@@ -38,7 +38,9 @@ export function Inspector() {
 
   const [mode, setMode] = useState<"auto" | "raw">("auto");
   const [editingJson, setEditingJson] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState<string | null>(null);
   const [jsonError, setJsonError] = useState<string | null>(null);
+  const editSeq = useInspector((s) => s.editSeq);
 
   const stmt = target ? statements.find((s) => s.index === target.stmtIndex) : null;
   const colMeta = target && stmt ? stmt.columns[target.col] : null;
@@ -92,8 +94,22 @@ export function Inspector() {
 
   useEffect(() => {
     setEditingJson(null);
+    setEditingText(null);
     setJsonError(null);
   }, [k]);
+
+  // grid double-click on a JSON cell lands here in edit mode
+  useEffect(() => {
+    if (editSeq === 0 || value == null) return;
+    const p = tryParseJson(value);
+    if (p !== undefined) {
+      setEditingJson(JSON.stringify(p, null, 2));
+      setJsonError(null);
+    } else {
+      setEditingText(value);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editSeq]);
 
   if (!target || !stmt) {
     return (
@@ -164,10 +180,39 @@ export function Inspector() {
             Edit JSON
           </button>
         )}
+        {parsed === undefined && editMeta?.editable && editingText === null && (
+          <button onClick={() => setEditingText(value ?? "")}>Edit</button>
+        )}
       </div>
 
       <div className="insp-body">
-        {editingJson !== null ? (
+        {editingText !== null ? (
+          <div className="insp-jsonedit">
+            <textarea
+              value={editingText}
+              onChange={(e) => setEditingText(e.target.value)}
+              spellCheck={false}
+            />
+            <div className="insp-jsonactions">
+              <button onClick={() => setEditingText(null)}>Cancel</button>
+              <button
+                className="primary"
+                onClick={() => {
+                  useEdits.getState().setEdit({
+                    stmtIndex: target.stmtIndex,
+                    row: target.row,
+                    col: target.col,
+                    value: editingText,
+                    original: stmt.rows[target.row]?.[target.col] ?? null,
+                  });
+                  setEditingText(null);
+                }}
+              >
+                Stage edit
+              </button>
+            </div>
+          </div>
+        ) : editingJson !== null ? (
           <div className="insp-jsonedit">
             <textarea
               value={editingJson}

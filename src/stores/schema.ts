@@ -35,11 +35,19 @@ export interface FuncInfo {
   returns: string;
 }
 
+export interface IndexInfo {
+  schema: string;
+  table: string;
+  name: string;
+  def: string;
+}
+
 export interface SchemaSnapshot {
   tables: TableInfo[];
   foreign_keys: FkInfo[];
   functions: FuncInfo[];
   schemas: string[];
+  indexes: IndexInfo[];
 }
 
 interface SchemaState {

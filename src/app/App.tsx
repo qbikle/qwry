@@ -6,6 +6,8 @@ import { ProfileForm } from "../sidebar/ProfileForm";
 import { QueryBox } from "../editor/QueryBox";
 import { ResultsPane } from "../grid/ResultsPane";
 import { Inspector } from "../inspector/Inspector";
+import { TableBrowser } from "../browser/TableBrowser";
+import { useBrowser } from "../stores/browser";
 import "./app.css";
 
 export function App() {
@@ -13,6 +15,7 @@ export function App() {
   const editing = useConnections((s) => s.editing);
   const inspectorOpen = useInspector((s) => s.open);
   const inspectorWidth = useInspector((s) => s.width);
+  const browsing = useBrowser((s) => s.table !== null);
 
   const startInspectorResize = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -75,12 +78,18 @@ export function App() {
         <ProfileList />
       </aside>
       <main className="main-area">
-        <section className="editor-pane">
-          <QueryBox />
-        </section>
-        <section className="results-pane">
-          <ResultsPane />
-        </section>
+        {browsing ? (
+          <TableBrowser />
+        ) : (
+          <>
+            <section className="editor-pane">
+              <QueryBox />
+            </section>
+            <section className="results-pane">
+              <ResultsPane />
+            </section>
+          </>
+        )}
       </main>
       {inspectorOpen ? (
         <aside className="inspector-pane" style={{ width: inspectorWidth }}>

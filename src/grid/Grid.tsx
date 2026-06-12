@@ -9,6 +9,9 @@ import { formatCells, type CopyFormat } from "./clipboard";
 import { useSelection, type DragMode, type SelRect } from "./useSelection";
 import "./grid.css";
 
+/** registered by TableBrowser for infinite scroll; null in plain editor mode */
+export const nearEndHook: { current: (() => void) | null } = { current: null };
+
 const ROW_H = 26;
 const HEADER_H = 30;
 const ROWNUM_W = 52;
@@ -47,6 +50,8 @@ function CellEditor({
   onNull: () => void;
   onCancel: () => void;
 }) {
+  // Esc must discard WITHOUT the unmount-blur saving the draft
+  const cancelled = useRef(false);
   return (
     <div
       className="vgrid-celledit"
@@ -54,30 +59,40 @@ function CellEditor({
         transform: `translate(${x + ROWNUM_W}px, ${y + HEADER_H}px)`,
         width: Math.max(width, 220),
       }}
+      onMouseDown={(e) => e.stopPropagation()}
     >
       <input
         autoFocus
         value={draft}
         onChange={(e) => onDraft(e.target.value)}
         onKeyDown={(e) => {
+          // never let grid-level handlers see editor keys (Enter would re-open)
+          e.stopPropagation();
           if (e.key === "Enter") {
             e.preventDefault();
             onSave();
           } else if (e.key === "Escape") {
             e.preventDefault();
+            cancelled.current = true;
             onCancel();
           } else if (e.key === "Backspace" && e.metaKey && e.shiftKey) {
             e.preventDefault();
+            cancelled.current = true; // onNull closes the editor; blur must not double-save
             onNull();
           }
         }}
-        onBlur={onCancel}
+        onBlur={() => {
+          // click-outside = save; Esc/∅ already handled
+          if (!cancelled.current) onSave();
+        }}
       />
       <button
         className="vgrid-nullbtn"
         title="Set NULL (⌘⇧⌫)"
         onMouseDown={(e) => {
           e.preventDefault();
+          e.stopPropagation();
+          cancelled.current = true;
           onNull();
         }}
       >
@@ -164,6 +179,17 @@ export function Grid({ statement }: { statement: StatementState }) {
       if (!meta?.editable) return;
       const k = editKey(statement.index, r, c);
       const current = pending[k] ? pending[k].value : rows[r][c];
+      // JSON cells edit in the inspector — a one-line input is hostile UX
+      const isJson =
+        meta.type_name === "jsonb" ||
+        meta.type_name === "json" ||
+        (current != null && /^\s*[[{]/.test(current));
+      if (isJson && current != null) {
+        void import("../stores/inspector").then(({ useInspector }) =>
+          useInspector.getState().requestEdit({ stmtIndex: statement.index, row: r, col: c }),
+        );
+        return;
+      }
       setEditing({ r, c, draft: current ?? "" });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -217,6 +243,7 @@ export function Grid({ statement }: { statement: StatementState }) {
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (editing) return; // cell editor owns the keyboard
       const meta = e.metaKey;
       if (meta && e.key === "c") {
         e.preventDefault();
@@ -251,8 +278,41 @@ export function Grid({ statement }: { statement: StatementState }) {
         startEdit(sel.focus.r, sel.focus.c);
       }
     },
-    [copySelection, sel, rows.length, cols.length, rowVirt, colVirt, startEdit],
+    [copySelection, sel, rows.length, cols.length, rowVirt, colVirt, startEdit, editing],
   );
+
+  /** stage NULL or empty-string for every editable cell in the selection */
+  const setSelectionValue = useCallback(
+    (value: string | null) => {
+      const rect = sel.rect;
+      if (!rect) return;
+      const st = useEdits.getState();
+      for (let c = rect.c0; c <= rect.c1; c++) {
+        if (!colEditMeta(c)?.editable) continue;
+        for (let r = rect.r0; r <= rect.r1; r++) {
+          st.setEdit({
+            stmtIndex: statement.index,
+            row: r,
+            col: c,
+            value,
+            original: rows[r][c],
+          });
+        }
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sel.rect, editMap, rows, statement.index],
+  );
+
+  const selectionHasEditable = useMemo(() => {
+    const rect = sel.rect;
+    if (!rect) return false;
+    for (let c = rect.c0; c <= rect.c1; c++) {
+      if (colEditMeta(c)?.editable) return true;
+    }
+    return false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel.rect, editMap]);
 
   const resizing = useRef<{ col: number; startX: number; startW: number } | null>(null);
   const onResizeStart = (col: number, e: React.MouseEvent) => {
@@ -289,7 +349,19 @@ export function Grid({ statement }: { statement: StatementState }) {
         if (sel.rect) setMenu({ x: e.clientX, y: e.clientY });
       }}
     >
-      <div ref={scrollRef} className="vgrid-scroll">
+      <div
+        ref={scrollRef}
+        className="vgrid-scroll"
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          if (
+            nearEndHook.current &&
+            el.scrollTop + el.clientHeight > el.scrollHeight - 800
+          ) {
+            nearEndHook.current();
+          }
+        }}
+      >
         <div
           className="vgrid-inner"
           style={{
@@ -419,6 +491,27 @@ export function Grid({ statement }: { statement: StatementState }) {
                 Copy as {f.toUpperCase()}
               </button>
             ))}
+            {selectionHasEditable && (
+              <>
+                <div className="vgrid-menu-sep" />
+                <button
+                  onClick={() => {
+                    setSelectionValue(null);
+                    setMenu(null);
+                  }}
+                >
+                  Set NULL
+                </button>
+                <button
+                  onClick={() => {
+                    setSelectionValue("");
+                    setMenu(null);
+                  }}
+                >
+                  Set EMPTY
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

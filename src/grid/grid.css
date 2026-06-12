@@ -400,3 +400,9 @@
   background: var(--accent);
   color: white;
 }
+
+.vgrid-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-strong);
+}

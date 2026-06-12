@@ -38,10 +38,20 @@ export function SchemaTree({ profileId }: { profileId: string }) {
   if (loading) return <div className="tree-msg">Loading schema…</div>;
   if (!snapshot) return null;
 
-  const openTable = (t: TableInfo) => {
-    const ref = t.schema === "public" ? t.name : `${t.schema}.${t.name}`;
-    useConnections.getState().setSql(`SELECT * FROM ${ref} LIMIT 100`);
-    void useResults.getState().run();
+  // single click = browse (Postico-style); double click = SELECT into editor
+  const browseTable = (t: TableInfo) => {
+    void import("../stores/browser").then(({ useBrowser }) =>
+      useBrowser.getState().openTable(t),
+    );
+  };
+
+  const insertSelect = (t: TableInfo) => {
+    void import("../stores/browser").then(({ useBrowser }) => {
+      useBrowser.getState().close();
+      const ref = t.schema === "public" ? t.name : `${t.schema}.${t.name}`;
+      useConnections.getState().setSql(`SELECT * FROM ${ref} LIMIT 100`);
+      void useResults.getState().run();
+    });
   };
 
   return (
@@ -72,8 +82,9 @@ export function SchemaTree({ profileId }: { profileId: string }) {
                 <div
                   key={t.table_oid}
                   className="tree-table"
-                  title={`${t.columns.length} columns${t.pk.length ? ` · pk: ${t.pk.join(", ")}` : ""}`}
-                  onDoubleClick={() => openTable(t)}
+                  title={`${t.columns.length} columns${t.pk.length ? ` · pk: ${t.pk.join(", ")}` : ""}\nclick: browse · double-click: SELECT in editor`}
+                  onClick={() => browseTable(t)}
+                  onDoubleClick={() => insertSelect(t)}
                 >
                   {t.kind === "v" || t.kind === "m" ? (
                     <Eye size={13} className="tree-icon view" />

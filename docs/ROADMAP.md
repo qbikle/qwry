@@ -68,10 +68,13 @@
 - [x] Gate: inspector flows ✅ user-verified
 
 ## P7 — Table browser
-- [ ] Table tab: data view (no SQL), filter row builder (col op value, AND), sort, infinite scroll
-- [ ] Structure tab: columns/indexes/FKs/constraints
-- [ ] Inline edit reusing P5 machinery; insert row; delete row (guarded)
-- [ ] Gate: browse + filter + edit without writing SQL
+- [x] Sidebar single-click → browser (double-click → SELECT in editor); Data/Structure tabs, close ✕ back to editor, refresh
+- [x] Filter builder: col + op (=,!=,<,>,<=,>=,LIKE,ILIKE,IN,IS [NOT] NULL) + value, enable checkboxes, AND-joined; sort dropdown; generated SQL runs through normal pipeline → grid stays editable (P5 reuse for free)
+- [x] Infinite scroll: LIMIT grows by 1000 near grid bottom (nearEndHook in Grid)
+- [x] Structure tab: columns (type/nullable/default/PK badge), FKs both directions, indexes (added to introspection — 5th json_agg query)
+- [ ] Insert row / delete row (deferred — needs guarded UX, do with P10 safety work)
+- [x] Feedback rounds: AND/OR filter connectors (parenthesized, left-to-right), cell-editor Enter-bubble bug (reopened editor — stopPropagation), blur=save/Esc=discard semantics, Set NULL/EMPTY in grid context menu for selections, inspector plain-text Edit, JSON cells double-click → inspector edit mode (never inline), sort = searchable popover (PK & time group first, click flips direction, Clear sort row)
+- [x] Gate: browse + filter + edit without writing SQL ✅ user-verified
 
 ## P8 — Tabs, history, palette
 - [ ] Tab persistence (editor text, connection, name) in appdb; restore on launch

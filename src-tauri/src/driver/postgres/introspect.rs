@@ -48,11 +48,21 @@ pub struct FuncInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexInfo {
+    pub schema: String,
+    pub table: String,
+    pub name: String,
+    pub def: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaSnapshot {
     pub tables: Vec<TableInfo>,
     pub foreign_keys: Vec<FkInfo>,
     pub functions: Vec<FuncInfo>,
     pub schemas: Vec<String>,
+    #[serde(default)]
+    pub indexes: Vec<IndexInfo>,
 }
 
 const TABLES_SQL: &str = r#"
@@ -126,13 +136,21 @@ FROM pg_namespace
 WHERE nspname NOT IN ('pg_catalog','information_schema')
   AND nspname NOT LIKE 'pg_toast%' AND nspname NOT LIKE 'pg_temp%'"#;
 
+const INDEXES_SQL: &str = r#"
+SELECT coalesce(json_agg(t), '[]') FROM (
+  SELECT schemaname AS schema, tablename AS table, indexname AS name, indexdef AS def
+  FROM pg_indexes
+  WHERE schemaname NOT IN ('pg_catalog','information_schema')
+  ORDER BY schemaname, tablename, indexname
+) t"#;
+
 impl PgSession {
     pub async fn introspect(&self) -> Result<SchemaSnapshot> {
-        let sql = format!("{TABLES_SQL};{FKS_SQL};{FUNCS_SQL};{SCHEMAS_SQL}");
+        let sql = format!("{TABLES_SQL};{FKS_SQL};{FUNCS_SQL};{SCHEMAS_SQL};{INDEXES_SQL}");
         let out = self.execute_simple(&sql).await?;
-        if out.statements.len() != 4 {
+        if out.statements.len() != 5 {
             return Err(DriverError::Internal(format!(
-                "introspection returned {} result sets, expected 4",
+                "introspection returned {} result sets, expected 5",
                 out.statements.len()
             )));
         }
@@ -152,6 +170,7 @@ impl PgSession {
             foreign_keys: serde_json::from_str(&cell(1)?).map_err(|e| parse_err("fks", e))?,
             functions: serde_json::from_str(&cell(2)?).map_err(|e| parse_err("functions", e))?,
             schemas: serde_json::from_str(&cell(3)?).map_err(|e| parse_err("schemas", e))?,
+            indexes: serde_json::from_str(&cell(4)?).map_err(|e| parse_err("indexes", e))?,
         })
     }
 }
