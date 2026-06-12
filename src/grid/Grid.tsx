@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { StatementState } from "../stores/results";
+import { editKey, useEdits } from "../stores/edits";
 import { formatCells, type CopyFormat } from "./clipboard";
 import { useSelection, type DragMode, type SelRect } from "./useSelection";
 import "./grid.css";
@@ -25,6 +26,65 @@ function estimateWidths(st: StatementState): number[] {
     }
     return Math.max(MIN_COL_W, Math.min(MAX_COL_W, Math.round(max * CHAR_W + 24)));
   });
+}
+
+function CellEditor({
+  x,
+  y,
+  width,
+  draft,
+  onDraft,
+  onSave,
+  onNull,
+  onCancel,
+}: {
+  x: number;
+  y: number;
+  width: number;
+  draft: string;
+  onDraft: (d: string) => void;
+  onSave: () => void;
+  onNull: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div
+      className="vgrid-celledit"
+      style={{
+        transform: `translate(${x + ROWNUM_W}px, ${y + HEADER_H}px)`,
+        width: Math.max(width, 220),
+      }}
+    >
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => onDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            onSave();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+          } else if (e.key === "Backspace" && e.metaKey && e.shiftKey) {
+            e.preventDefault();
+            onNull();
+          }
+        }}
+        onBlur={onCancel}
+      />
+      <button
+        className="vgrid-nullbtn"
+        title="Set NULL (⌘⇧⌫)"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          onNull();
+        }}
+      >
+        ∅
+      </button>
+    </div>
+  );
 }
 
 export function Grid({ statement }: { statement: StatementState }) {
@@ -71,6 +131,49 @@ export function Grid({ statement }: { statement: StatementState }) {
   }, [colWidths, colVirt]);
 
   const sel = useSelection(rows.length, cols.length);
+
+  // editability map fetched once the statement is done
+  const editMap = useEdits((s) => s.maps[statement.index]);
+  const pending = useEdits((s) => s.pending);
+  const ensureMap = useEdits((s) => s.ensureMap);
+  useEffect(() => {
+    if (statement.done && !statement.error) ensureMap(statement.index);
+  }, [statement.done, statement.error, statement.index, ensureMap]);
+
+  const [editing, setEditing] = useState<{ r: number; c: number; draft: string } | null>(null);
+
+  const colEditMeta = (c: number) =>
+    editMap && editMap !== "loading" && editMap !== "unavailable"
+      ? editMap.columns[c]
+      : undefined;
+
+  const startEdit = useCallback(
+    (r: number, c: number) => {
+      const meta = colEditMeta(c);
+      if (!meta?.editable) return;
+      const k = editKey(statement.index, r, c);
+      const current = pending[k] ? pending[k].value : rows[r][c];
+      setEditing({ r, c, draft: current ?? "" });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [editMap, pending, rows, statement.index],
+  );
+
+  const saveEdit = useCallback(
+    (value: string | null) => {
+      if (!editing) return;
+      useEdits.getState().setEdit({
+        stmtIndex: statement.index,
+        row: editing.r,
+        col: editing.c,
+        value,
+        original: rows[editing.r][editing.c],
+      });
+      setEditing(null);
+      containerRef.current?.focus();
+    },
+    [editing, rows, statement.index],
+  );
 
   const copySelection = useCallback(
     (format: CopyFormat) => {
@@ -130,9 +233,14 @@ export function Grid({ statement }: { statement: StatementState }) {
         );
         rowVirt.scrollToIndex(next.r);
         colVirt.scrollToIndex(next.c);
+        return;
+      }
+      if (e.key === "Enter" && sel.focus) {
+        e.preventDefault();
+        startEdit(sel.focus.r, sel.focus.c);
       }
     },
-    [copySelection, sel, rows.length, cols.length, rowVirt, colVirt],
+    [copySelection, sel, rows.length, cols.length, rowVirt, colVirt, startEdit],
   );
 
   const resizing = useRef<{ col: number; startX: number; startW: number } | null>(null);
@@ -230,27 +338,51 @@ export function Grid({ statement }: { statement: StatementState }) {
           {/* cells */}
           {rowVirt.getVirtualItems().map((vr) =>
             colVirt.getVirtualItems().map((vc) => {
-              const v = rows[vr.index][vc.index];
+              const k = editKey(statement.index, vr.index, vc.index);
+              const pendingEdit = pending[k];
+              const v = pendingEdit ? pendingEdit.value : rows[vr.index][vc.index];
               const selected = inRect(vr.index, vc.index, sel.rect);
               const focused = sel.focus?.r === vr.index && sel.focus?.c === vc.index;
               const truncated = statement.truncated.has(`${vr.index}:${vc.index}`);
+              const meta = colEditMeta(vc.index);
+              const readonlyReason = meta && !meta.editable ? meta.reason : null;
               return (
                 <div
                   key={`${vr.key}:${vc.key}`}
-                  className={`vgrid-cell${v === null ? " null" : ""}${selected ? " sel" : ""}${focused ? " focus" : ""}`}
+                  className={`vgrid-cell${v === null ? " null" : ""}${selected ? " sel" : ""}${focused ? " focus" : ""}${pendingEdit ? " dirty" : ""}`}
                   style={{
                     transform: `translate(${vc.start + ROWNUM_W}px, ${vr.start + HEADER_H}px)`,
                     width: vc.size,
                     height: ROW_H,
                   }}
+                  title={readonlyReason ?? undefined}
                   onMouseDown={(e) => beginDrag(e, { r: vr.index, c: vc.index }, "cell")}
                   onMouseEnter={() => sel.dragOver({ r: vr.index, c: vc.index })}
+                  onDoubleClick={() => startEdit(vr.index, vc.index)}
                 >
                   {v === null ? "NULL" : v}
+                  {pendingEdit && <span className="vgrid-dirty-badge">✎</span>}
                   {truncated && <span className="vgrid-trunc">…⧉</span>}
                 </div>
               );
             }),
+          )}
+
+          {/* in-place cell editor */}
+          {editing && (
+            <CellEditor
+              x={colVirt.getVirtualItems().find((v) => v.index === editing.c)?.start ?? 0}
+              y={rowVirt.getVirtualItems().find((v) => v.index === editing.r)?.start ?? 0}
+              width={colWidths[editing.c] ?? 160}
+              draft={editing.draft}
+              onDraft={(d) => setEditing((e) => (e ? { ...e, draft: d } : e))}
+              onSave={() => saveEdit(editing.draft)}
+              onNull={() => saveEdit(null)}
+              onCancel={() => {
+                setEditing(null);
+                containerRef.current?.focus();
+              }}
+            />
           )}
         </div>
       </div>

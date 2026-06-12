@@ -109,6 +109,90 @@ async fn staging_introspect() {
 
 #[tokio::test]
 #[ignore]
+async fn staging_edit_pipeline() {
+    use qwry_lib::driver::postgres::edit::RowEdit;
+
+    let profile = Profile {
+        id: "test".into(),
+        name: "staging".into(),
+        host: env("QWRY_TEST_HOST"),
+        port: 5432,
+        dbname: env("QWRY_TEST_DB"),
+        user: env("QWRY_TEST_USER"),
+        sslmode: "prefer".into(),
+        color: None,
+        is_prod: false,
+    };
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"))
+        .await
+        .expect("connect");
+
+    session
+        .execute_simple(
+            "DROP TABLE IF EXISTS qwry_edit_test;
+             CREATE TABLE qwry_edit_test (id serial PRIMARY KEY, name text, val int);
+             INSERT INTO qwry_edit_test (name, val) VALUES ('a', 1), ('b', 2), ('c', NULL)",
+        )
+        .await
+        .expect("setup");
+
+    // editability: computed col read-only, base cols editable
+    let sql = "SELECT id, name, val, upper(name) AS un FROM qwry_edit_test ORDER BY id";
+    let map = session.editability(sql, 0).await.expect("editability");
+    assert!(map.columns[0].editable, "id should be editable");
+    assert!(map.columns[1].editable, "name should be editable");
+    assert!(map.columns[2].editable, "val should be editable");
+    assert!(!map.columns[3].editable, "computed col must be read-only");
+    assert!(map.columns[3].reason.as_deref().unwrap().contains("computed"));
+
+    // no PK in selection → read-only with actionable reason
+    let map2 = session
+        .editability("SELECT name FROM qwry_edit_test", 0)
+        .await
+        .expect("editability2");
+    assert!(!map2.columns[0].editable);
+    assert!(map2.columns[0].reason.as_deref().unwrap().contains("primary key"));
+
+    // preview generates sane SQL
+    let oid = map.columns[0].table_oid;
+    let edits = vec![
+        RowEdit { table_oid: oid, col: 1, value: Some("edited".into()), pk: vec![(0, Some("2".into()))] },
+        RowEdit { table_oid: oid, col: 2, value: None, pk: vec![(0, Some("1".into()))] },
+    ];
+    let preview = session
+        .build_edit_statements(sql, 0, &edits)
+        .await
+        .expect("preview");
+    assert_eq!(preview.len(), 2);
+    assert!(preview[0].contains(r#"SET "name" = 'edited'::text WHERE "id" = '2'::int4"#), "{}", preview[0]);
+    assert!(preview[1].contains(r#"SET "val" = NULL"#), "{}", preview[1]);
+
+    // apply in one tx, RETURNING refreshes
+    let outcome = session.apply_edits(sql, 0, edits).await.expect("apply");
+    assert!(outcome.committed);
+    assert!(outcome.results.iter().all(|r| r.ok), "{:?}", outcome.results);
+    assert_eq!(outcome.results[0].new_value.as_deref(), Some("edited"));
+
+    let check = session
+        .execute_simple("SELECT name, val FROM qwry_edit_test ORDER BY id")
+        .await
+        .expect("check");
+    assert_eq!(check.statements[0].rows[1][0].as_deref(), Some("edited"));
+    assert_eq!(check.statements[0].rows[0][1], None, "val should be NULL");
+
+    // edit through a JOIN: base-table column still editable
+    let join_sql = "SELECT t.id, t.name, o.name AS other FROM qwry_edit_test t JOIN qwry_edit_test o ON o.id = t.id";
+    let jmap = session.editability(join_sql, 0).await.expect("join map");
+    assert!(jmap.columns[1].editable, "joined base col should be editable");
+
+    session
+        .execute_simple("DROP TABLE qwry_edit_test")
+        .await
+        .expect("cleanup");
+}
+
+#[tokio::test]
+#[ignore]
 async fn staging_streaming_and_cancel() {
     use qwry_lib::driver::QueryEvent;
     use std::sync::Arc;

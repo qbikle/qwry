@@ -95,6 +95,49 @@ pub async fn introspect(
 }
 
 #[tauri::command]
+pub async fn editability(
+    state: State<'_, AppState>,
+    session_id: String,
+    sql: String,
+    statement_index: u32,
+) -> Result<crate::driver::postgres::edit::EditabilityMap> {
+    let session = state
+        .session(&session_id)
+        .ok_or(driver::DriverError::NoSession)?;
+    session.editability(&sql, statement_index).await
+}
+
+#[tauri::command]
+pub async fn edits_preview(
+    state: State<'_, AppState>,
+    session_id: String,
+    sql: String,
+    statement_index: u32,
+    edits: Vec<crate::driver::postgres::edit::RowEdit>,
+) -> Result<Vec<String>> {
+    let session = state
+        .session(&session_id)
+        .ok_or(driver::DriverError::NoSession)?;
+    session
+        .build_edit_statements(&sql, statement_index, &edits)
+        .await
+}
+
+#[tauri::command]
+pub async fn edits_apply(
+    state: State<'_, AppState>,
+    session_id: String,
+    sql: String,
+    statement_index: u32,
+    edits: Vec<crate::driver::postgres::edit::RowEdit>,
+) -> Result<crate::driver::postgres::edit::EditOutcome> {
+    let session = state
+        .session(&session_id)
+        .ok_or(driver::DriverError::NoSession)?;
+    session.apply_edits(&sql, statement_index, edits).await
+}
+
+#[tauri::command]
 pub async fn cancel(state: State<'_, AppState>, session_id: String) -> Result<()> {
     let session = state
         .session(&session_id)

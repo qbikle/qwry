@@ -1,4 +1,6 @@
+import { useEdits } from "../stores/edits";
 import { useResults } from "../stores/results";
+import { EditPreview } from "./EditPreview";
 import { Grid } from "./Grid";
 import "./grid.css";
 
@@ -75,7 +77,35 @@ export function ResultsPane() {
         {totalMs != null && statements.length > 1 && (
           <span>total {totalMs.toFixed(1)} ms</span>
         )}
+        <PendingEditsStatus />
       </div>
+      <EditPreview />
     </div>
+  );
+}
+
+function PendingEditsStatus() {
+  const count = useEdits((s) => Object.keys(s.pending).length);
+  const lastError = useEdits((s) => s.lastError);
+  const discardAll = useEdits((s) => s.discardAll);
+  const openPreview = useEdits((s) => s.openPreview);
+  if (count === 0 && !lastError) return null;
+  return (
+    <span className="status-edits">
+      {lastError && <span className="status-edit-error">{lastError}</span>}
+      {count > 0 && (
+        <>
+          <span className="status-edit-count">
+            ✎ {count} pending edit{count === 1 ? "" : "s"}
+          </span>
+          <button className="status-link" onClick={() => void openPreview()}>
+            Commit ⌘S
+          </button>
+          <button className="status-link danger" onClick={discardAll}>
+            Discard ⌘⇧D
+          </button>
+        </>
+      )}
+    </span>
   );
 }

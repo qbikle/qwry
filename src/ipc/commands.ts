@@ -1,5 +1,12 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { ExecOutcome, Profile, QueryEvent } from "./types";
+import type {
+  EditabilityMap,
+  EditOutcome,
+  ExecOutcome,
+  Profile,
+  QueryEvent,
+  RowEdit,
+} from "./types";
 
 export const profilesList = () => invoke<Profile[]>("profiles_list");
 
@@ -18,6 +25,23 @@ export const execute = (sessionId: string, sql: string) =>
   invoke<ExecOutcome>("execute", { sessionId, sql });
 
 export const cancel = (sessionId: string) => invoke<void>("cancel", { sessionId });
+
+export const editability = (sessionId: string, sql: string, statementIndex: number) =>
+  invoke<EditabilityMap>("editability", { sessionId, sql, statementIndex });
+
+export const editsPreview = (
+  sessionId: string,
+  sql: string,
+  statementIndex: number,
+  edits: RowEdit[],
+) => invoke<string[]>("edits_preview", { sessionId, sql, statementIndex, edits });
+
+export const editsApply = (
+  sessionId: string,
+  sql: string,
+  statementIndex: number,
+  edits: RowEdit[],
+) => invoke<EditOutcome>("edits_apply", { sessionId, sql, statementIndex, edits });
 
 /** Streaming execution. Resolves when the whole batch finishes (or errors). */
 export const executeStream = (

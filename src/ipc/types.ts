@@ -39,6 +39,40 @@ export interface DriverError {
   code: string | null;
 }
 
+export interface ColumnEditMeta {
+  col: number;
+  table_oid: number;
+  attnum: number;
+  editable: boolean;
+  reason: string | null;
+  type_name: string;
+}
+
+export interface EditabilityMap {
+  statement_index: number;
+  columns: ColumnEditMeta[];
+  pk_cols: Record<number, number[]>;
+  tables: Record<number, string>;
+}
+
+export interface RowEdit {
+  table_oid: number;
+  col: number;
+  value: string | null;
+  pk: [number, string | null][];
+}
+
+export interface EditResult {
+  ok: boolean;
+  message: string | null;
+  new_value: string | null;
+}
+
+export interface EditOutcome {
+  results: EditResult[];
+  committed: boolean;
+}
+
 export type QueryEvent =
   | { type: "statement_start"; index: number; sql: string }
   | { type: "columns"; index: number; columns: ColumnMeta[] }

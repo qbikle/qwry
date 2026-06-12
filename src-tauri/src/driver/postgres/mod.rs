@@ -4,6 +4,7 @@ use tokio_postgres::{Client, SimpleQueryMessage};
 
 use super::{ColumnMeta, DriverError, ExecOutcome, Profile, Result, StatementResult};
 
+pub mod edit;
 mod execute;
 pub mod introspect;
 mod splitter;

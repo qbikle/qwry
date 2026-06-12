@@ -104,6 +104,8 @@ export const useResults = create<ResultsState>((set, get) => ({
       executedSql: sql,
       globalError: null,
     });
+    // stale editability + pending edits die with the previous result set
+    void import("./edits").then(({ useEdits }) => useEdits.getState().reset());
 
     const onEvent = (ev: QueryEvent) => {
       switch (ev.type) {

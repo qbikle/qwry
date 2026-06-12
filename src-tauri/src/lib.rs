@@ -27,6 +27,9 @@ pub fn run() {
             commands::execute,
             commands::execute_stream,
             commands::introspect,
+            commands::editability,
+            commands::edits_preview,
+            commands::edits_apply,
             commands::cancel,
         ])
         .run(tauri::generate_context!())

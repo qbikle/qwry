@@ -50,12 +50,13 @@
 - [x] User-feedback round: functions out of typed flow (settings toggle + ^Space), ⌘⇧U/right-click searchable function palette, editor context menu
 
 ## P5 — Editable results
-- [ ] `edit.rs`: editability map from table_oid/attnum + PK presence (ctid fallback w/ warning)
-- [ ] ColumnMeta carries editability + read-only reason
-- [ ] Grid editing: double-click/Enter to edit, type-aware inputs, NULL toggle, Esc revert
-- [ ] editsStore: pending edits, dirty ✎ badges, discard all
-- [ ] ⌘S → SQL preview modal → `apply_edits` one transaction → RETURNING refresh
-- [ ] Gate: edit base-table cell from a JOIN query, persists; computed col shows reason
+- [x] `edit.rs`: editability via `prepare()` (no re-execution) — table_oid/column_id → PK presence; reasons for read-only (computed / no PK / PK not selected). ctid fallback NOT implemented (deferred; reasons are actionable instead)
+- [x] `editability`/`edits_preview`/`edits_apply` commands; UPDATE gen with `'val'::type` casts, one transaction, RETURNING ::text refresh; rows-matched≠1 reported per edit — live-tested on staging scratch table incl. JOIN base-col edit + SET NULL
+- [x] Grid editing: double-click or Enter on focused cell, input overlay, Esc revert, ∅ button / ⌘⇧⌫ sets NULL, editing-back-to-original clears the edit
+- [x] editsStore: pending keyed (stmt,row,col), dirty ✎ amber cells, PK values always taken from ORIGINAL row data, discard all
+- [x] ⌘S (or status-bar Commit) → SQL preview modal → apply → RETURNING patches grid in place
+- [x] Gate: edit base-table cell from a JOIN query in-app, persists; computed col shows reason tooltip ✅ user-verified
+- [x] Keyboard flow polish: Enter commits in preview modal, esc cancels, ⌘⇧D discard all
 
 ## P6 — Inspector + jsonb
 - [ ] Inspector panel: full cell value (on-demand fetch for truncated), text/json/bytea modes
@@ -91,6 +92,9 @@
 ---
 
 ## Session log
+
+### 2026-06-12 — P5 (session 1, continued)
+P5 complete, user-verified. THE differentiator feature works: edit any base-table cell from arbitrary SQL (incl. JOINs). Design notes: editability via `prepare()` of the same SQL (RowDescription table_oid/column_id — zero re-execution); `'value'::typename` casts give psql-typing semantics; PK WHERE values always from original row data; whole commit keyboard-driven (Enter in grid → ⌘S → Enter). Deferred: ctid fallback for PK-less tables (read-only reason is actionable instead), batched multi-cell row updates (one UPDATE per cell currently). Next: P6 inspector + jsonb.
 
 ### 2026-06-12 — P4 (session 1, continued)
 P4 intellisense built + 3 user-feedback rounds. CRITICAL GOTCHA: the CodeMirror EditorView is created in a `useEffect([], )` — it captures completion-engine closures at mount. Vite HMR swaps modules but the live view keeps OLD references → engine edits silently don't apply. ALWAYS restart `tauri dev` (not just HMR) when testing editor-internal changes. Engine reads stores dynamically per keystroke (no Compartment reconfig — also HMR-fragile). Functions gated: typed flow excludes 3.5k pg functions unless settings.fnInComplete; ^Space always includes; ⌘⇧U / right-click → searchable function palette. context.ts parses FULL statement for tables (cursor-bounded only for clause) — `SELECT col| FROM t` needs tables after cursor.

@@ -216,6 +216,157 @@
   font-size: var(--text-xs);
 }
 
+/* editing */
+.vgrid-cell.dirty {
+  background: rgba(245, 166, 35, 0.12);
+  outline: 1px dashed var(--warn);
+  outline-offset: -1px;
+}
+
+.vgrid-dirty-badge {
+  margin-left: 5px;
+  color: var(--warn);
+  font-size: var(--text-xs);
+}
+
+.vgrid-celledit {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 5;
+  display: flex;
+  background: var(--bg-raised);
+  border: 1.5px solid var(--accent);
+  border-radius: 3px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.vgrid-celledit input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  user-select: text;
+}
+
+.vgrid-nullbtn {
+  border: none;
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+  padding: 0 8px;
+  font-size: var(--text-md);
+}
+.vgrid-nullbtn:hover {
+  color: var(--warn);
+}
+
+/* status bar edit cluster */
+.status-edits {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.status-edit-count {
+  color: var(--warn);
+}
+
+.status-edit-error {
+  color: var(--danger);
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  padding: 0;
+}
+.status-link.danger {
+  color: var(--danger);
+}
+
+/* edit preview modal */
+.ep-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ep-modal {
+  width: min(640px, 90%);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  padding: var(--sp-4);
+  gap: var(--sp-3);
+}
+
+.ep-title {
+  font-weight: 600;
+}
+
+.ep-sql {
+  flex: 1;
+  margin: 0;
+  overflow: auto;
+  padding: var(--sp-3);
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  user-select: text;
+  white-space: pre-wrap;
+}
+
+.ep-error {
+  color: var(--danger);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.ep-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
+
+.ep-actions button {
+  padding: 5px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-raised);
+  cursor: pointer;
+}
+.ep-actions button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.ep-actions button:disabled {
+  opacity: 0.5;
+}
+
 /* copy menu */
 .vgrid-menu-backdrop {
   position: fixed;

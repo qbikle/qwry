@@ -17,6 +17,19 @@ export function App() {
         e.preventDefault();
         document.getElementById("schema-filter")?.focus();
       }
+      if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        void import("../stores/edits").then(({ useEdits }) => {
+          const st = useEdits.getState();
+          if (Object.keys(st.pending).length > 0) void st.openPreview();
+        });
+      }
+      if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        void import("../stores/edits").then(({ useEdits }) =>
+          useEdits.getState().discardAll(),
+        );
+      }
       if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "r") {
         e.preventDefault(); // also blocks webview reload
         void Promise.all([
