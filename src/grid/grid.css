@@ -216,6 +216,19 @@
   font-size: var(--text-xs);
 }
 
+/* committed flash */
+.vgrid-cell.flash {
+  animation: cell-flash 0.9s ease-out;
+}
+@keyframes cell-flash {
+  0% {
+    background: rgba(62, 207, 142, 0.45);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
 /* editing */
 .vgrid-cell.dirty {
   background: rgba(245, 166, 35, 0.12);

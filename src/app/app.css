@@ -10,10 +10,22 @@
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  position: relative;
+}
+
+/* the traffic-light row — full-width invisible drag handle */
+.titlebar-drag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 34px;
+  z-index: 4;
 }
 
 /* connections + schema tree scroll; saved queries stay pinned at the bottom */
-.sidebar > :first-child {
+.sidebar > .profile-list,
+.sidebar > :nth-child(2) {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -75,6 +87,77 @@
 .inspector-reopen:hover {
   color: var(--fg);
   background: var(--bg-active);
+}
+
+.prod-strip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--danger);
+  z-index: 60;
+}
+
+/* danger confirm */
+.danger-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.danger-modal {
+  width: min(520px, 90%);
+  background: var(--bg-panel);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.danger-title {
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.danger-detail {
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+  padding: var(--sp-3);
+  background: var(--bg-app);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.danger-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
+
+.danger-actions button {
+  padding: 5px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-raised);
+  cursor: pointer;
+}
+
+.danger-actions .danger-go {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: white;
 }
 
 .modal-backdrop {

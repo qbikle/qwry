@@ -7,10 +7,14 @@
   justify-content: center;
 }
 
-.pal {
+.pal-wrap {
   margin-top: 10vh;
   width: min(620px, 92%);
   height: fit-content;
+}
+
+.pal {
+  width: 100%;
   max-height: 60vh;
   display: flex;
   flex-direction: column;

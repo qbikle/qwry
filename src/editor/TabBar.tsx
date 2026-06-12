@@ -14,7 +14,7 @@ export function TabBar() {
   const [draft, setDraft] = useState("");
 
   return (
-    <div className="tabbar">
+    <div className="tabbar" data-tauri-drag-region>
       {tabs.map((t) => (
         <div
           key={t.id}

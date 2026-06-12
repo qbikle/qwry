@@ -19,6 +19,8 @@ import { bracketMatching, indentOnInput } from "@codemirror/language";
 import { sql, PostgreSQL } from "@codemirror/lang-sql";
 import { setDiagnostics, lintGutter } from "@codemirror/lint";
 import { useState } from "react";
+import { motion } from "motion/react";
+import { menuIn } from "../design/springs";
 import { useConnections } from "../stores/connections";
 import { useResults } from "../stores/results";
 import { useSettings } from "../stores/settings";
@@ -187,7 +189,7 @@ export function SqlEditor() {
           className="ed-menu-backdrop"
           onMouseDown={(e) => e.target === e.currentTarget && setMenu(null)}
         >
-          <div className="ed-menu" style={{ left: menu.x, top: menu.y }}>
+          <motion.div className="ed-menu" style={{ left: menu.x, top: menu.y }} {...menuIn}>
             <button
               onClick={() => {
                 setMenu(null);
@@ -212,7 +214,7 @@ export function SqlEditor() {
             >
               Functions in autocomplete: {fnInComplete ? "ON" : "OFF"}
             </button>
-          </div>
+          </motion.div>
         </div>
       )}
       {fnSearch && viewRef.current && (

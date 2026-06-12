@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { Command } from "cmdk";
+import { motion } from "motion/react";
+import { popIn } from "../design/springs";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Clock,
@@ -75,6 +77,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
 
   return (
     <div className="pal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}>
+      <motion.div className="pal-wrap" {...popIn}>
       <Command className="pal" shouldFilter={true} loop>
         <Command.Input
           autoFocus
@@ -215,6 +218,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
           )}
         </Command.List>
       </Command>
+      </motion.div>
     </div>
   );
 }

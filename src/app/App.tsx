@@ -11,6 +11,7 @@ import { ResultsPane } from "../grid/ResultsPane";
 import { Inspector } from "../inspector/Inspector";
 import { TableBrowser } from "../browser/TableBrowser";
 import { Palette } from "../palette/Palette";
+import { DangerModal } from "./DangerModal";
 import { ExplainView } from "../explain/ExplainView";
 import { useBrowser } from "../stores/browser";
 import { useExplain } from "../stores/explain";
@@ -24,6 +25,9 @@ export function App() {
   const browsing = useBrowser((s) => s.table !== null);
   const explainOpen = useExplain((s) => s.open);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const prodActive = useConnections(
+    (s) => !!s.profiles.find((p) => p.id === s.activeProfileId)?.is_prod,
+  );
 
   const startInspectorResize = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -131,7 +135,9 @@ export function App() {
 
   return (
     <div className="app-shell">
+      {prodActive && <div className="prod-strip" title="Connected to PRODUCTION" />}
       <aside className="sidebar">
+        <div className="titlebar-drag" data-tauri-drag-region />
         <ProfileList />
         <SavedQueries />
       </aside>
@@ -172,6 +178,7 @@ export function App() {
         </div>
       )}
       <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <DangerModal />
     </div>
   );
 }

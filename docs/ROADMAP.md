@@ -91,12 +91,15 @@
 - [ ] NOTE: ⌘E on UPDATE/DELETE executes it (ANALYZE) — P10 adds the guard
 
 ## P10 — Polish
-- [ ] Springs per `design/springs.ts` spec: palette, panel resize, tab reorder, edit pulse, commit flash
-- [ ] Vibrancy sidebar, traffic-light inset, native menus + context menus
-- [ ] Dark/light themes via tokens
-- [ ] Safety: prod-flag styling, UPDATE/DELETE-without-WHERE confirm
-- [ ] App icon, `tauri build` dmg (ad-hoc sign)
-- [ ] Gate: full keyboard map works; dangerous-SQL guard fires
+- [x] Springs (`design/springs.ts` = only spring source): pop-in for palette/fn-search/edit-preview/danger modal, snappy menus (context menus, sort popover); commit flash (green fade on RETURNING-confirmed cells); never on scroll/typing
+- [x] Traffic-light inset: titleBarStyle Overlay + hiddenTitle, drag regions on sidebar header + tab bar, sidebar top padding
+- [x] Safety: UPDATE/DELETE-without-WHERE → DangerModal (custom — window.confirm is a stub) listing exact statements; EXPLAIN ANALYZE on mutating SQL → same guard; 3px red prod-strip when active connection is_prod
+- [ ] Vibrancy sidebar (deferred — needs transparent window + effect tuning, risky)
+- [ ] Light theme (deferred — user is dark-only; needs token set + second CM theme)
+- [ ] App icon (deferred — needs artwork; template icon shipping)
+- [ ] `tauri build` dmg (ad-hoc) — run at session end
+- [x] Feedback fixes: drag-region needed explicit `core:window:allow-start-dragging` permission (dblclick-maximize worked but drag silently denied — asymmetric!); spring transform overwrote fn-search's translateX centering → use flex centering on backdrops, never transform, anywhere motion animates
+- [x] Gate: keyboard map + danger guard + window chrome ✅ user-verified
 
 ---
 

@@ -2,6 +2,8 @@
 // Perf checkpoint vs Glide Data Grid happens at the end of P2 (see ROADMAP).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { motion } from "motion/react";
+import { menuIn } from "../design/springs";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { StatementState } from "../stores/results";
 import { editKey, useEdits } from "../stores/edits";
@@ -150,6 +152,7 @@ export function Grid({ statement }: { statement: StatementState }) {
   // editability map fetched once the statement is done
   const editMap = useEdits((s) => s.maps[statement.index]);
   const pending = useEdits((s) => s.pending);
+  const flash = useEdits((s) => s.flash);
   const ensureMap = useEdits((s) => s.ensureMap);
   useEffect(() => {
     if (statement.done && !statement.error) ensureMap(statement.index);
@@ -432,7 +435,7 @@ export function Grid({ statement }: { statement: StatementState }) {
               return (
                 <div
                   key={`${vr.key}:${vc.key}`}
-                  className={`vgrid-cell${v === null ? " null" : ""}${selected ? " sel" : ""}${focused ? " focus" : ""}${pendingEdit ? " dirty" : ""}`}
+                  className={`vgrid-cell${v === null ? " null" : ""}${selected ? " sel" : ""}${focused ? " focus" : ""}${pendingEdit ? " dirty" : ""}${flash.has(k) ? " flash" : ""}`}
                   style={{
                     transform: `translate(${vc.start + ROWNUM_W}px, ${vr.start + HEADER_H}px)`,
                     width: vc.size,
@@ -479,7 +482,7 @@ export function Grid({ statement }: { statement: StatementState }) {
             if (e.target === e.currentTarget) setMenu(null);
           }}
         >
-          <div className="vgrid-menu" style={{ left: menu.x, top: menu.y }}>
+          <motion.div className="vgrid-menu" style={{ left: menu.x, top: menu.y }} {...menuIn}>
             {(["tsv", "csv", "json", "markdown", "insert"] as CopyFormat[]).map((f) => (
               <button
                 key={f}
@@ -512,7 +515,7 @@ export function Grid({ statement }: { statement: StatementState }) {
                 </button>
               </>
             )}
-          </div>
+          </motion.div>
         </div>
       )}
     </div>

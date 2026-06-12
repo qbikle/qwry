@@ -69,6 +69,15 @@ export const useExplain = create<ExplainState>((set) => ({
     const sessionId = conn.activeProfileId ? conn.sessions[conn.activeProfileId] : null;
     if (!sessionId || !sql.trim()) return;
 
+    const { isMutating, confirmDanger } = await import("./danger");
+    if (isMutating(sql)) {
+      const ok = await confirmDanger(
+        "EXPLAIN ANALYZE executes the statement",
+        `This will actually run:\n\n${sql.trim().slice(0, 400)}`,
+      );
+      if (!ok) return;
+    }
+
     set({ open: true, running: true, error: null, root: null });
     try {
       const out = await ipc.execute(

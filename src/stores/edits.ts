@@ -21,6 +21,8 @@ interface EditsState {
   /** editability per statement index, fetched lazily after a run */
   maps: Record<number, EditabilityMap | "loading" | "unavailable">;
   pending: Record<string, PendingEdit>;
+  /** cells that just committed — grid flashes them green briefly */
+  flash: Set<string>;
   committing: boolean;
   /** preview modal contents; null = closed */
   preview: { statements: string[]; error: string | null } | null;
@@ -70,6 +72,7 @@ function buildRowEdits(
 export const useEdits = create<EditsState>((set, get) => ({
   maps: {},
   pending: {},
+  flash: new Set(),
   committing: false,
   preview: null,
   lastError: null,
@@ -179,6 +182,12 @@ export const useEdits = create<EditsState>((set, get) => ({
           if (failed.length > 0) {
             set({ lastError: failed.map((f) => f.message).join("; ") });
           }
+          const flash = new Set(get().flash);
+          stmtEdits.forEach((e, i) => {
+            if (outcome.results[i]?.ok) flash.add(keyOf(e.stmtIndex, e.row, e.col));
+          });
+          set({ flash });
+          setTimeout(() => set({ flash: new Set() }), 900);
         }
       }
       set({ pending: {}, preview: null, committing: false });

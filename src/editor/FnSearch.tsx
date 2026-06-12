@@ -1,6 +1,8 @@
 // Searchable function palette — insert any of the 3.5k pg functions without
 // polluting the typed completion flow.
 import { useEffect, useMemo, useRef, useState } from "react";
+import { motion } from "motion/react";
+import { popIn } from "../design/springs";
 import type { EditorView } from "@codemirror/view";
 import { useConnections } from "../stores/connections";
 import { useSchema, type FuncInfo } from "../stores/schema";
@@ -77,7 +79,7 @@ export function FnSearch({ view, onClose }: { view: EditorView; onClose: () => v
 
   return (
     <div className="fn-search-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="fn-search">
+      <motion.div className="fn-search" {...popIn}>
         <input
           autoFocus
           placeholder="Search functions… (↵ insert, esc close)"
@@ -103,7 +105,7 @@ export function FnSearch({ view, onClose }: { view: EditorView; onClose: () => v
           ))}
           {matches.length === 0 && <div className="fn-empty">No matches</div>}
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 }

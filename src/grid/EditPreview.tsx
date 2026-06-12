@@ -1,4 +1,6 @@
 import { useEffect, useRef } from "react";
+import { motion } from "motion/react";
+import { popIn } from "../design/springs";
 import { useEdits } from "../stores/edits";
 import "./grid.css";
 
@@ -33,7 +35,7 @@ export function EditPreview() {
         }
       }}
     >
-      <div className="ep-modal">
+      <motion.div className="ep-modal" {...popIn}>
         <div className="ep-title">
           Commit {preview.statements.length} change
           {preview.statements.length === 1 ? "" : "s"} — runs in one transaction
@@ -49,7 +51,7 @@ export function EditPreview() {
             {committing ? "Committing…" : "Commit ⏎"}
           </button>
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 }

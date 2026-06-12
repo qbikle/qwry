@@ -95,6 +95,16 @@ export const useResults = create<ResultsState>((set, get) => ({
     const sessionId = sessions[activeProfileId];
     if (!sessionId) return;
 
+    const { dangerousStatements, confirmDanger } = await import("./danger");
+    const danger = dangerousStatements(sql);
+    if (danger.length > 0) {
+      const ok = await confirmDanger(
+        `${danger.length === 1 ? "Statement has" : `${danger.length} statements have`} no WHERE clause`,
+        danger.join(";\n\n"),
+      );
+      if (!ok) return;
+    }
+
     pending = null;
     set({
       statements: [],

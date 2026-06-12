@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { motion } from "motion/react";
+import { menuIn } from "../design/springs";
 import { Plus, RefreshCw, X } from "lucide-react";
 import { FILTER_OPS, useBrowser, type Filter } from "../stores/browser";
 import { useResults } from "../stores/results";
@@ -217,7 +219,7 @@ function SortSelect() {
       </button>
       {open && <div className="tbs-backdrop" onMouseDown={() => setOpen(false)} />}
       {open && (
-          <div className="tbs-pop">
+          <motion.div className="tbs-pop" {...menuIn}>
             <input
               autoFocus
               placeholder="Search columns…"
@@ -252,7 +254,7 @@ function SortSelect() {
               {restM.length > 0 && <div className="tbs-group">All columns</div>}
               {restM.map(row)}
             </div>
-          </div>
+          </motion.div>
       )}
     </div>
   );

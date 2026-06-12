@@ -30,7 +30,7 @@ export function ProfileList() {
 
   return (
     <div className="profile-list">
-      <div className="pl-header">
+      <div className="pl-header" data-tauri-drag-region>
         <span>Connections</span>
         <button className="icon-btn" title="New connection" onClick={() => setEditing(blank())}>
           <Plus size={14} />

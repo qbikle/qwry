@@ -17,6 +17,11 @@
   color: var(--fg-faint);
 }
 
+/* room for macOS traffic lights (titleBarStyle Overlay) + window dragging */
+.profile-list > .pl-header:first-child {
+  padding-top: 34px;
+}
+
 .pl-empty {
   padding: var(--sp-3) var(--sp-2);
   color: var(--fg-muted);
