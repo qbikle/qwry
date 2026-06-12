@@ -91,4 +91,4 @@
 ## Session log
 
 ### 2026-06-12 — P0 (session 1)
-Scaffolded. rustc 1.96.0, tauri 2 template (React 19.2.7, Vite, bun). First cargo build green. Docs written. Gotchas: none yet. Next: P1 from top.
+Scaffolded. rustc 1.96.0, tauri 2.11.2 (React 19.2.7, Vite, bun). Docs written. Gotcha: `time` 0.3.48 breaks tauri-utils 2.9.2 (E0119) — pinned 0.3.47 in Cargo.lock, see DECISIONS.md. Beware: `cargo build | tail` masks exit code — check PIPESTATUS or drop the pipe. Next: P1 from top.

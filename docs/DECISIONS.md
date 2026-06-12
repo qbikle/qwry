@@ -8,3 +8,4 @@
 - 2026-06-12 · Passwords in macOS Keychain (keyring crate); rusqlite app-db stores everything else.
 - 2026-06-12 · JSON row values over Channel v1; binary/Arrow only if profiling demands.
 - 2026-06-12 · zustand for state; `motion` for springs; lucide icons; cmdk palette.
+- 2026-06-12 · `time` pinned to 0.3.47 in Cargo.lock — 0.3.48 breaks tauri-utils 2.9.2 with E0119 (conflicting From impls). Unpin when tauri-utils ships a fix; don't `cargo update` blindly.
