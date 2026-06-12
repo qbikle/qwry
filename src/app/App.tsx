@@ -3,7 +3,7 @@ import { useConnections } from "../stores/connections";
 import { ProfileList } from "../sidebar/ProfileList";
 import { ProfileForm } from "../sidebar/ProfileForm";
 import { QueryBox } from "../editor/QueryBox";
-import { ResultsTable } from "../grid/ResultsTable";
+import { ResultsPane } from "../grid/ResultsPane";
 import "./app.css";
 
 export function App() {
@@ -24,7 +24,7 @@ export function App() {
           <QueryBox />
         </section>
         <section className="results-pane">
-          <ResultsTable />
+          <ResultsPane />
         </section>
       </main>
       {editing && (

@@ -10,6 +10,7 @@ use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             let appdb = appdb::AppDb::open(&dir)
@@ -24,6 +25,7 @@ pub fn run() {
             commands::connect,
             commands::disconnect,
             commands::execute,
+            commands::execute_stream,
             commands::cancel,
         ])
         .run(tauri::generate_context!())

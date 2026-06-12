@@ -21,8 +21,19 @@
 .qb-bar {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-3);
   border-top: 1px solid var(--border);
+}
+
+.qb-conn-error {
+  color: var(--danger);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
 }
 
 .qb-run,

@@ -1,16 +1,18 @@
 // P1 placeholder editor — replaced by CodeMirror SqlEditor in P3.
 import { useConnections } from "../stores/connections";
+import { useResults } from "../stores/results";
 import "./editor.css";
 
 export function QueryBox() {
   const sql = useConnections((s) => s.sql);
   const setSql = useConnections((s) => s.setSql);
-  const run = useConnections((s) => s.run);
-  const cancelRun = useConnections((s) => s.cancelRun);
-  const running = useConnections((s) => s.running);
+  const connectError = useConnections((s) => s.error);
   const connected = useConnections(
     (s) => s.activeProfileId !== null && !!s.sessions[s.activeProfileId],
   );
+  const run = useResults((s) => s.run);
+  const cancel = useResults((s) => s.cancel);
+  const running = useResults((s) => s.running);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.metaKey && e.key === "Enter") {
@@ -19,7 +21,7 @@ export function QueryBox() {
     }
     if (e.metaKey && e.key === ".") {
       e.preventDefault();
-      cancelRun();
+      cancel();
     }
   };
 
@@ -33,8 +35,9 @@ export function QueryBox() {
         spellCheck={false}
       />
       <div className="qb-bar">
+        {connectError && <span className="qb-conn-error">{connectError.message}</span>}
         {running ? (
-          <button className="qb-cancel" onClick={cancelRun}>
+          <button className="qb-cancel" onClick={cancel}>
             Cancel ⌘.
           </button>
         ) : (

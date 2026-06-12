@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import * as ipc from "../ipc/commands";
-import type { DriverError, ExecOutcome, Profile } from "../ipc/types";
+import type { DriverError, Profile } from "../ipc/types";
 
 type ConnState = "disconnected" | "connecting" | "connected";
 
@@ -15,8 +15,7 @@ interface ConnectionsState {
   editing: Profile | null;
 
   sql: string;
-  running: boolean;
-  result: ExecOutcome | null;
+  /** connect-time errors (auth, network) */
   error: DriverError | null;
 
   loadProfiles: () => Promise<void>;
@@ -26,8 +25,6 @@ interface ConnectionsState {
   connect: (profileId: string) => Promise<void>;
   setActive: (profileId: string) => void;
   setSql: (sql: string) => void;
-  run: () => Promise<void>;
-  cancelRun: () => Promise<void>;
 }
 
 export const useConnections = create<ConnectionsState>((set, get) => ({
@@ -37,8 +34,6 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
   activeProfileId: null,
   editing: null,
   sql: "",
-  running: false,
-  result: null,
   error: null,
 
   loadProfiles: async () => {
@@ -78,24 +73,4 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
 
   setActive: (profileId) => set({ activeProfileId: profileId }),
   setSql: (sql) => set({ sql }),
-
-  run: async () => {
-    const { activeProfileId, sessions, sql, running } = get();
-    if (running || !activeProfileId || !sql.trim()) return;
-    const sessionId = sessions[activeProfileId];
-    if (!sessionId) return;
-    set({ running: true, error: null });
-    try {
-      const result = await ipc.execute(sessionId, sql);
-      set({ result, running: false });
-    } catch (e) {
-      set({ error: e as DriverError, result: null, running: false });
-    }
-  },
-
-  cancelRun: async () => {
-    const { activeProfileId, sessions } = get();
-    const sessionId = activeProfileId ? sessions[activeProfileId] : null;
-    if (sessionId) await ipc.cancel(sessionId);
-  },
 }));

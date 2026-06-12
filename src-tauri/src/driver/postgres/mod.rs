@@ -4,6 +4,8 @@ use tokio_postgres::{Client, SimpleQueryMessage};
 
 use super::{ColumnMeta, DriverError, ExecOutcome, Profile, Result, StatementResult};
 
+mod execute;
+mod splitter;
 mod tls;
 
 pub struct PgSession {

@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
+use tauri::ipc::Channel;
 use tauri::State;
 
-use crate::driver::{self, ExecOutcome, Profile, Result, SessionId};
+use crate::driver::{self, ExecOutcome, Profile, QueryEvent, Result, SessionId};
 use crate::secrets;
 use crate::state::AppState;
 
@@ -66,6 +67,20 @@ pub async fn execute(
         .session(&session_id)
         .ok_or(driver::DriverError::NoSession)?;
     session.execute_simple(&sql).await
+}
+
+#[tauri::command]
+pub async fn execute_stream(
+    state: State<'_, AppState>,
+    session_id: String,
+    sql: String,
+    on_event: Channel<QueryEvent>,
+) -> Result<()> {
+    let session = state
+        .session(&session_id)
+        .ok_or(driver::DriverError::NoSession)?;
+    let mut sink = move |ev: QueryEvent| on_event.send(ev).is_ok();
+    session.execute_stream(&sql, &mut sink).await
 }
 
 #[tauri::command]

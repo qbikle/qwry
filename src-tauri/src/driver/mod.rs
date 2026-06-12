@@ -53,6 +53,48 @@ pub struct ExecOutcome {
     pub statements: Vec<StatementResult>,
 }
 
+/// Streaming execution events, sent over a Tauri Channel to the frontend.
+/// `rows` batches are ≤ ROW_BATCH; values are wire text, None = NULL.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum QueryEvent {
+    StatementStart {
+        index: u32,
+        sql: String,
+    },
+    Columns {
+        index: u32,
+        columns: Vec<ColumnMeta>,
+    },
+    Rows {
+        index: u32,
+        rows: Vec<Vec<Option<String>>>,
+        /// (row_in_batch, col) pairs whose value was cut at CELL_CAP bytes
+        truncated: Vec<(u32, u32)>,
+    },
+    StatementDone {
+        index: u32,
+        affected: Option<u64>,
+        ms: f64,
+        row_count: u64,
+        /// true when row_count exceeded ROW_CAP and the surplus was drained, not sent
+        capped: bool,
+    },
+    Error {
+        index: u32,
+        message: String,
+        position: Option<u32>,
+        code: Option<String>,
+    },
+    Finished {
+        total_ms: f64,
+    },
+}
+
+pub const ROW_BATCH: usize = 500;
+pub const ROW_CAP: u64 = 50_000;
+pub const CELL_CAP: usize = 8 * 1024;
+
 #[derive(Debug, thiserror::Error)]
 pub enum DriverError {
     #[error("{message}")]

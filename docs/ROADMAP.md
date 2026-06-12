@@ -20,15 +20,16 @@
 - [x] Gate: connect to staging PG in-app, query renders ✅ (verified by user: 10 rows from product_flatlay_generations, 69.7ms)
 
 ## P2 — Streaming + grid
-- [ ] Statement splitter lexer (strings, dollar-quotes, comments) + unit tests
-- [ ] `execute.rs`: QueryEvent stream over Tauri Channel, ≤500-row batches, per-statement timing/affected
-- [ ] CancelToken wiring + ⌘. shortcut
-- [ ] `ipc/`: typed QueryEvent decoder, resultsStore filling from batches
-- [ ] Grid: virtualized rows+columns (TanStack Virtual), sticky header, column resize
-- [ ] Cell selection, copy TSV/CSV/JSON/Markdown/INSERT
-- [ ] Row cap 50k + "load more"; >8KB cell truncation marker
-- [ ] Gate: `SELECT * FROM generate_series(1,1000000)` scrolls smooth, ⌘. cancels mid-stream
-- [ ] **CHECKPOINT: grid perf in WKWebView. If choppy → swap to Glide Data Grid before proceeding**
+- [x] Statement splitter lexer (strings, dollar-quotes, nested block comments) + 8 unit tests
+- [x] `execute.rs`: QueryEvent stream via `simple_query_raw` (public, streams!), ≤500-row batches, per-statement timing/affected — live-tested (120k rows → 50k cap + full count)
+- [x] CancelToken wiring + ⌘. shortcut — live-tested (pg_sleep(30) killed <5s)
+- [x] `ipc/`: Channel-based QueryEvent decoder, resultsStore with rAF-batched row flushing
+- [x] Grid: virtualized rows+columns (TanStack Virtual), sticky header + sticky rownum column, column resize
+- [x] Cell selection (drag/shift/arrows/⌘A), ⌘C TSV, right-click copy menu (TSV/CSV/JSON/Markdown/INSERT)
+- [x] Row cap 50k (status shows "50,000 of N (capped)"); >8KB cell truncation marker …⧉
+- [x] Gate: `SELECT * FROM generate_series(1,1000000)` scrolls smooth, ⌘. cancels mid-stream ✅ user-verified
+- [x] **CHECKPOINT passed: custom DOM grid is smooth in WKWebView at 50k rows — Glide fallback not needed**
+- [x] Fixes from user testing: clipboard via tauri-plugin-clipboard-manager (navigator.clipboard dead on dev origin), copy-menu backdrop swallowed clicks, native text-selection during drag, row/col/select-all via rownum+header+corner
 
 ## P3 — Schema + basic completion
 - [ ] `introspect.rs`: pg_catalog queries → SchemaSnapshot (tables, columns, PKs, FKs, indexes, functions, enums)
@@ -89,6 +90,9 @@
 ---
 
 ## Session log
+
+### 2026-06-12 — P2 (session 1, continued)
+P2 complete, all gates user-verified incl. 1M-row stream (50k cap), instant ⌘. cancel, statement chips, row/col/all selection, 5-format copy. Key learnings: (1) `simple_query_raw` is public in tokio-postgres — true streaming, no materialization. (2) `navigator.clipboard` is unavailable in dev (http://localhost = insecure context in WKWebView) — always use tauri-plugin-clipboard-manager. (3) Backdrop-close patterns must check `e.target === e.currentTarget` or inner button clicks die. (4) rAF-batched row flushing into zustand keeps stream renders at 60/s. Next: P3 (introspection + sidebar tree + lang-sql completion).
 
 ### 2026-06-12 — P1 (session 1, continued)
 P1 complete. Rust core: driver/postgres (simple-protocol exec, TLS prefer/require/disable, cancel), secrets (keyring v3), appdb (rusqlite profiles), commands wired. Frontend: zustand connections store, profile list+form modal, query box (⌘Enter/⌘.), plain results table w/ per-statement blocks + error pane. Live staging smoke test in `src-tauri/tests/staging_smoke.rs` (run with --ignored + env creds). Gotchas: (1) Keychain items seeded via `security` CLI trigger an auth prompt asking for the *Mac login password* — app-saved passwords avoid it; dev rebuilds are ad-hoc-signed so prompts can recur until P10 signing. (2) keyring v4 is a breaking meta-crate — stay on v3. Next: P2 from top (splitter lexer first).

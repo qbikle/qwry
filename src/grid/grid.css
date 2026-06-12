@@ -1,6 +1,7 @@
-.results-scroll {
+.results-pane-inner {
+  display: flex;
+  flex-direction: column;
   height: 100%;
-  overflow: auto;
   background: var(--bg-panel);
 }
 
@@ -15,6 +16,7 @@
 .grid-error {
   padding: var(--sp-4);
   user-select: text;
+  overflow: auto;
 }
 .ge-title {
   color: var(--danger);
@@ -28,64 +30,222 @@
   white-space: pre-wrap;
 }
 
-.stmt-block {
-  margin-bottom: var(--sp-4);
+/* statement switcher */
+.stmt-chips {
+  display: flex;
+  gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-2);
+  border-bottom: 1px solid var(--border);
 }
 
-.results-table {
-  border-collapse: collapse;
+.stmt-chip {
+  padding: 2px 10px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  user-select: text;
+  cursor: pointer;
+}
+.stmt-chip.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--fg);
+}
+.stmt-chip.error {
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
-.results-table th {
+.stmt-body {
+  flex: 1;
+  min-height: 0;
+}
+
+/* status bar */
+.status-bar {
+  display: flex;
+  gap: var(--sp-4);
+  padding: 3px var(--sp-3);
+  border-top: 1px solid var(--border);
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.status-running {
+  color: var(--warn);
+}
+
+/* virtualized grid */
+.vgrid {
+  height: 100%;
+  outline: none;
+  position: relative;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.vgrid-scroll {
+  height: 100%;
+  overflow: auto;
+}
+
+.vgrid-inner {
+  position: relative;
+}
+
+.vgrid-header {
   position: sticky;
   top: 0;
+  z-index: 3;
   background: var(--bg-raised);
-  text-align: left;
-  font-weight: 600;
-  padding: 5px 10px;
   border-bottom: 1px solid var(--border-strong);
-  border-right: 1px solid var(--border);
-  white-space: nowrap;
 }
 
-.results-table td {
-  padding: 3px 10px;
-  border-bottom: 1px solid var(--border);
+.vgrid-corner {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  display: inline-block;
+  background: var(--bg-raised);
+  border-right: 1px solid var(--border-strong);
+  cursor: pointer;
+}
+.vgrid-corner:hover {
+  background: var(--bg-active);
+}
+
+.vgrid-hcell:hover,
+.vgrid-rownum:hover {
+  background: var(--bg-active);
+  cursor: pointer;
+}
+
+.vgrid-hcell {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 600;
   border-right: 1px solid var(--border);
-  white-space: nowrap;
-  max-width: 480px;
+  background: var(--bg-raised);
+}
+
+.vgrid-hname {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.results-table td.null {
+.vgrid-resize {
+  position: absolute;
+  right: -3px;
+  top: 0;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 1;
+}
+.vgrid-resize:hover {
+  background: var(--accent);
+  opacity: 0.5;
+}
+
+.vgrid-rownums {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  height: 0;
+}
+
+.vgrid-rownum {
+  position: absolute;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 8px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-faint);
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border-strong);
+  border-bottom: 1px solid var(--border);
+}
+
+.vgrid-cell {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  cursor: default;
+}
+
+.vgrid-cell.null {
   color: var(--fg-faint);
   font-style: italic;
 }
 
-.results-table .rownum {
-  color: var(--fg-faint);
-  text-align: right;
-  background: var(--bg-panel);
+.vgrid-cell.sel {
+  background: var(--accent-soft);
+}
+
+.vgrid-cell.focus {
+  outline: 1.5px solid var(--accent);
+  outline-offset: -1.5px;
+}
+
+.vgrid-trunc {
+  margin-left: 4px;
+  color: var(--warn);
   font-size: var(--text-xs);
 }
 
-.results-table tbody tr:hover td {
-  background: var(--bg-hover);
+/* copy menu */
+.vgrid-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
 }
 
-.stmt-noresult {
-  padding: var(--sp-2) var(--sp-3);
-  color: var(--ok);
-  font-family: var(--font-mono);
+.vgrid-menu {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  min-width: 170px;
+  padding: var(--sp-1);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.vgrid-menu button {
+  text-align: left;
+  padding: 5px 10px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  cursor: pointer;
   font-size: var(--text-sm);
 }
-
-.stmt-status {
-  padding: var(--sp-1) var(--sp-3);
-  color: var(--fg-faint);
-  font-size: var(--text-xs);
+.vgrid-menu button:hover {
+  background: var(--accent);
+  color: white;
 }

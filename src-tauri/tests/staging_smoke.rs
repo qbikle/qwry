@@ -63,3 +63,76 @@ async fn staging_connect_and_query() {
     let msg = format!("{err}");
     assert!(msg.contains("syntax"), "unexpected error: {msg}");
 }
+
+#[tokio::test]
+#[ignore]
+async fn staging_streaming_and_cancel() {
+    use qwry_lib::driver::QueryEvent;
+    use std::sync::Arc;
+
+    let profile = Profile {
+        id: "test".into(),
+        name: "staging".into(),
+        host: env("QWRY_TEST_HOST"),
+        port: 5432,
+        dbname: env("QWRY_TEST_DB"),
+        user: env("QWRY_TEST_USER"),
+        sslmode: "prefer".into(),
+        color: None,
+        is_prod: false,
+    };
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"))
+        .await
+        .expect("connect");
+
+    // streaming: 120k rows → capped at 50k sent, full count reported, batches ≤500
+    let mut events: Vec<QueryEvent> = Vec::new();
+    let mut sink = |ev: QueryEvent| {
+        events.push(ev);
+        true
+    };
+    session
+        .execute_stream(
+            "SELECT generate_series(1, 120000) AS n; SELECT 'two' AS t",
+            &mut sink,
+        )
+        .await
+        .expect("stream");
+
+    let mut sent_rows = 0u64;
+    let mut dones = Vec::new();
+    for ev in &events {
+        match ev {
+            QueryEvent::Rows { index: 0, rows, .. } => {
+                assert!(rows.len() <= 500);
+                sent_rows += rows.len() as u64;
+            }
+            QueryEvent::StatementDone { index, row_count, capped, .. } => {
+                dones.push((*index, *row_count, *capped));
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(sent_rows, 50_000, "cap should limit sent rows");
+    assert_eq!(dones[0], (0, 120_000, true));
+    assert_eq!(dones[1].0, 1);
+    assert!(matches!(events.last(), Some(QueryEvent::Finished { .. })));
+
+    // cancellation: long pg_sleep killed from another task
+    let session = Arc::new(session);
+    let s2 = session.clone();
+    let canceller = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        s2.cancel().await.expect("cancel");
+    });
+    let start = std::time::Instant::now();
+    let mut sink = |_ev: QueryEvent| true;
+    let res = session.execute_stream("SELECT pg_sleep(30)", &mut sink).await;
+    canceller.await.unwrap();
+    assert!(start.elapsed().as_secs() < 5, "cancel should kill quickly");
+    let msg = format!("{}", res.expect_err("expected cancel error"));
+    assert!(
+        msg.contains("cancel") || msg.contains("statement"),
+        "unexpected: {msg}"
+    );
+}

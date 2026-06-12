@@ -38,3 +38,29 @@ export interface DriverError {
   position: number | null;
   code: string | null;
 }
+
+export type QueryEvent =
+  | { type: "statement_start"; index: number; sql: string }
+  | { type: "columns"; index: number; columns: ColumnMeta[] }
+  | {
+      type: "rows";
+      index: number;
+      rows: (string | null)[][];
+      truncated: [number, number][];
+    }
+  | {
+      type: "statement_done";
+      index: number;
+      affected: number | null;
+      ms: number;
+      row_count: number;
+      capped: boolean;
+    }
+  | {
+      type: "error";
+      index: number;
+      message: string;
+      position: number | null;
+      code: string | null;
+    }
+  | { type: "finished"; total_ms: number };
