@@ -105,6 +105,18 @@
 
 ## Session log
 
+### 2026-06-12 — P5–P10 (session 1, conclusion)
+ENTIRE v1 ROADMAP SHIPPED IN ONE SESSION (P0→P10), every gate user-verified against live staging data. The three headline differentiators all work: (1) schema-aware intellisense with alias scoping + FK joins, (2) editable results from arbitrary SQL via prepare()-metadata, (3) free first-class jsonb. Plus: streaming 1M-row grid, table browser with AND/OR filters + searchable sort, tabs/saved-queries/history/palette, EXPLAIN viz, danger guards, native chrome with springs.
+
+Key gotchas burned into this codebase (also see inline notes):
+- vite HMR lies for CodeMirror-internal modules — restart `tauri dev` to verify editor changes
+- `window.confirm()` is a silent stub → two-click arm pattern
+- drag regions need `core:window:allow-start-dragging` (dblclick works without it — trap!)
+- never rely on CSS transform where motion animates — flex-center backdrops instead
+- `cargo build | tail` masks exit codes; `time` crate pinned 0.3.47
+
+Deferred backlog (next sessions): light theme, vibrancy, app icon artwork, row insert/delete in browser, ctid-fallback editing, SSH tunnel UI (tunnel.rs never built — profiles work via existing local tunnels), per-tab sessions for transactions, JsonTree search, tree-mode JSON editing, Glide reevaluation if grids ever feel slow.
+
 ### 2026-06-12 — P5 (session 1, continued)
 P5 complete, user-verified. THE differentiator feature works: edit any base-table cell from arbitrary SQL (incl. JOINs). Design notes: editability via `prepare()` of the same SQL (RowDescription table_oid/column_id — zero re-execution); `'value'::typename` casts give psql-typing semantics; PK WHERE values always from original row data; whole commit keyboard-driven (Enter in grid → ⌘S → Enter). Deferred: ctid fallback for PK-less tables (read-only reason is actionable instead), batched multi-cell row updates (one UPDATE per cell currently). Next: P6 inspector + jsonb.
 
