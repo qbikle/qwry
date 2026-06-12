@@ -5,17 +5,15 @@
   background: var(--bg-panel);
 }
 
-.query-box textarea {
+.sql-editor {
   flex: 1;
-  resize: none;
-  border: none;
-  outline: none;
-  background: transparent;
-  padding: var(--sp-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-md);
-  line-height: 1.55;
+  min-height: 0;
+  overflow: hidden;
   user-select: text;
+}
+
+.sql-editor .cm-editor {
+  height: 100%;
 }
 
 .qb-bar {
@@ -25,6 +23,134 @@
   gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-3);
   border-top: 1px solid var(--border);
+}
+
+.sql-editor-wrap {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* editor context menu */
+.ed-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+
+.ed-menu {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  min-width: 230px;
+  padding: var(--sp-1);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.ed-menu button {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  text-align: left;
+  padding: 5px 10px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: var(--text-sm);
+}
+.ed-menu button:hover {
+  background: var(--accent);
+  color: white;
+}
+.ed-menu-hint {
+  color: var(--fg-faint);
+}
+.ed-menu button:hover .ed-menu-hint {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* function search palette */
+.fn-search-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.fn-search {
+  position: absolute;
+  top: 8%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, 90%);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.fn-search input {
+  width: 100%;
+  padding: 10px 14px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  outline: none;
+  font-size: var(--text-lg);
+  user-select: text;
+}
+
+.fn-list {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: var(--sp-1);
+}
+
+.fn-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  overflow: hidden;
+}
+.fn-item.sel {
+  background: var(--accent);
+}
+.fn-item.sel .fn-name,
+.fn-item.sel .fn-sig {
+  color: white;
+}
+
+.fn-name {
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  color: var(--fg);
+  flex-shrink: 0;
+}
+
+.fn-sig {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fn-empty {
+  padding: var(--sp-3);
+  color: var(--fg-faint);
+  text-align: center;
 }
 
 .qb-conn-error {

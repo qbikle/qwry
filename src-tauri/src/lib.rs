@@ -26,6 +26,7 @@ pub fn run() {
             commands::disconnect,
             commands::execute,
             commands::execute_stream,
+            commands::introspect,
             commands::cancel,
         ])
         .run(tauri::generate_context!())

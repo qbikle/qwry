@@ -1,6 +1,7 @@
 import { Circle, Database, Pencil, Plus, Trash2 } from "lucide-react";
 import { useConnections } from "../stores/connections";
 import type { Profile } from "../ipc/types";
+import { SchemaTree } from "./SchemaTree";
 import "./sidebar.css";
 
 const blank = (): Profile => ({
@@ -43,8 +44,8 @@ export function ProfileList() {
       {profiles.map((p) => {
         const state = connState[p.id] ?? "disconnected";
         return (
+          <div key={p.id}>
           <div
-            key={p.id}
             className={`pl-item ${activeProfileId === p.id ? "active" : ""}`}
             onClick={() => (state === "connected" ? setActive(p.id) : connect(p.id))}
             onDoubleClick={() => connect(p.id)}
@@ -79,6 +80,10 @@ export function ProfileList() {
                 <Trash2 size={12} />
               </button>
             </span>
+          </div>
+          {state === "connected" && activeProfileId === p.id && (
+            <SchemaTree profileId={p.id} />
+          )}
           </div>
         );
       })}

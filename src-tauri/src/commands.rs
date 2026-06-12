@@ -84,6 +84,17 @@ pub async fn execute_stream(
 }
 
 #[tauri::command]
+pub async fn introspect(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<crate::driver::postgres::introspect::SchemaSnapshot> {
+    let session = state
+        .session(&session_id)
+        .ok_or(driver::DriverError::NoSession)?;
+    session.introspect().await
+}
+
+#[tauri::command]
 pub async fn cancel(state: State<'_, AppState>, session_id: String) -> Result<()> {
     let session = state
         .session(&session_id)

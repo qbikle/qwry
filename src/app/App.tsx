@@ -12,6 +12,26 @@ export function App() {
 
   useEffect(() => {
     loadProfiles();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        document.getElementById("schema-filter")?.focus();
+      }
+      if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "r") {
+        e.preventDefault(); // also blocks webview reload
+        void Promise.all([
+          import("../stores/connections"),
+          import("../stores/schema"),
+        ]).then(([{ useConnections }, { useSchema }]) => {
+          const { activeProfileId, sessions } = useConnections.getState();
+          if (activeProfileId && sessions[activeProfileId]) {
+            void useSchema.getState().fetch(activeProfileId, sessions[activeProfileId]);
+          }
+        });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [loadProfiles]);
 
   return (

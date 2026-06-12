@@ -63,6 +63,10 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
         activeProfileId: profileId,
         error: null,
       }));
+      // schema cache powers sidebar + completion; fire and forget
+      void import("./schema").then(({ useSchema }) =>
+        useSchema.getState().fetch(profileId, sessionId),
+      );
     } catch (e) {
       set((s) => ({
         connState: { ...s.connState, [profileId]: "disconnected" },

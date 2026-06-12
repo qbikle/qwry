@@ -24,10 +24,13 @@ interface ResultsState {
   activeStatement: number;
   running: boolean;
   totalMs: number | null;
+  /** exact text of the last execution (for editor error squiggles) */
+  executedSql: string | null;
   /** errors not tied to a statement (connect drops etc.) */
   globalError: DriverError | null;
 
-  run: () => Promise<void>;
+  /** runs `sqlOverride` when given (e.g. editor selection), else the buffer */
+  run: (sqlOverride?: string) => Promise<void>;
   cancel: () => Promise<void>;
   setActiveStatement: (i: number) => void;
 }
@@ -79,13 +82,15 @@ export const useResults = create<ResultsState>((set, get) => ({
   activeStatement: 0,
   running: false,
   totalMs: null,
+  executedSql: null,
   globalError: null,
 
   setActiveStatement: (i) => set({ activeStatement: i }),
 
-  run: async () => {
+  run: async (sqlOverride?: string) => {
     const conn = useConnections.getState();
-    const { activeProfileId, sessions, sql } = conn;
+    const { activeProfileId, sessions } = conn;
+    const sql = sqlOverride ?? conn.sql;
     if (get().running || !activeProfileId || !sql.trim()) return;
     const sessionId = sessions[activeProfileId];
     if (!sessionId) return;
@@ -96,6 +101,7 @@ export const useResults = create<ResultsState>((set, get) => ({
       activeStatement: 0,
       running: true,
       totalMs: null,
+      executedSql: sql,
       globalError: null,
     });
 
@@ -173,6 +179,10 @@ export const useResults = create<ResultsState>((set, get) => ({
 
     try {
       await ipc.executeStream(sessionId, sql, onEvent);
+      const { looksLikeDdl, useSchema } = await import("./schema");
+      if (looksLikeDdl(sql)) {
+        void useSchema.getState().fetch(activeProfileId, sessionId);
+      }
     } catch (e) {
       const err = e as DriverError;
       // statement-level errors already arrive as events; anything else is global

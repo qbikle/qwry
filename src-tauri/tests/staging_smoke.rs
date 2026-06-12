@@ -66,6 +66,49 @@ async fn staging_connect_and_query() {
 
 #[tokio::test]
 #[ignore]
+async fn staging_introspect() {
+    let profile = Profile {
+        id: "test".into(),
+        name: "staging".into(),
+        host: env("QWRY_TEST_HOST"),
+        port: 5432,
+        dbname: env("QWRY_TEST_DB"),
+        user: env("QWRY_TEST_USER"),
+        sslmode: "prefer".into(),
+        color: None,
+        is_prod: false,
+    };
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"))
+        .await
+        .expect("connect");
+
+    let start = std::time::Instant::now();
+    let snap = session.introspect().await.expect("introspect");
+    let ms = start.elapsed().as_millis();
+
+    assert!(snap.schemas.contains(&"public".to_string()));
+    assert!(!snap.tables.is_empty(), "no tables found");
+    let with_pk = snap
+        .tables
+        .iter()
+        .find(|t| t.schema == "public" && t.kind == "r" && !t.pk.is_empty())
+        .expect("no table with a primary key found");
+    assert!(!with_pk.columns.is_empty());
+    assert!(
+        snap.functions.iter().any(|f| f.name == "jsonb_build_object"),
+        "builtin functions missing"
+    );
+    println!(
+        "introspect: {} tables, {} fks, {} functions in {}ms",
+        snap.tables.len(),
+        snap.foreign_keys.len(),
+        snap.functions.len(),
+        ms
+    );
+}
+
+#[tokio::test]
+#[ignore]
 async fn staging_streaming_and_cancel() {
     use qwry_lib::driver::QueryEvent;
     use std::sync::Arc;

@@ -32,21 +32,22 @@
 - [x] Fixes from user testing: clipboard via tauri-plugin-clipboard-manager (navigator.clipboard dead on dev origin), copy-menu backdrop swallowed clicks, native text-selection during drag, row/col/select-all via rownum+header+corner
 
 ## P3 — Schema + basic completion
-- [ ] `introspect.rs`: pg_catalog queries → SchemaSnapshot (tables, columns, PKs, FKs, indexes, functions, enums)
-- [ ] Schema cache + push event; refresh on connect / DDL / manual ⌘R
-- [ ] Sidebar: connection → schema → tables/views tree, fuzzy filter ⌘⇧F
-- [ ] CodeMirror SqlEditor with @codemirror/lang-sql (PostgreSQL dialect), schema wired from snapshot
-- [ ] ⌘Enter run, run-selection-if-any
-- [ ] Gate: completion offers tables after FROM, columns after SELECT
+- [x] `introspect.rs`: 4 pg_catalog json_agg queries in one round trip → SchemaSnapshot (tables+columns+PKs, FKs, functions incl. pg_catalog, schemas) — live: 128 tables/3475 fns in 268ms (indexes deferred to P7 structure tab)
+- [x] Schema fetch on connect + DDL sniff after runs + manual ⌘R
+- [x] Sidebar: schema → tables/views tree under connected profile, fuzzy filter ⌘⇧F, double-click → SELECT LIMIT 100
+- [x] CodeMirror SqlEditor: lang-sql PostgreSQL dialect, snapshot-fed schema completion (Compartment-swapped), dark theme, history/brackets/active-line
+- [x] ⌘Enter runs selection-if-any else buffer; ⌘. cancel
+- [ ] Gate: completion offers tables after FROM, columns after SELECT (user verify)
 
 ## P4 — Intellisense deep
-- [ ] `completion/context.ts`: lezer tree walk → clause + FROM/JOIN tables + alias map
-- [ ] `completion/sources.ts`: column source scoped to in-scope tables; qualified `alias.` completion
-- [ ] `completion/joins.ts`: FK-aware JOIN … ON suggestions
-- [ ] `completion/rank.ts`: fuzzy × usage frequency × context boost; usage persisted in appdb
-- [ ] Function signatures + snippets (sel, ins, upd templates)
-- [ ] `lint.ts`: squiggle from PG error position
-- [ ] Gate: `SELECT u.|` with `users u` in FROM → only users columns; <16ms popup
+- [x] `completion/context.ts`: token walk → clause + FROM/JOIN/UPDATE/INSERT tables + alias map + dot-qualifier
+- [x] `completion/engine.ts`: clause-scoped sources — columns from in-scope tables (alias detail), `alias.` exact-table columns, `schema.` tables, aliases, functions w/ signatures, keywords; CM fuzzy + boost ranking
+- [x] FK-aware suggestions: after JOIN → `table ON cond` one-shot; after ON → `a.col = b.col` pairs (in engine.ts joinOptions)
+- [x] Usage ranking: accepted completions bump localStorage counts → log boost (appdb persistence later if needed)
+- [x] Snippets: sel/ins/upd/cnt templates at statement start
+- [x] PG error position → squiggle + lint gutter (when executed text == buffer)
+- [x] Gate: column scoping + FK joins + function gating ✅ user-verified
+- [x] User-feedback round: functions out of typed flow (settings toggle + ^Space), ⌘⇧U/right-click searchable function palette, editor context menu
 
 ## P5 — Editable results
 - [ ] `edit.rs`: editability map from table_oid/attnum + PK presence (ctid fallback w/ warning)
@@ -90,6 +91,9 @@
 ---
 
 ## Session log
+
+### 2026-06-12 — P4 (session 1, continued)
+P4 intellisense built + 3 user-feedback rounds. CRITICAL GOTCHA: the CodeMirror EditorView is created in a `useEffect([], )` — it captures completion-engine closures at mount. Vite HMR swaps modules but the live view keeps OLD references → engine edits silently don't apply. ALWAYS restart `tauri dev` (not just HMR) when testing editor-internal changes. Engine reads stores dynamically per keystroke (no Compartment reconfig — also HMR-fragile). Functions gated: typed flow excludes 3.5k pg functions unless settings.fnInComplete; ^Space always includes; ⌘⇧U / right-click → searchable function palette. context.ts parses FULL statement for tables (cursor-bounded only for clause) — `SELECT col| FROM t` needs tables after cursor.
 
 ### 2026-06-12 — P2 (session 1, continued)
 P2 complete, all gates user-verified incl. 1M-row stream (50k cap), instant ⌘. cancel, statement chips, row/col/all selection, 5-format copy. Key learnings: (1) `simple_query_raw` is public in tokio-postgres — true streaming, no materialization. (2) `navigator.clipboard` is unavailable in dev (http://localhost = insecure context in WKWebView) — always use tauri-plugin-clipboard-manager. (3) Backdrop-close patterns must check `e.target === e.currentTarget` or inner button clicks die. (4) rAF-batched row flushing into zustand keeps stream renders at 60/s. Next: P3 (introspection + sidebar tree + lang-sql completion).
