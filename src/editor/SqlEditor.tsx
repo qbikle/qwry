@@ -66,6 +66,16 @@ export function SqlEditor() {
             return true;
           },
         },
+        {
+          // defaultKeymap binds Mod-i to selectParentSyntax — we want inspector
+          key: "Mod-i",
+          run: () => {
+            void import("../stores/inspector").then(({ useInspector }) =>
+              useInspector.getState().toggle(),
+            );
+            return true;
+          },
+        },
       ]),
     );
 

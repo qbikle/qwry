@@ -59,10 +59,13 @@
 - [x] Keyboard flow polish: Enter commits in preview modal, esc cancels, ⌘⇧D discard all
 
 ## P6 — Inspector + jsonb
-- [ ] Inspector panel: full cell value (on-demand fetch for truncated), text/json/bytea modes
-- [ ] JsonTree: collapsible, search, path copy, value copy
-- [ ] jsonb in-place edit with validation → pending edit
-- [ ] Gate: edit nested jsonb key, persists
+- [x] Inspector panel (right, ⌘I toggle): focused cell full view, auto JSON detection, raw/tree modes, Copy + Copy-pretty, type + read-only reason display
+- [x] Truncated cells: full value auto-fetched by PK when editability map allows
+- [x] JsonTree: collapsible (depth-2 default), click value copies, ⌥-click copies json path
+- [x] jsonb edit: pretty textarea with live validation → staged into pending edits (⌘S commits like any cell)
+- [ ] JsonTree search (deferred — palette/⌘F later)
+- [x] User-feedback round: ⌘I intercepted in editor (CM binds Mod-i to selectParentSyntax) + defaultPrevented guard on the window keymap (double-fire = no-op toggle), resizable inspector (drag left edge, persisted), Raw→Tree dead-end fixed, hide button + right-edge reopen tab
+- [x] Gate: inspector flows ✅ user-verified
 
 ## P7 — Table browser
 - [ ] Table tab: data view (no SQL), filter row builder (col op value, AND), sort, infinite scroll

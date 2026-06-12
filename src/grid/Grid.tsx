@@ -142,6 +142,17 @@ export function Grid({ statement }: { statement: StatementState }) {
 
   const [editing, setEditing] = useState<{ r: number; c: number; draft: string } | null>(null);
 
+  // focused cell drives the inspector
+  useEffect(() => {
+    if (sel.focus) {
+      void import("../stores/inspector").then(({ useInspector }) =>
+        useInspector
+          .getState()
+          .setTarget({ stmtIndex: statement.index, row: sel.focus!.r, col: sel.focus!.c }),
+      );
+    }
+  }, [sel.focus, statement.index]);
+
   const colEditMeta = (c: number) =>
     editMap && editMap !== "loading" && editMap !== "unavailable"
       ? editMap.columns[c]

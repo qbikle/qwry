@@ -1,0 +1,43 @@
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
+
+export interface InspectTarget {
+  stmtIndex: number;
+  row: number;
+  col: number;
+}
+
+interface InspectorState {
+  open: boolean;
+  width: number;
+  target: InspectTarget | null;
+  /** full value fetched on demand for truncated cells */
+  fullValue: string | null;
+  fullValueFor: string | null;
+
+  toggle: () => void;
+  setWidth: (w: number) => void;
+  setTarget: (t: InspectTarget | null) => void;
+  setFullValue: (key: string, v: string | null) => void;
+}
+
+export const useInspector = create<InspectorState>()(
+  persist(
+    (set) => ({
+      open: true,
+      width: 300,
+      target: null,
+      fullValue: null,
+      fullValueFor: null,
+
+      toggle: () => set((s) => ({ open: !s.open })),
+      setWidth: (w) => set({ width: Math.max(220, Math.min(640, w)) }),
+      setTarget: (t) => set({ target: t, fullValue: null, fullValueFor: null }),
+      setFullValue: (key, v) => set({ fullValue: v, fullValueFor: key }),
+    }),
+    {
+      name: "qwry.inspector",
+      partialize: (s) => ({ open: s.open, width: s.width }),
+    },
+  ),
+);
