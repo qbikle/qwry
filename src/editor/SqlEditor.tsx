@@ -67,6 +67,19 @@ export function SqlEditor() {
           },
         },
         {
+          key: "Mod-e",
+          run: (view) => {
+            const sel = view.state.selection.main;
+            const text = sel.empty
+              ? view.state.doc.toString()
+              : view.state.sliceDoc(sel.from, sel.to);
+            void import("../stores/explain").then(({ useExplain }) =>
+              useExplain.getState().run(text),
+            );
+            return true;
+          },
+        },
+        {
           // defaultKeymap binds Mod-i to selectParentSyntax — we want inspector
           key: "Mod-i",
           run: () => {

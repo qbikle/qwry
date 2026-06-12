@@ -246,6 +246,24 @@
   user-select: text;
 }
 
+.qb-explain {
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-raised);
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-weight: 500;
+}
+.qb-explain:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+.qb-explain:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .qb-run,
 .qb-cancel {
   padding: 4px 14px;

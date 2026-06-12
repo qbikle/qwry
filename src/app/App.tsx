@@ -11,7 +11,9 @@ import { ResultsPane } from "../grid/ResultsPane";
 import { Inspector } from "../inspector/Inspector";
 import { TableBrowser } from "../browser/TableBrowser";
 import { Palette } from "../palette/Palette";
+import { ExplainView } from "../explain/ExplainView";
 import { useBrowser } from "../stores/browser";
+import { useExplain } from "../stores/explain";
 import "./app.css";
 
 export function App() {
@@ -20,6 +22,7 @@ export function App() {
   const inspectorOpen = useInspector((s) => s.open);
   const inspectorWidth = useInspector((s) => s.width);
   const browsing = useBrowser((s) => s.table !== null);
+  const explainOpen = useExplain((s) => s.open);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   const startInspectorResize = (e: React.MouseEvent) => {
@@ -66,6 +69,13 @@ export function App() {
             if (activeId) useTabs.getState().closeTab(activeId);
           }
         });
+      }
+      if (e.key === "Escape" && useExplain.getState().open) {
+        useExplain.getState().close();
+      }
+      if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "e") {
+        e.preventDefault();
+        void useExplain.getState().run();
       }
       if (e.ctrlKey && e.key === "Tab") {
         e.preventDefault();
@@ -135,7 +145,7 @@ export function App() {
               <QueryBox />
             </section>
             <section className="results-pane">
-              <ResultsPane />
+              {explainOpen ? <ExplainView /> : <ResultsPane />}
             </section>
           </>
         )}

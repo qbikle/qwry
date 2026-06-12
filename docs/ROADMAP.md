@@ -85,9 +85,10 @@
 - [x] Gate: tabs/saved/shortcuts ✅ user-verified (restart-restore trusted, retest later)
 
 ## P9 — EXPLAIN viz
-- [ ] Run EXPLAIN (ANALYZE, FORMAT JSON) action
-- [ ] Plan tree view: nodes, timing bars, rows est-vs-actual, hot-node highlight
-- [ ] Gate: readable tree for a 3-join query
+- [x] ⌘E / Explain button → EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON), selection-aware
+- [x] Plan tree: per-node self-time bars (hot ≥20% red / warm ≥5% amber), actual-vs-est rows with 100× misestimate badge, ×loops, relation/index names, execution+planning summary, esc closes
+- [x] Gate: readable tree for join query ✅ user-verified
+- [ ] NOTE: ⌘E on UPDATE/DELETE executes it (ANALYZE) — P10 adds the guard
 
 ## P10 — Polish
 - [ ] Springs per `design/springs.ts` spec: palette, panel resize, tab reorder, edit pulse, commit flash

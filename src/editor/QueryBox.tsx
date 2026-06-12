@@ -18,6 +18,17 @@ export function QueryBox() {
       <SqlEditor />
       <div className="qb-bar">
         {connectError && <span className="qb-conn-error">{connectError.message}</span>}
+        <button
+          className="qb-explain"
+          onClick={() =>
+            void import("../stores/explain").then(({ useExplain }) =>
+              useExplain.getState().run(),
+            )
+          }
+          disabled={!connected || !sql.trim()}
+        >
+          Explain ⌘E
+        </button>
         {running ? (
           <button className="qb-cancel" onClick={() => cancel()}>
             Cancel ⌘.
