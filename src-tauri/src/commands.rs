@@ -138,6 +138,63 @@ pub async fn edits_apply(
 }
 
 #[tauri::command]
+pub fn tabs_list(state: State<'_, AppState>) -> Result<Vec<crate::appdb::TabRow>> {
+    state.appdb.tabs_list()
+}
+
+#[tauri::command]
+pub fn tabs_save(state: State<'_, AppState>, tabs: Vec<crate::appdb::TabRow>) -> Result<()> {
+    state.appdb.tabs_save(&tabs)
+}
+
+#[tauri::command]
+pub fn history_add(
+    state: State<'_, AppState>,
+    profile_id: String,
+    sql: String,
+    ms: f64,
+    rows: i64,
+) -> Result<()> {
+    state.appdb.history_add(&profile_id, &sql, ms, rows)
+}
+
+#[tauri::command]
+pub fn history_search(
+    state: State<'_, AppState>,
+    profile_id: String,
+    query: String,
+    limit: Option<i64>,
+) -> Result<Vec<crate::appdb::HistoryRow>> {
+    state
+        .appdb
+        .history_search(&profile_id, &query, limit.unwrap_or(100))
+}
+
+#[tauri::command]
+pub fn saved_list(state: State<'_, AppState>) -> Result<Vec<crate::appdb::SavedQuery>> {
+    state.appdb.saved_list()
+}
+
+#[tauri::command]
+pub fn saved_upsert(state: State<'_, AppState>, q: crate::appdb::SavedQuery) -> Result<()> {
+    state.appdb.saved_upsert(&q)
+}
+
+#[tauri::command]
+pub fn saved_delete(state: State<'_, AppState>, id: String) -> Result<()> {
+    state.appdb.saved_delete(&id)
+}
+
+#[tauri::command]
+pub fn history_clear(
+    state: State<'_, AppState>,
+    profile_id: String,
+    older_than_days: Option<i64>,
+) -> Result<()> {
+    state.appdb.history_clear(&profile_id, older_than_days)
+}
+
+#[tauri::command]
 pub async fn cancel(state: State<'_, AppState>, session_id: String) -> Result<()> {
     let session = state
         .session(&session_id)

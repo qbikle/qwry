@@ -1,12 +1,16 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useConnections } from "../stores/connections";
 import { useInspector } from "../stores/inspector";
+import { useTabs } from "../stores/tabs";
 import { ProfileList } from "../sidebar/ProfileList";
 import { ProfileForm } from "../sidebar/ProfileForm";
+import { SavedQueries } from "../sidebar/SavedQueries";
 import { QueryBox } from "../editor/QueryBox";
+import { TabBar } from "../editor/TabBar";
 import { ResultsPane } from "../grid/ResultsPane";
 import { Inspector } from "../inspector/Inspector";
 import { TableBrowser } from "../browser/TableBrowser";
+import { Palette } from "../palette/Palette";
 import { useBrowser } from "../stores/browser";
 import "./app.css";
 
@@ -16,6 +20,7 @@ export function App() {
   const inspectorOpen = useInspector((s) => s.open);
   const inspectorWidth = useInspector((s) => s.width);
   const browsing = useBrowser((s) => s.table !== null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   const startInspectorResize = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -31,9 +36,46 @@ export function App() {
 
   useEffect(() => {
     loadProfiles();
+    void useTabs.getState().load();
     const onKey = (e: KeyboardEvent) => {
       // CodeMirror (or another component) already handled it — don't double-fire
       if (e.defaultPrevented) return;
+      if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+      if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "t") {
+        e.preventDefault();
+        void import("../stores/browser").then(({ useBrowser }) => {
+          useBrowser.getState().close();
+          useTabs.getState().newTab();
+        });
+      }
+      if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "t") {
+        e.preventDefault();
+        useTabs.getState().restoreClosed();
+      }
+      if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "w") {
+        e.preventDefault();
+        void import("../stores/browser").then(({ useBrowser }) => {
+          // in table view, ⌘W closes the table — not the query tab behind it
+          if (useBrowser.getState().table) {
+            useBrowser.getState().close();
+          } else {
+            const { activeId } = useTabs.getState();
+            if (activeId) useTabs.getState().closeTab(activeId);
+          }
+        });
+      }
+      if (e.ctrlKey && e.key === "Tab") {
+        e.preventDefault();
+        useTabs.getState().cycle(e.shiftKey ? -1 : 1);
+      }
+      if (e.metaKey && !e.shiftKey && /^[0-9]$/.test(e.key)) {
+        e.preventDefault();
+        const n = e.key === "0" ? 10 : Number(e.key);
+        useTabs.getState().selectByIndex(n - 1);
+      }
       if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "f") {
         e.preventDefault();
         document.getElementById("schema-filter")?.focus();
@@ -42,7 +84,12 @@ export function App() {
         e.preventDefault();
         void import("../stores/edits").then(({ useEdits }) => {
           const st = useEdits.getState();
-          if (Object.keys(st.pending).length > 0) void st.openPreview();
+          if (Object.keys(st.pending).length > 0) {
+            void st.openPreview();
+          } else {
+            // no pending cell edits → ⌘S saves the query tab to the sidebar
+            void useTabs.getState().saveActive();
+          }
         });
       }
       if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "i") {
@@ -76,12 +123,14 @@ export function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <ProfileList />
+        <SavedQueries />
       </aside>
       <main className="main-area">
         {browsing ? (
           <TableBrowser />
         ) : (
           <>
+            <TabBar />
             <section className="editor-pane">
               <QueryBox />
             </section>
@@ -112,6 +161,7 @@ export function App() {
           </div>
         </div>
       )}
+      <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
   );
 }

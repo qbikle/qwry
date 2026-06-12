@@ -8,6 +8,14 @@
   flex-shrink: 0;
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+
+/* connections + schema tree scroll; saved queries stay pinned at the bottom */
+.sidebar > :first-child {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 

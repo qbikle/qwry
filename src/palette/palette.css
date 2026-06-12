@@ -1,0 +1,117 @@
+.pal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  justify-content: center;
+}
+
+.pal {
+  margin-top: 10vh;
+  width: min(620px, 92%);
+  height: fit-content;
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.pal [cmdk-input] {
+  width: 100%;
+  padding: 13px 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  outline: none;
+  font-size: var(--text-lg);
+  color: var(--fg);
+  user-select: text;
+}
+
+.pal [cmdk-list] {
+  overflow-y: auto;
+  padding: var(--sp-1);
+  max-height: calc(60vh - 54px);
+}
+
+.pal [cmdk-group-heading] {
+  padding: 8px 10px 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-faint);
+}
+
+.pal [cmdk-item] {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-size: var(--text-md);
+  cursor: pointer;
+}
+
+.pal [cmdk-item][data-selected="true"] {
+  background: var(--accent);
+  color: white;
+}
+.pal [cmdk-item][data-selected="true"] .pal-detail {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.pal [cmdk-item] svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.pal [cmdk-empty] {
+  padding: var(--sp-4);
+  text-align: center;
+  color: var(--fg-faint);
+}
+
+.pal kbd {
+  margin-left: auto;
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  background: var(--bg-active);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+.pal [cmdk-item][data-selected="true"] kbd {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+}
+
+.pal-detail {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  flex-shrink: 0;
+}
+
+.pal-sql {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pal-prod {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--danger-soft);
+  color: var(--danger);
+}

@@ -25,6 +25,90 @@
   border-top: 1px solid var(--border);
 }
 
+/* tab bar */
+.tabbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px 0;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 12px;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  max-width: 200px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  border-bottom: none;
+}
+.tab:hover {
+  background: var(--bg-hover);
+}
+.tab.active {
+  background: var(--bg-panel);
+  color: var(--fg);
+  border-color: var(--border);
+}
+
+.tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab input {
+  width: 110px;
+  background: var(--bg-raised);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: var(--text-sm);
+  outline: none;
+  user-select: text;
+}
+
+.tab-close {
+  display: inline-flex;
+  padding: 2px;
+  border: none;
+  background: none;
+  border-radius: 3px;
+  color: var(--fg-faint);
+  cursor: pointer;
+  visibility: hidden;
+}
+.tab:hover .tab-close,
+.tab.active .tab-close {
+  visibility: visible;
+}
+.tab-close:hover {
+  background: var(--bg-active);
+  color: var(--fg);
+}
+
+.tab-new {
+  display: inline-flex;
+  padding: 4px;
+  margin-left: 4px;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+.tab-new:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
 .sql-editor-wrap {
   flex: 1;
   min-height: 0;

@@ -185,6 +185,15 @@ export const useResults = create<ResultsState>((set, get) => ({
       if (looksLikeDdl(sql)) {
         void useSchema.getState().fetch(activeProfileId, sessionId);
       }
+      const s = get();
+      void import("@tauri-apps/api/core").then(({ invoke }) =>
+        invoke("history_add", {
+          profileId: activeProfileId,
+          sql,
+          ms: s.totalMs ?? 0,
+          rows: s.statements.reduce((n, st) => n + st.rowCount, 0),
+        }),
+      );
     } catch (e) {
       const err = e as DriverError;
       // statement-level errors already arrive as events; anything else is global

@@ -30,6 +30,14 @@ pub fn run() {
             commands::editability,
             commands::edits_preview,
             commands::edits_apply,
+            commands::tabs_list,
+            commands::tabs_save,
+            commands::history_add,
+            commands::history_search,
+            commands::history_clear,
+            commands::saved_list,
+            commands::saved_upsert,
+            commands::saved_delete,
             commands::cancel,
         ])
         .run(tauri::generate_context!())

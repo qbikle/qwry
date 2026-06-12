@@ -77,10 +77,12 @@
 - [x] Gate: browse + filter + edit without writing SQL ✅ user-verified
 
 ## P8 — Tabs, history, palette
-- [ ] Tab persistence (editor text, connection, name) in appdb; restore on launch
-- [ ] Query history: every run logged (sql, conn, ms, rows); searchable UI
-- [ ] ⌘K palette (cmdk): tables, connections, actions, history
-- [ ] Gate: relaunch restores everything
+- [x] Tabs: bar above editor, ⌘T new / ⌘W close (last tab resets, never zero), double-click rename, active tab mirrors editor buffer, debounced replace-all persistence in appdb `tabs`, restore on launch
+- [x] History: every run logged to appdb `history` (profile, sql, total ms, total rows); LIKE search command
+- [x] ⌘K palette (cmdk): Actions (run/new tab/inspector/refresh schema), Tables (→ browser), Connections (→ connect, PROD badge), History (live-searched, → new tab)
+- [x] Feedback round: ⌃Tab cycle, ⌘1-9/0 jump, ⌘⇧T restore-closed (20-deep stack), ⌘W context-aware (table view first), saved-queries section pinned to sidebar bottom, tab↔saved linking via tabs.saved_id (⌘S upserts same entry, two-way rename sync, click focuses existing tab), history clear actions in palette
+- [x] **GOTCHA: `window.confirm()` is a silent no-op stub in Tauri WKWebView** — never gate actions on it; use two-click arm pattern (see SavedQueries/ProfileList delete)
+- [x] Gate: tabs/saved/shortcuts ✅ user-verified (restart-restore trusted, retest later)
 
 ## P9 — EXPLAIN viz
 - [ ] Run EXPLAIN (ANALYZE, FORMAT JSON) action

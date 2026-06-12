@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Circle, Database, Pencil, Plus, Trash2 } from "lucide-react";
 import { useConnections } from "../stores/connections";
 import type { Profile } from "../ipc/types";
@@ -17,6 +18,8 @@ const blank = (): Profile => ({
 });
 
 export function ProfileList() {
+  // window.confirm is a stub in WKWebView — two-click arm instead
+  const [armed, setArmed] = useState<string | null>(null);
   const profiles = useConnections((s) => s.profiles);
   const connState = useConnections((s) => s.connState);
   const activeProfileId = useConnections((s) => s.activeProfileId);
@@ -70,11 +73,17 @@ export function ProfileList() {
                 <Pencil size={12} />
               </button>
               <button
-                className="icon-btn"
-                title="Delete"
+                className={`icon-btn${armed === p.id ? " armed" : ""}`}
+                title={armed === p.id ? "Click again to delete" : "Delete"}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (confirm(`Delete connection "${p.name}"?`)) deleteProfile(p.id);
+                  if (armed === p.id) {
+                    void deleteProfile(p.id);
+                    setArmed(null);
+                  } else {
+                    setArmed(p.id);
+                    setTimeout(() => setArmed((a) => (a === p.id ? null : a)), 2000);
+                  }
                 }}
               >
                 <Trash2 size={12} />
