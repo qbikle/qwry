@@ -1,0 +1,82 @@
+/* qwry design tokens — dark first; light theme lands in P10 */
+
+:root {
+  /* surfaces */
+  --bg-app: #16181d;
+  --bg-sidebar: #1b1e24;
+  --bg-panel: #1e2128;
+  --bg-raised: #262a32;
+  --bg-hover: #2c313a;
+  --bg-active: #333945;
+
+  /* text */
+  --fg: #e6e9ef;
+  --fg-muted: #9aa3b2;
+  --fg-faint: #5e6673;
+
+  /* accent */
+  --accent: #5b8cff;
+  --accent-soft: rgba(91, 140, 255, 0.16);
+  --danger: #ff5c69;
+  --danger-soft: rgba(255, 92, 105, 0.14);
+  --ok: #3ecf8e;
+  --warn: #f5a623;
+
+  /* borders */
+  --border: #2a2e37;
+  --border-strong: #3a4050;
+
+  /* type */
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 15px;
+
+  /* spacing (4px grid) */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-6: 24px;
+
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  color: var(--fg);
+  background: var(--bg-app);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+}
+
+input,
+textarea,
+select,
+button {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+::selection {
+  background: var(--accent-soft);
+}

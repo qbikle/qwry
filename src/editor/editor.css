@@ -1,0 +1,49 @@
+.query-box {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-panel);
+}
+
+.query-box textarea {
+  flex: 1;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: var(--sp-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  line-height: 1.55;
+  user-select: text;
+}
+
+.qb-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--sp-2) var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+
+.qb-run,
+.qb-cancel {
+  padding: 4px 14px;
+  border-radius: var(--radius-sm);
+  border: none;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.qb-run {
+  background: var(--accent);
+  color: white;
+}
+.qb-run:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.qb-cancel {
+  background: var(--danger-soft);
+  color: var(--danger);
+}

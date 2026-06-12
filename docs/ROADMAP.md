@@ -10,14 +10,14 @@
 - [x] Gate: `bun run tauri dev` opens window, hello IPC works
 
 ## P1 — Connect + run
-- [ ] `driver/mod.rs`: DbDriver trait + shared types (Value, ColumnMeta, ConnConfig, SessionId)
-- [ ] `driver/postgres/`: connect (tokio-postgres, TLS via rustls), session registry in AppState
-- [ ] `secrets.rs`: keyring save/load password per profile
-- [ ] `appdb.rs`: rusqlite init, `profiles` table (no passwords)
-- [ ] Connection profiles UI: list + create/edit form (host/port/db/user/ssl, color badge, prod flag)
-- [ ] Execute (non-streaming v0): run single statement, return rows as JSON, render plain table
-- [ ] PG error display (message + position)
-- [ ] Gate: connect to staging PG, `SELECT * FROM products LIMIT 50` renders
+- [x] `driver/mod.rs`: shared types (Profile, ColumnMeta, StatementResult, DriverError)
+- [x] `driver/postgres/`: connect (tokio-postgres, rustls no-verify ≈ psql sslmode=require), session registry in AppState
+- [x] `secrets.rs`: keyring save/load password per profile (service `app.qwry`)
+- [x] `appdb.rs`: rusqlite init, `profiles` table (no passwords)
+- [x] Connection profiles UI: list + create/edit modal (host/port/db/user/ssl, prod flag)
+- [x] Execute v0 via **simple protocol** (universal wire-text values, multi-statement free) — `tests/staging_smoke.rs` passes live against staging
+- [x] PG error display (message + code + position)
+- [x] Gate: connect to staging PG in-app, query renders ✅ (verified by user: 10 rows from product_flatlay_generations, 69.7ms)
 
 ## P2 — Streaming + grid
 - [ ] Statement splitter lexer (strings, dollar-quotes, comments) + unit tests
@@ -89,6 +89,9 @@
 ---
 
 ## Session log
+
+### 2026-06-12 — P1 (session 1, continued)
+P1 complete. Rust core: driver/postgres (simple-protocol exec, TLS prefer/require/disable, cancel), secrets (keyring v3), appdb (rusqlite profiles), commands wired. Frontend: zustand connections store, profile list+form modal, query box (⌘Enter/⌘.), plain results table w/ per-statement blocks + error pane. Live staging smoke test in `src-tauri/tests/staging_smoke.rs` (run with --ignored + env creds). Gotchas: (1) Keychain items seeded via `security` CLI trigger an auth prompt asking for the *Mac login password* — app-saved passwords avoid it; dev rebuilds are ad-hoc-signed so prompts can recur until P10 signing. (2) keyring v4 is a breaking meta-crate — stay on v3. Next: P2 from top (splitter lexer first).
 
 ### 2026-06-12 — P0 (session 1)
 Scaffolded. rustc 1.96.0, tauri 2.11.2 (React 19.2.7, Vite, bun). Docs written. Gotcha: `time` 0.3.48 breaks tauri-utils 2.9.2 (E0119) — pinned 0.3.47 in Cargo.lock, see DECISIONS.md. Beware: `cargo build | tail` masks exit code — check PIPESTATUS or drop the pipe. Next: P1 from top.
