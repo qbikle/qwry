@@ -157,6 +157,9 @@ export function Inspector() {
       {editMeta && !editMeta.editable && editMeta.reason && (
         <div className="insp-readonly">{editMeta.reason}</div>
       )}
+      {editMeta?.editable && editMeta.warn && (
+        <div className="insp-warn">⚠ {editMeta.warn}</div>
+      )}
       {pendingEdit && <div className="insp-pending">✎ pending edit shown — ⌘S to commit</div>}
 
       <div className="insp-actions">

@@ -432,16 +432,17 @@ export function Grid({ statement }: { statement: StatementState }) {
               const truncated = statement.truncated.has(`${vr.index}:${vc.index}`);
               const meta = colEditMeta(vc.index);
               const readonlyReason = meta && !meta.editable ? meta.reason : null;
+              const warn = meta?.editable ? meta.warn : null;
               return (
                 <div
                   key={`${vr.key}:${vc.key}`}
-                  className={`vgrid-cell${v === null ? " null" : ""}${selected ? " sel" : ""}${focused ? " focus" : ""}${pendingEdit ? " dirty" : ""}${flash.has(k) ? " flash" : ""}`}
+                  className={`vgrid-cell${v === null ? " null" : ""}${selected ? " sel" : ""}${focused ? " focus" : ""}${pendingEdit ? " dirty" : ""}${flash.has(k) ? " flash" : ""}${warn ? " ctid-warn" : ""}`}
                   style={{
                     transform: `translate(${vc.start + ROWNUM_W}px, ${vr.start + HEADER_H}px)`,
                     width: vc.size,
                     height: ROW_H,
                   }}
-                  title={readonlyReason ?? undefined}
+                  title={readonlyReason ?? warn ?? undefined}
                   onMouseDown={(e) => beginDrag(e, { r: vr.index, c: vc.index }, "cell")}
                   onMouseEnter={() => sel.dragOver({ r: vr.index, c: vc.index })}
                   onDoubleClick={() => startEdit(vr.index, vc.index)}

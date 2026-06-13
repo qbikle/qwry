@@ -103,6 +103,49 @@
 
 ---
 
+# v0.1.5 — remaining backlog, phased (session 2+)
+
+Same protocol as v0.1: build a phase, hit its gate, get user review, tick, next.
+Order = daily-value + risk first, cosmetic mid, big-build last. Glide reeval (#11) is NOT a phase — a checkpoint only if grid feels slow.
+
+## P1.1 — Edit power
+- [x] Batched multi-cell row UPDATE: `plan_edits` groups by (table, row) → one `UPDATE … SET a=,b=,c= WHERE pk RETURNING a::text,b::text` per row; results map back per-cell via RETURNING order. Preview + apply share `plan_edits`.
+- [x] ctid-fallback editing: result column named `ctid` (type `tid`) with a source table is detected as a row locator; when no usable PK is in the result, `pk_cols[oid] = [ctid_col]` and cells become editable with `warn` = "editing via ctid". `is_ctid` columns themselves read-only. WHERE uses `ctid = '…'::tid`; ctid name hardcoded (no pg_attribute row for system cols).
+- [x] Gate: 3-cell row edit → ONE update; PK-less table edit via ctid ✅ user-verified
+- NOTE: ctid moves on UPDATE — a 2nd edit to the same row before re-running matches 0 rows → EditResult.ok=false ("0 rows matched"), surfaced not silent. Acceptable for a fallback.
+
+## P1.2 — Row lifecycle (browser)
+- [ ] Insert row: ＋ affordance in browser → blank editable row → fill → commit INSERT
+- [ ] Delete row: row context menu / ⌫ on row selection → guarded DELETE
+- [ ] Gate: add a row + delete a row in table browser, both persist
+
+## P1.3 — JSON power (inspector)
+- [ ] JsonTree search: ⌘F in inspector filters/highlights matching keys+values, jump between hits
+- [ ] Tree-mode editing: edit a leaf value (and key) inline in the tree, not just raw textarea → stages into pending edits
+- [ ] Gate: search a key in a big jsonb; edit a nested value in the tree → commits
+
+## P1.4 — Transactions (per-tab sessions)
+- [ ] Dedicated DB session per query tab (not one shared session) so BEGIN/COMMIT/ROLLBACK and temp state stay coherent
+- [ ] Session lifecycle tied to tab open/close; status indicator when a tx is open
+- [ ] Gate: BEGIN in a tab, mutate, see change, ROLLBACK → gone; a second tab is unaffected
+
+## P1.5 — Light theme
+- [ ] Light token set in design tokens + second CodeMirror theme
+- [ ] Theme toggle (palette action + persisted setting), system-follow option
+- [ ] Gate: toggle light/dark — every surface legible (grid, editor, inspector, modals), persists across relaunch
+
+## P1.6 — Native skin
+- [ ] Vibrancy sidebar: transparent window + macOS vibrancy effect behind sidebar
+- [ ] App icon artwork → .icns iconset, wired in tauri.conf
+- [ ] Gate: sidebar shows vibrancy; dock/Finder show the real icon
+
+## P1.7 — SSH tunnel
+- [ ] `tunnel.rs`: spawn system `ssh -L` subprocess (respects ~/.ssh/config), health check, teardown on disconnect
+- [ ] Profile UI: tunnel fields (host, user, jump/bastion), wire connect through local forwarded port
+- [ ] Gate: connect to a DB through a tunnel profile end-to-end
+
+---
+
 ## Session log
 
 ### 2026-06-12 — P5–P10 (session 1, conclusion)

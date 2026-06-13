@@ -242,6 +242,11 @@
   font-size: var(--text-xs);
 }
 
+/* editable only via ctid (no PK in result) — subtle amber underline */
+.vgrid-cell.ctid-warn {
+  box-shadow: inset 0 -2px 0 rgba(245, 166, 35, 0.45);
+}
+
 .vgrid-celledit {
   position: absolute;
   top: 0;

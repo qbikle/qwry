@@ -67,6 +67,15 @@
   font-size: var(--text-xs);
 }
 
+.insp-warn {
+  margin: 0 var(--sp-3) var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--warn-soft, rgba(220, 160, 40, 0.12));
+  border-radius: var(--radius-sm);
+  color: var(--warn);
+  font-size: var(--text-xs);
+}
+
 .insp-actions {
   display: flex;
   gap: var(--sp-1);

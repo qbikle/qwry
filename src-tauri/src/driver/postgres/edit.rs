@@ -5,7 +5,7 @@
 //! cells are editable and edits become `UPDATE … WHERE pk = …` in one
 //! transaction, with RETURNING to refresh the grid.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -23,6 +23,10 @@ pub struct ColumnEditMeta {
     /// human reason when not editable
     pub reason: Option<String>,
     pub type_name: String,
+    /// this result column is the table's `ctid` (used as a row locator)
+    pub is_ctid: bool,
+    /// soft warning shown on an editable cell (e.g. "editing via ctid")
+    pub warn: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,6 +62,13 @@ pub struct EditResult {
 pub struct EditOutcome {
     pub results: Vec<EditResult>,
     pub committed: bool,
+}
+
+/// One planned UPDATE (one edited row) plus the original edit indices in the
+/// same order as its RETURNING columns.
+struct PlannedUpdate {
+    sql: String,
+    edit_indices: Vec<usize>,
 }
 
 /// quote an identifier for SQL
@@ -152,6 +163,27 @@ impl PgSession {
             }
         }
 
+        // ctid fallback: a result column named "ctid" with a source table is a
+        // unique physical row locator. Detect by name+type (RowDescription does
+        // not reliably surface the system attnum for ctid).
+        let mut ctid_col_of: HashMap<u32, u32> = HashMap::new();
+        for (i, c) in prepared.columns().iter().enumerate() {
+            if c.name() == "ctid" && c.type_().name() == "tid" {
+                if let Some(oid) = c.table_oid() {
+                    ctid_col_of.entry(oid).or_insert(i as u32);
+                }
+            }
+        }
+        // for tables without a usable PK in the result, fall back to ctid
+        let mut ctid_tables: HashSet<u32> = HashSet::new();
+        for (&oid, &ctid_col) in &ctid_col_of {
+            if !table_names.contains_key(&oid) || pk_cols.contains_key(&oid) {
+                continue;
+            }
+            pk_cols.insert(oid, vec![ctid_col]);
+            ctid_tables.insert(oid);
+        }
+
         let columns = prepared
             .columns()
             .iter()
@@ -159,19 +191,43 @@ impl PgSession {
             .map(|(i, c)| {
                 let table_oid = c.table_oid();
                 let attnum = c.column_id();
-                let (editable, reason) = match (table_oid, attnum) {
-                    (None, _) => (false, Some("computed expression — no source table".into())),
-                    (_, None) => (false, Some("not a plain table column".into())),
-                    (Some(oid), Some(_)) => {
-                        if table_pks.get(&oid).is_none_or(|p| p.is_empty()) {
-                            (false, Some("source table has no primary key".into()))
-                        } else if !pk_cols.contains_key(&oid) {
-                            (
-                                false,
-                                Some("primary key not in result — add it to the SELECT".into()),
-                            )
-                        } else {
-                            (true, None)
+                let is_ctid = ctid_col_of.get(&table_oid.unwrap_or(0)) == Some(&(i as u32));
+                let (editable, reason, warn) = if is_ctid {
+                    (false, Some("ctid — physical row locator".into()), None)
+                } else {
+                    match (table_oid, attnum) {
+                        (None, _) => (
+                            false,
+                            Some("computed expression — no source table".into()),
+                            None,
+                        ),
+                        (_, None) => (false, Some("not a plain table column".into()), None),
+                        (Some(oid), Some(_)) => {
+                            if pk_cols.contains_key(&oid) {
+                                let warn = if ctid_tables.contains(&oid) {
+                                    Some("no primary key in result — editing via ctid".into())
+                                } else {
+                                    None
+                                };
+                                (true, None, warn)
+                            } else if table_pks.get(&oid).is_none_or(|p| p.is_empty()) {
+                                (
+                                    false,
+                                    Some(
+                                        "no primary key — add ctid to the SELECT to edit".into(),
+                                    ),
+                                    None,
+                                )
+                            } else {
+                                (
+                                    false,
+                                    Some(
+                                        "primary key not in result — add it (or ctid) to the SELECT"
+                                            .into(),
+                                    ),
+                                    None,
+                                )
+                            }
                         }
                     }
                 };
@@ -182,6 +238,8 @@ impl PgSession {
                     editable,
                     reason,
                     type_name: c.type_().name().to_string(),
+                    is_ctid,
+                    warn,
                 }
             })
             .collect();
@@ -194,68 +252,134 @@ impl PgSession {
         })
     }
 
-    /// Generate the UPDATE statements for a set of edits (no execution).
+    /// Group edits by (table, row) and build ONE `UPDATE … SET a=, b=, …
+    /// WHERE pk RETURNING a::text, b::text` per row. Returns each planned
+    /// statement plus the original edit indices in RETURNING-column order, so
+    /// callers can map results back to the cells the user touched.
+    async fn plan_edits(
+        &self,
+        sql: &str,
+        statement_index: u32,
+        edits: &[RowEdit],
+    ) -> Result<Vec<PlannedUpdate>> {
+        let map = self.editability(sql, statement_index).await?;
+        let col_meta = |idx: u32| map.columns.iter().find(|c| c.col == idx).cloned();
+
+        // group edits preserving first-seen order; key = table + pk signature
+        struct Group {
+            table_oid: u32,
+            pk: Vec<(u32, Option<String>)>,
+            /// (original edit index, edited result column, new value)
+            sets: Vec<(usize, u32, Option<String>)>,
+        }
+        let mut order: Vec<String> = Vec::new();
+        let mut groups: HashMap<String, Group> = HashMap::new();
+        for (ei, e) in edits.iter().enumerate() {
+            // reject non-editable up front (matches old per-cell guard)
+            col_meta(e.col)
+                .filter(|m| m.editable && m.table_oid == e.table_oid)
+                .ok_or_else(|| DriverError::Internal(format!("column {} not editable", e.col)))?;
+            let mut sig = e.table_oid.to_string();
+            for (c, v) in &e.pk {
+                sig.push('|');
+                sig.push_str(&c.to_string());
+                sig.push('=');
+                sig.push_str(v.as_deref().unwrap_or("\u{0}NULL"));
+            }
+            let g = groups.entry(sig.clone()).or_insert_with(|| {
+                order.push(sig);
+                Group {
+                    table_oid: e.table_oid,
+                    pk: e.pk.clone(),
+                    sets: Vec::new(),
+                }
+            });
+            g.sets.push((ei, e.col, e.value.clone()));
+        }
+
+        let mut planned = Vec::with_capacity(order.len());
+        for sig in &order {
+            let g = &groups[sig];
+            let table = map
+                .tables
+                .get(&g.table_oid)
+                .ok_or_else(|| DriverError::Internal("unknown table in edit".into()))?;
+
+            // real column names by attnum (one pg_attribute round trip); ctid
+            // is a system column with no pg_attribute row — handled inline.
+            let real_attnums: Vec<i16> = g
+                .sets
+                .iter()
+                .filter_map(|(_, c, _)| col_meta(*c).map(|m| m.attnum))
+                .chain(g.pk.iter().filter_map(|(c, _)| col_meta(*c).map(|m| m.attnum)))
+                .filter(|a| *a > 0)
+                .collect();
+            let names = self.attnames(g.table_oid, &real_attnums).await?;
+            let name_of = |m: &ColumnEditMeta| -> Option<String> {
+                if m.is_ctid {
+                    Some("ctid".to_string())
+                } else {
+                    names.get(&m.attnum).cloned()
+                }
+            };
+
+            let mut set_parts = Vec::new();
+            let mut returning = Vec::new();
+            let mut edit_indices = Vec::new();
+            for (ei, c, v) in &g.sets {
+                let m = col_meta(*c).unwrap();
+                let n = name_of(&m)
+                    .ok_or_else(|| DriverError::Internal("column name lookup failed".into()))?;
+                let value_sql = match v {
+                    None => "NULL".to_string(),
+                    Some(s) => format!("{}::{}", ql(s), m.type_name),
+                };
+                set_parts.push(format!("{} = {}", qi(&n), value_sql));
+                returning.push(format!("{}::text", qi(&n)));
+                edit_indices.push(*ei);
+            }
+
+            let mut where_parts = Vec::new();
+            for (c, v) in &g.pk {
+                let m = col_meta(*c)
+                    .ok_or_else(|| DriverError::Internal("bad pk column".into()))?;
+                let n = name_of(&m)
+                    .ok_or_else(|| DriverError::Internal("pk column name lookup failed".into()))?;
+                let rhs = match v {
+                    None => "IS NULL".to_string(),
+                    Some(s) => format!("= {}::{}", ql(s), m.type_name),
+                };
+                where_parts.push(format!("{} {}", qi(&n), rhs));
+            }
+
+            planned.push(PlannedUpdate {
+                sql: format!(
+                    "UPDATE {} SET {} WHERE {} RETURNING {}",
+                    table_path(table),
+                    set_parts.join(", "),
+                    where_parts.join(" AND "),
+                    returning.join(", "),
+                ),
+                edit_indices,
+            });
+        }
+        Ok(planned)
+    }
+
+    /// Generate the UPDATE statements for a set of edits (no execution) — for
+    /// the commit-preview modal. One statement per edited row.
     pub async fn build_edit_statements(
         &self,
         sql: &str,
         statement_index: u32,
         edits: &[RowEdit],
     ) -> Result<Vec<String>> {
-        let map = self.editability(sql, statement_index).await?;
-        let col_meta = |idx: u32| map.columns.iter().find(|c| c.col == idx);
-
-        let mut out = Vec::with_capacity(edits.len());
-        for e in edits {
-            let table = map
-                .tables
-                .get(&e.table_oid)
-                .ok_or_else(|| DriverError::Internal("unknown table in edit".into()))?;
-            let meta = col_meta(e.col)
-                .filter(|m| m.editable && m.table_oid == e.table_oid)
-                .ok_or_else(|| DriverError::Internal(format!("column {} not editable", e.col)))?;
-
-            let mut where_parts: Vec<(i16, String)> = Vec::new();
-            for (pk_col, pk_val) in &e.pk {
-                let pk_meta = col_meta(*pk_col)
-                    .ok_or_else(|| DriverError::Internal("bad pk column".into()))?;
-                let rhs = match pk_val {
-                    None => "IS NULL".to_string(),
-                    Some(v) => format!("= {}::{}", ql(v), pk_meta.type_name),
-                };
-                where_parts.push((pk_meta.attnum, rhs));
-            }
-
-            let attnums: Vec<i16> = std::iter::once(meta.attnum)
-                .chain(where_parts.iter().map(|(a, _)| *a))
-                .collect();
-            let names = self.attnames(e.table_oid, &attnums).await?;
-            let set_name = names
-                .get(&meta.attnum)
-                .ok_or_else(|| DriverError::Internal("column name lookup failed".into()))?;
-
-            let value_sql = match &e.value {
-                None => "NULL".to_string(),
-                Some(v) => format!("{}::{}", ql(v), meta.type_name),
-            };
-            let where_sql = where_parts
-                .iter()
-                .map(|(att, rhs)| {
-                    let n = names.get(att).cloned().unwrap_or_default();
-                    format!("{} {}", qi(&n), rhs)
-                })
-                .collect::<Vec<_>>()
-                .join(" AND ");
-
-            out.push(format!(
-                "UPDATE {} SET {} = {} WHERE {} RETURNING {}::text",
-                table_path(table),
-                qi(set_name),
-                value_sql,
-                where_sql,
-                qi(set_name),
-            ));
-        }
-        Ok(out)
+        Ok(self
+            .plan_edits(sql, statement_index, edits)
+            .await?
+            .into_iter()
+            .map(|p| p.sql)
+            .collect())
     }
 
     /// Apply edits in ONE transaction. Values are text with a cast to the
@@ -266,28 +390,43 @@ impl PgSession {
         statement_index: u32,
         edits: Vec<RowEdit>,
     ) -> Result<EditOutcome> {
-        let updates = self
-            .build_edit_statements(sql, statement_index, &edits)
-            .await?;
+        let planned = self.plan_edits(sql, statement_index, &edits).await?;
         let mut statements = vec!["BEGIN".to_string()];
-        statements.extend(updates);
+        statements.extend(planned.iter().map(|p| p.sql.clone()));
         statements.push("COMMIT".to_string());
         let batch = statements.join(";\n");
 
         match self.execute_simple(&batch).await {
             Ok(out) => {
-                let mut results = Vec::new();
-                for stmt in out.statements.iter().skip(1).take(edits.len()) {
-                    let ok = stmt.rows.len() == 1;
-                    results.push(EditResult {
-                        ok,
-                        message: if ok {
-                            None
+                // results aligned to original edit order
+                let mut results: Vec<EditResult> = (0..edits.len())
+                    .map(|_| EditResult {
+                        ok: false,
+                        message: Some("not applied".into()),
+                        new_value: None,
+                    })
+                    .collect();
+                // out.statements: [BEGIN, update0, update1, …, COMMIT]
+                for (gi, p) in planned.iter().enumerate() {
+                    let stmt = out.statements.get(1 + gi);
+                    let matched = stmt.map(|s| s.rows.len()).unwrap_or(0);
+                    let ok = matched == 1;
+                    let row = stmt.and_then(|s| s.rows.first());
+                    for (ret_pos, &ei) in p.edit_indices.iter().enumerate() {
+                        results[ei] = if ok {
+                            EditResult {
+                                ok: true,
+                                message: None,
+                                new_value: row.and_then(|r| r.get(ret_pos).cloned()).flatten(),
+                            }
                         } else {
-                            Some(format!("{} rows matched (expected 1)", stmt.rows.len()))
-                        },
-                        new_value: stmt.rows.first().and_then(|r| r.first().cloned()).flatten(),
-                    });
+                            EditResult {
+                                ok: false,
+                                message: Some(format!("{matched} rows matched (expected 1)")),
+                                new_value: None,
+                            }
+                        };
+                    }
                 }
                 Ok(EditOutcome { results, committed: true })
             }
@@ -299,6 +438,9 @@ impl PgSession {
     }
 
     async fn attnames(&self, table_oid: u32, attnums: &[i16]) -> Result<HashMap<i16, String>> {
+        if attnums.is_empty() {
+            return Ok(HashMap::new());
+        }
         let list = attnums
             .iter()
             .map(|a| a.to_string())

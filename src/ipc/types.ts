@@ -46,6 +46,10 @@ export interface ColumnEditMeta {
   editable: boolean;
   reason: string | null;
   type_name: string;
+  /** this result column is the table's ctid (a row locator, not user-editable) */
+  is_ctid: boolean;
+  /** soft warning shown on an editable cell (e.g. "editing via ctid") */
+  warn: string | null;
 }
 
 export interface EditabilityMap {
