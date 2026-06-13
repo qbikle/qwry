@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::splitter::split_statements;
 use super::{map_pg_err, PgSession};
-use crate::driver::{DriverError, Result};
+use crate::driver::{DriverError, ExecOutcome, Result};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ColumnEditMeta {
@@ -435,6 +435,125 @@ impl PgSession {
                 Err(e)
             }
         }
+    }
+
+    /// Delete rows of a single table by locator (PK or ctid). One transaction;
+    /// each DELETE must match exactly one row (locators are always unique).
+    pub async fn delete_rows(
+        &self,
+        sql: &str,
+        statement_index: u32,
+        table_oid: u32,
+        rows: Vec<Vec<(u32, Option<String>)>>,
+    ) -> Result<EditOutcome> {
+        let map = self.editability(sql, statement_index).await?;
+        let col_meta = |idx: u32| map.columns.iter().find(|c| c.col == idx).cloned();
+        let table = map
+            .tables
+            .get(&table_oid)
+            .ok_or_else(|| DriverError::Internal("unknown table for delete".into()))?;
+
+        let attset: Vec<i16> = rows
+            .iter()
+            .flatten()
+            .filter_map(|(c, _)| col_meta(*c).map(|m| m.attnum))
+            .filter(|a| *a > 0)
+            .collect();
+        let names = self.attnames(table_oid, &attset).await?;
+        let name_of = |m: &ColumnEditMeta| -> Option<String> {
+            if m.is_ctid {
+                Some("ctid".to_string())
+            } else {
+                names.get(&m.attnum).cloned()
+            }
+        };
+
+        let mut statements = vec!["BEGIN".to_string()];
+        for locator in &rows {
+            let mut where_parts = Vec::new();
+            for (c, v) in locator {
+                let m = col_meta(*c)
+                    .ok_or_else(|| DriverError::Internal("bad locator column".into()))?;
+                let n = name_of(&m)
+                    .ok_or_else(|| DriverError::Internal("locator name lookup failed".into()))?;
+                let rhs = match v {
+                    None => "IS NULL".to_string(),
+                    Some(s) => format!("= {}::{}", ql(s), m.type_name),
+                };
+                where_parts.push(format!("{} {}", qi(&n), rhs));
+            }
+            if where_parts.is_empty() {
+                return Err(DriverError::Internal(
+                    "refusing to delete with an empty row locator".into(),
+                ));
+            }
+            statements.push(format!(
+                "DELETE FROM {} WHERE {} RETURNING ctid::text",
+                table_path(table),
+                where_parts.join(" AND "),
+            ));
+        }
+        statements.push("COMMIT".to_string());
+        let batch = statements.join(";\n");
+
+        match self.execute_simple(&batch).await {
+            Ok(out) => {
+                let mut results = Vec::with_capacity(rows.len());
+                for stmt in out.statements.iter().skip(1).take(rows.len()) {
+                    let matched = stmt.rows.len();
+                    results.push(EditResult {
+                        ok: matched == 1,
+                        message: if matched == 1 {
+                            None
+                        } else {
+                            Some(format!("{matched} rows matched (expected 1)"))
+                        },
+                        new_value: None,
+                    });
+                }
+                Ok(EditOutcome {
+                    results,
+                    committed: true,
+                })
+            }
+            Err(e) => {
+                let _ = self.execute_simple("ROLLBACK").await;
+                Err(e)
+            }
+        }
+    }
+
+    /// Insert one row. Columns the user left untouched are omitted so table
+    /// defaults apply. Values are text literals — Postgres coerces them to the
+    /// target column type on INSERT (same as typing them in psql).
+    pub async fn insert_row(
+        &self,
+        schema: &str,
+        table: &str,
+        cols: Vec<String>,
+        values: Vec<Option<String>>,
+    ) -> Result<ExecOutcome> {
+        if cols.len() != values.len() {
+            return Err(DriverError::Internal(
+                "insert: column/value count mismatch".into(),
+            ));
+        }
+        let t = format!("{}.{}", qi(schema), qi(table));
+        let sql = if cols.is_empty() {
+            format!("INSERT INTO {t} DEFAULT VALUES RETURNING *")
+        } else {
+            let collist = cols.iter().map(|c| qi(c)).collect::<Vec<_>>().join(", ");
+            let vallist = values
+                .iter()
+                .map(|v| match v {
+                    None => "NULL".to_string(),
+                    Some(s) => ql(s),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("INSERT INTO {t} ({collist}) VALUES ({vallist}) RETURNING *")
+        };
+        self.execute_simple(&sql).await
     }
 
     async fn attnames(&self, table_oid: u32, attnums: &[i16]) -> Result<HashMap<i16, String>> {

@@ -5,8 +5,11 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { motion } from "motion/react";
 import { menuIn } from "../design/springs";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import type { StatementState } from "../stores/results";
+import { useResults, type StatementState } from "../stores/results";
+import { useConnections } from "../stores/connections";
 import { editKey, useEdits } from "../stores/edits";
+import * as ipc from "../ipc/commands";
+import type { EditabilityMap } from "../ipc/types";
 import { formatCells, type CopyFormat } from "./clipboard";
 import { useSelection, type DragMode, type SelRect } from "./useSelection";
 import "./grid.css";
@@ -317,6 +320,60 @@ export function Grid({ statement }: { statement: StatementState }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sel.rect, editMap]);
 
+  // a result row is deletable iff exactly one source table has a locator
+  // (PK or ctid) in the result — ambiguous for multi-table JOINs.
+  const deletableTableOid = useMemo(() => {
+    if (!editMap || editMap === "loading" || editMap === "unavailable") return null;
+    const oids = Object.keys(editMap.pk_cols).map(Number);
+    return oids.length === 1 ? oids[0] : null;
+  }, [editMap]);
+
+  const deleteSelectedRows = useCallback(async () => {
+    const rect = sel.rect;
+    if (!rect || deletableTableOid == null) return;
+    const map = editMap as EditabilityMap;
+    const pkCols = map.pk_cols[deletableTableOid];
+    if (!pkCols?.length) return;
+
+    const locators: [number, string | null][][] = [];
+    for (let r = rect.r0; r <= rect.r1; r++) {
+      locators.push(pkCols.map((pc) => [pc, rows[r][pc]] as [number, string | null]));
+    }
+    const tableName = map.tables[deletableTableOid] ?? "table";
+    const n = locators.length;
+    const preview = locators
+      .slice(0, 8)
+      .map(
+        (loc) =>
+          `WHERE ${loc
+            .map(([c, v]) => `${cols[c]?.name ?? `col${c}`} = ${v ?? "NULL"}`)
+            .join(" AND ")}`,
+      )
+      .join("\n");
+
+    const { confirmDanger } = await import("../stores/danger");
+    const ok = await confirmDanger(
+      `Delete ${n} row${n > 1 ? "s" : ""} from ${tableName}?`,
+      `This cannot be undone.\n\n${preview}${n > 8 ? `\n… and ${n - 8} more` : ""}`,
+    );
+    if (!ok) return;
+
+    const conn = useConnections.getState();
+    const sessionId = conn.activeProfileId ? conn.sessions[conn.activeProfileId] : null;
+    const executedSql = useResults.getState().executedSql;
+    if (!sessionId || !executedSql) return;
+    try {
+      await ipc.deleteRows(sessionId, executedSql, statement.index, deletableTableOid, locators);
+      // re-run the exact query so the grid reflects the delete
+      void useResults.getState().run(executedSql);
+    } catch (e) {
+      useResults.setState({
+        globalError: { message: (e as { message?: string }).message ?? String(e), position: null, code: null },
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel.rect, deletableTableOid, editMap, rows, statement.index]);
+
   const resizing = useRef<{ col: number; startX: number; startW: number } | null>(null);
   const onResizeStart = (col: number, e: React.MouseEvent) => {
     e.preventDefault();
@@ -513,6 +570,22 @@ export function Grid({ statement }: { statement: StatementState }) {
                   }}
                 >
                   Set EMPTY
+                </button>
+              </>
+            )}
+            {deletableTableOid != null && (
+              <>
+                <div className="vgrid-menu-sep" />
+                <button
+                  className="danger"
+                  onClick={() => {
+                    setMenu(null);
+                    void deleteSelectedRows();
+                  }}
+                >
+                  Delete {sel.rect && sel.rect.r1 > sel.rect.r0
+                    ? `${sel.rect.r1 - sel.rect.r0 + 1} rows`
+                    : "row"}
                 </button>
               </>
             )}

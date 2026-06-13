@@ -115,9 +115,11 @@ Order = daily-value + risk first, cosmetic mid, big-build last. Glide reeval (#1
 - NOTE: ctid moves on UPDATE — a 2nd edit to the same row before re-running matches 0 rows → EditResult.ok=false ("0 rows matched"), surfaced not silent. Acceptable for a fallback.
 
 ## P1.2 — Row lifecycle (browser)
-- [ ] Insert row: ＋ affordance in browser → blank editable row → fill → commit INSERT
-- [ ] Delete row: row context menu / ⌫ on row selection → guarded DELETE
-- [ ] Gate: add a row + delete a row in table browser, both persist
+- [x] Insert row: `+`/"Add row" in browser header (data tab, ordinary tables) → springy `InsertPanel`, one field/column. Blank = DEFAULT (col omitted), ∅ = NULL, typed = value. ⌘↵ insert / Esc cancel. Backend `insert_row` (text literals coerce to col type), then reload.
+- [x] Delete row: grid context menu → red "Delete row(s)" (shown only when exactly ONE source table has a locator) → DangerModal with WHERE preview → backend `delete_rows` (one txn, RETURNING ctid, must match 1) → reload via re-run of executedSql.
+- [x] Browser auto-includes `ctid` for PK-less ordinary tables (`SELECT ctid, *`) → fully editable/insert/delete via the P1.1 ctid engine.
+- [x] Fixes: header icon `+` tooltip "Add row"; global autocorrect killer (`app/noAutocorrect.ts` — WKWebView forces macOS autocorrect/autocapitalize/substitution on every field; no global switch, so stamp `autocorrect/autocapitalize/spellcheck=off` per field + MutationObserver for new ones; opt-out `data-allow-autocorrect`).
+- [x] Gate: insert + delete in browser ✅ user-verified
 
 ## P1.3 — JSON power (inspector)
 - [ ] JsonTree search: ⌘F in inspector filters/highlights matching keys+values, jump between hits

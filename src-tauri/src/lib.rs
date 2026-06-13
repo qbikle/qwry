@@ -30,6 +30,8 @@ pub fn run() {
             commands::editability,
             commands::edits_preview,
             commands::edits_apply,
+            commands::delete_rows,
+            commands::insert_row,
             commands::tabs_list,
             commands::tabs_save,
             commands::history_add,

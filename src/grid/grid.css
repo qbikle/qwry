@@ -418,6 +418,13 @@
   background: var(--accent);
   color: white;
 }
+.vgrid-menu button.danger {
+  color: var(--danger);
+}
+.vgrid-menu button.danger:hover {
+  background: var(--danger);
+  color: white;
+}
 
 .vgrid-menu-sep {
   height: 1px;

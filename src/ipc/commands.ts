@@ -8,6 +8,9 @@ import type {
   RowEdit,
 } from "./types";
 
+/** (result-column index, text value) pairs locating one row by PK or ctid */
+export type RowLocator = [number, string | null][];
+
 export const profilesList = () => invoke<Profile[]>("profiles_list");
 
 export const profileSave = (profile: Profile, password?: string) =>
@@ -42,6 +45,22 @@ export const editsApply = (
   statementIndex: number,
   edits: RowEdit[],
 ) => invoke<EditOutcome>("edits_apply", { sessionId, sql, statementIndex, edits });
+
+export const deleteRows = (
+  sessionId: string,
+  sql: string,
+  statementIndex: number,
+  tableOid: number,
+  rows: RowLocator[],
+) => invoke<EditOutcome>("delete_rows", { sessionId, sql, statementIndex, tableOid, rows });
+
+export const insertRow = (
+  sessionId: string,
+  schema: string,
+  table: string,
+  cols: string[],
+  values: (string | null)[],
+) => invoke<ExecOutcome>("insert_row", { sessionId, schema, table, cols, values });
 
 /** Streaming execution. Resolves when the whole batch finishes (or errors). */
 export const executeStream = (

@@ -48,6 +48,10 @@
 .tb-header .icon-btn:last-child {
   margin-left: auto;
 }
+.tb-header .icon-btn.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 
 .spin {
   animation: tb-spin 0.9s linear infinite;
@@ -333,4 +337,139 @@
 .st-none {
   color: var(--fg-faint);
   font-size: var(--text-sm);
+}
+
+/* insert-row panel */
+.tb-insert {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+  padding: var(--sp-2) var(--sp-3) var(--sp-3);
+  max-height: 46%;
+  overflow-y: auto;
+}
+
+.tb-insert-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-2);
+}
+.tb-insert-head > span:first-child {
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+.tb-insert-hint {
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+}
+
+.tb-insert-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--sp-2) var(--sp-3);
+}
+
+.tb-insert-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tb-insert-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+}
+.tb-insert-name {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--fg);
+}
+.tb-insert-type {
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tb-insert-input {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+.tb-insert-input input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 7px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  outline: none;
+  user-select: text;
+}
+.tb-insert-input input:focus {
+  border-color: var(--accent);
+}
+.tb-insert-input.is-null input {
+  color: var(--fg-faint);
+  font-style: italic;
+}
+
+.tb-null-btn {
+  width: 26px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+.tb-null-btn:hover {
+  color: var(--fg);
+  border-color: var(--border-strong);
+}
+.tb-null-btn.on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tb-insert-error {
+  margin-top: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--danger-soft);
+  border-radius: var(--radius-sm);
+  color: var(--danger);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  user-select: text;
+}
+
+.tb-insert-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+.tb-insert-actions button {
+  padding: 5px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: var(--text-sm);
+}
+.tb-insert-actions button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.tb-insert-actions button:disabled {
+  opacity: 0.6;
+  cursor: default;
 }

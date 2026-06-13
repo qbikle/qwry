@@ -138,6 +138,38 @@ pub async fn edits_apply(
 }
 
 #[tauri::command]
+pub async fn delete_rows(
+    state: State<'_, AppState>,
+    session_id: String,
+    sql: String,
+    statement_index: u32,
+    table_oid: u32,
+    rows: Vec<Vec<(u32, Option<String>)>>,
+) -> Result<crate::driver::postgres::edit::EditOutcome> {
+    let session = state
+        .session(&session_id)
+        .ok_or(driver::DriverError::NoSession)?;
+    session
+        .delete_rows(&sql, statement_index, table_oid, rows)
+        .await
+}
+
+#[tauri::command]
+pub async fn insert_row(
+    state: State<'_, AppState>,
+    session_id: String,
+    schema: String,
+    table: String,
+    cols: Vec<String>,
+    values: Vec<Option<String>>,
+) -> Result<ExecOutcome> {
+    let session = state
+        .session(&session_id)
+        .ok_or(driver::DriverError::NoSession)?;
+    session.insert_row(&schema, &table, cols, values).await
+}
+
+#[tauri::command]
 pub fn tabs_list(state: State<'_, AppState>) -> Result<Vec<crate::appdb::TabRow>> {
     state.appdb.tabs_list()
 }
