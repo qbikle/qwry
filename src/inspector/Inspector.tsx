@@ -16,7 +16,7 @@ import { useInspector } from "../stores/inspector";
 import { useResults } from "../stores/results";
 import { JsonTree } from "./JsonTree";
 import { JsonField } from "./JsonField";
-import { structuredValue } from "./format";
+import { isArrayType, jsToPgArray, structuredValue } from "./format";
 import "./inspector.css";
 
 /** copy button: click copies formatted; the caret opens raw / formatted */
@@ -133,8 +133,8 @@ export function Inspector() {
   const structured = value != null ? structuredValue(value, editMeta?.type_name) : undefined;
   const isStructured = structured !== undefined;
   const pretty = isStructured ? JSON.stringify(structured, null, 2) : (value ?? "");
-  const isJsonType = editMeta?.type_name === "json" || editMeta?.type_name === "jsonb";
-  const jsonEditable = !!editMeta?.editable && isJsonType; // arrays: view-only (no round-trip)
+  const isArr = isArrayType(editMeta?.type_name);
+  const structuredEditable = !!editMeta?.editable && isStructured;
 
   const stage = (v: string) =>
     useEdits.getState().setEdit({
@@ -144,12 +144,14 @@ export function Inspector() {
       value: v,
       original: stmt.rows[target.row]?.[target.col] ?? null,
     });
+  // arrays stage as a PG array literal; JSON stages as JSON text
+  const serialize = (v: unknown) => (isArr ? jsToPgArray(v) : JSON.stringify(v));
 
   const rawDirty = rawDraft !== null && rawDraft !== pretty;
   const saveRaw = () => {
     if (rawDraft === null) return;
     try {
-      stage(JSON.stringify(JSON.parse(rawDraft)));
+      stage(serialize(JSON.parse(rawDraft)));
       setRawDraft(null);
       setJsonError(null);
     } catch (e) {
@@ -244,12 +246,12 @@ export function Inspector() {
             )}
           </div>
         ) : isStructured && mode === "auto" ? (
-          <JsonTree json={structured as never} editable={jsonEditable} onChange={(n) => stage(JSON.stringify(n))} />
+          <JsonTree json={structured as never} editable={structuredEditable} onChange={(n) => stage(serialize(n))} />
         ) : isStructured ? (
           <div className="insp-edit">
             <JsonField
               value={rawDraft ?? pretty}
-              readOnly={!jsonEditable}
+              readOnly={!structuredEditable}
               onChange={(v) => {
                 setRawDraft(v);
                 try {

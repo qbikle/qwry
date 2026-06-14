@@ -44,7 +44,22 @@ export function parsePgArray(text: string): unknown[] {
   }
 }
 
-const isArrayType = (t?: string) => !!t && (t.startsWith("_") || t.endsWith("[]"));
+export const isArrayType = (t?: string) => !!t && (t.startsWith("_") || t.endsWith("[]"));
+
+/** serialize a JS value back to a Postgres array literal ({a,"b c",NULL,{1,2}}).
+ * Strings are always quoted (valid for any element type; PG coerces on cast). */
+export function jsToPgArray(v: unknown): string {
+  const quote = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  const elem = (e: unknown): string => {
+    if (e === null || e === undefined) return "NULL";
+    if (Array.isArray(e)) return jsToPgArray(e);
+    if (typeof e === "number" || typeof e === "boolean") return String(e);
+    if (typeof e === "object") return quote(JSON.stringify(e));
+    return quote(String(e));
+  };
+  if (!Array.isArray(v)) return JSON.stringify(v);
+  return `{${v.map(elem).join(",")}}`;
+}
 
 /** if a cell is structured (JSON or a PG array), return it parsed; else undefined */
 export function structuredValue(value: string | null | undefined, typeName?: string): unknown | undefined {

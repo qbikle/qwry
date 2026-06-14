@@ -186,7 +186,7 @@ Design (from user wireframes): floating rounded cards on a themed-glass gutter �
 
 ## P2.5 — inspector redesign ✅
 - [x] Tidy chrome: header (col name + type pill + row + hide), status **chips** (read-only 🔒 / ctid ⚠ / pending ✎ / loading), compact **icon toolbar**. Sits transparently inside the floating inspector-card.
-- [x] **Structured formatting**: JSON *and* PG arrays (`text[]`, `int[]`, …) parse via `format.ts` (`structuredValue`/`parsePgArray`) → tree view. Arrays are view-only (no JS↔PG-array round-trip); JSON fully editable.
+- [x] **Structured formatting**: JSON *and* PG arrays (`text[]`, `int[]`, …) parse via `format.ts` (`structuredValue`/`parsePgArray`) → tree view. Arrays are **editable** too: `jsToPgArray` serializes the JS value back to a PG array literal, staged + cast `'{…}'::_text`/`::_int4` (verified PG coerces quoted elements). JSON stages as JSON.
 - [x] **Colorized raw view+edit** via a CodeMirror `JsonField` (`@codemirror/lang-json` + qwryHighlight, readOnly toggle). Replaced a transparent-textarea-over-`<pre>` overlay that WKWebView's native textarea background kept covering — 3 failed iterations; CM renders its own DOM, reliable. Raw = the editor (Stage/Discard on change); arrays read-only colorized.
 - [x] **Split copy button**: click = formatted; caret → Copy formatted / Copy raw.
 - [x] Gate: arrays + JSON formatted, colorized raw/edit, copy split ✅ user-verified
