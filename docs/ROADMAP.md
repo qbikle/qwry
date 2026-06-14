@@ -122,9 +122,10 @@ Order = daily-value + risk first, cosmetic mid, big-build last. Glide reeval (#1
 - [x] Gate: insert + delete in browser ✅ user-verified
 
 ## P1.3 — JSON power (inspector)
-- [ ] JsonTree search: ⌘F in inspector filters/highlights matching keys+values, jump between hits
-- [ ] Tree-mode editing: edit a leaf value (and key) inline in the tree, not just raw textarea → stages into pending edits
-- [ ] Gate: search a key in a big jsonb; edit a nested value in the tree → commits
+- [x] JsonTree search: in-tree search box + ⌘F; `computeSearch` walks once → {visible, forceOpen, hits}; filters to matching subtrees, highlights match (`<mark>`), matched-key reveals its whole subtree (`forced` flag); hit counter + ⏎/⇧⏎/↑↓ nav with scrollIntoView; Esc clears.
+- [x] Tree-mode editing: click leaf → inline type-preserving edit (number→number, bool→bool, invalid number rejected); click key → rename (order-preserving `renameKeyIn`); each commit `setIn`/rebuild → stages whole JSON into pending edits (⌘S commits). ⌥-click copies path; read-only cells keep click-to-copy. JsonTree gained `editable`/`onChange` props; Inspector wires `editable={!!editMeta?.editable}`.
+- [x] Node ids via `JSON.stringify(path)`; `displayPath` for `a.b[0]` copy. (Earlier draft used a `` separator — replaced, don't reintroduce invisible-char joins.)
+- [x] Gate: search keys + edit nested value/key in tree → commits ✅ user-verified
 
 ## P1.4 — Transactions (per-tab sessions)
 - [ ] Dedicated DB session per query tab (not one shared session) so BEGIN/COMMIT/ROLLBACK and temp state stay coherent

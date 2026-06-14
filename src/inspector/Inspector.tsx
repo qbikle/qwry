@@ -142,6 +142,17 @@ export function Inspector() {
     }
   };
 
+  // live tree edits (edit a leaf/key in the tree) stage immediately
+  const stageTreeEdit = (next: unknown) => {
+    useEdits.getState().setEdit({
+      stmtIndex: target.stmtIndex,
+      row: target.row,
+      col: target.col,
+      value: JSON.stringify(next),
+      original: stmt.rows[target.row]?.[target.col] ?? null,
+    });
+  };
+
   return (
     <div className="inspector">
       <HideButton />
@@ -241,7 +252,11 @@ export function Inspector() {
         ) : value === null || value === undefined ? (
           <div className="insp-null">NULL</div>
         ) : json !== undefined ? (
-          <JsonTree json={json as never} />
+          <JsonTree
+            json={json as never}
+            editable={!!editMeta?.editable}
+            onChange={stageTreeEdit}
+          />
         ) : (
           <pre className="insp-text">{value}</pre>
         )}
