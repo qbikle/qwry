@@ -149,13 +149,33 @@ Order = daily-value + risk first, cosmetic mid, big-build last. Glide reeval (#1
 - NOTE: built .app + dmg at `src-tauri/target/release/bundle/` — rebuild after P1.7 tunnel work for the final artifact.
 
 ## P1.7 — SSH tunnel
-- [ ] `tunnel.rs`: spawn system `ssh -L` subprocess (respects ~/.ssh/config), health check, teardown on disconnect
-- [ ] Profile UI: tunnel fields (host, user, jump/bastion), wire connect through local forwarded port
-- [ ] Gate: connect to a DB through a tunnel profile end-to-end
+- [x] `tunnel.rs`: spawns `ssh -N -L 127.0.0.1:<free>:<dbhost>:<dbport> [user@]<sshhost>` with BatchMode=yes (key/agent only, no prompts), ExitOnForwardFailure, keepalives; honors ~/.ssh/config (aliases/ProxyJump/keys); free-port pick, ~10s TcpStream health check, ssh-stderr surfaced on failure, `kill_on_drop` reaps it. Needed tokio `net` feature.
+- [x] One tunnel **shared per profile** (`AppState.tunnels`, `ensure_tunnel` get-or-start, race-safe), reused across the profile's per-tab sessions; lives for app lifetime (kill_on_drop on exit).
+- [x] `postgres::connect(profile, password, addr: Option<(&str,u16)>)` — addr overrides host/port for the tunnel local endpoint; TLS no-verify so hostname mismatch is fine. Profile gained `ssh_host/ssh_port/ssh_user/ssh_key` (JSON blob → no DB migration). ProfileForm "SSH tunnel" section.
+- [x] Gate: connect + query through an SSH tunnel ✅ user-verified
+- NOTE: couldn't self-test (localhost sshd off; didn't touch prod) — user verified with their bastion.
 
 ---
 
 ## Session log
+
+### 2026-06-13/14 — v0.1.5 P1.1–P1.7 (session 2)
+Shipped the entire 11-feature backlog as v0.1.5 (P1.1→P1.7), every gate user-verified against live staging.
+- **P1.1 edit power**: `plan_edits` groups edits by (table,row) → one batched UPDATE/row; ctid-fallback editing (detect a `ctid` result column → row locator when no PK), `is_ctid`/`warn` on ColumnEditMeta.
+- **P1.2 row lifecycle**: browser insert panel (`insert_row`, blank=DEFAULT/∅=NULL/typed=value) + grid context-menu delete (`delete_rows`, one txn, DangerModal preview). Browser auto-selects `ctid, *` for PK-less tables. Also: global `noAutocorrect` killer for the WKWebView macOS suggestion bubble.
+- **P1.3 JSON power**: rewrote JsonTree with ⌘F search (filter+highlight+hit-nav) and in-place type-preserving leaf/key editing → stages to pending edits.
+- **P1.4 per-tab sessions**: `ensureTabSession` (keyed profile::tab), `results.executedSessionId` so edits share the tab txn; isolated primary session for introspect; amber tab tx-dot (SQL-sniff).
+- **P1.5 light theme**: `:root[data-theme=light]` token override, `--syn-*`/`--hl-*` tokens, parametric CM `dark` flag (editor remounts on theme change), settings.theme system|dark|light persisted, palette Appearance group.
+- **P1.6 native skin**: window-vibrancy Sidebar material (transparent window + macOSPrivateApi feature must match conf), opaque content panes; custom app icon (qwry-icon.svg → tauri icon).
+- **P1.7 ssh tunnel**: `tunnel.rs` spawns system `ssh -L` (BatchMode, ~/.ssh/config), one tunnel/profile shared across sessions, connect routes through the local port.
+
+Gotchas burned this session:
+- `tauri` cargo feature `macos-private-api` MUST match `app.macOSPrivateApi:true` in tauri.conf or build.rs aborts.
+- editing Cargo.toml mid-session makes the `tauri dev` watcher rebuild — it can show transient errors from a half-applied edit; trust a clean standalone `cargo check`.
+- WKWebView forces macOS autocorrect on every field; no global switch — stamp `autocorrect/autocapitalize/spellcheck=off` per field + MutationObserver (`app/noAutocorrect.ts`).
+- per-tab sessions = one PG connection per tab (and one ssh tunnel/profile shared); tx indicator is a SQL-sniff heuristic.
+
+Remaining deferred (not in v0.1.5): Glide grid reeval (only if grid feels slow), ERD, CSV/Parquet import-export, MySQL/SQLite drivers, LISTEN/NOTIFY, flame-graph EXPLAIN. Scratch tables on staging: `qwry_scratch_ctid`, `qwry_scratch_json` (drop when done testing).
 
 ### 2026-06-12 — P5–P10 (session 1, conclusion)
 ENTIRE v1 ROADMAP SHIPPED IN ONE SESSION (P0→P10), every gate user-verified against live staging data. The three headline differentiators all work: (1) schema-aware intellisense with alias scoping + FK joins, (2) editable results from arbitrary SQL via prepare()-metadata, (3) free first-class jsonb. Plus: streaming 1M-row grid, table browser with AND/OR filters + searchable sort, tabs/saved-queries/history/palette, EXPLAIN viz, danger guards, native chrome with springs.

@@ -20,6 +20,17 @@ pub struct Profile {
     pub color: Option<String>,
     #[serde(default)]
     pub is_prod: bool,
+    /// SSH tunnel: when `ssh_host` is set, connect Postgres through `ssh -L`.
+    /// `host`/`port` above are then the DB address as seen from the ssh server.
+    #[serde(default)]
+    pub ssh_host: Option<String>,
+    #[serde(default)]
+    pub ssh_port: Option<u16>,
+    #[serde(default)]
+    pub ssh_user: Option<String>,
+    /// optional identity file; otherwise ssh-agent / ~/.ssh/config supplies it
+    #[serde(default)]
+    pub ssh_key: Option<String>,
 }
 
 fn default_sslmode() -> String {

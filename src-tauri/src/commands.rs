@@ -41,7 +41,13 @@ pub async fn connect(state: State<'_, AppState>, profile_id: String) -> Result<S
         .ok_or(driver::DriverError::Internal("no such profile".into()))?;
     let password = secrets::get_password(&profile_id).unwrap_or_default();
 
-    let session = driver::postgres::connect(&profile, &password).await?;
+    // through an SSH tunnel when the profile has one, else direct
+    let session = if crate::tunnel::tunnel_host(&profile).is_some() {
+        let tunnel = state.ensure_tunnel(&profile).await?;
+        driver::postgres::connect(&profile, &password, Some(("127.0.0.1", tunnel.local_port))).await?
+    } else {
+        driver::postgres::connect(&profile, &password, None).await?
+    };
     let session_id = uuid::Uuid::new_v4().to_string();
     state
         .sessions

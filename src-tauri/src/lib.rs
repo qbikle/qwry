@@ -3,6 +3,7 @@ mod commands;
 pub mod driver;
 mod secrets;
 mod state;
+mod tunnel;
 
 use tauri::Manager;
 

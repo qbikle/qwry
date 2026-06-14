@@ -29,10 +29,11 @@ impl Drop for PgSession {
     }
 }
 
-fn pg_config(profile: &Profile, password: &str) -> tokio_postgres::Config {
+fn pg_config(profile: &Profile, password: &str, addr: Option<(&str, u16)>) -> tokio_postgres::Config {
+    let (host, port) = addr.unwrap_or((profile.host.as_str(), profile.port));
     let mut cfg = tokio_postgres::Config::new();
-    cfg.host(&profile.host)
-        .port(profile.port)
+    cfg.host(host)
+        .port(port)
         .dbname(&profile.dbname)
         .user(&profile.user)
         .password(password)
@@ -41,8 +42,11 @@ fn pg_config(profile: &Profile, password: &str) -> tokio_postgres::Config {
     cfg
 }
 
-pub async fn connect(profile: &Profile, password: &str) -> Result<PgSession> {
-    let cfg = pg_config(profile, password);
+/// Connect to a profile. When `addr` is given (an SSH tunnel's local endpoint),
+/// it overrides the profile's host/port; dbname/user/sslmode still come from the
+/// profile. TLS uses a no-verify verifier, so the tunnel hostname mismatch is fine.
+pub async fn connect(profile: &Profile, password: &str, addr: Option<(&str, u16)>) -> Result<PgSession> {
+    let cfg = pg_config(profile, password, addr);
 
     let try_tls = profile.sslmode != "disable";
     let try_plain = profile.sslmode != "require";
