@@ -235,6 +235,13 @@ export const useResults = create<ResultsState>((set, get) => ({
       set((s) => ({
         globalError: s.statements.some((st) => st.error) ? null : err,
       }));
+      // a dead connection makes "connected" a lie — flip the dot so the UI is honest
+      const msg = (err?.message ?? "").toLowerCase();
+      if (/connection|closed|communicat|broken pipe|reset|terminat|no such session/.test(msg)) {
+        useConnections.setState((s) => ({
+          connState: { ...s.connState, [activeProfileId]: "disconnected" },
+        }));
+      }
     } finally {
       set({ running: false });
     }

@@ -3,6 +3,8 @@ import * as ipc from "../ipc/commands";
 import type { DriverError, Profile } from "../ipc/types";
 
 type ConnState = "disconnected" | "connecting" | "connected";
+/** which full-screen connection surface is showing (null = work view) */
+export type HomeMode = "dashboard" | "edit" | null;
 
 /** key for a per-tab session / transaction flag */
 export const skey = (profileId: string, tabId: string) => `${profileId}::${tabId}`;
@@ -18,8 +20,10 @@ interface ConnectionsState {
   connState: Record<string, ConnState>;
   activeProfileId: string | null;
 
-  /** profile being edited in the form; null = form closed, "new" sentinel id for create */
+  /** profile being edited in the form; null = form closed */
   editing: Profile | null;
+  /** full-screen connection surface (dashboard / editor); null = work view */
+  homeMode: HomeMode;
 
   sql: string;
   /** connect-time errors (auth, network) */
@@ -29,6 +33,9 @@ interface ConnectionsState {
   saveProfile: (p: Profile, password?: string) => Promise<void>;
   deleteProfile: (id: string) => Promise<void>;
   setEditing: (p: Profile | null) => void;
+  setHome: (m: HomeMode) => void;
+  /** open the editor for a profile (or a blank one) in the home surface */
+  editConnection: (p: Profile | null) => void;
   connect: (profileId: string) => Promise<void>;
   setActive: (profileId: string) => void;
   setSql: (sql: string) => void;
@@ -37,6 +44,8 @@ interface ConnectionsState {
   setTxTab: (key: string, inTx: boolean) => void;
   /** disconnect and forget every session for a closed tab */
   closeTabSessions: (tabId: string) => void;
+  /** a profile's connection died — flip the dot and drop its (dead) sessions */
+  markDisconnected: (profileId: string) => void;
 }
 
 export const useConnections = create<ConnectionsState>((set, get) => ({
@@ -47,6 +56,7 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
   connState: {},
   activeProfileId: null,
   editing: null,
+  homeMode: "dashboard", // app opens on the home/connections screen
   sql: "",
   error: null,
 
@@ -74,6 +84,8 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
   },
 
   setEditing: (p) => set({ editing: p }),
+  setHome: (homeMode) => set({ homeMode }),
+  editConnection: (p) => set({ editing: p, homeMode: "edit" }),
 
   connect: async (profileId) => {
     set((s) => ({ connState: { ...s.connState, [profileId]: "connecting" } }));
@@ -97,6 +109,8 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
         txTabs,
         connState: { ...s.connState, [profileId]: "connected" },
         activeProfileId: profileId,
+        editing: null,
+        homeMode: null, // connected → leave the home surface for the work view
         error: null,
       }));
       // schema cache powers sidebar + completion; fire and forget
@@ -118,8 +132,11 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
     const key = skey(profileId, tabId);
     const existing = get().tabSessions[key];
     if (existing) return existing;
-    // a tab session presupposes the profile is connected (primary session)
-    if (!get().sessions[profileId]) return null;
+    // primary gone (never connected, or dropped) → reconnect transparently
+    if (!get().sessions[profileId]) {
+      await get().connect(profileId);
+      if (!get().sessions[profileId]) return null;
+    }
     try {
       const sid = await ipc.connect(profileId);
       set((s) => ({ tabSessions: { ...s.tabSessions, [key]: sid } }));
@@ -149,4 +166,24 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
     }
     set({ tabSessions: sessions, txTabs });
   },
+
+  markDisconnected: (profileId) =>
+    set((s) => {
+      const prefix = `${profileId}::`;
+      const { [profileId]: _gone, ...sessions } = s.sessions;
+      const tabSessions: Record<string, string> = {};
+      for (const [k, v] of Object.entries(s.tabSessions)) {
+        if (!k.startsWith(prefix)) tabSessions[k] = v;
+      }
+      const txTabs: Record<string, boolean> = {};
+      for (const [k, v] of Object.entries(s.txTabs)) {
+        if (!k.startsWith(prefix)) txTabs[k] = v;
+      }
+      return {
+        sessions,
+        tabSessions,
+        txTabs,
+        connState: { ...s.connState, [profileId]: "disconnected" },
+      };
+    }),
 }));

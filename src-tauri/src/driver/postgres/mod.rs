@@ -42,10 +42,46 @@ fn pg_config(profile: &Profile, password: &str, addr: Option<(&str, u16)>) -> to
     cfg
 }
 
+/// spawn the connection driver task. When the connection ends (server drop /
+/// network error) `on_close` fires. An intentional disconnect aborts this task
+/// (PgSession::drop) before it reaches `on_close`, so it only signals a real
+/// death — the frontend uses it to flip the connection's status dot.
+fn spawn_session<C>(
+    client: Client,
+    connection: C,
+    tls: TlsChoice,
+    on_close: Box<dyn FnOnce() + Send>,
+) -> PgSession
+where
+    C: std::future::Future<Output = std::result::Result<(), tokio_postgres::Error>>
+        + Send
+        + 'static,
+{
+    let cancel = client.cancel_token();
+    let conn_handle = tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("pg connection error: {e}");
+        }
+        on_close();
+    });
+    PgSession {
+        client,
+        cancel,
+        tls,
+        conn_handle,
+    }
+}
+
 /// Connect to a profile. When `addr` is given (an SSH tunnel's local endpoint),
 /// it overrides the profile's host/port; dbname/user/sslmode still come from the
 /// profile. TLS uses a no-verify verifier, so the tunnel hostname mismatch is fine.
-pub async fn connect(profile: &Profile, password: &str, addr: Option<(&str, u16)>) -> Result<PgSession> {
+/// `on_close` fires when the connection later dies (see `spawn_session`).
+pub async fn connect(
+    profile: &Profile,
+    password: &str,
+    addr: Option<(&str, u16)>,
+    on_close: Box<dyn FnOnce() + Send>,
+) -> Result<PgSession> {
     let cfg = pg_config(profile, password, addr);
 
     let try_tls = profile.sslmode != "disable";
@@ -54,18 +90,7 @@ pub async fn connect(profile: &Profile, password: &str, addr: Option<(&str, u16)
     if try_tls {
         match cfg.connect(tls::connector()).await {
             Ok((client, connection)) => {
-                let cancel = client.cancel_token();
-                let conn_handle = tokio::spawn(async move {
-                    if let Err(e) = connection.await {
-                        eprintln!("pg connection error: {e}");
-                    }
-                });
-                return Ok(PgSession {
-                    client,
-                    cancel,
-                    tls: TlsChoice::Tls,
-                    conn_handle,
-                });
+                return Ok(spawn_session(client, connection, TlsChoice::Tls, on_close));
             }
             Err(e) if !try_plain => return Err(DriverError::Connect(e.to_string())),
             Err(_) => {} // prefer: fall through to plain
@@ -76,18 +101,7 @@ pub async fn connect(profile: &Profile, password: &str, addr: Option<(&str, u16)
         .connect(tokio_postgres::NoTls)
         .await
         .map_err(|e| DriverError::Connect(e.to_string()))?;
-    let cancel = client.cancel_token();
-    let conn_handle = tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("pg connection error: {e}");
-        }
-    });
-    Ok(PgSession {
-        client,
-        cancel,
-        tls: TlsChoice::Plain,
-        conn_handle,
-    })
+    Ok(spawn_session(client, connection, TlsChoice::Plain, on_close))
 }
 
 impl PgSession {

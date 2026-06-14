@@ -1,13 +1,15 @@
 import { useConnections } from "../stores/connections";
 import { useResults } from "../stores/results";
-import { SqlEditor } from "./SqlEditor";
+import { SqlEditor, editorRunText } from "./SqlEditor";
 import "./editor.css";
+
+/** selection if any, else the whole buffer — matches ⌘↵ */
+const runText = () => editorRunText.current?.();
 
 export function QueryBox() {
   const connectError = useConnections((s) => s.error);
-  const connected = useConnections(
-    (s) => s.activeProfileId !== null && !!s.sessions[s.activeProfileId],
-  );
+  // a profile is active — run() auto-reconnects if the session has dropped
+  const connected = useConnections((s) => s.activeProfileId !== null);
   const sql = useConnections((s) => s.sql);
   const run = useResults((s) => s.run);
   const cancel = useResults((s) => s.cancel);
@@ -22,7 +24,7 @@ export function QueryBox() {
           className="qb-explain"
           onClick={() =>
             void import("../stores/explain").then(({ useExplain }) =>
-              useExplain.getState().run(),
+              useExplain.getState().run(runText()),
             )
           }
           disabled={!connected || !sql.trim()}
@@ -36,7 +38,7 @@ export function QueryBox() {
         ) : (
           <button
             className="qb-run"
-            onClick={() => run()}
+            onClick={() => run(runText())}
             disabled={!connected || !sql.trim()}
           >
             Run ⌘↵

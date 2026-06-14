@@ -39,35 +39,43 @@
   cursor: pointer;
 }
 
-.rail-avatar {
-  position: relative;
-  width: 40px;
-  height: 40px;
-  border-radius: 13px; /* squircle-ish; P2.3 makes it configurable */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  font-weight: 650;
-  font-size: 16px;
-  letter-spacing: 0.01em;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
-  transition:
-    border-radius 220ms cubic-bezier(0.2, 0.9, 0.3, 1.2),
-    transform 180ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
-  user-select: none;
+.rail-item .qa-avatar {
+  transition: transform 180ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
-.rail-item:hover .rail-avatar {
-  border-radius: 11px;
+.rail-item:hover .qa-avatar {
   transform: translateY(-1px);
 }
 /* active = a full ring in the connection's own colour, with a gap */
-.rail-item.active .rail-avatar {
-  border-radius: 12px;
+.rail-item.active .qa-avatar {
   box-shadow:
     0 0 0 2px var(--bg-app),
     0 0 0 4px var(--c, var(--avatar-ring)),
     0 3px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* home button at the top of the rail */
+.rail-home {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: color 150ms, background 150ms, border-color 150ms;
+}
+.rail-home:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+.rail-home.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .rail-prod {

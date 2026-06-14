@@ -1,11 +1,19 @@
 use std::sync::Arc;
 
 use tauri::ipc::Channel;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::driver::{self, ExecOutcome, Profile, QueryEvent, Result, SessionId};
 use crate::secrets;
 use crate::state::AppState;
+
+/// emitted to the frontend when a connection's socket dies, so the UI can flip
+/// the status dot and auto-reconnect on next use
+#[derive(Clone, serde::Serialize)]
+struct SessionClosed {
+    session_id: String,
+    profile_id: String,
+}
 
 #[tauri::command]
 pub fn profiles_list(state: State<'_, AppState>) -> Result<Vec<Profile>> {
@@ -32,7 +40,11 @@ pub fn profile_delete(state: State<'_, AppState>, id: String) -> Result<()> {
 }
 
 #[tauri::command]
-pub async fn connect(state: State<'_, AppState>, profile_id: String) -> Result<SessionId> {
+pub async fn connect(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> Result<SessionId> {
     let profile = state
         .appdb
         .list_profiles()?
@@ -41,14 +53,26 @@ pub async fn connect(state: State<'_, AppState>, profile_id: String) -> Result<S
         .ok_or(driver::DriverError::Internal("no such profile".into()))?;
     let password = secrets::get_password(&profile_id).unwrap_or_default();
 
+    // session id up front so the death callback can name itself
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let on_close: Box<dyn FnOnce() + Send> = {
+        let app = app.clone();
+        let payload = SessionClosed {
+            session_id: session_id.clone(),
+            profile_id: profile_id.clone(),
+        };
+        Box::new(move || {
+            let _ = app.emit("session-closed", payload);
+        })
+    };
+
     // through an SSH tunnel when the profile has one, else direct
     let session = if crate::tunnel::tunnel_host(&profile).is_some() {
         let tunnel = state.ensure_tunnel(&profile).await?;
-        driver::postgres::connect(&profile, &password, Some(("127.0.0.1", tunnel.local_port))).await?
+        driver::postgres::connect(&profile, &password, Some(("127.0.0.1", tunnel.local_port)), on_close).await?
     } else {
-        driver::postgres::connect(&profile, &password, None).await?
+        driver::postgres::connect(&profile, &password, None, on_close).await?
     };
-    let session_id = uuid::Uuid::new_v4().to_string();
     state
         .sessions
         .lock()

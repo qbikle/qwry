@@ -172,8 +172,11 @@ Design (from user wireframes): floating rounded cards on a themed-glass gutter �
 - [x] Custom themes = explicit anchors (AMOLED/neutral/high-contrast all reachable, no mangling). **Dual-mode**: authored once, engine synthesises the opposite light/dark variant (flip surface lightness, keep character+accents, contrast-adapt accent) → mode toggle flips custom themes too. Edit (pencil) custom; fork (copy) built-in → anchors. ThemePicker modal (swatchbook button in titlebar / ⌘K → Customize theme); active = ring (no check). Stable custom ids.
 - [x] Gate: palettes + modes + custom AMOLED/neutral + dual-mode flip ✅ user-verified
 
-## P2.3 — connection rail + customization + home (next)
-- [ ] Rail polish, avatar color+glyph customization (feeds `--c` ring), home/startup screen (both: home dashboard + right-click edit), DB switcher dropdown.
+## P2.3 — connection rail + customization + home
+- [x] **P2.3a**: shared `Avatar` (color + glyph: letter/emoji/curated lucide icon, auto-contrast glyph) + `glyph` on Profile (JSON, no migration). Rail uses Avatar + 🏠 home button; ＋/right-click → editor; click green → instant open. Home surface (`homeMode` in connections store): **Dashboard** (connection grid + New, click connects / green opens instantly) + **ConnectionEditor** (full panel, replaces modal: avatar preview + name + color swatches/picker + glyph picker + connection fields + SSH + Delete/Cancel/Save/Save&Connect). App opens on home; sidebar hidden during home.
+- [x] **Connection liveness**: `connect` takes an `on_close` Box callback → driver task fires it when the socket dies (abort on intentional disconnect skips it); `commands::connect` emits `session-closed`. Frontend `markDisconnected` flips the dot gray + drops dead sessions; `ensureTabSession` auto-reconnects on next run; query-failure also flips the dot. Work view stays mounted when disconnected (gate = activeProfile, not live `connected`).
+- [x] Run/Explain **buttons** now honour the editor selection (via `editorRunText`), matching ⌘↵.
+- [ ] **P2.3b**: DB-switcher dropdown in the sidebar DB header (new sibling connection per database) + recent-activity strip on the dashboard.
 
 ## P2.4 — per-tab results
 - [ ] Each tab owns its results + executedSql + session + edits + inspector target.
