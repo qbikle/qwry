@@ -40,6 +40,37 @@ pub fn profile_delete(state: State<'_, AppState>, id: String) -> Result<()> {
 }
 
 #[tauri::command]
+pub fn set_profile_order(state: State<'_, AppState>, ids: Vec<String>) -> Result<()> {
+    state.appdb.set_profile_order(&ids)
+}
+
+/// clone a profile onto a different database (the DB-switcher) — new id, same
+/// host/creds (password carried over), name "<base> · <db>"
+#[tauri::command]
+pub fn clone_connection(
+    state: State<'_, AppState>,
+    src_profile_id: String,
+    dbname: String,
+) -> Result<Profile> {
+    let src = state
+        .appdb
+        .list_profiles()?
+        .into_iter()
+        .find(|p| p.id == src_profile_id)
+        .ok_or(driver::DriverError::Internal("no such profile".into()))?;
+    let base = src.name.split(" · ").next().unwrap_or(&src.name).to_string();
+    let mut p = src.clone();
+    p.id = uuid::Uuid::new_v4().to_string();
+    p.dbname = dbname.clone();
+    p.name = format!("{base} · {dbname}");
+    state.appdb.save_profile(&p)?;
+    if let Ok(pw) = secrets::get_password(&src_profile_id) {
+        let _ = secrets::set_password(&p.id, &pw);
+    }
+    Ok(p)
+}
+
+#[tauri::command]
 pub async fn connect(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -230,6 +261,14 @@ pub fn history_search(
     state
         .appdb
         .history_search(&profile_id, &query, limit.unwrap_or(100))
+}
+
+#[tauri::command]
+pub fn history_recent(
+    state: State<'_, AppState>,
+    limit: Option<i64>,
+) -> Result<Vec<crate::appdb::HistoryRow>> {
+    state.appdb.history_recent(limit.unwrap_or(8))
 }
 
 #[tauri::command]

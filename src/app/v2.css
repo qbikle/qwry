@@ -104,13 +104,24 @@
 }
 
 /* sidebar card sections */
+.dbsw {
+  position: relative;
+}
 .sb-dbhead {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
+  width: 100%;
   padding: 10px var(--sp-3);
+  border: none;
   border-bottom: 1px solid var(--border);
-  cursor: default;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  text-align: left;
+}
+.sb-dbhead:hover {
+  background: var(--bg-hover);
 }
 .sb-db-icon {
   color: var(--accent);
@@ -123,11 +134,61 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.sb-db-sub {
-  font-size: var(--text-xs);
-  color: var(--fg-faint);
+.sb-db-chev {
   margin-left: auto;
+  color: var(--fg-faint);
+  flex-shrink: 0;
+}
+
+.dbsw-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+.dbsw-pop {
+  position: absolute;
+  top: calc(100% - 2px);
+  left: var(--sp-2);
+  right: var(--sp-2);
+  z-index: 21;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: var(--sp-1);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+}
+.dbsw-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: 6px 9px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-family: var(--font-mono);
+}
+.dbsw-item:hover {
+  background: var(--bg-hover);
+}
+.dbsw-item.active {
+  color: var(--accent);
+}
+.dbsw-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+.dbsw-msg {
+  padding: 8px 10px;
+  color: var(--fg-faint);
+  font-size: var(--text-sm);
 }
 
 .sb-tables {

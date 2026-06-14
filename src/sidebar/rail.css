@@ -20,7 +20,9 @@
      clip box — overflow-y:auto forces overflow-x to clip, so they must fit */
   overflow-x: hidden;
   padding: 6px 11px;
+  margin: 0;
   width: 100%;
+  list-style: none;
   /* hide the scrollbar — the rail is narrow */
   scrollbar-width: none;
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { Database, SwatchBook } from "lucide-react";
+import { SwatchBook } from "lucide-react";
 import { panelIn } from "../design/springs";
 import { useUI } from "../stores/ui";
 import { ThemePicker } from "./ThemePicker";
@@ -8,6 +8,7 @@ import { useConnections } from "../stores/connections";
 import { useInspector } from "../stores/inspector";
 import { useTabs } from "../stores/tabs";
 import { ConnectionRail } from "../sidebar/ConnectionRail";
+import { DbSwitcher } from "../sidebar/DbSwitcher";
 import { Home } from "../home/Home";
 import { SchemaTree } from "../sidebar/SchemaTree";
 import { SavedQueries } from "../sidebar/SavedQueries";
@@ -28,11 +29,7 @@ import "./v2.css";
 function SidebarCard({ profileId, dbname, name }: { profileId: string; dbname: string; name: string }) {
   return (
     <>
-      <div className="sb-dbhead" title={`${name} · ${dbname}`}>
-        <Database size={15} className="sb-db-icon" />
-        <span className="sb-db-name">{dbname || name}</span>
-        <span className="sb-db-sub">{name}</span>
-      </div>
+      <DbSwitcher profileId={profileId} dbname={dbname} name={name} />
       <div className="sb-tables">
         <SchemaTree profileId={profileId} />
       </div>

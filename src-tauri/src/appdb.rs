@@ -76,15 +76,17 @@ impl AppDb {
              );",
         )
         .map_err(|e| DriverError::Internal(format!("appdb init: {e}")))?;
-        // additive migration; fails harmlessly when the column already exists
+        // additive migrations; fail harmlessly when the column already exists
         let _ = conn.execute("ALTER TABLE tabs ADD COLUMN saved_id TEXT", []);
+        let _ = conn.execute("ALTER TABLE profiles ADD COLUMN position INTEGER", []);
+        let _ = conn.execute("UPDATE profiles SET position = rowid WHERE position IS NULL", []);
         Ok(Self(Mutex::new(conn)))
     }
 
     pub fn list_profiles(&self) -> Result<Vec<Profile>> {
         let conn = self.0.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT data FROM profiles ORDER BY rowid")
+            .prepare("SELECT data FROM profiles ORDER BY position, rowid")
             .map_err(internal)?;
         let rows = stmt
             .query_map([], |r| r.get::<_, String>(0))
@@ -106,12 +108,28 @@ impl AppDb {
             .lock()
             .unwrap()
             .execute(
-                "INSERT INTO profiles (id, data) VALUES (?1, ?2)
+                // new rows append at the end; existing rows keep their position
+                "INSERT INTO profiles (id, data, position)
+                 VALUES (?1, ?2, COALESCE((SELECT MAX(position) FROM profiles), 0) + 1)
                  ON CONFLICT(id) DO UPDATE SET data = excluded.data",
                 rusqlite::params![profile.id, data],
             )
             .map_err(internal)?;
         Ok(())
+    }
+
+    /// persist the rail order
+    pub fn set_profile_order(&self, ids: &[String]) -> Result<()> {
+        let mut conn = self.0.lock().unwrap();
+        let tx = conn.transaction().map_err(internal)?;
+        for (i, id) in ids.iter().enumerate() {
+            tx.execute(
+                "UPDATE profiles SET position = ?1 WHERE id = ?2",
+                rusqlite::params![i as i64, id],
+            )
+            .map_err(internal)?;
+        }
+        tx.commit().map_err(internal)
     }
 
     pub fn delete_profile(&self, id: &str) -> Result<()> {
@@ -188,6 +206,30 @@ impl AppDb {
         let pattern = format!("%{}%", query.replace('%', "\\%"));
         let rows = stmt
             .query_map(rusqlite::params![profile_id, pattern, limit], |r| {
+                Ok(HistoryRow {
+                    id: r.get(0)?,
+                    profile_id: r.get(1)?,
+                    sql: r.get(2)?,
+                    ms: r.get(3)?,
+                    rows: r.get(4)?,
+                    ran_at: r.get(5)?,
+                })
+            })
+            .map_err(internal)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(internal)
+    }
+
+    /// most recent queries across all profiles (for the home dashboard)
+    pub fn history_recent(&self, limit: i64) -> Result<Vec<HistoryRow>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, profile_id, sql, ms, rows, ran_at FROM history
+                 ORDER BY ran_at DESC, id DESC LIMIT ?1",
+            )
+            .map_err(internal)?;
+        let rows = stmt
+            .query_map([limit], |r| {
                 Ok(HistoryRow {
                     id: r.get(0)?,
                     profile_id: r.get(1)?,

@@ -1,10 +1,24 @@
+import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { Pencil, Plus } from "lucide-react";
+import { Clock, Pencil, Plus } from "lucide-react";
 import { panelIn } from "../design/springs";
 import { useConnections } from "../stores/connections";
+import { useTabs } from "../stores/tabs";
 import { Avatar } from "../sidebar/avatar";
 import { blankProfile } from "../sidebar/ConnectionRail";
+import * as ipc from "../ipc/commands";
+import type { HistoryRow } from "../ipc/types";
 import "./home.css";
+
+function relTime(ranAt: string): string {
+  const t = new Date(ranAt.replace(" ", "T") + "Z").getTime();
+  if (Number.isNaN(t)) return "";
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
 
 export function Dashboard() {
   const profiles = useConnections((s) => s.profiles);
@@ -13,6 +27,11 @@ export function Dashboard() {
   const setActive = useConnections((s) => s.setActive);
   const setHome = useConnections((s) => s.setHome);
   const editConnection = useConnections((s) => s.editConnection);
+  const [recent, setRecent] = useState<HistoryRow[]>([]);
+
+  useEffect(() => {
+    void ipc.historyRecent(8).then(setRecent).catch(() => setRecent([]));
+  }, []);
 
   // already connected (green) → open the work view instantly; else connect
   const openConn = (id: string) => {
@@ -22,6 +41,11 @@ export function Dashboard() {
     } else {
       void connect(id);
     }
+  };
+
+  const openRecent = async (row: HistoryRow) => {
+    await connect(row.profile_id);
+    useTabs.getState().newTab(row.sql, "recent");
   };
 
   return (
@@ -72,6 +96,26 @@ export function Dashboard() {
           <span>New connection</span>
         </button>
       </div>
+
+      {recent.length > 0 && (
+        <div className="dash-recent">
+          <div className="dash-recent-head">
+            <Clock size={13} /> Recent
+          </div>
+          {recent.map((row) => {
+            const prof = profiles.find((p) => p.id === row.profile_id);
+            return (
+              <button key={row.id} className="dash-recent-item" onClick={() => void openRecent(row)}>
+                {prof && <Avatar profile={prof} index={profiles.indexOf(prof)} size={22} />}
+                <span className="dash-recent-sql">{row.sql.replace(/\s+/g, " ").trim()}</span>
+                <span className="dash-recent-meta">
+                  {prof?.name || prof?.host || "—"} · {relTime(row.ran_at)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </motion.div>
   );
 }

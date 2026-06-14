@@ -20,6 +20,15 @@ export interface Profile {
   ssh_key?: string | null;
 }
 
+export interface HistoryRow {
+  id: number;
+  profile_id: string;
+  sql: string;
+  ms: number;
+  rows: number;
+  ran_at: string;
+}
+
 export interface ColumnMeta {
   name: string;
   type_oid: number;

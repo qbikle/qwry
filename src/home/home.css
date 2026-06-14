@@ -123,6 +123,55 @@
   display: inline-flex;
 }
 
+/* recent activity */
+.dash-recent {
+  margin-top: var(--sp-6);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dash-recent-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-faint);
+  font-weight: 600;
+  margin-bottom: var(--sp-2);
+}
+.dash-recent-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 7px 9px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+.dash-recent-item:hover {
+  background: var(--bg-hover);
+}
+.dash-recent-sql {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+.dash-recent-meta {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}
+
 /* ---------- connection editor ---------- */
 .ce {
   height: 100%;
