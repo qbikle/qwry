@@ -157,6 +157,35 @@ Order = daily-value + risk first, cosmetic mid, big-build last. Glide reeval (#1
 
 ---
 
+# v0.2 — visual overhaul + UX/QOL (session 3+, iterative)
+
+Major UI overhaul to "best-looking DB client" + per-tab results. Iterative & communicative — features grow with user feedback, not fully pre-planned. Branch `v0.2` off `v0.1.5`.
+
+Design (from user wireframes): floating rounded cards on a themed-glass gutter — left **connection rail** (circular avatars) · **sidebar card** (Databases / Tables / Saved) · **main card** (tabs / query / results) · inspector slides in. Top breadcrumb. Feel = Linear/Arc (soft, springy).
+
+## P2.1 — layout shell ✅
+- [x] `v2-shell`: transparent window, vibrancy in gutters; floating cards (`.card` = radius-panel + shadow + hairline border + top sheen) with `--gutter`/`--rail-w` tokens. ConnectionRail (basic) + SidebarCard (DB head + SchemaTree + SavedQueries) + main-card; inspector as its own card + flush reopen tab. `panelIn`/`railItemIn` springs. Old `.app-shell/.sidebar/.main-area` removed.
+
+## P2.2 — theme system + colour overhaul ✅
+- [x] Engine `design/theme.ts`: palette = seeds → derive full token set as inline CSS vars at startup (no flash). TWO kinds: **hue** (curated: accent+hue+tint → tinted neutral ramp) and **anchors** (custom: bg/fg/primary/secondary → surfaces derived by sRGB mix). `--accent-fg` auto-contrast (Pikachu yellow → dark text); swapped all `color:white`-on-accent.
+- [x] 8 Pokémon palettes (Blastoise default) + mode system/light/dark (independent axis). Themed `--glass-tint` (gutter matches scheme).
+- [x] Custom themes = explicit anchors (AMOLED/neutral/high-contrast all reachable, no mangling). **Dual-mode**: authored once, engine synthesises the opposite light/dark variant (flip surface lightness, keep character+accents, contrast-adapt accent) → mode toggle flips custom themes too. Edit (pencil) custom; fork (copy) built-in → anchors. ThemePicker modal (swatchbook button in titlebar / ⌘K → Customize theme); active = ring (no check). Stable custom ids.
+- [x] Gate: palettes + modes + custom AMOLED/neutral + dual-mode flip ✅ user-verified
+
+## P2.3 — connection rail + customization + home (next)
+- [ ] Rail polish, avatar color+glyph customization (feeds `--c` ring), home/startup screen (both: home dashboard + right-click edit), DB switcher dropdown.
+
+## P2.4 — per-tab results
+- [ ] Each tab owns its results + executedSql + session + edits + inspector target.
+
+## P2.5 — inspector redesign
+- [ ] Tidier slide-in; consider moving toggle to titlebar.
+
+## P2.6 — breadcrumb + animation polish
+- [ ] Richer breadcrumb (db/table/query); spring tuning pass.
+
+---
+
 ## Session log
 
 ### 2026-06-13/14 — v0.1.5 P1.1–P1.7 (session 2)

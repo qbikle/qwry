@@ -1,9 +1,15 @@
 import { useEffect, useState } from "react";
+import { motion } from "motion/react";
+import { Database, SwatchBook } from "lucide-react";
+import { panelIn } from "../design/springs";
+import { useUI } from "../stores/ui";
+import { ThemePicker } from "./ThemePicker";
 import { useConnections } from "../stores/connections";
 import { useInspector } from "../stores/inspector";
 import { useTabs } from "../stores/tabs";
-import { ProfileList } from "../sidebar/ProfileList";
+import { ConnectionRail } from "../sidebar/ConnectionRail";
 import { ProfileForm } from "../sidebar/ProfileForm";
+import { SchemaTree } from "../sidebar/SchemaTree";
 import { SavedQueries } from "../sidebar/SavedQueries";
 import { QueryBox } from "../editor/QueryBox";
 import { TabBar } from "../editor/TabBar";
@@ -16,18 +22,40 @@ import { ExplainView } from "../explain/ExplainView";
 import { useBrowser } from "../stores/browser";
 import { useExplain } from "../stores/explain";
 import "./app.css";
+import "./v2.css";
+
+/** the sidebar card: DB header → tables → saved queries (shown when connected) */
+function SidebarCard({ profileId, dbname, name }: { profileId: string; dbname: string; name: string }) {
+  return (
+    <>
+      <div className="sb-dbhead" title={`${name} · ${dbname}`}>
+        <Database size={15} className="sb-db-icon" />
+        <span className="sb-db-name">{dbname || name}</span>
+        <span className="sb-db-sub">{name}</span>
+      </div>
+      <div className="sb-tables">
+        <SchemaTree profileId={profileId} />
+      </div>
+      <SavedQueries />
+    </>
+  );
+}
 
 export function App() {
   const loadProfiles = useConnections((s) => s.loadProfiles);
   const editing = useConnections((s) => s.editing);
+  const profiles = useConnections((s) => s.profiles);
+  const activeProfileId = useConnections((s) => s.activeProfileId);
+  const connState = useConnections((s) => s.connState);
   const inspectorOpen = useInspector((s) => s.open);
   const inspectorWidth = useInspector((s) => s.width);
   const browsing = useBrowser((s) => s.table !== null);
   const explainOpen = useExplain((s) => s.open);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const prodActive = useConnections(
-    (s) => !!s.profiles.find((p) => p.id === s.activeProfileId)?.is_prod,
-  );
+
+  const activeProfile = profiles.find((p) => p.id === activeProfileId) ?? null;
+  const connected = activeProfileId ? connState[activeProfileId] === "connected" : false;
+  const prodActive = !!activeProfile?.is_prod && connected;
 
   const startInspectorResize = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -134,50 +162,106 @@ export function App() {
   }, [loadProfiles]);
 
   return (
-    <div className="app-shell">
+    <div className="v2-shell">
       {prodActive && <div className="prod-strip" title="Connected to PRODUCTION" />}
-      <aside className="sidebar">
-        <div className="titlebar-drag" data-tauri-drag-region />
-        <ProfileList />
-        <SavedQueries />
-      </aside>
-      <main className="main-area">
-        {browsing ? (
-          <TableBrowser />
-        ) : (
-          <>
-            <TabBar />
-            <section className="editor-pane">
-              <QueryBox />
-            </section>
-            <section className="results-pane">
-              {explainOpen ? <ExplainView /> : <ResultsPane />}
-            </section>
-          </>
-        )}
-      </main>
-      {inspectorOpen ? (
-        <aside className="inspector-pane" style={{ width: inspectorWidth }}>
-          <div className="inspector-resize" onMouseDown={startInspectorResize} />
-          <Inspector />
-        </aside>
-      ) : (
+
+      <div className="v2-titlebar" data-tauri-drag-region>
+        <span className="v2-breadcrumb">
+          {activeProfile ? (
+            <>
+              <span className="crumb-strong">{activeProfile.name || activeProfile.host}</span>
+              {activeProfile.dbname && (
+                <>
+                  <span className="crumb-sep">/</span>
+                  {activeProfile.dbname}
+                </>
+              )}
+            </>
+          ) : (
+            "qwry"
+          )}
+        </span>
         <button
-          className="inspector-reopen"
-          title="Show inspector ⌘I"
-          onClick={() => useInspector.getState().toggle()}
+          className="v2-tool"
+          title="Theme"
+          onClick={() => useUI.getState().openThemePicker()}
         >
-          ‹
+          <SwatchBook size={15} />
         </button>
-      )}
+      </div>
+
+      <div className="v2-body">
+        <ConnectionRail />
+
+        {connected && activeProfile ? (
+          <motion.aside className="sidebar-card card" {...panelIn}>
+            <SidebarCard
+              profileId={activeProfile.id}
+              dbname={activeProfile.dbname}
+              name={activeProfile.name || activeProfile.host}
+            />
+          </motion.aside>
+        ) : (
+          <motion.aside className="sidebar-card card" {...panelIn}>
+            <div className="sb-empty">
+              {profiles.length === 0
+                ? "Add a connection with ＋ on the left"
+                : "Select a connection to browse its schema"}
+            </div>
+          </motion.aside>
+        )}
+
+        <motion.main className="main-card card" {...panelIn}>
+          {browsing ? (
+            <TableBrowser />
+          ) : connected ? (
+            <>
+              <TabBar />
+              <section className="editor-pane">
+                <QueryBox />
+              </section>
+              <section className="results-pane">
+                {explainOpen ? <ExplainView /> : <ResultsPane />}
+              </section>
+            </>
+          ) : (
+            <div className="main-empty">
+              <div className="me-title">qwry</div>
+              <div>Pick a connection from the rail, or ＋ to add one.</div>
+            </div>
+          )}
+
+          {!inspectorOpen && connected && (
+            <button
+              className="inspector-reopen"
+              title="Show inspector ⌘I"
+              onClick={() => useInspector.getState().toggle()}
+            >
+              ‹
+            </button>
+          )}
+        </motion.main>
+
+        {inspectorOpen && (
+          <motion.aside className="inspector-card card" style={{ width: inspectorWidth }} {...panelIn}>
+            <div className="inspector-resize" onMouseDown={startInspectorResize} />
+            <Inspector />
+          </motion.aside>
+        )}
+      </div>
+
       {editing && (
-        <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && useConnections.getState().setEditing(null)}>
+        <div
+          className="modal-backdrop"
+          onMouseDown={(e) => e.target === e.currentTarget && useConnections.getState().setEditing(null)}
+        >
           <div className="modal">
             <ProfileForm profile={editing} />
           </div>
         </div>
       )}
       <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <ThemePicker />
       <DangerModal />
     </div>
   );

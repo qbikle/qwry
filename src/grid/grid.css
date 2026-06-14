@@ -379,7 +379,7 @@
 .ep-actions button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: white;
+  color: var(--accent-fg);
 }
 .ep-actions button:disabled {
   opacity: 0.5;
@@ -416,7 +416,7 @@
 }
 .vgrid-menu button:hover {
   background: var(--accent);
-  color: white;
+  color: var(--accent-fg);
 }
 .vgrid-menu button.danger {
   color: var(--danger);

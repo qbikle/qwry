@@ -163,7 +163,7 @@
 }
 .ed-menu button:hover {
   background: var(--accent);
-  color: white;
+  color: var(--accent-fg);
 }
 .ed-menu-hint {
   color: var(--fg-faint);
@@ -225,7 +225,7 @@
 }
 .fn-item.sel .fn-name,
 .fn-item.sel .fn-sig {
-  color: white;
+  color: var(--accent-fg);
 }
 
 .fn-name {
@@ -288,7 +288,7 @@
 
 .qb-run {
   background: var(--accent);
-  color: white;
+  color: var(--accent-fg);
 }
 .qb-run:disabled {
   opacity: 0.4;

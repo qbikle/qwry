@@ -467,7 +467,7 @@
 .tb-insert-actions button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: white;
+  color: var(--accent-fg);
 }
 .tb-insert-actions button:disabled {
   opacity: 0.6;

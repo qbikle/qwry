@@ -15,9 +15,11 @@
   --fg-muted: #9aa3b2;
   --fg-faint: #5e6673;
 
-  /* accent */
+  /* accent (fallbacks; the theme engine overrides these at runtime) */
   --accent: #5b8cff;
   --accent-soft: rgba(91, 140, 255, 0.16);
+  --accent-fg: #ffffff;
+  --glass-tint: transparent;
   --danger: #ff5c69;
   --danger-soft: rgba(255, 92, 105, 0.14);
   --ok: #3ecf8e;
@@ -65,6 +67,16 @@
   --radius-sm: 5px;
   --radius-md: 8px;
   --radius-lg: 12px;
+
+  /* v0.2 floating-card shell */
+  --rail-w: 66px;
+  --gutter: 9px;
+  --radius-panel: 14px;
+  --radius-inner: 10px;
+  --shadow-panel: 0 6px 24px rgba(0, 0, 0, 0.34);
+  --card-border: rgba(255, 255, 255, 0.06);
+  --card-highlight: rgba(255, 255, 255, 0.05);
+  --avatar-ring: rgba(255, 255, 255, 0.16);
 }
 
 :root[data-theme="light"] {
@@ -110,6 +122,12 @@
 
   --hl-bg: #ffd866;
   --hl-fg: #1c2128;
+
+  /* v0.2 card shell — light */
+  --shadow-panel: 0 6px 22px rgba(30, 41, 66, 0.16);
+  --card-border: rgba(20, 30, 60, 0.08);
+  --card-highlight: rgba(255, 255, 255, 0.5);
+  --avatar-ring: rgba(20, 30, 60, 0.18);
 }
 
 * {
@@ -128,9 +146,9 @@ body {
   font-family: var(--font-ui);
   font-size: var(--text-md);
   color: var(--fg);
-  /* transparent so the macOS sidebar vibrancy material shows through where the
-     UI leaves gaps (the sidebar); content panels paint their own opaque bg */
-  background: transparent;
+  /* themed translucent wash over the vibrancy material in the gutters — gives a
+     frosted glass that matches the active palette instead of neutral system gray */
+  background: var(--glass-tint, transparent);
   -webkit-font-smoothing: antialiased;
   user-select: none;
   cursor: default;

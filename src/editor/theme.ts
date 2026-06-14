@@ -51,7 +51,7 @@ export const qwryTheme = (dark: boolean) =>
       },
       ".cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]": {
         backgroundColor: "var(--accent)",
-        color: "white",
+        color: "var(--accent-fg)",
       },
       ".cm-completionDetail": {
         color: "var(--fg-faint)",

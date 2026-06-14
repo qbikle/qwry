@@ -1,47 +1,4 @@
-.app-shell {
-  display: flex;
-  height: 100%;
-  background: transparent;
-}
-
-/* the sidebar is left transparent so the NSVisualEffect (vibrancy) material
-   behind the transparent window shows through; content panels stay opaque */
-.sidebar {
-  width: 230px;
-  flex-shrink: 0;
-  background: var(--sidebar-bg, transparent);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  position: relative;
-}
-
-/* the traffic-light row — full-width invisible drag handle */
-.titlebar-drag {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 34px;
-  z-index: 4;
-}
-
-/* connections + schema tree scroll; saved queries stay pinned at the bottom */
-.sidebar > .profile-list,
-.sidebar > :nth-child(2) {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.main-area {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  background: var(--bg-app);
-}
-
+/* panes inside the main card (editor over results) */
 .editor-pane {
   height: 38%;
   min-height: 120px;
@@ -53,47 +10,7 @@
   min-height: 0;
 }
 
-.inspector-pane {
-  flex-shrink: 0;
-  min-width: 0;
-  position: relative;
-  background: var(--bg-panel);
-}
-
-.inspector-resize {
-  position: absolute;
-  left: -3px;
-  top: 0;
-  bottom: 0;
-  width: 7px;
-  cursor: col-resize;
-  z-index: 5;
-}
-.inspector-resize:hover {
-  background: var(--accent);
-  opacity: 0.4;
-}
-
-.inspector-reopen {
-  position: fixed;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 16px;
-  height: 56px;
-  border: 1px solid var(--border-strong);
-  border-right: none;
-  border-radius: var(--radius-md) 0 0 var(--radius-md);
-  background: var(--bg-raised);
-  color: var(--fg-muted);
-  cursor: pointer;
-  z-index: 8;
-}
-.inspector-reopen:hover {
-  color: var(--fg);
-  background: var(--bg-active);
-}
-
+/* thin red strip across the top gutter when the active connection is prod */
 .prod-strip {
   position: fixed;
   top: 0;

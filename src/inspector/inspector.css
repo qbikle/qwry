@@ -169,7 +169,7 @@
 .insp-jsonactions button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: white;
+  color: var(--accent-fg);
 }
 .insp-jsonactions button:disabled {
   opacity: 0.5;
