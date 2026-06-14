@@ -143,9 +143,10 @@ Order = daily-value + risk first, cosmetic mid, big-build last. Glide reeval (#1
 - NOTE: all `color: white` in CSS sit on accent/danger backgrounds (fine both themes); box-shadow/backdrop rgba(0,0,0,…) left as-is (shadows read in both).
 
 ## P1.6 — Native skin
-- [ ] Vibrancy sidebar: transparent window + macOS vibrancy effect behind sidebar
-- [ ] App icon artwork → .icns iconset, wired in tauri.conf
-- [ ] Gate: sidebar shows vibrancy; dock/Finder show the real icon
+- [x] Vibrancy sidebar: `window-vibrancy` applies NSVisualEffectMaterial::Sidebar (FollowsWindowActiveState) in lib.rs setup; window `transparent:true` + `app.macOSPrivateApi:true` + tauri feature `macos-private-api` (feature MUST match conf flag or build.rs fails). body+sidebar transparent so material shows there; `.main-area`/`.inspector-pane` opaque so content never bleeds.
+- [x] App icon: `src-tauri/icons/qwry-icon.svg` (gradient squircle + DB cylinder + cursor) → `rsvg-convert` 1024 PNG → `bun tauri icon` regenerated full set. Dock/Finder icon only shows in the bundled .app (dev runs the bare binary).
+- [x] Gate: vibrancy light+dark + real icon in Finder/dock ✅ user-verified
+- NOTE: built .app + dmg at `src-tauri/target/release/bundle/` — rebuild after P1.7 tunnel work for the final artifact.
 
 ## P1.7 — SSH tunnel
 - [ ] `tunnel.rs`: spawn system `ssh -L` subprocess (respects ~/.ssh/config), health check, teardown on disconnect

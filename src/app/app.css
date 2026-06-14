@@ -1,12 +1,15 @@
 .app-shell {
   display: flex;
   height: 100%;
+  background: transparent;
 }
 
+/* the sidebar is left transparent so the NSVisualEffect (vibrancy) material
+   behind the transparent window shows through; content panels stay opaque */
 .sidebar {
   width: 230px;
   flex-shrink: 0;
-  background: var(--bg-sidebar);
+  background: var(--sidebar-bg, transparent);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -36,6 +39,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  background: var(--bg-app);
 }
 
 .editor-pane {
@@ -53,6 +57,7 @@
   flex-shrink: 0;
   min-width: 0;
   position: relative;
+  background: var(--bg-panel);
 }
 
 .inspector-resize {

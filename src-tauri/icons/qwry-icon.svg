@@ -1,0 +1,36 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6f9dff"/>
+      <stop offset="0.55" stop-color="#4f74f0"/>
+      <stop offset="1" stop-color="#3548c4"/>
+    </linearGradient>
+    <linearGradient id="cyl" x1="0" y1="320" x2="0" y2="720" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dbe6ff"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="22" flood-color="#1a2a6c" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- app tile -->
+  <rect x="112" y="112" width="800" height="800" rx="196" fill="url(#bg)"/>
+  <!-- top sheen -->
+  <rect x="112" y="112" width="800" height="800" rx="196" fill="#ffffff" opacity="0.06"/>
+
+  <!-- database cylinder -->
+  <g filter="url(#soft)">
+    <path d="M332 372 V652 A180 56 0 0 0 692 652 V372 Z" fill="url(#cyl)"/>
+    <ellipse cx="512" cy="372" rx="180" ry="56" fill="#ffffff"/>
+  </g>
+  <!-- disc seams -->
+  <g fill="none" stroke="#4f74f0" stroke-width="13" opacity="0.5" stroke-linecap="round">
+    <path d="M332 464 A180 56 0 0 0 692 464"/>
+    <path d="M332 556 A180 56 0 0 0 692 556"/>
+  </g>
+
+  <!-- query spark: a fast cursor caret on the cylinder -->
+  <path d="M470 612 L470 700 L500 672 L540 736 L566 720 L526 658 L566 658 Z"
+        fill="#3548c4"/>
+</svg>
