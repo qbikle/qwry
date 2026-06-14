@@ -315,7 +315,7 @@
 
 .st-type {
   font-family: var(--font-mono);
-  color: #ffcb6b !important;
+  color: var(--syn-type) !important;
 }
 
 .st-pk {

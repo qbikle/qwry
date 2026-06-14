@@ -4,17 +4,22 @@ import { motion } from "motion/react";
 import { popIn } from "../design/springs";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  Check,
   Clock,
   Database,
+  Monitor,
+  Moon,
   PanelRight,
   Play,
   Plus,
   RefreshCw,
+  Sun,
   Table2,
 } from "lucide-react";
 import { useConnections } from "../stores/connections";
 import { useResults } from "../stores/results";
 import { useSchema } from "../stores/schema";
+import { useSettings, type Theme } from "../stores/settings";
 import { useTabs } from "../stores/tabs";
 import "./palette.css";
 
@@ -32,6 +37,8 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
 
   const profiles = useConnections((s) => s.profiles);
   const activeProfileId = useConnections((s) => s.activeProfileId);
+  const theme = useSettings((s) => s.theme);
+  const setTheme = useSettings((s) => s.setTheme);
   const snapshot = useSchema((s) =>
     activeProfileId ? s.snapshots[activeProfileId] : undefined,
   );
@@ -164,6 +171,28 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
             >
               <Clock size={13} /> Clear history older than 7 days
             </Command.Item>
+          </Command.Group>
+
+          <Command.Group heading="Appearance">
+            {(
+              [
+                ["dark", "Dark", Moon],
+                ["light", "Light", Sun],
+                ["system", "System", Monitor],
+              ] as [Theme, string, typeof Moon][]
+            ).map(([t, label, Icon]) => (
+              <Command.Item
+                key={t}
+                value={`theme ${label}`}
+                onSelect={() => {
+                  setTheme(t);
+                  close();
+                }}
+              >
+                <Icon size={13} /> Theme: {label}
+                {theme === t && <Check size={13} className="pal-check" />}
+              </Command.Item>
+            ))}
           </Command.Group>
 
           {snapshot && (

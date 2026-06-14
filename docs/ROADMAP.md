@@ -136,9 +136,11 @@ Order = daily-value + risk first, cosmetic mid, big-build last. Glide reeval (#1
 - NOTE: tx indicator is a SQL-sniff heuristic (tokio-postgres doesn't expose ReadyForQuery status). Each tab = one extra PG connection.
 
 ## P1.5 — Light theme
-- [ ] Light token set in design tokens + second CodeMirror theme
-- [ ] Theme toggle (palette action + persisted setting), system-follow option
-- [ ] Gate: toggle light/dark — every surface legible (grid, editor, inspector, modals), persists across relaunch
+- [x] Dark = `:root`; light = `:root[data-theme="light"]` full token override. Tokenized syntax colours (`--syn-*`) so editor highlight + json tree + structure switch; search highlight got `--hl-bg/--hl-fg` (was dark-on-amber, illegible in light); `--cm-active-line`, `--shadow-pop`, `--warn-soft` tokens added.
+- [x] CodeMirror: theme fully CSS-var driven; `qwryTheme(dark)` parametric `dark` flag; editor **remounts on theme change** (SqlEditor effect dep `isDark`) — text preserved, cursor/undo reset (fine for a rare toggle).
+- [x] `settings.theme` = system|dark|light persisted (partialize); `resolved` recomputed each launch; applied to `<html data-theme>` at import (no flash) + `prefers-color-scheme` listener for system-follow. Palette → Appearance group (Dark/Light/System, ✓ current).
+- [x] Gate: every surface legible light+dark, system-follow, persists ✅ user-verified
+- NOTE: all `color: white` in CSS sit on accent/danger backgrounds (fine both themes); box-shadow/backdrop rgba(0,0,0,…) left as-is (shadows read in both).
 
 ## P1.6 — Native skin
 - [ ] Vibrancy sidebar: transparent window + macOS vibrancy effect behind sidebar

@@ -207,17 +207,17 @@
 }
 
 .jt-key {
-  color: #82aaff;
+  color: var(--syn-prop);
 }
 .jt-str {
-  color: #c3e88d;
+  color: var(--syn-string);
   word-break: break-all;
 }
 .jt-num {
-  color: #f78c6c;
+  color: var(--syn-number);
 }
 .jt-bool {
-  color: #c792ea;
+  color: var(--syn-keyword);
 }
 .jt-null {
   color: var(--fg-faint);
@@ -278,8 +278,8 @@
 }
 
 .jt-mark {
-  background: var(--warn);
-  color: #1a1a1a;
+  background: var(--hl-bg);
+  color: var(--hl-fg);
   border-radius: 2px;
   padding: 0 1px;
 }
@@ -316,5 +316,5 @@
   border-color: var(--danger);
 }
 .jt-key-edit {
-  color: #82aaff;
+  color: var(--syn-prop);
 }
