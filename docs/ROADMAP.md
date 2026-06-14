@@ -184,8 +184,13 @@ Design (from user wireframes): floating rounded cards on a themed-glass gutter �
 - [x] `setActive`/`syncActive` driven by `useTabs.activeId` subscription; closed tabs cleared (`clearTab`/`resetTab`) via the same subscription (diff tab-id set) — no tabs→results import cycle.
 - [x] Gate: tab-switch keeps each tab's grid/edits; background run doesn't bleed; close drops state ✅ user-verified.
 
-## P2.5 — inspector redesign
-- [ ] Tidier slide-in; consider moving toggle to titlebar.
+## P2.5 — inspector redesign ✅
+- [x] Tidy chrome: header (col name + type pill + row + hide), status **chips** (read-only 🔒 / ctid ⚠ / pending ✎ / loading), compact **icon toolbar**. Sits transparently inside the floating inspector-card.
+- [x] **Structured formatting**: JSON *and* PG arrays (`text[]`, `int[]`, …) parse via `format.ts` (`structuredValue`/`parsePgArray`) → tree view. Arrays are view-only (no JS↔PG-array round-trip); JSON fully editable.
+- [x] **Colorized raw view+edit** via a CodeMirror `JsonField` (`@codemirror/lang-json` + qwryHighlight, readOnly toggle). Replaced a transparent-textarea-over-`<pre>` overlay that WKWebView's native textarea background kept covering — 3 failed iterations; CM renders its own DOM, reliable. Raw = the editor (Stage/Discard on change); arrays read-only colorized.
+- [x] **Split copy button**: click = formatted; caret → Copy formatted / Copy raw.
+- [x] Gate: arrays + JSON formatted, colorized raw/edit, copy split ✅ user-verified
+- NOTE: GOTCHA — don't try transparent-textarea highlight overlays in WKWebView (opaque field bg wins); use CodeMirror for colorized editing.
 
 ## P2.6 — breadcrumb + animation polish
 - [ ] Richer breadcrumb (db/table/query); spring tuning pass.

@@ -74,5 +74,6 @@ export const qwryHighlight = syntaxHighlighting(
     { tag: t.propertyName, color: "var(--syn-prop)" },
     { tag: t.variableName, color: "var(--syn-var)" },
     { tag: t.punctuation, color: "var(--syn-punct)" },
+    { tag: [t.bool, t.null], color: "var(--syn-keyword)" },
   ]),
 );

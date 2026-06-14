@@ -1,34 +1,49 @@
 import { useEffect, useState } from "react";
-import { PanelRightClose } from "lucide-react";
+import {
+  ChevronDown,
+  Code,
+  Copy,
+  ListTree,
+  Lock,
+  PanelRightClose,
+  Pencil,
+  TriangleAlert,
+} from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import * as ipc from "../ipc/commands";
 import { editKey, useEdits } from "../stores/edits";
 import { useInspector } from "../stores/inspector";
 import { useResults } from "../stores/results";
 import { JsonTree } from "./JsonTree";
+import { JsonField } from "./JsonField";
+import { structuredValue } from "./format";
 import "./inspector.css";
 
-function tryParseJson(v: string): unknown | undefined {
-  const t = v.trim();
-  if (!t.startsWith("{") && !t.startsWith("[")) return undefined;
-  try {
-    return JSON.parse(t);
-  } catch {
-    return undefined;
-  }
-}
-
-function HideButton() {
-  const toggle = useInspector((s) => s.toggle);
+/** copy button: click copies formatted; the caret opens raw / formatted */
+function CopySplit({ raw, pretty }: { raw: string; pretty: string }) {
+  const [open, setOpen] = useState(false);
   return (
-    <button className="insp-hide" title="Hide inspector ⌘I" onClick={toggle}>
-      <PanelRightClose size={14} />
-    </button>
+    <div className="insp-copy">
+      <button className="insp-tool insp-copy-main" title="Copy formatted" onClick={() => void writeText(pretty)}>
+        <Copy size={14} />
+      </button>
+      <button className="insp-tool insp-copy-caret" title="Copy options" onClick={() => setOpen((o) => !o)}>
+        <ChevronDown size={11} />
+      </button>
+      {open && <div className="insp-copy-backdrop" onMouseDown={() => setOpen(false)} />}
+      {open && (
+        <div className="insp-copy-menu">
+          <button onClick={() => { void writeText(pretty); setOpen(false); }}>Copy formatted</button>
+          <button onClick={() => { void writeText(raw); setOpen(false); }}>Copy raw</button>
+        </div>
+      )}
+    </div>
   );
 }
 
 export function Inspector() {
   const target = useInspector((s) => s.target);
+  const toggle = useInspector((s) => s.toggle);
   const fullValue = useInspector((s) => s.fullValue);
   const fullValueFor = useInspector((s) => s.fullValueFor);
   const statements = useResults((s) => s.statements);
@@ -36,8 +51,8 @@ export function Inspector() {
   const maps = useEdits((s) => s.maps);
 
   const [mode, setMode] = useState<"auto" | "raw">("auto");
-  const [editingJson, setEditingJson] = useState<string | null>(null);
   const [editingText, setEditingText] = useState<string | null>(null);
+  const [rawDraft, setRawDraft] = useState<string | null>(null);
   const [jsonError, setJsonError] = useState<string | null>(null);
   const editSeq = useInspector((s) => s.editSeq);
 
@@ -46,10 +61,7 @@ export function Inspector() {
 
   const k = target ? editKey(target.stmtIndex, target.row, target.col) : null;
   const pendingEdit = k ? pending[k] : undefined;
-
-  const truncated =
-    target && stmt ? stmt.truncated.has(`${target.row}:${target.col}`) : false;
-
+  const truncated = target && stmt ? stmt.truncated.has(`${target.row}:${target.col}`) : false;
   const rawCell =
     target && stmt ? (pendingEdit ? pendingEdit.value : stmt.rows[target.row]?.[target.col]) : null;
   const value = truncated && fullValueFor === k ? fullValue : rawCell;
@@ -60,7 +72,6 @@ export function Inspector() {
       ? editMap.columns[target.col]
       : undefined;
 
-  // fetch full value for truncated cells when the PK is available
   useEffect(() => {
     if (!truncated || !target || !stmt || fullValueFor === k) return;
     if (!editMap || editMap === "loading" || editMap === "unavailable") return;
@@ -71,7 +82,6 @@ export function Inspector() {
     if (!pkCols || !table) return;
     const sessionId = useResults.getState().executedSessionId;
     if (!sessionId) return;
-
     const colName = stmt.columns[target.col].name;
     const wheres = pkCols
       .map((pc) => {
@@ -90,133 +100,133 @@ export function Inspector() {
     });
   }, [truncated, target, stmt, editMap, k, fullValueFor]);
 
+  // reset edit state when the focused cell changes
   useEffect(() => {
-    setEditingJson(null);
     setEditingText(null);
+    setRawDraft(null);
     setJsonError(null);
+    setMode("auto");
   }, [k]);
 
-  // grid double-click on a JSON cell lands here in edit mode
+  // grid double-click on a structured cell lands here ready to edit
   useEffect(() => {
     if (editSeq === 0 || value == null) return;
-    const p = tryParseJson(value);
-    if (p !== undefined) {
-      setEditingJson(JSON.stringify(p, null, 2));
-      setJsonError(null);
-    } else {
-      setEditingText(value);
-    }
+    if (structuredValue(value, editMeta?.type_name) !== undefined) setMode("raw");
+    else setEditingText(value);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editSeq]);
 
   if (!target || !stmt) {
     return (
       <div className="inspector">
-        <HideButton />
+        <div className="insp-top">
+          <span className="insp-col muted">Inspector</span>
+          <button className="insp-icon" title="Hide ⌘I" onClick={toggle}>
+            <PanelRightClose size={15} />
+          </button>
+        </div>
         <div className="insp-empty">Select a cell to inspect</div>
       </div>
     );
   }
 
-  // parse regardless of mode — buttons must survive Raw mode
-  const parsed = value != null ? tryParseJson(value) : undefined;
-  const json = mode === "auto" ? parsed : undefined;
+  const structured = value != null ? structuredValue(value, editMeta?.type_name) : undefined;
+  const isStructured = structured !== undefined;
+  const pretty = isStructured ? JSON.stringify(structured, null, 2) : (value ?? "");
+  const isJsonType = editMeta?.type_name === "json" || editMeta?.type_name === "jsonb";
+  const jsonEditable = !!editMeta?.editable && isJsonType; // arrays: view-only (no round-trip)
 
-  const saveJsonEdit = () => {
-    if (editingJson === null) return;
+  const stage = (v: string) =>
+    useEdits.getState().setEdit({
+      stmtIndex: target.stmtIndex,
+      row: target.row,
+      col: target.col,
+      value: v,
+      original: stmt.rows[target.row]?.[target.col] ?? null,
+    });
+
+  const rawDirty = rawDraft !== null && rawDraft !== pretty;
+  const saveRaw = () => {
+    if (rawDraft === null) return;
     try {
-      const normalized = JSON.stringify(JSON.parse(editingJson));
-      useEdits.getState().setEdit({
-        stmtIndex: target.stmtIndex,
-        row: target.row,
-        col: target.col,
-        value: normalized,
-        original: stmt.rows[target.row]?.[target.col] ?? null,
-      });
-      setEditingJson(null);
+      stage(JSON.stringify(JSON.parse(rawDraft)));
+      setRawDraft(null);
       setJsonError(null);
     } catch (e) {
       setJsonError((e as Error).message);
     }
   };
 
-  // live tree edits (edit a leaf/key in the tree) stage immediately
-  const stageTreeEdit = (next: unknown) => {
-    useEdits.getState().setEdit({
-      stmtIndex: target.stmtIndex,
-      row: target.row,
-      col: target.col,
-      value: JSON.stringify(next),
-      original: stmt.rows[target.row]?.[target.col] ?? null,
-    });
-  };
-
   return (
     <div className="inspector">
-      <HideButton />
-      <div className="insp-header">
-        <span className="insp-col">{colMeta?.name ?? `col ${target.col}`}</span>
-        <span className="insp-meta">
-          row {target.row + 1}
-          {editMeta && ` · ${editMeta.type_name}`}
-          {truncated && fullValueFor !== k && " · loading full value…"}
-        </span>
+      <div className="insp-top">
+        <div className="insp-id">
+          <span className="insp-col" title={colMeta?.name ?? `col ${target.col}`}>
+            {colMeta?.name ?? `col ${target.col}`}
+          </span>
+          {editMeta && <span className="insp-type">{editMeta.type_name}</span>}
+        </div>
+        <span className="insp-rownum">row {target.row + 1}</span>
+        <button className="insp-icon" title="Hide ⌘I" onClick={toggle}>
+          <PanelRightClose size={15} />
+        </button>
       </div>
 
       {editMeta && !editMeta.editable && editMeta.reason && (
-        <div className="insp-readonly">{editMeta.reason}</div>
+        <div className="insp-chip ro">
+          <Lock size={12} /> {editMeta.reason}
+        </div>
       )}
       {editMeta?.editable && editMeta.warn && (
-        <div className="insp-warn">⚠ {editMeta.warn}</div>
+        <div className="insp-chip warn">
+          <TriangleAlert size={12} /> {editMeta.warn}
+        </div>
       )}
-      {pendingEdit && <div className="insp-pending">✎ pending edit shown — ⌘S to commit</div>}
+      {pendingEdit && (
+        <div className="insp-chip pend">
+          <Pencil size={12} /> Pending edit — ⌘S to commit
+        </div>
+      )}
+      {truncated && fullValueFor !== k && <div className="insp-chip">Loading full value…</div>}
 
-      <div className="insp-actions">
-        <button onClick={() => value != null && void writeText(value)}>Copy</button>
-        {parsed !== undefined && (
-          <button
-            onClick={() =>
-              value != null && void writeText(JSON.stringify(JSON.parse(value), null, 2))
-            }
-          >
-            Copy pretty
-          </button>
-        )}
-        {parsed !== undefined && (
-          <button onClick={() => setMode(mode === "auto" ? "raw" : "auto")}>
-            {mode === "auto" ? "Raw" : "Tree"}
-          </button>
-        )}
-        {parsed !== undefined && editMeta?.editable && editingJson === null && (
-          <button onClick={() => setEditingJson(JSON.stringify(JSON.parse(value!), null, 2))}>
-            Edit JSON
-          </button>
-        )}
-        {parsed === undefined && editMeta?.editable && editingText === null && (
-          <button onClick={() => setEditingText(value ?? "")}>Edit</button>
-        )}
-      </div>
+      {editingText === null && value != null && (
+        <div className="insp-tools">
+          {isStructured ? (
+            <>
+              <CopySplit raw={value} pretty={pretty} />
+              <button
+                className="insp-tool"
+                title={mode === "auto" ? "Raw JSON" : "Tree"}
+                onClick={() => setMode(mode === "auto" ? "raw" : "auto")}
+              >
+                {mode === "auto" ? <Code size={14} /> : <ListTree size={14} />}
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="insp-tool" title="Copy" onClick={() => void writeText(value)}>
+                <Copy size={14} />
+              </button>
+              {editMeta?.editable && (
+                <button className="insp-tool" title="Edit value" onClick={() => setEditingText(value)}>
+                  <Pencil size={14} />
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       <div className="insp-body">
         {editingText !== null ? (
-          <div className="insp-jsonedit">
-            <textarea
-              value={editingText}
-              onChange={(e) => setEditingText(e.target.value)}
-              spellCheck={false}
-            />
-            <div className="insp-jsonactions">
+          <div className="insp-edit">
+            <textarea value={editingText} onChange={(e) => setEditingText(e.target.value)} spellCheck={false} />
+            <div className="insp-editactions">
               <button onClick={() => setEditingText(null)}>Cancel</button>
               <button
                 className="primary"
                 onClick={() => {
-                  useEdits.getState().setEdit({
-                    stmtIndex: target.stmtIndex,
-                    row: target.row,
-                    col: target.col,
-                    value: editingText,
-                    original: stmt.rows[target.row]?.[target.col] ?? null,
-                  });
+                  stage(editingText);
                   setEditingText(null);
                 }}
               >
@@ -224,37 +234,42 @@ export function Inspector() {
               </button>
             </div>
           </div>
-        ) : editingJson !== null ? (
-          <div className="insp-jsonedit">
-            <textarea
-              value={editingJson}
-              onChange={(e) => {
-                setEditingJson(e.target.value);
+        ) : value === null || value === undefined ? (
+          <div className="insp-null">
+            NULL
+            {editMeta?.editable && (
+              <button className="insp-null-edit" onClick={() => setEditingText("")}>
+                set value
+              </button>
+            )}
+          </div>
+        ) : isStructured && mode === "auto" ? (
+          <JsonTree json={structured as never} editable={jsonEditable} onChange={(n) => stage(JSON.stringify(n))} />
+        ) : isStructured ? (
+          <div className="insp-edit">
+            <JsonField
+              value={rawDraft ?? pretty}
+              readOnly={!jsonEditable}
+              onChange={(v) => {
+                setRawDraft(v);
                 try {
-                  JSON.parse(e.target.value);
+                  JSON.parse(v);
                   setJsonError(null);
                 } catch (err) {
                   setJsonError((err as Error).message);
                 }
               }}
-              spellCheck={false}
             />
-            {jsonError && <div className="insp-jsonerror">{jsonError}</div>}
-            <div className="insp-jsonactions">
-              <button onClick={() => setEditingJson(null)}>Cancel</button>
-              <button className="primary" disabled={!!jsonError} onClick={saveJsonEdit}>
-                Stage edit
-              </button>
-            </div>
+            {jsonError && rawDirty && <div className="insp-jsonerror">{jsonError}</div>}
+            {rawDirty && (
+              <div className="insp-editactions">
+                <button onClick={() => { setRawDraft(null); setJsonError(null); }}>Discard</button>
+                <button className="primary" disabled={!!jsonError} onClick={saveRaw}>
+                  Stage edit
+                </button>
+              </div>
+            )}
           </div>
-        ) : value === null || value === undefined ? (
-          <div className="insp-null">NULL</div>
-        ) : json !== undefined ? (
-          <JsonTree
-            json={json as never}
-            editable={!!editMeta?.editable}
-            onChange={stageTreeEdit}
-          />
         ) : (
           <pre className="insp-text">{value}</pre>
         )}
