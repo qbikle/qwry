@@ -179,8 +179,10 @@ Design (from user wireframes): floating rounded cards on a themed-glass gutter �
 - [x] **P2.3b**: DB-switcher (`DbSwitcher`) in the sidebar DB header → lists `pg_database` → picking another clones the connection (`clone_connection`: new sibling, password carried over) + connects. Recent-activity strip on the dashboard (`history_recent` across profiles → avatar + sql + time, click connects + opens in a tab).
 - [x] **Rail drag-reorder**: `motion` `Reorder.Group`/`Item` (spring layout, whileDrag lift); persisted via `set_profile_order` + a `position` column (additive migration, backfilled from rowid); debounced save after drop. Tap connects / right-click edits still work (threshold).
 
-## P2.4 — per-tab results
-- [ ] Each tab owns its results + executedSql + session + edits + inspector target.
+## P2.4 — per-tab results ✅
+- [x] `useResults` + `useEdits` keyed **by tab** (`byTab`) with the active tab mirrored to the top-level fields — every consumer reads unchanged, and a background tab's stream can't corrupt the visible tab (each event/rAF-flush writes to its own tab id). Per-tab: statements/activeStatement/running/totalMs/executedSql/executedSessionId/globalError + editability maps/pending/flash. `committing`/`preview`/`lastError` stay global (one commit at a time). `patchStatement` patches the active tab on commit.
+- [x] `setActive`/`syncActive` driven by `useTabs.activeId` subscription; closed tabs cleared (`clearTab`/`resetTab`) via the same subscription (diff tab-id set) — no tabs→results import cycle.
+- [x] Gate: tab-switch keeps each tab's grid/edits; background run doesn't bleed; close drops state ✅ user-verified.
 
 ## P2.5 — inspector redesign
 - [ ] Tidier slide-in; consider moving toggle to titlebar.
