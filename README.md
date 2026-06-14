@@ -8,13 +8,15 @@ Tauri 2 (Rust core) · React 19 · CodeMirror 6 · ~15 MB app, ~6 MB dmg.
 
 **SQL intellisense that actually understands your query.** Columns scoped to the tables in your FROM clause, `alias.` completion, FK-aware `JOIN … ON` one-shot suggestions, usage-ranked results, PG error squiggles at the exact position. The 3.5k `pg_catalog` functions stay out of your way — Ctrl-Space or ⌘⇧U when you want them.
 
-**Edit any query result.** Run any SELECT — joins included. Double-click a cell, type, ⌘S. qwry maps result columns back to their source tables via the wire protocol's `table_oid`/`attnum` metadata, finds the primary key, and shows you the exact `UPDATE … WHERE pk = … RETURNING …` before committing everything in one transaction. Read-only cells tell you *why* (computed expression, PK not selected, …).
+**Edit any query result.** Run any SELECT — joins included. Double-click a cell, type, ⌘S. qwry maps result columns back to their source tables via the wire protocol's `table_oid`/`attnum` metadata, finds the primary key, and shows you the exact `UPDATE … WHERE pk = … RETURNING …` before committing everything in one transaction. Edits to several cells of one row collapse into a single UPDATE. No primary key in the result? It falls back to `ctid`. Insert and delete rows from the table browser too. Read-only cells tell you *why* (computed expression, PK not selected, …).
 
-**First-class JSON.** Collapsible jsonb tree in the inspector, click-to-copy values, ⌥-click for paths, validated in-place editing. Free.
+**First-class JSON.** Collapsible jsonb tree in the inspector with ⌘F search (filter, highlight, jump between hits), click-to-copy values, ⌥-click for paths, and in-place type-preserving editing of values and keys right in the tree. Free.
+
+**Real transactions.** Every query tab gets its own dedicated connection, so `BEGIN`/`COMMIT`/`ROLLBACK` and temp state stay coherent and isolated — a tab shows a dot while a transaction is open.
 
 **Fast.** Results stream from Rust in batches over Tauri channels into a custom virtualized grid — a million-row result scrolls smoothly. ⌘. cancels instantly via the PG cancel protocol.
 
-Also: table browser (filters with AND/OR, searchable sort, structure tab), persistent tabs, saved queries, searchable history, ⌘K command palette, EXPLAIN ANALYZE visualizer with hot-node highlighting, guards for UPDATE/DELETE without WHERE, prod-connection warning strip, Keychain-stored credentials, no telemetry.
+Also: table browser (filters with AND/OR, searchable sort, structure tab, row insert/delete), SSH tunnels via your system `ssh` (honours `~/.ssh/config`), light/dark/system themes, macOS sidebar vibrancy, persistent tabs, saved queries, searchable history, ⌘K command palette, EXPLAIN ANALYZE visualizer with hot-node highlighting, guards for UPDATE/DELETE without WHERE, prod-connection warning strip, Keychain-stored credentials, no telemetry.
 
 ## Keyboard map
 
@@ -27,6 +29,7 @@ Also: table browser (filters with AND/OR, searchable sort, structure tab), persi
 | ⌃Tab cycle tabs | ⌘1–9, ⌘0 jump to tab |
 | ⌘I inspector | ⌘⇧U function search |
 | ⌘⇧F filter tables | ⌘R refresh schema |
+| ⌘F search JSON (inspector) | |
 
 ## Build
 
@@ -52,4 +55,4 @@ Details in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Development happens pha
 
 ## Status
 
-v0.1.0 — full v1 roadmap shipped. PostgreSQL only (driver trait is in place for SQLite/MySQL later). macOS only. Dark theme only, by choice.
+v0.1.5 — v1 roadmap + the v0.1.5 backlog shipped (batched/ctid edits, row insert/delete, JSON search & tree-edit, per-tab transactions, light theme, sidebar vibrancy, SSH tunnels). PostgreSQL only (driver trait is in place for SQLite/MySQL later). macOS only.
