@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { PanelRightClose } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import * as ipc from "../ipc/commands";
-import { useConnections } from "../stores/connections";
 import { editKey, useEdits } from "../stores/edits";
 import { useInspector } from "../stores/inspector";
 import { useResults } from "../stores/results";
@@ -70,8 +69,7 @@ export function Inspector() {
     const pkCols = editMap.pk_cols[meta.table_oid];
     const table = editMap.tables[meta.table_oid];
     if (!pkCols || !table) return;
-    const conn = useConnections.getState();
-    const sessionId = conn.activeProfileId ? conn.sessions[conn.activeProfileId] : null;
+    const sessionId = useResults.getState().executedSessionId;
     if (!sessionId) return;
 
     const colName = stmt.columns[target.col].name;
@@ -142,6 +140,17 @@ export function Inspector() {
     }
   };
 
+  // live tree edits (edit a leaf/key in the tree) stage immediately
+  const stageTreeEdit = (next: unknown) => {
+    useEdits.getState().setEdit({
+      stmtIndex: target.stmtIndex,
+      row: target.row,
+      col: target.col,
+      value: JSON.stringify(next),
+      original: stmt.rows[target.row]?.[target.col] ?? null,
+    });
+  };
+
   return (
     <div className="inspector">
       <HideButton />
@@ -156,6 +165,9 @@ export function Inspector() {
 
       {editMeta && !editMeta.editable && editMeta.reason && (
         <div className="insp-readonly">{editMeta.reason}</div>
+      )}
+      {editMeta?.editable && editMeta.warn && (
+        <div className="insp-warn">⚠ {editMeta.warn}</div>
       )}
       {pendingEdit && <div className="insp-pending">✎ pending edit shown — ⌘S to commit</div>}
 
@@ -238,7 +250,11 @@ export function Inspector() {
         ) : value === null || value === undefined ? (
           <div className="insp-null">NULL</div>
         ) : json !== undefined ? (
-          <JsonTree json={json as never} />
+          <JsonTree
+            json={json as never}
+            editable={!!editMeta?.editable}
+            onChange={stageTreeEdit}
+          />
         ) : (
           <pre className="insp-text">{value}</pre>
         )}

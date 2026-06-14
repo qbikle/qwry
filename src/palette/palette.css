@@ -103,6 +103,12 @@
   flex-shrink: 0;
 }
 
+.pal-check {
+  margin-left: auto;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
 .pal-sql {
   font-family: var(--font-mono);
   font-size: var(--text-sm);

@@ -15,6 +15,10 @@ const blank = (): Profile => ({
   sslmode: "prefer",
   color: null,
   is_prod: false,
+  ssh_host: null,
+  ssh_port: null,
+  ssh_user: null,
+  ssh_key: null,
 });
 
 export function ProfileList() {

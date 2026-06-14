@@ -36,6 +36,8 @@ export function SqlEditor() {
   const [fnSearch, setFnSearch] = useState(false);
   const fnInComplete = useSettings((s) => s.fnInComplete);
   const toggleFnInComplete = useSettings((s) => s.toggleFnInComplete);
+  // CodeMirror's `dark` flag must match the theme, so remount on theme change
+  const isDark = useSettings((s) => s.resolved === "dark");
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -123,7 +125,7 @@ export function SqlEditor() {
             maxRenderedOptions: 50,
             override: [qwryCompletion],
           }),
-          qwryTheme,
+          qwryTheme(isDark),
           qwryHighlight,
           EditorView.updateListener.of((u) => {
             if (u.docChanged) {
@@ -173,7 +175,7 @@ export function SqlEditor() {
       view.destroy();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isDark]);
 
   return (
     <div

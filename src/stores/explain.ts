@@ -66,8 +66,13 @@ export const useExplain = create<ExplainState>((set) => ({
   run: async (sqlOverride?: string) => {
     const conn = useConnections.getState();
     const sql = sqlOverride ?? conn.sql;
-    const sessionId = conn.activeProfileId ? conn.sessions[conn.activeProfileId] : null;
-    if (!sessionId || !sql.trim()) return;
+    if (!conn.activeProfileId || !sql.trim()) return;
+    // EXPLAIN on the active tab's session so it sees the tab's txn/temp state
+    const { useTabs } = await import("./tabs");
+    const tabId = useTabs.getState().activeId;
+    if (!tabId) return;
+    const sessionId = await conn.ensureTabSession(conn.activeProfileId, tabId);
+    if (!sessionId) return;
 
     const { isMutating, confirmDanger } = await import("./danger");
     if (isMutating(sql)) {

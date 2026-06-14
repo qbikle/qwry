@@ -103,7 +103,79 @@
 
 ---
 
+# v0.1.5 — remaining backlog, phased (session 2+)
+
+Same protocol as v0.1: build a phase, hit its gate, get user review, tick, next.
+Order = daily-value + risk first, cosmetic mid, big-build last. Glide reeval (#11) is NOT a phase — a checkpoint only if grid feels slow.
+
+## P1.1 — Edit power
+- [x] Batched multi-cell row UPDATE: `plan_edits` groups by (table, row) → one `UPDATE … SET a=,b=,c= WHERE pk RETURNING a::text,b::text` per row; results map back per-cell via RETURNING order. Preview + apply share `plan_edits`.
+- [x] ctid-fallback editing: result column named `ctid` (type `tid`) with a source table is detected as a row locator; when no usable PK is in the result, `pk_cols[oid] = [ctid_col]` and cells become editable with `warn` = "editing via ctid". `is_ctid` columns themselves read-only. WHERE uses `ctid = '…'::tid`; ctid name hardcoded (no pg_attribute row for system cols).
+- [x] Gate: 3-cell row edit → ONE update; PK-less table edit via ctid ✅ user-verified
+- NOTE: ctid moves on UPDATE — a 2nd edit to the same row before re-running matches 0 rows → EditResult.ok=false ("0 rows matched"), surfaced not silent. Acceptable for a fallback.
+
+## P1.2 — Row lifecycle (browser)
+- [x] Insert row: `+`/"Add row" in browser header (data tab, ordinary tables) → springy `InsertPanel`, one field/column. Blank = DEFAULT (col omitted), ∅ = NULL, typed = value. ⌘↵ insert / Esc cancel. Backend `insert_row` (text literals coerce to col type), then reload.
+- [x] Delete row: grid context menu → red "Delete row(s)" (shown only when exactly ONE source table has a locator) → DangerModal with WHERE preview → backend `delete_rows` (one txn, RETURNING ctid, must match 1) → reload via re-run of executedSql.
+- [x] Browser auto-includes `ctid` for PK-less ordinary tables (`SELECT ctid, *`) → fully editable/insert/delete via the P1.1 ctid engine.
+- [x] Fixes: header icon `+` tooltip "Add row"; global autocorrect killer (`app/noAutocorrect.ts` — WKWebView forces macOS autocorrect/autocapitalize/substitution on every field; no global switch, so stamp `autocorrect/autocapitalize/spellcheck=off` per field + MutationObserver for new ones; opt-out `data-allow-autocorrect`).
+- [x] Gate: insert + delete in browser ✅ user-verified
+
+## P1.3 — JSON power (inspector)
+- [x] JsonTree search: in-tree search box + ⌘F; `computeSearch` walks once → {visible, forceOpen, hits}; filters to matching subtrees, highlights match (`<mark>`), matched-key reveals its whole subtree (`forced` flag); hit counter + ⏎/⇧⏎/↑↓ nav with scrollIntoView; Esc clears.
+- [x] Tree-mode editing: click leaf → inline type-preserving edit (number→number, bool→bool, invalid number rejected); click key → rename (order-preserving `renameKeyIn`); each commit `setIn`/rebuild → stages whole JSON into pending edits (⌘S commits). ⌥-click copies path; read-only cells keep click-to-copy. JsonTree gained `editable`/`onChange` props; Inspector wires `editable={!!editMeta?.editable}`.
+- [x] Node ids via `JSON.stringify(path)`; `displayPath` for `a.b[0]` copy. (Earlier draft used a `` separator — replaced, don't reintroduce invisible-char joins.)
+- [x] Gate: search keys + edit nested value/key in tree → commits ✅ user-verified
+
+## P1.4 — Transactions (per-tab sessions)
+- [x] Dedicated session per query tab: `connections.tabSessions` keyed `skey(profile,tab)`, `ensureTabSession` creates lazily on first run (backend was already multi-session — frontend-only change). `results.executedSessionId` records the running session; edits/insert/delete/EXPLAIN/full-value-fetch all reuse it so they share the tab's txn/temp state.
+- [x] Schema introspection isolated on the per-profile **primary** session (`sessions[profileId]`), never a tab session — DDL refresh + ⌘R use it.
+- [x] Open-tx indicator: amber dot on tab when a BEGIN is open (sniffed from executed statement heads, batch-abort aware); clears on COMMIT/ROLLBACK/END. `txTabs` keyed by skey.
+- [x] Lifecycle: tab close → `closeTabSessions` disconnects its session(s); reconnect (`connect`) drops stale tabSessions/txTabs for that profile.
+- [x] Gate: BEGIN+mutate visible in same tab, invisible in a 2nd tab, ROLLBACK reverts ✅ user-verified
+- NOTE: tx indicator is a SQL-sniff heuristic (tokio-postgres doesn't expose ReadyForQuery status). Each tab = one extra PG connection.
+
+## P1.5 — Light theme
+- [x] Dark = `:root`; light = `:root[data-theme="light"]` full token override. Tokenized syntax colours (`--syn-*`) so editor highlight + json tree + structure switch; search highlight got `--hl-bg/--hl-fg` (was dark-on-amber, illegible in light); `--cm-active-line`, `--shadow-pop`, `--warn-soft` tokens added.
+- [x] CodeMirror: theme fully CSS-var driven; `qwryTheme(dark)` parametric `dark` flag; editor **remounts on theme change** (SqlEditor effect dep `isDark`) — text preserved, cursor/undo reset (fine for a rare toggle).
+- [x] `settings.theme` = system|dark|light persisted (partialize); `resolved` recomputed each launch; applied to `<html data-theme>` at import (no flash) + `prefers-color-scheme` listener for system-follow. Palette → Appearance group (Dark/Light/System, ✓ current).
+- [x] Gate: every surface legible light+dark, system-follow, persists ✅ user-verified
+- NOTE: all `color: white` in CSS sit on accent/danger backgrounds (fine both themes); box-shadow/backdrop rgba(0,0,0,…) left as-is (shadows read in both).
+
+## P1.6 — Native skin
+- [x] Vibrancy sidebar: `window-vibrancy` applies NSVisualEffectMaterial::Sidebar (FollowsWindowActiveState) in lib.rs setup; window `transparent:true` + `app.macOSPrivateApi:true` + tauri feature `macos-private-api` (feature MUST match conf flag or build.rs fails). body+sidebar transparent so material shows there; `.main-area`/`.inspector-pane` opaque so content never bleeds.
+- [x] App icon: `src-tauri/icons/qwry-icon.svg` (gradient squircle + DB cylinder + cursor) → `rsvg-convert` 1024 PNG → `bun tauri icon` regenerated full set. Dock/Finder icon only shows in the bundled .app (dev runs the bare binary).
+- [x] Gate: vibrancy light+dark + real icon in Finder/dock ✅ user-verified
+- NOTE: built .app + dmg at `src-tauri/target/release/bundle/` — rebuild after P1.7 tunnel work for the final artifact.
+
+## P1.7 — SSH tunnel
+- [x] `tunnel.rs`: spawns `ssh -N -L 127.0.0.1:<free>:<dbhost>:<dbport> [user@]<sshhost>` with BatchMode=yes (key/agent only, no prompts), ExitOnForwardFailure, keepalives; honors ~/.ssh/config (aliases/ProxyJump/keys); free-port pick, ~10s TcpStream health check, ssh-stderr surfaced on failure, `kill_on_drop` reaps it. Needed tokio `net` feature.
+- [x] One tunnel **shared per profile** (`AppState.tunnels`, `ensure_tunnel` get-or-start, race-safe), reused across the profile's per-tab sessions; lives for app lifetime (kill_on_drop on exit).
+- [x] `postgres::connect(profile, password, addr: Option<(&str,u16)>)` — addr overrides host/port for the tunnel local endpoint; TLS no-verify so hostname mismatch is fine. Profile gained `ssh_host/ssh_port/ssh_user/ssh_key` (JSON blob → no DB migration). ProfileForm "SSH tunnel" section.
+- [x] Gate: connect + query through an SSH tunnel ✅ user-verified
+- NOTE: couldn't self-test (localhost sshd off; didn't touch prod) — user verified with their bastion.
+
+---
+
 ## Session log
+
+### 2026-06-13/14 — v0.1.5 P1.1–P1.7 (session 2)
+Shipped the entire 11-feature backlog as v0.1.5 (P1.1→P1.7), every gate user-verified against live staging.
+- **P1.1 edit power**: `plan_edits` groups edits by (table,row) → one batched UPDATE/row; ctid-fallback editing (detect a `ctid` result column → row locator when no PK), `is_ctid`/`warn` on ColumnEditMeta.
+- **P1.2 row lifecycle**: browser insert panel (`insert_row`, blank=DEFAULT/∅=NULL/typed=value) + grid context-menu delete (`delete_rows`, one txn, DangerModal preview). Browser auto-selects `ctid, *` for PK-less tables. Also: global `noAutocorrect` killer for the WKWebView macOS suggestion bubble.
+- **P1.3 JSON power**: rewrote JsonTree with ⌘F search (filter+highlight+hit-nav) and in-place type-preserving leaf/key editing → stages to pending edits.
+- **P1.4 per-tab sessions**: `ensureTabSession` (keyed profile::tab), `results.executedSessionId` so edits share the tab txn; isolated primary session for introspect; amber tab tx-dot (SQL-sniff).
+- **P1.5 light theme**: `:root[data-theme=light]` token override, `--syn-*`/`--hl-*` tokens, parametric CM `dark` flag (editor remounts on theme change), settings.theme system|dark|light persisted, palette Appearance group.
+- **P1.6 native skin**: window-vibrancy Sidebar material (transparent window + macOSPrivateApi feature must match conf), opaque content panes; custom app icon (qwry-icon.svg → tauri icon).
+- **P1.7 ssh tunnel**: `tunnel.rs` spawns system `ssh -L` (BatchMode, ~/.ssh/config), one tunnel/profile shared across sessions, connect routes through the local port.
+
+Gotchas burned this session:
+- `tauri` cargo feature `macos-private-api` MUST match `app.macOSPrivateApi:true` in tauri.conf or build.rs aborts.
+- editing Cargo.toml mid-session makes the `tauri dev` watcher rebuild — it can show transient errors from a half-applied edit; trust a clean standalone `cargo check`.
+- WKWebView forces macOS autocorrect on every field; no global switch — stamp `autocorrect/autocapitalize/spellcheck=off` per field + MutationObserver (`app/noAutocorrect.ts`).
+- per-tab sessions = one PG connection per tab (and one ssh tunnel/profile shared); tx indicator is a SQL-sniff heuristic.
+
+Remaining deferred (not in v0.1.5): Glide grid reeval (only if grid feels slow), ERD, CSV/Parquet import-export, MySQL/SQLite drivers, LISTEN/NOTIFY, flame-graph EXPLAIN. Scratch tables on staging: `qwry_scratch_ctid`, `qwry_scratch_json` (drop when done testing).
 
 ### 2026-06-12 — P5–P10 (session 1, conclusion)
 ENTIRE v1 ROADMAP SHIPPED IN ONE SESSION (P0→P10), every gate user-verified against live staging data. The three headline differentiators all work: (1) schema-aware intellisense with alias scoping + FK joins, (2) editable results from arbitrary SQL via prepare()-metadata, (3) free first-class jsonb. Plus: streaming 1M-row grid, table browser with AND/OR filters + searchable sort, tabs/saved-queries/history/palette, EXPLAIN viz, danger guards, native chrome with springs.

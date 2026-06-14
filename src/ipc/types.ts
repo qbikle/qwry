@@ -10,6 +10,12 @@ export interface Profile {
   sslmode: "disable" | "prefer" | "require";
   color?: string | null;
   is_prod: boolean;
+  /** SSH tunnel: when ssh_host is set, connect through `ssh -L`. host/port
+   * above are then the DB address as seen from the ssh server. */
+  ssh_host?: string | null;
+  ssh_port?: number | null;
+  ssh_user?: string | null;
+  ssh_key?: string | null;
 }
 
 export interface ColumnMeta {
@@ -46,6 +52,10 @@ export interface ColumnEditMeta {
   editable: boolean;
   reason: string | null;
   type_name: string;
+  /** this result column is the table's ctid (a row locator, not user-editable) */
+  is_ctid: boolean;
+  /** soft warning shown on an editable cell (e.g. "editing via ctid") */
+  warn: string | null;
 }
 
 export interface EditabilityMap {

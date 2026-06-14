@@ -41,7 +41,13 @@ pub async fn connect(state: State<'_, AppState>, profile_id: String) -> Result<S
         .ok_or(driver::DriverError::Internal("no such profile".into()))?;
     let password = secrets::get_password(&profile_id).unwrap_or_default();
 
-    let session = driver::postgres::connect(&profile, &password).await?;
+    // through an SSH tunnel when the profile has one, else direct
+    let session = if crate::tunnel::tunnel_host(&profile).is_some() {
+        let tunnel = state.ensure_tunnel(&profile).await?;
+        driver::postgres::connect(&profile, &password, Some(("127.0.0.1", tunnel.local_port))).await?
+    } else {
+        driver::postgres::connect(&profile, &password, None).await?
+    };
     let session_id = uuid::Uuid::new_v4().to_string();
     state
         .sessions
@@ -135,6 +141,38 @@ pub async fn edits_apply(
         .session(&session_id)
         .ok_or(driver::DriverError::NoSession)?;
     session.apply_edits(&sql, statement_index, edits).await
+}
+
+#[tauri::command]
+pub async fn delete_rows(
+    state: State<'_, AppState>,
+    session_id: String,
+    sql: String,
+    statement_index: u32,
+    table_oid: u32,
+    rows: Vec<Vec<(u32, Option<String>)>>,
+) -> Result<crate::driver::postgres::edit::EditOutcome> {
+    let session = state
+        .session(&session_id)
+        .ok_or(driver::DriverError::NoSession)?;
+    session
+        .delete_rows(&sql, statement_index, table_oid, rows)
+        .await
+}
+
+#[tauri::command]
+pub async fn insert_row(
+    state: State<'_, AppState>,
+    session_id: String,
+    schema: String,
+    table: String,
+    cols: Vec<String>,
+    values: Vec<Option<String>>,
+) -> Result<ExecOutcome> {
+    let session = state
+        .session(&session_id)
+        .ok_or(driver::DriverError::NoSession)?;
+    session.insert_row(&schema, &table, cols, values).await
 }
 
 #[tauri::command]

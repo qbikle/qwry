@@ -1,4 +1,5 @@
-/* qwry design tokens — dark first; light theme lands in P10 */
+/* qwry design tokens — dark is the default (:root); light overrides under
+   :root[data-theme="light"]. Theme is set by src/stores/settings.ts. */
 
 :root {
   /* surfaces */
@@ -21,10 +22,30 @@
   --danger-soft: rgba(255, 92, 105, 0.14);
   --ok: #3ecf8e;
   --warn: #f5a623;
+  --warn-soft: rgba(245, 166, 35, 0.12);
 
   /* borders */
   --border: #2a2e37;
   --border-strong: #3a4050;
+
+  /* syntax / JSON colours (editor highlight + json tree + structure) */
+  --syn-keyword: #c792ea;
+  --syn-operator: #89ddff;
+  --syn-number: #f78c6c;
+  --syn-string: #c3e88d;
+  --syn-comment: #5e6673;
+  --syn-type: #ffcb6b;
+  --syn-prop: #82aaff;
+  --syn-var: #e6e9ef;
+  --syn-punct: #9aa3b2;
+
+  /* CodeMirror surface bits */
+  --cm-active-line: rgba(255, 255, 255, 0.03);
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.45);
+
+  /* search-match highlight */
+  --hl-bg: #f5a623;
+  --hl-fg: #1a1a1a;
 
   /* type */
   --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
@@ -46,6 +67,51 @@
   --radius-lg: 12px;
 }
 
+:root[data-theme="light"] {
+  /* surfaces */
+  --bg-app: #eef1f5;
+  --bg-sidebar: #e7ebf1;
+  --bg-panel: #ffffff;
+  --bg-raised: #f1f3f7;
+  --bg-hover: #e7ebf1;
+  --bg-active: #dbe1ea;
+
+  /* text */
+  --fg: #1c2128;
+  --fg-muted: #586173;
+  --fg-faint: #9aa3b2;
+
+  /* accent */
+  --accent: #2f6bff;
+  --accent-soft: rgba(47, 107, 255, 0.12);
+  --danger: #d92d3a;
+  --danger-soft: rgba(217, 45, 58, 0.1);
+  --ok: #1a9d6b;
+  --warn: #b9770a;
+  --warn-soft: rgba(185, 119, 10, 0.13);
+
+  /* borders */
+  --border: #e1e5ec;
+  --border-strong: #c8cfda;
+
+  /* syntax — darkened for legibility on white */
+  --syn-keyword: #8a1fa6;
+  --syn-operator: #0a7ea4;
+  --syn-number: #b5430b;
+  --syn-string: #2e7d32;
+  --syn-comment: #97a0af;
+  --syn-type: #976a00;
+  --syn-prop: #1d4ed8;
+  --syn-var: #1c2128;
+  --syn-punct: #586173;
+
+  --cm-active-line: rgba(0, 0, 0, 0.04);
+  --shadow-pop: 0 8px 24px rgba(20, 30, 60, 0.18);
+
+  --hl-bg: #ffd866;
+  --hl-fg: #1c2128;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -62,7 +128,9 @@ body {
   font-family: var(--font-ui);
   font-size: var(--text-md);
   color: var(--fg);
-  background: var(--bg-app);
+  /* transparent so the macOS sidebar vibrancy material shows through where the
+     UI leaves gaps (the sidebar); content panels paint their own opaque bg */
+  background: transparent;
   -webkit-font-smoothing: antialiased;
   user-select: none;
   cursor: default;

@@ -10,6 +10,7 @@ export function ProfileForm({ profile }: { profile: Profile }) {
   const [password, setPassword] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [tunnel, setTunnel] = useState(!!profile.ssh_host?.trim());
 
   const field = <K extends keyof Profile>(k: K, v: Profile[K]) =>
     setP((prev) => ({ ...prev, [k]: v }));
@@ -85,6 +86,60 @@ export function ProfileForm({ profile }: { profile: Profile }) {
           Production
         </label>
       </div>
+
+      <label className="pf-check">
+        <input
+          type="checkbox"
+          checked={tunnel}
+          onChange={(e) => {
+            setTunnel(e.target.checked);
+            if (!e.target.checked) field("ssh_host", null);
+          }}
+        />
+        SSH tunnel
+      </label>
+      {tunnel && (
+        <div className="pf-ssh">
+          <div className="pf-hint">
+            Uses your system <code>ssh</code> (~/.ssh/config, keys, ProxyJump). Host/Port
+            above are the database as seen from the SSH server.
+          </div>
+          <div className="pf-row">
+            <label style={{ flex: 3 }}>
+              SSH host
+              <input
+                value={p.ssh_host ?? ""}
+                onChange={(e) => field("ssh_host", e.target.value)}
+                placeholder="bastion.example.com or ssh-config alias"
+              />
+            </label>
+            <label style={{ flex: 1 }}>
+              SSH port
+              <input
+                type="number"
+                value={p.ssh_port ?? 22}
+                onChange={(e) => field("ssh_port", Number(e.target.value) || 22)}
+              />
+            </label>
+          </div>
+          <label>
+            SSH user
+            <input
+              value={p.ssh_user ?? ""}
+              onChange={(e) => field("ssh_user", e.target.value)}
+              placeholder="(optional — from ssh config)"
+            />
+          </label>
+          <label>
+            Identity file
+            <input
+              value={p.ssh_key ?? ""}
+              onChange={(e) => field("ssh_key", e.target.value)}
+              placeholder="(optional — e.g. ~/.ssh/id_ed25519)"
+            />
+          </label>
+        </div>
+      )}
       {err && <div className="pf-error">{err}</div>}
       <div className="pf-actions">
         <button type="button" onClick={() => setEditing(null)}>

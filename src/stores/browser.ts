@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { TableInfo } from "./schema";
 import { useResults } from "./results";
+import * as ipc from "../ipc/commands";
 
 export type FilterOp =
   | "="
@@ -42,6 +43,11 @@ interface BrowserState {
   setSort: (s: BrowserState["sort"]) => void;
   loadMore: () => void;
   refresh: () => void;
+  /** insert a row; cols/values cover only the columns the user set */
+  insertRow: (
+    cols: string[],
+    values: (string | null)[],
+  ) => Promise<{ ok: boolean; error?: string }>;
 }
 
 const PAGE = 1000;
@@ -75,7 +81,9 @@ export function browseSql(s: {
           .join("\n  ")}`
       : "";
   const order = s.sort ? `\nORDER BY ${qi(s.sort.col)} ${s.sort.dir}` : "";
-  return `SELECT * FROM ${t}${where}${order}\nLIMIT ${s.limit}`;
+  // ordinary tables without a PK get ctid so they stay editable/deletable
+  const cols = s.table.pk.length === 0 && s.table.kind === "r" ? "ctid, *" : "*";
+  return `SELECT ${cols} FROM ${t}${where}${order}\nLIMIT ${s.limit}`;
 }
 
 function run(state: BrowserState) {
@@ -126,4 +134,19 @@ export const useBrowser = create<BrowserState>((set, get) => ({
   },
 
   refresh: () => run(get()),
+
+  insertRow: async (cols, values) => {
+    const s = get();
+    if (!s.table) return { ok: false, error: "no table open" };
+    // insert on the same session the browse query ran on (shares the tab txn)
+    const sessionId = useResults.getState().executedSessionId;
+    if (!sessionId) return { ok: false, error: "not connected" };
+    try {
+      await ipc.insertRow(sessionId, s.table.schema, s.table.name, cols, values);
+      run(get()); // reload so the new row shows
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: (e as { message?: string }).message ?? String(e) };
+    }
+  },
 }));
