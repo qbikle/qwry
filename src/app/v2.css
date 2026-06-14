@@ -101,6 +101,28 @@
   min-width: 0;
   background: var(--bg-panel);
   position: relative;
+  /* width animates the open/close so the main card reflows in lockstep;
+     margin cancels the flex gutter when collapsed (no empty strip) */
+  transition:
+    width 240ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    margin-left 240ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.inspector-card.resizing {
+  transition: none;
+}
+.inspector-card.collapsed {
+  margin-left: calc(-1 * var(--gutter));
+  border-color: transparent;
+  box-shadow: none;
+}
+.inspector-card.collapsed .inspector-resize {
+  display: none;
+}
+.inspector-fixed {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
 }
 
 /* sidebar card sections */

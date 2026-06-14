@@ -192,8 +192,12 @@ Design (from user wireframes): floating rounded cards on a themed-glass gutter �
 - [x] Gate: arrays + JSON formatted, colorized raw/edit, copy split ✅ user-verified
 - NOTE: GOTCHA — don't try transparent-textarea highlight overlays in WKWebView (opaque field bg wins); use CodeMirror for colorized editing.
 
-## P2.6 — breadcrumb + animation polish
-- [ ] Richer breadcrumb (db/table/query); spring tuning pass.
+## P2.6 — breadcrumb + animation polish ✅
+- [x] Breadcrumb: `connection / database / context` (context = browsed table name or active tab name); fades on change (`swapIn`).
+- [x] Inspector open/close animates its **width** (CSS transition) so the main card reflows in lockstep — content right-anchored fixed-width (reads as a slide), transition disabled while drag-resizing (`resizing` flag), negative margin cancels the flex gutter when collapsed. (Replaced a motion x-slide that desynced from the instant flex shrink.)
+- [x] DB-switcher fixes: query a **live** session (active tab via ensureTabSession, then executedSessionId, then primary) — the primary introspect session goes stale across dev rebuilds; and **reuse an existing connection** for the picked db (same host/port/user) instead of always cloning.
+- [x] Gate: breadcrumb, smooth inspector push, DB switch reuses existing ✅ user-verified
+- NOTE: smooth "push" needs the content area to reflow over time (animate width), not a transform — accepted the grid re-measure cost.
 
 ---
 

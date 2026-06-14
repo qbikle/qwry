@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "motion/react";
 import { SwatchBook } from "lucide-react";
-import { panelIn } from "../design/springs";
+import { panelIn, swapIn } from "../design/springs";
 import { useUI } from "../stores/ui";
 import { ThemePicker } from "./ThemePicker";
 import { useConnections } from "../stores/connections";
@@ -47,18 +47,37 @@ export function App() {
   const inspectorOpen = useInspector((s) => s.open);
   const inspectorWidth = useInspector((s) => s.width);
   const browsing = useBrowser((s) => s.table !== null);
+  const browserTable = useBrowser((s) => s.table);
   const explainOpen = useExplain((s) => s.open);
+  const activeTabName = useTabs((s) => s.tabs.find((t) => t.id === s.activeId)?.name);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [resizing, setResizing] = useState(false);
 
   const activeProfile = profiles.find((p) => p.id === activeProfileId) ?? null;
   const connected = activeProfileId ? connState[activeProfileId] === "connected" : false;
   const prodActive = !!activeProfile?.is_prod && connected;
 
+  const crumbs: string[] = useMemo(() => {
+    if (homeMode) return [homeMode === "edit" ? "Edit connection" : "Connections"];
+    if (!activeProfile) return ["qwry"];
+    const ctx =
+      browsing && browserTable
+        ? browserTable.schema === "public"
+          ? browserTable.name
+          : `${browserTable.schema}.${browserTable.name}`
+        : activeTabName;
+    return [activeProfile.name || activeProfile.host, activeProfile.dbname, ctx].filter(
+      Boolean,
+    ) as string[];
+  }, [homeMode, activeProfile, browsing, browserTable, activeTabName]);
+
   const startInspectorResize = (e: React.MouseEvent) => {
     e.preventDefault();
+    setResizing(true); // suppress the width transition while dragging
     const onMove = (me: MouseEvent) =>
       useInspector.getState().setWidth(window.innerWidth - me.clientX);
     const onUp = () => {
+      setResizing(false);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
@@ -177,23 +196,14 @@ export function App() {
       {prodActive && <div className="prod-strip" title="Connected to PRODUCTION" />}
 
       <div className="v2-titlebar" data-tauri-drag-region>
-        <span className="v2-breadcrumb">
-          {homeMode ? (
-            <span className="crumb-strong">{homeMode === "edit" ? "Edit connection" : "Connections"}</span>
-          ) : activeProfile ? (
-            <>
-              <span className="crumb-strong">{activeProfile.name || activeProfile.host}</span>
-              {activeProfile.dbname && (
-                <>
-                  <span className="crumb-sep">/</span>
-                  {activeProfile.dbname}
-                </>
-              )}
-            </>
-          ) : (
-            "qwry"
-          )}
-        </span>
+        <motion.span className="v2-breadcrumb" key={crumbs.join("›")} {...swapIn}>
+          {crumbs.map((seg, i, arr) => (
+            <span key={i} className="crumb">
+              {i > 0 && <span className="crumb-sep">/</span>}
+              <span className={i === arr.length - 1 ? "crumb-strong" : ""}>{seg}</span>
+            </span>
+          ))}
+        </motion.span>
         <button
           className="v2-tool"
           title="Theme"
@@ -256,12 +266,17 @@ export function App() {
               )}
             </motion.main>
 
-            {inspectorOpen && (
-              <motion.aside className="inspector-card card" style={{ width: inspectorWidth }} {...panelIn}>
-                <div className="inspector-resize" onMouseDown={startInspectorResize} />
+            <aside
+              className={`inspector-card card${inspectorOpen ? "" : " collapsed"}${resizing ? " resizing" : ""}`}
+              style={{ width: inspectorOpen ? inspectorWidth : 0 }}
+            >
+              <div className="inspector-resize" onMouseDown={startInspectorResize} />
+              {/* fixed-width content so it slides in from the right as the card
+                  widens (the main card reflows in lockstep) */}
+              <div className="inspector-fixed" style={{ width: inspectorWidth }}>
                 <Inspector />
-              </motion.aside>
-            )}
+              </div>
+            </aside>
           </>
         )}
       </div>

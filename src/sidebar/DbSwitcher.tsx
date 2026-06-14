@@ -3,6 +3,8 @@ import { motion } from "motion/react";
 import { Check, ChevronDown, Database } from "lucide-react";
 import { menuIn } from "../design/springs";
 import { useConnections } from "../stores/connections";
+import { useResults } from "../stores/results";
+import { useTabs } from "../stores/tabs";
 import * as ipc from "../ipc/commands";
 
 const LIST_DBS =
@@ -12,8 +14,6 @@ const LIST_DBS =
  * Picking another database clones the connection (sibling) and connects. */
 export function DbSwitcher({ profileId, dbname, name }: { profileId: string; dbname: string; name: string }) {
   const sessions = useConnections((s) => s.sessions);
-  const connect = useConnections((s) => s.connect);
-  const loadProfiles = useConnections((s) => s.loadProfiles);
   const [open, setOpen] = useState(false);
   const [dbs, setDbs] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -24,8 +24,15 @@ export function DbSwitcher({ profileId, dbname, name }: { profileId: string; dbn
       return;
     }
     setOpen(true);
-    if (dbs) return;
-    const sid = sessions[profileId];
+    setDbs(null);
+    // use a guaranteed-live session: the active tab's (reconnects if needed),
+    // then the last-run session, then the primary
+    const conn = useConnections.getState();
+    const tabId = useTabs.getState().activeId;
+    const sid =
+      (tabId ? await conn.ensureTabSession(profileId, tabId) : null) ??
+      useResults.getState().executedSessionId ??
+      sessions[profileId];
     if (!sid) {
       setDbs([]);
       return;
@@ -43,9 +50,29 @@ export function DbSwitcher({ profileId, dbname, name }: { profileId: string; dbn
     if (db === dbname) return;
     setBusy(true);
     try {
+      const conn = useConnections.getState();
+      const src = conn.profiles.find((p) => p.id === profileId);
+      // reuse an existing connection for this database on the same server
+      const existing = conn.profiles.find(
+        (p) =>
+          p.id !== profileId &&
+          p.dbname === db &&
+          p.host === src?.host &&
+          p.port === src?.port &&
+          p.user === src?.user,
+      );
+      if (existing) {
+        if (conn.connState[existing.id] === "connected") {
+          conn.setActive(existing.id);
+          conn.setHome(null);
+        } else {
+          await conn.connect(existing.id);
+        }
+        return;
+      }
       const p = await ipc.cloneConnection(profileId, db);
-      await loadProfiles();
-      await connect(p.id);
+      await conn.loadProfiles();
+      await conn.connect(p.id);
     } finally {
       setBusy(false);
     }
