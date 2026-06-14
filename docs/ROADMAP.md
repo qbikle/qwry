@@ -128,9 +128,12 @@ Order = daily-value + risk first, cosmetic mid, big-build last. Glide reeval (#1
 - [x] Gate: search keys + edit nested value/key in tree → commits ✅ user-verified
 
 ## P1.4 — Transactions (per-tab sessions)
-- [ ] Dedicated DB session per query tab (not one shared session) so BEGIN/COMMIT/ROLLBACK and temp state stay coherent
-- [ ] Session lifecycle tied to tab open/close; status indicator when a tx is open
-- [ ] Gate: BEGIN in a tab, mutate, see change, ROLLBACK → gone; a second tab is unaffected
+- [x] Dedicated session per query tab: `connections.tabSessions` keyed `skey(profile,tab)`, `ensureTabSession` creates lazily on first run (backend was already multi-session — frontend-only change). `results.executedSessionId` records the running session; edits/insert/delete/EXPLAIN/full-value-fetch all reuse it so they share the tab's txn/temp state.
+- [x] Schema introspection isolated on the per-profile **primary** session (`sessions[profileId]`), never a tab session — DDL refresh + ⌘R use it.
+- [x] Open-tx indicator: amber dot on tab when a BEGIN is open (sniffed from executed statement heads, batch-abort aware); clears on COMMIT/ROLLBACK/END. `txTabs` keyed by skey.
+- [x] Lifecycle: tab close → `closeTabSessions` disconnects its session(s); reconnect (`connect`) drops stale tabSessions/txTabs for that profile.
+- [x] Gate: BEGIN+mutate visible in same tab, invisible in a 2nd tab, ROLLBACK reverts ✅ user-verified
+- NOTE: tx indicator is a SQL-sniff heuristic (tokio-postgres doesn't expose ReadyForQuery status). Each tab = one extra PG connection.
 
 ## P1.5 — Light theme
 - [ ] Light token set in design tokens + second CodeMirror theme

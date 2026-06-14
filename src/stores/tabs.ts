@@ -77,6 +77,8 @@ export const useTabs = create<TabsState>((set, get) => ({
 
   closeTab: (id) => {
     const { tabs, activeId, closedStack } = get();
+    // drop the closed tab's dedicated DB session(s)
+    useConnections.getState().closeTabSessions(id);
     const closing = tabs.find((t) => t.id === id);
     const remember =
       closing && closing.sql.trim() !== ""

@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import type { TableInfo } from "./schema";
 import { useResults } from "./results";
-import { useConnections } from "./connections";
 import * as ipc from "../ipc/commands";
 
 export type FilterOp =
@@ -139,8 +138,8 @@ export const useBrowser = create<BrowserState>((set, get) => ({
   insertRow: async (cols, values) => {
     const s = get();
     if (!s.table) return { ok: false, error: "no table open" };
-    const conn = useConnections.getState();
-    const sessionId = conn.activeProfileId ? conn.sessions[conn.activeProfileId] : null;
+    // insert on the same session the browse query ran on (shares the tab txn)
+    const sessionId = useResults.getState().executedSessionId;
     if (!sessionId) return { ok: false, error: "not connected" };
     try {
       await ipc.insertRow(sessionId, s.table.schema, s.table.name, cols, values);

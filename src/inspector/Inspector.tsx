@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { PanelRightClose } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import * as ipc from "../ipc/commands";
-import { useConnections } from "../stores/connections";
 import { editKey, useEdits } from "../stores/edits";
 import { useInspector } from "../stores/inspector";
 import { useResults } from "../stores/results";
@@ -70,8 +69,7 @@ export function Inspector() {
     const pkCols = editMap.pk_cols[meta.table_oid];
     const table = editMap.tables[meta.table_oid];
     if (!pkCols || !table) return;
-    const conn = useConnections.getState();
-    const sessionId = conn.activeProfileId ? conn.sessions[conn.activeProfileId] : null;
+    const sessionId = useResults.getState().executedSessionId;
     if (!sessionId) return;
 
     const colName = stmt.columns[target.col].name;

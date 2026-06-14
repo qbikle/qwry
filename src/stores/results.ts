@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import * as ipc from "../ipc/commands";
 import type { ColumnMeta, DriverError, QueryEvent } from "../ipc/types";
-import { useConnections } from "./connections";
+import { skey, useConnections } from "./connections";
 
 export interface StatementState {
   index: number;
@@ -26,6 +26,9 @@ interface ResultsState {
   totalMs: number | null;
   /** exact text of the last execution (for editor error squiggles) */
   executedSql: string | null;
+  /** the session the last query ran on — edits/inserts/deletes reuse it so
+   * they share the tab's transaction/temp state */
+  executedSessionId: string | null;
   /** errors not tied to a statement (connect drops etc.) */
   globalError: DriverError | null;
 
@@ -83,16 +86,23 @@ export const useResults = create<ResultsState>((set, get) => ({
   running: false,
   totalMs: null,
   executedSql: null,
+  executedSessionId: null,
   globalError: null,
 
   setActiveStatement: (i) => set({ activeStatement: i }),
 
   run: async (sqlOverride?: string) => {
     const conn = useConnections.getState();
-    const { activeProfileId, sessions } = conn;
+    const { activeProfileId } = conn;
     const sql = sqlOverride ?? conn.sql;
     if (get().running || !activeProfileId || !sql.trim()) return;
-    const sessionId = sessions[activeProfileId];
+
+    // each query tab runs on its own dedicated session so transactions and
+    // temp state stay coherent and isolated from other tabs
+    const { useTabs } = await import("./tabs");
+    const tabId = useTabs.getState().activeId;
+    if (!tabId) return;
+    const sessionId = await conn.ensureTabSession(activeProfileId, tabId);
     if (!sessionId) return;
 
     const { dangerousStatements, confirmDanger } = await import("./danger");
@@ -112,6 +122,7 @@ export const useResults = create<ResultsState>((set, get) => ({
       running: true,
       totalMs: null,
       executedSql: sql,
+      executedSessionId: sessionId,
       globalError: null,
     });
     // stale editability + pending edits die with the previous result set
@@ -191,9 +202,23 @@ export const useResults = create<ResultsState>((set, get) => ({
 
     try {
       await ipc.executeStream(sessionId, sql, onEvent);
+
+      // update the tab's open-transaction flag from what actually ran
+      const txKey = skey(activeProfileId, tabId);
+      let inTx = useConnections.getState().txTabs[txKey] ?? false;
+      for (const st of get().statements) {
+        const head = st.sql.trim().toLowerCase();
+        if (/^(begin|start\s+transaction)\b/.test(head)) inTx = true;
+        else if (/^(commit|rollback|end)\b/.test(head)) inTx = false;
+        if (st.error) break; // simple-protocol batch aborts here
+      }
+      useConnections.getState().setTxTab(txKey, inTx);
+
       const { looksLikeDdl, useSchema } = await import("./schema");
       if (looksLikeDdl(sql)) {
-        void useSchema.getState().fetch(activeProfileId, sessionId);
+        // refresh schema on the isolated primary session, not the tab session
+        const primary = useConnections.getState().sessions[activeProfileId];
+        if (primary) void useSchema.getState().fetch(activeProfileId, primary);
       }
       const s = get();
       void import("@tauri-apps/api/core").then(({ invoke }) =>
@@ -216,8 +241,8 @@ export const useResults = create<ResultsState>((set, get) => ({
   },
 
   cancel: async () => {
-    const conn = useConnections.getState();
-    const sessionId = conn.activeProfileId ? conn.sessions[conn.activeProfileId] : null;
+    // cancel runs against the session the active query is executing on
+    const sessionId = get().executedSessionId;
     if (sessionId) await ipc.cancel(sessionId);
   },
 }));

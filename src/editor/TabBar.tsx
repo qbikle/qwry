@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Plus, X } from "lucide-react";
 import { useTabs } from "../stores/tabs";
+import { skey, useConnections } from "../stores/connections";
 import "./editor.css";
 
 export function TabBar() {
@@ -10,6 +11,8 @@ export function TabBar() {
   const closeTab = useTabs((s) => s.closeTab);
   const newTab = useTabs((s) => s.newTab);
   const rename = useTabs((s) => s.rename);
+  const activeProfileId = useConnections((s) => s.activeProfileId);
+  const txTabs = useConnections((s) => s.txTabs);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
 
@@ -46,7 +49,12 @@ export function TabBar() {
               onClick={(e) => e.stopPropagation()}
             />
           ) : (
-            <span className="tab-name">{t.name}</span>
+            <span className="tab-name">
+              {activeProfileId && txTabs[skey(activeProfileId, t.id)] && (
+                <span className="tab-tx" title="Open transaction on this tab" />
+              )}
+              {t.name}
+            </span>
           )}
           <button
             className="tab-close"

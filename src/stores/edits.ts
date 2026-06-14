@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import * as ipc from "../ipc/commands";
 import type { EditabilityMap, RowEdit } from "../ipc/types";
-import { useConnections } from "./connections";
 import { useResults } from "./results";
 
 export interface PendingEdit {
@@ -39,9 +38,10 @@ interface EditsState {
 }
 
 function sessionAndSql(): { sessionId: string; sql: string } | null {
-  const conn = useConnections.getState();
   const res = useResults.getState();
-  const sessionId = conn.activeProfileId ? conn.sessions[conn.activeProfileId] : null;
+  // edits must run on the SAME session that produced the result set, so they
+  // share the tab's transaction / temp state
+  const sessionId = res.executedSessionId;
   if (!sessionId || !res.executedSql) return null;
   return { sessionId, sql: res.executedSql };
 }

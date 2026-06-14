@@ -6,7 +6,6 @@ import { motion } from "motion/react";
 import { menuIn } from "../design/springs";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { useResults, type StatementState } from "../stores/results";
-import { useConnections } from "../stores/connections";
 import { editKey, useEdits } from "../stores/edits";
 import * as ipc from "../ipc/commands";
 import type { EditabilityMap } from "../ipc/types";
@@ -358,9 +357,7 @@ export function Grid({ statement }: { statement: StatementState }) {
     );
     if (!ok) return;
 
-    const conn = useConnections.getState();
-    const sessionId = conn.activeProfileId ? conn.sessions[conn.activeProfileId] : null;
-    const executedSql = useResults.getState().executedSql;
+    const { executedSql, executedSessionId: sessionId } = useResults.getState();
     if (!sessionId || !executedSql) return;
     try {
       await ipc.deleteRows(sessionId, executedSql, statement.index, deletableTableOid, locators);
