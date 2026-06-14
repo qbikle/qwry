@@ -36,6 +36,17 @@ fn free_local_port() -> Result<u16> {
 }
 
 impl Tunnel {
+    /// is the forward still up? (ssh died / bastion dropped → local port closed)
+    pub async fn is_alive(&self) -> bool {
+        tokio::time::timeout(
+            Duration::from_millis(800),
+            tokio::net::TcpStream::connect(("127.0.0.1", self.local_port)),
+        )
+        .await
+        .map(|r| r.is_ok())
+        .unwrap_or(false)
+    }
+
     pub async fn start(profile: &Profile) -> Result<Tunnel> {
         let ssh_host = tunnel_host(profile)
             .ok_or_else(|| DriverError::Connect("tunnel: no ssh host".into()))?;

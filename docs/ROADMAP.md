@@ -154,6 +154,7 @@ Order = daily-value + risk first, cosmetic mid, big-build last. Glide reeval (#1
 - [x] `postgres::connect(profile, password, addr: Option<(&str,u16)>)` — addr overrides host/port for the tunnel local endpoint; TLS no-verify so hostname mismatch is fine. Profile gained `ssh_host/ssh_port/ssh_user/ssh_key` (JSON blob → no DB migration). ProfileForm "SSH tunnel" section.
 - [x] Gate: connect + query through an SSH tunnel ✅ user-verified
 - NOTE: couldn't self-test (localhost sshd off; didn't touch prod) — user verified with their bastion.
+- [x] (v0.2) Tunnel **liveness**: `ensure_tunnel` health-checks the cached tunnel (`Tunnel::is_alive` — TCP to the local port) and restarts it if the ssh died (bastion idle / network drop) instead of reusing a dead one → fixed "connection failed" on a previously-working tunnel after it dropped.
 
 ---
 
