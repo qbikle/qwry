@@ -222,7 +222,19 @@ export function Inspector() {
       <div className="insp-body">
         {editingText !== null ? (
           <div className="insp-edit">
-            <textarea value={editingText} onChange={(e) => setEditingText(e.target.value)} spellCheck={false} />
+            <textarea
+              value={editingText}
+              onChange={(e) => setEditingText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  stage(editingText);
+                  setEditingText(null);
+                } else if (e.key === "Escape") {
+                  setEditingText(null);
+                }
+              }}
+              spellCheck={false}
+            />
             <div className="insp-editactions">
               <button onClick={() => setEditingText(null)}>Cancel</button>
               <button
@@ -260,6 +272,11 @@ export function Inspector() {
                 } catch (err) {
                   setJsonError((err as Error).message);
                 }
+              }}
+              onSave={saveRaw}
+              onCancel={() => {
+                setRawDraft(null);
+                setJsonError(null);
               }}
             />
             {jsonError && rawDirty && <div className="insp-jsonerror">{jsonError}</div>}

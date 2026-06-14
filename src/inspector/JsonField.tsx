@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import { EditorState } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { EditorState, Prec } from "@codemirror/state";
+import { EditorView, keymap } from "@codemirror/view";
 import { json } from "@codemirror/lang-json";
 import { qwryHighlight } from "../editor/theme";
 import "./inspector.css";
@@ -27,15 +27,23 @@ export function JsonField({
   value,
   readOnly,
   onChange,
+  onSave,
+  onCancel,
 }: {
   value: string;
   readOnly?: boolean;
   onChange?: (v: string) => void;
+  onSave?: () => void;
+  onCancel?: () => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
 
   useEffect(() => {
     if (!host.current) return;
@@ -44,6 +52,24 @@ export function JsonField({
       state: EditorState.create({
         doc: value,
         extensions: [
+          Prec.highest(
+            keymap.of([
+              {
+                key: "Mod-Enter",
+                run: () => {
+                  onSaveRef.current?.();
+                  return true;
+                },
+              },
+              {
+                key: "Escape",
+                run: () => {
+                  onCancelRef.current?.();
+                  return true;
+                },
+              },
+            ]),
+          ),
           json(),
           qwryHighlight,
           EditorView.lineWrapping,
