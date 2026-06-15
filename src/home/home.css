@@ -389,6 +389,12 @@
   border-color: var(--accent);
   color: var(--accent-fg);
 }
+.ce-key {
+  margin-left: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  opacity: 0.55;
+}
 .ce-actions button:disabled {
   opacity: 0.5;
   cursor: default;

@@ -19,6 +19,10 @@ export const profileSave = (profile: Profile, password?: string) =>
 
 export const profileDelete = (id: string) => invoke<void>("profile_delete", { id });
 
+/** drop a profile's cached SSH tunnel so the next connect rebuilds it */
+export const invalidateProfile = (profileId: string) =>
+  invoke<void>("invalidate_profile", { profileId });
+
 export const setProfileOrder = (ids: string[]) =>
   invoke<void>("set_profile_order", { ids });
 

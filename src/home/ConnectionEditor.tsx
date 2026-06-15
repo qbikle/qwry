@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { useConnections } from "../stores/connections";
 import type { Profile } from "../ipc/types";
@@ -38,6 +38,32 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
       setSaving(false);
     }
   };
+
+  const valid = !saving && !!p.name.trim() && !!p.host && !!p.dbname && !!p.user;
+
+  // capture-phase window listener: fires regardless of focus (WKWebView buttons
+  // don't take focus on click) and beats the global ⌘S/Esc handlers
+  const keyRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  keyRef.current = (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      setHome("dashboard");
+    } else if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (valid) void save(true);
+    } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (valid) void save(false);
+    }
+  };
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => keyRef.current(e);
+    window.addEventListener("keydown", h, true);
+    return () => window.removeEventListener("keydown", h, true);
+  }, []);
 
   return (
     <div className="ce">
@@ -207,16 +233,14 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
             <Trash2 size={14} /> {armed ? "Click again" : "Delete"}
           </button>
         )}
-        <button onClick={() => setHome("dashboard")}>Cancel</button>
-        <button disabled={saving || !p.name.trim() || !p.host || !p.dbname || !p.user} onClick={() => void save(false)}>
-          {saving ? "Saving…" : "Save"}
+        <button onClick={() => setHome("dashboard")}>
+          Cancel <span className="ce-key">esc</span>
         </button>
-        <button
-          className="primary"
-          disabled={saving || !p.name.trim() || !p.host || !p.dbname || !p.user}
-          onClick={() => void save(true)}
-        >
-          Save & Connect
+        <button disabled={!valid} onClick={() => void save(false)}>
+          {saving ? "Saving…" : "Save"} <span className="ce-key">⌘S</span>
+        </button>
+        <button className="primary" disabled={!valid} onClick={() => void save(true)}>
+          Save &amp; Connect <span className="ce-key">⌘↵</span>
         </button>
       </div>
     </div>

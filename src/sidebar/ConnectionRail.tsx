@@ -36,13 +36,18 @@ export function ConnectionRail() {
   const setHome = useConnections((s) => s.setHome);
   const editConnection = useConnections((s) => s.editConnection);
 
-  // local order drives the drag animation; resync only when membership changes
+  // local order drives the drag animation; keep our order but always adopt the
+  // latest profile objects (so a customise — color/glyph — shows immediately)
   const [items, setItems] = useState<Profile[]>(profiles);
   useEffect(() => {
     setItems((cur) => {
-      const sameMembers =
-        cur.length === profiles.length && cur.every((c) => profiles.some((p) => p.id === c.id));
-      return sameMembers ? cur : profiles;
+      const byId = new Map(profiles.map((p) => [p.id, p]));
+      const kept = cur.filter((c) => byId.has(c.id)).map((c) => byId.get(c.id)!);
+      const keptIds = new Set(kept.map((p) => p.id));
+      const added = profiles.filter((p) => !keptIds.has(p.id));
+      const next = [...kept, ...added];
+      const same = next.length === cur.length && next.every((p, i) => p === cur[i]);
+      return same ? cur : next;
     });
   }, [profiles]);
 

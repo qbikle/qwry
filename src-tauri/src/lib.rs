@@ -39,6 +39,7 @@ pub fn run() {
             commands::profiles_list,
             commands::profile_save,
             commands::profile_delete,
+            commands::invalidate_profile,
             commands::set_profile_order,
             commands::clone_connection,
             commands::connect,

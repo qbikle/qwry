@@ -28,14 +28,17 @@ impl AppState {
     }
 
     /// Get-or-start the profile's SSH tunnel. Shared across all its sessions.
-    /// A cached tunnel whose ssh died (bastion idle / network drop) is replaced.
+    /// A cached tunnel is replaced when its ssh died (bastion idle / network drop)
+    /// OR when the profile was repointed (DB host/port or ssh params changed) — else
+    /// a stale tunnel keeps forwarding to the old host (e.g. a read replica).
     pub async fn ensure_tunnel(&self, profile: &Profile) -> Result<Arc<Tunnel>> {
+        let spec = crate::tunnel::tunnel_spec(profile);
         let cached = self.tunnels.lock().unwrap().get(&profile.id).cloned();
         if let Some(t) = cached {
-            if t.is_alive().await {
+            if t.spec == spec && t.is_alive().await {
                 return Ok(t);
             }
-            self.tunnels.lock().unwrap().remove(&profile.id); // dead → restart below
+            self.tunnels.lock().unwrap().remove(&profile.id); // stale/dead → restart below
         }
         // start outside the lock (std Mutex can't be held across await)
         let tunnel = Arc::new(Tunnel::start(profile).await?);

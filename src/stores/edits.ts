@@ -2,6 +2,7 @@ import { create } from "zustand";
 import * as ipc from "../ipc/commands";
 import type { EditabilityMap, RowEdit } from "../ipc/types";
 import { useResults } from "./results";
+import { useConnections } from "./connections";
 
 export interface PendingEdit {
   stmtIndex: number;
@@ -49,6 +50,21 @@ function sessionAndSql(): { sessionId: string; sql: string } | null {
   const sessionId = res.executedSessionId;
   if (!sessionId || !res.executedSql) return null;
   return { sessionId, sql: res.executedSql };
+}
+
+/** resolve a LIVE session for commit/preview. The result's executedSessionId may
+ * be dead (profile repointed, network drop, dev rebuild) — re-resolve the active
+ * tab's session, reconnecting transparently. Edits are pk-based so they apply
+ * cleanly on a fresh connection to the same database. */
+async function liveSessionId(): Promise<string | null> {
+  const conn = useConnections.getState();
+  const tabId = useResults.getState().active;
+  const profileId = conn.activeProfileId;
+  if (profileId && tabId) {
+    const sid = await conn.ensureTabSession(profileId, tabId);
+    if (sid) return sid;
+  }
+  return useResults.getState().executedSessionId;
 }
 
 /** group pending edits into RowEdit payloads for one statement (active tab) */
@@ -134,10 +150,15 @@ export const useEdits = create<EditsState>((set, get) => ({
   },
 
   openPreview: async () => {
-    const ctx = sessionAndSql();
+    const sql = useResults.getState().executedSql;
     const tab = get().byTab[get().active] ?? blankEdits();
     const edits = Object.values(tab.pending);
-    if (!ctx || edits.length === 0) return;
+    if (!sql || edits.length === 0) return;
+    const sessionId = await liveSessionId();
+    if (!sessionId) {
+      set({ preview: { statements: [], error: "no live connection" } });
+      return;
+    }
     const byStmt = new Map<number, PendingEdit[]>();
     for (const e of edits) {
       const arr = byStmt.get(e.stmtIndex) ?? [];
@@ -150,7 +171,7 @@ export const useEdits = create<EditsState>((set, get) => ({
         const map = tab.maps[stmtIndex];
         if (!map || map === "loading" || map === "unavailable") continue;
         const rowEdits = buildRowEdits(stmtEdits, map, stmtIndex);
-        const sqls = await ipc.editsPreview(ctx.sessionId, ctx.sql, stmtIndex, rowEdits);
+        const sqls = await ipc.editsPreview(sessionId, sql, stmtIndex, rowEdits);
         all.push(...sqls);
       }
       set({ preview: { statements: all, error: null } });
@@ -162,12 +183,17 @@ export const useEdits = create<EditsState>((set, get) => ({
   closePreview: () => set({ preview: null }),
 
   commit: async () => {
-    const ctx = sessionAndSql();
+    const sql = useResults.getState().executedSql;
     const tabId = get().active;
     const tab = get().byTab[tabId] ?? blankEdits();
     const edits = Object.values(tab.pending);
-    if (!ctx || edits.length === 0 || get().committing) return;
+    if (!sql || edits.length === 0 || get().committing) return;
     set({ committing: true, lastError: null });
+    const sessionId = await liveSessionId();
+    if (!sessionId) {
+      set({ committing: false, lastError: "no live connection" });
+      return;
+    }
 
     const byStmt = new Map<number, PendingEdit[]>();
     for (const e of edits) {
@@ -181,7 +207,7 @@ export const useEdits = create<EditsState>((set, get) => ({
         const map = tab.maps[stmtIndex];
         if (!map || map === "loading" || map === "unavailable") continue;
         const rowEdits = buildRowEdits(stmtEdits, map, stmtIndex);
-        const outcome = await ipc.editsApply(ctx.sessionId, ctx.sql, stmtIndex, rowEdits);
+        const outcome = await ipc.editsApply(sessionId, sql, stmtIndex, rowEdits);
         if (outcome.committed) {
           useResults.getState().patchStatement(stmtIndex, (rows) => {
             const copy = rows.map((r) => [...r]);

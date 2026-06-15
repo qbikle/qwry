@@ -39,6 +39,15 @@ pub fn profile_delete(state: State<'_, AppState>, id: String) -> Result<()> {
     secrets::delete_password(&id)
 }
 
+/// Drop a profile's cached SSH tunnel so the next connect rebuilds it against the
+/// (possibly repointed) host. Frontend closes the profile's sessions separately;
+/// this just discards the shared tunnel. No-op when the profile has none.
+#[tauri::command]
+pub fn invalidate_profile(state: State<'_, AppState>, profile_id: String) -> Result<()> {
+    state.tunnels.lock().unwrap().remove(&profile_id);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn set_profile_order(state: State<'_, AppState>, ids: Vec<String>) -> Result<()> {
     state.appdb.set_profile_order(&ids)
