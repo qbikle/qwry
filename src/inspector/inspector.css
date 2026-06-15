@@ -134,7 +134,8 @@
   font-family: var(--font-mono);
 }
 
-.insp-text {
+/* scalar value card (plain text / int / etc.) */
+.insp-value {
   margin: 0;
   font-family: var(--font-mono);
   font-size: var(--text-sm);
@@ -142,6 +143,17 @@
   white-space: pre-wrap;
   word-break: break-word;
   user-select: text;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.insp-value.editable {
+  cursor: text;
+  transition: border-color 120ms;
+}
+.insp-value.editable:hover {
+  border-color: var(--border-strong);
 }
 
 /* value editor (plain text + raw json) */
@@ -149,7 +161,6 @@
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
-  height: 100%;
 }
 
 .insp-edit textarea {
@@ -168,6 +179,12 @@
 }
 .insp-edit textarea:focus {
   border-color: var(--accent);
+}
+/* scalar editor sizes to its content instead of filling the panel */
+.insp-edit.scalar textarea {
+  flex: 0 0 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .insp-jsonerror {
@@ -197,6 +214,12 @@
 }
 .insp-editactions button:disabled {
   opacity: 0.5;
+}
+.insp-key {
+  margin-left: 5px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  opacity: 0.55;
 }
 
 /* colorized JSON view/editor (CodeMirror) */

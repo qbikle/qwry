@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ChevronDown,
   Code,
@@ -52,6 +52,7 @@ export function Inspector() {
 
   const [mode, setMode] = useState<"auto" | "raw">("auto");
   const [editingText, setEditingText] = useState<string | null>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
   const [rawDraft, setRawDraft] = useState<string | null>(null);
   const [jsonError, setJsonError] = useState<string | null>(null);
   const editSeq = useInspector((s) => s.editSeq);
@@ -115,6 +116,18 @@ export function Inspector() {
     else setEditingText(value);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editSeq]);
+
+  // scalar editor auto-grows to its content (one line for an int, more for prose)
+  // so it never balloons to the full panel height
+  const growTextarea = () => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, 38), window.innerHeight * 0.4)}px`;
+  };
+  useLayoutEffect(() => {
+    if (editingText !== null) growTextarea();
+  }, [editingText !== null]);
 
   if (!target || !stmt) {
     return (
@@ -221,10 +234,14 @@ export function Inspector() {
 
       <div className="insp-body">
         {editingText !== null ? (
-          <div className="insp-edit">
+          <div className="insp-edit scalar">
             <textarea
+              ref={taRef}
               value={editingText}
-              onChange={(e) => setEditingText(e.target.value)}
+              onChange={(e) => {
+                setEditingText(e.target.value);
+                growTextarea();
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                   stage(editingText);
@@ -234,9 +251,12 @@ export function Inspector() {
                 }
               }}
               spellCheck={false}
+              autoFocus
             />
             <div className="insp-editactions">
-              <button onClick={() => setEditingText(null)}>Cancel</button>
+              <button onClick={() => setEditingText(null)}>
+                Cancel <span className="insp-key">esc</span>
+              </button>
               <button
                 className="primary"
                 onClick={() => {
@@ -244,7 +264,7 @@ export function Inspector() {
                   setEditingText(null);
                 }}
               >
-                Stage edit
+                Stage edit <span className="insp-key">⌘↵</span>
               </button>
             </div>
           </div>
@@ -282,15 +302,23 @@ export function Inspector() {
             {jsonError && rawDirty && <div className="insp-jsonerror">{jsonError}</div>}
             {rawDirty && (
               <div className="insp-editactions">
-                <button onClick={() => { setRawDraft(null); setJsonError(null); }}>Discard</button>
+                <button onClick={() => { setRawDraft(null); setJsonError(null); }}>
+                  Discard <span className="insp-key">esc</span>
+                </button>
                 <button className="primary" disabled={!!jsonError} onClick={saveRaw}>
-                  Stage edit
+                  Stage edit <span className="insp-key">⌘↵</span>
                 </button>
               </div>
             )}
           </div>
         ) : (
-          <pre className="insp-text">{value}</pre>
+          <div
+            className={`insp-value${editMeta?.editable ? " editable" : ""}`}
+            title={editMeta?.editable ? "Double-click to edit" : undefined}
+            onDoubleClick={() => editMeta?.editable && setEditingText(value)}
+          >
+            {value}
+          </div>
         )}
       </div>
     </div>
