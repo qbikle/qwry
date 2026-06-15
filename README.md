@@ -16,7 +16,9 @@ Tauri 2 (Rust core) · React 19 · CodeMirror 6 · ~15 MB app, ~6 MB dmg.
 
 **Fast.** Results stream from Rust in batches over Tauri channels into a custom virtualized grid — a million-row result scrolls smoothly. ⌘. cancels instantly via the PG cancel protocol.
 
-Also: table browser (filters with AND/OR, searchable sort, structure tab, row insert/delete), SSH tunnels via your system `ssh` (honours `~/.ssh/config`), light/dark/system themes, macOS sidebar vibrancy, persistent tabs, saved queries, searchable history, ⌘K command palette, EXPLAIN ANALYZE visualizer with hot-node highlighting, guards for UPDATE/DELETE without WHERE, prod-connection warning strip, Keychain-stored credentials, no telemetry.
+**Looks the part.** Floating rounded cards on a themed-glass gutter, a connection rail of customizable avatars (colour + glyph, drag to reorder), a colour engine with curated palettes + custom themes (each with a synthesised light/dark variant), and springy Linear/Arc-style motion. Edit a saved connection and it actually re-points — stale sessions and SSH tunnels are torn down so the next query hits the new host.
+
+Also: table browser (filters with AND/OR, searchable sort, structure tab, row insert/delete), SSH tunnels via your system `ssh` (honours `~/.ssh/config`), per-connection home dashboard with recent activity, in-app database switcher, light/dark/system themes, macOS vibrancy, persistent tabs, saved queries, searchable history, ⌘K command palette, EXPLAIN ANALYZE visualizer with hot-node highlighting, guards for UPDATE/DELETE without WHERE, prod-connection warning strip, Keychain-stored credentials, no telemetry.
 
 ## Keyboard map
 
@@ -55,4 +57,4 @@ Details in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Development happens pha
 
 ## Status
 
-v0.1.5 — v1 roadmap + the v0.1.5 backlog shipped (batched/ctid edits, row insert/delete, JSON search & tree-edit, per-tab transactions, light theme, sidebar vibrancy, SSH tunnels). PostgreSQL only (driver trait is in place for SQLite/MySQL later). macOS only.
+v0.2.0 — major visual overhaul on top of the full v1 + v0.1.5 feature set. v0.2 adds the floating-card shell, the colour/theme engine (curated palettes + custom dual-mode themes), the connection rail with customizable avatars, a home dashboard, in-app database switcher, per-tab results, connection liveness + edit-takes-effect re-pointing, and an inspector redesign (structured JSON/array view + edit). PostgreSQL only (driver trait is in place for SQLite/MySQL later). macOS only.
