@@ -20,9 +20,14 @@ async fn staging_connect_and_query() {
         user: env("QWRY_TEST_USER"),
         sslmode: "prefer".into(),
         color: None,
+        glyph: None,
         is_prod: false,
+        ssh_host: None,
+        ssh_port: None,
+        ssh_user: None,
+        ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, Box::new(|| {}))
         .await
         .expect("connect");
 
@@ -76,9 +81,14 @@ async fn staging_introspect() {
         user: env("QWRY_TEST_USER"),
         sslmode: "prefer".into(),
         color: None,
+        glyph: None,
         is_prod: false,
+        ssh_host: None,
+        ssh_port: None,
+        ssh_user: None,
+        ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, Box::new(|| {}))
         .await
         .expect("connect");
 
@@ -121,9 +131,14 @@ async fn staging_edit_pipeline() {
         user: env("QWRY_TEST_USER"),
         sslmode: "prefer".into(),
         color: None,
+        glyph: None,
         is_prod: false,
+        ssh_host: None,
+        ssh_port: None,
+        ssh_user: None,
+        ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, Box::new(|| {}))
         .await
         .expect("connect");
 
@@ -206,9 +221,14 @@ async fn staging_streaming_and_cancel() {
         user: env("QWRY_TEST_USER"),
         sslmode: "prefer".into(),
         color: None,
+        glyph: None,
         is_prod: false,
+        ssh_host: None,
+        ssh_port: None,
+        ssh_user: None,
+        ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, Box::new(|| {}))
         .await
         .expect("connect");
 
