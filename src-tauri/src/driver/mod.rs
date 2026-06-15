@@ -18,6 +18,10 @@ pub struct Profile {
     pub sslmode: String,
     #[serde(default)]
     pub color: Option<String>,
+    /// avatar glyph: a letter/emoji, or "icon:<name>" for a curated lucide icon;
+    /// null = auto-initial from the name
+    #[serde(default)]
+    pub glyph: Option<String>,
     #[serde(default)]
     pub is_prod: bool,
     /// SSH tunnel: when `ssh_host` is set, connect Postgres through `ssh -L`.

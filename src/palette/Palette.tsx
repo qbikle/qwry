@@ -14,12 +14,14 @@ import {
   Plus,
   RefreshCw,
   Sun,
+  SwatchBook,
   Table2,
 } from "lucide-react";
 import { useConnections } from "../stores/connections";
 import { useResults } from "../stores/results";
 import { useSchema } from "../stores/schema";
-import { useSettings, type Theme } from "../stores/settings";
+import { useSettings, type Mode } from "../stores/settings";
+import { useUI } from "../stores/ui";
 import { useTabs } from "../stores/tabs";
 import "./palette.css";
 
@@ -37,8 +39,8 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
 
   const profiles = useConnections((s) => s.profiles);
   const activeProfileId = useConnections((s) => s.activeProfileId);
-  const theme = useSettings((s) => s.theme);
-  const setTheme = useSettings((s) => s.setTheme);
+  const mode = useSettings((s) => s.mode);
+  const setMode = useSettings((s) => s.setMode);
   const snapshot = useSchema((s) =>
     activeProfileId ? s.snapshots[activeProfileId] : undefined,
   );
@@ -174,23 +176,32 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
           </Command.Group>
 
           <Command.Group heading="Appearance">
+            <Command.Item
+              value="theme customize palette picker pokemon"
+              onSelect={() => {
+                useUI.getState().openThemePicker();
+                close();
+              }}
+            >
+              <SwatchBook size={13} /> Customize theme…
+            </Command.Item>
             {(
               [
                 ["dark", "Dark", Moon],
                 ["light", "Light", Sun],
                 ["system", "System", Monitor],
-              ] as [Theme, string, typeof Moon][]
-            ).map(([t, label, Icon]) => (
+              ] as [Mode, string, typeof Moon][]
+            ).map(([m, label, Icon]) => (
               <Command.Item
-                key={t}
-                value={`theme ${label}`}
+                key={m}
+                value={`mode ${label}`}
                 onSelect={() => {
-                  setTheme(t);
+                  setMode(m);
                   close();
                 }}
               >
-                <Icon size={13} /> Theme: {label}
-                {theme === t && <Check size={13} className="pal-check" />}
+                <Icon size={13} /> Mode: {label}
+                {mode === m && <Check size={13} className="pal-check" />}
               </Command.Item>
             ))}
           </Command.Group>

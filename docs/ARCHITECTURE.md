@@ -72,25 +72,34 @@ enum QueryEvent {
 
 - **Streaming**: tokio-postgres `RowStream` → ≤500-row batches over Tauri `Channel`. Frontend caps in-memory rows (50k default, "load more"). JSON values v1. Cells >8KB truncated with `cell_overflow` marker; inspector fetches full value on demand.
 - **Editable results**: column editable iff `table_oid != 0` AND full PK of that table present in result columns (ctid fallback = editable-with-warning). `apply_edits` → one transaction of generated `UPDATE … WHERE pk=…` with RETURNING to refresh cells. Joined/computed columns read-only with reason.
-- **Sessions**: one dedicated PG connection per query tab (transactions coherent). CancelToken per session.
+- **Sessions**: one dedicated PG connection per query tab (transactions coherent). CancelToken per session. `connect` takes an `on_close` callback the driver fires on socket death → `session-closed` event → frontend flips the dot + auto-reconnects (`ensureTabSession`).
 - **Introspection**: pg_catalog queries (tables, columns+types+nullability+defaults, PKs, FKs both directions, indexes, functions+signatures, enums) → `SchemaSnapshot { version }`, pushed via event. Refresh on connect / DDL detection / manual.
 - **Statement splitter**: lexer respecting `'…'`, `"…"`, `$tag$…$tag$`, `--`, `/*…*/`.
+- **SSH tunnel** (`tunnel.rs`): one `ssh -N -L` subprocess shared per profile (`AppState.tunnels`). Each carries a `spec` (forward target + ssh params); `ensure_tunnel` rebuilds on spec mismatch (profile repointed) or dead socket (`is_alive`), so a stale tunnel can't keep forwarding to the old host.
+- **Connection-edit invalidation** (v0.2): editing a saved profile whose connection fields changed (`connSig`) closes its sessions + drops its tunnel via `invalidate_profile` → next connect uses the new values; cosmetic edits don't disturb the live connection.
 
 ## Frontend (`src/`)
 
 ```
-app/         shell: layout, panels, theming, menu wiring
-stores/      zustand: connections, tabs, results, schema, edits, settings
+app/         floating-card shell (v2.css), breadcrumb, menu wiring
+home/        Dashboard (connection grid + recent activity) + ConnectionEditor
+stores/      zustand: connections, tabs, results, schema, edits, settings, inspector
 ipc/         typed invoke/Channel wrappers; types.ts mirrors Rust types
-editor/      SqlEditor.tsx; completion/{context,sources,rank,joins}.ts; lint.ts
+editor/      SqlEditor.tsx; completion/{context,engine,joins}.ts; lint.ts
 grid/        Grid/Cell/Header; selection.ts; clipboard.ts; editing.ts
-inspector/   cell detail; JsonTree.tsx; text/bytea views
-sidebar/     connection→schema→table tree, fuzzy filter
+inspector/   cell detail; JsonTree.tsx; JsonField.tsx (CodeMirror); format.ts
+sidebar/     ConnectionRail + Avatar; DbSwitcher; schema→table tree; SavedQueries
 browser/     table data browser + structure tab
 palette/     cmdk ⌘K
 explain/     plan tree visualizer
-design/      tokens.css, springs.ts, icons (lucide)
+design/      tokens.css, theme.ts (palette engine), springs.ts, icons (lucide)
 ```
+
+### v0.2 frontend designs
+
+- **Theme engine** (`design/theme.ts`): a palette is *seeds*, expanded to the full CSS-var token set as inline vars at startup (no flash). Two kinds — **hue** (curated 8 Pokémon palettes: accent+hue+tint → tinted neutral ramp) and **anchors** (custom: bg/fg/primary/secondary → surfaces by sRGB mix). `--accent-fg` is auto-contrast; custom themes synthesise their opposite light/dark variant so the mode toggle flips them too.
+- **Floating-card shell** (`app/v2.css`): transparent window, `window-vibrancy` material showing through `--gutter` between `.card` panels; inspector animates its *width* so the main card reflows in lockstep (no transform desync).
+- **Per-tab results/edits**: `useResults`/`useEdits` keyed `byTab` with the active tab mirrored to top-level store fields — every consumer reads unchanged and a background tab's stream can't corrupt the visible tab. `committing`/`preview` stay global.
 
 ### Completion engine (the intellisense)
 
@@ -101,19 +110,22 @@ Then replace its completion source: walk lezer parse tree → query context (cur
 
 Custom DOM grid, TanStack Virtual on both axes. Pending-edit overlay model in `editsStore` keyed (statementIdx, rowIdx, colIdx); dirty cells show ✎; ⌘S opens SQL preview → commit. Read-only cells show reason on hover.
 
-## Wireframe
+## Wireframe (v0.2 — floating cards on a themed-glass gutter)
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ ●●●  qwry          ⌥⌘P prod-shopix ▾ 🔴          ⌘K Search…              │
-├────────────┬─────────────────────────────────────────────┬───────────────┤
-│ CONNECTIONS│ ┌─ orders.sql ● ─┬─ users ─┬─ + ───────────┐│ INSPECTOR     │
-│ ▸ staging  │ │  SQL editor (CodeMirror 6)               ││ cell detail / │
-│ ▾ prod 🔴  │ │  completion popup, lint squiggles        ││ jsonb tree /  │
-│   tables…  │ ├──────────────────────────────────────────┤│ table struct  │
-│ filter ⌘⇧F │ │  virtualized results grid · status bar   ││ pending edits │
-└────────────┴─┴──────────────────────────────────────────┴┴───────────────┘
+│ ●●●   connection / database / table·tab            ⌘K   theme   qwry      │
+│  ┌──┐ ┌───────────┐ ┌──────────────────────────────────┐ ┌─────────────┐ │
+│  │🏠│ │ Databases ▾│ │ orders.sql ● │ users │ +         │ │ INSPECTOR   │ │
+│  │🐢│ │ Tables     │ │  SQL editor (CodeMirror 6)        │ │ cell / jsonb│ │
+│  │🔥│ │  orders    │ │  completion popup, lint squiggles │ │ tree / array│ │
+│  │＋│ │  users…    │ ├───────────────────────────────────┤ │ struct      │ │
+│  └──┘ │ Saved      │ │  virtualized grid · status bar    │ │ pending ✎   │ │
+│ rail  └───────────┘ └───────────────────────────────────┘ └─────────────┘ │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
+
+Left **connection rail** = circular avatars (colour + glyph), drag-reorder, 🏠 → home (dashboard / connection editor). Floating **sidebar card** (Databases switcher / Tables / Saved), **main card** (tabs / editor / results), **inspector card** slides in by animating its width so the main card reflows in lockstep. `--gutter` between cards shows the window vibrancy, tinted to the active theme.
 
 ## Keyboard map (core)
 

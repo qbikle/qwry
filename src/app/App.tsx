@@ -1,9 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { motion } from "motion/react";
+import { SwatchBook } from "lucide-react";
+import { panelIn, swapIn } from "../design/springs";
+import { useUI } from "../stores/ui";
+import { ThemePicker } from "./ThemePicker";
 import { useConnections } from "../stores/connections";
 import { useInspector } from "../stores/inspector";
 import { useTabs } from "../stores/tabs";
-import { ProfileList } from "../sidebar/ProfileList";
-import { ProfileForm } from "../sidebar/ProfileForm";
+import { ConnectionRail } from "../sidebar/ConnectionRail";
+import { DbSwitcher } from "../sidebar/DbSwitcher";
+import { Home } from "../home/Home";
+import { SchemaTree } from "../sidebar/SchemaTree";
 import { SavedQueries } from "../sidebar/SavedQueries";
 import { QueryBox } from "../editor/QueryBox";
 import { TabBar } from "../editor/TabBar";
@@ -16,24 +23,61 @@ import { ExplainView } from "../explain/ExplainView";
 import { useBrowser } from "../stores/browser";
 import { useExplain } from "../stores/explain";
 import "./app.css";
+import "./v2.css";
+
+/** the sidebar card: DB header → tables → saved queries (shown when connected) */
+function SidebarCard({ profileId, dbname, name }: { profileId: string; dbname: string; name: string }) {
+  return (
+    <>
+      <DbSwitcher profileId={profileId} dbname={dbname} name={name} />
+      <div className="sb-tables">
+        <SchemaTree profileId={profileId} />
+      </div>
+      <SavedQueries />
+    </>
+  );
+}
 
 export function App() {
   const loadProfiles = useConnections((s) => s.loadProfiles);
-  const editing = useConnections((s) => s.editing);
+  const homeMode = useConnections((s) => s.homeMode);
+  const profiles = useConnections((s) => s.profiles);
+  const activeProfileId = useConnections((s) => s.activeProfileId);
+  const connState = useConnections((s) => s.connState);
   const inspectorOpen = useInspector((s) => s.open);
   const inspectorWidth = useInspector((s) => s.width);
   const browsing = useBrowser((s) => s.table !== null);
+  const browserTable = useBrowser((s) => s.table);
   const explainOpen = useExplain((s) => s.open);
+  const activeTabName = useTabs((s) => s.tabs.find((t) => t.id === s.activeId)?.name);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const prodActive = useConnections(
-    (s) => !!s.profiles.find((p) => p.id === s.activeProfileId)?.is_prod,
-  );
+  const [resizing, setResizing] = useState(false);
+
+  const activeProfile = profiles.find((p) => p.id === activeProfileId) ?? null;
+  const connected = activeProfileId ? connState[activeProfileId] === "connected" : false;
+  const prodActive = !!activeProfile?.is_prod && connected;
+
+  const crumbs: string[] = useMemo(() => {
+    if (homeMode) return [homeMode === "edit" ? "Edit connection" : "Connections"];
+    if (!activeProfile) return ["qwry"];
+    const ctx =
+      browsing && browserTable
+        ? browserTable.schema === "public"
+          ? browserTable.name
+          : `${browserTable.schema}.${browserTable.name}`
+        : activeTabName;
+    return [activeProfile.name || activeProfile.host, activeProfile.dbname, ctx].filter(
+      Boolean,
+    ) as string[];
+  }, [homeMode, activeProfile, browsing, browserTable, activeTabName]);
 
   const startInspectorResize = (e: React.MouseEvent) => {
     e.preventDefault();
+    setResizing(true); // suppress the width transition while dragging
     const onMove = (me: MouseEvent) =>
       useInspector.getState().setWidth(window.innerWidth - me.clientX);
     const onUp = () => {
+      setResizing(false);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
@@ -44,6 +88,17 @@ export function App() {
   useEffect(() => {
     loadProfiles();
     void useTabs.getState().load();
+
+    // a connection's socket died → flip its dot (auto-reconnects on next run)
+    let unlistenClosed: (() => void) | undefined;
+    void import("@tauri-apps/api/event").then(({ listen }) =>
+      listen<{ profile_id: string }>("session-closed", (e) => {
+        useConnections.getState().markDisconnected(e.payload.profile_id);
+      }).then((un) => {
+        unlistenClosed = un;
+      }),
+    );
+
     const onKey = (e: KeyboardEvent) => {
       // CodeMirror (or another component) already handled it — don't double-fire
       if (e.defaultPrevented) return;
@@ -130,54 +185,104 @@ export function App() {
       }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      unlistenClosed?.();
+    };
   }, [loadProfiles]);
 
   return (
-    <div className="app-shell">
+    <div className="v2-shell">
       {prodActive && <div className="prod-strip" title="Connected to PRODUCTION" />}
-      <aside className="sidebar">
-        <div className="titlebar-drag" data-tauri-drag-region />
-        <ProfileList />
-        <SavedQueries />
-      </aside>
-      <main className="main-area">
-        {browsing ? (
-          <TableBrowser />
+
+      <div className="v2-titlebar" data-tauri-drag-region>
+        <motion.span className="v2-breadcrumb" key={crumbs.join("›")} {...swapIn}>
+          {crumbs.map((seg, i, arr) => (
+            <span key={i} className="crumb">
+              {i > 0 && <span className="crumb-sep">/</span>}
+              <span className={i === arr.length - 1 ? "crumb-strong" : ""}>{seg}</span>
+            </span>
+          ))}
+        </motion.span>
+        <button
+          className="v2-tool"
+          title="Theme"
+          onClick={() => useUI.getState().openThemePicker()}
+        >
+          <SwatchBook size={15} />
+        </button>
+      </div>
+
+      <div className="v2-body">
+        <ConnectionRail />
+
+        {homeMode ? (
+          // full-screen connection surface (dashboard / editor)
+          <motion.main className="main-card card" {...panelIn}>
+            <Home />
+          </motion.main>
         ) : (
           <>
-            <TabBar />
-            <section className="editor-pane">
-              <QueryBox />
-            </section>
-            <section className="results-pane">
-              {explainOpen ? <ExplainView /> : <ResultsPane />}
-            </section>
+            <motion.aside className="sidebar-card card" {...panelIn}>
+              {activeProfile ? (
+                <SidebarCard
+                  profileId={activeProfile.id}
+                  dbname={activeProfile.dbname}
+                  name={activeProfile.name || activeProfile.host}
+                />
+              ) : (
+                <div className="sb-empty">Select a connection</div>
+              )}
+            </motion.aside>
+
+            <motion.main className="main-card card" {...panelIn}>
+              {browsing ? (
+                <TableBrowser />
+              ) : activeProfile ? (
+                <>
+                  <TabBar />
+                  <section className="editor-pane">
+                    <QueryBox />
+                  </section>
+                  <section className="results-pane">
+                    {explainOpen ? <ExplainView /> : <ResultsPane />}
+                  </section>
+                </>
+              ) : (
+                <div className="main-empty">
+                  <div className="me-title">qwry</div>
+                  <div>Pick a connection from the rail.</div>
+                </div>
+              )}
+
+              {!inspectorOpen && activeProfile && (
+                <button
+                  className="inspector-reopen"
+                  title="Show inspector ⌘I"
+                  onClick={() => useInspector.getState().toggle()}
+                >
+                  ‹
+                </button>
+              )}
+            </motion.main>
+
+            <aside
+              className={`inspector-card card${inspectorOpen ? "" : " collapsed"}${resizing ? " resizing" : ""}`}
+              style={{ width: inspectorOpen ? inspectorWidth : 0 }}
+            >
+              <div className="inspector-resize" onMouseDown={startInspectorResize} />
+              {/* fixed-width content so it slides in from the right as the card
+                  widens (the main card reflows in lockstep) */}
+              <div className="inspector-fixed" style={{ width: inspectorWidth }}>
+                <Inspector />
+              </div>
+            </aside>
           </>
         )}
-      </main>
-      {inspectorOpen ? (
-        <aside className="inspector-pane" style={{ width: inspectorWidth }}>
-          <div className="inspector-resize" onMouseDown={startInspectorResize} />
-          <Inspector />
-        </aside>
-      ) : (
-        <button
-          className="inspector-reopen"
-          title="Show inspector ⌘I"
-          onClick={() => useInspector.getState().toggle()}
-        >
-          ‹
-        </button>
-      )}
-      {editing && (
-        <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && useConnections.getState().setEditing(null)}>
-          <div className="modal">
-            <ProfileForm profile={editing} />
-          </div>
-        </div>
-      )}
+      </div>
+
       <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <ThemePicker />
       <DangerModal />
     </div>
   );

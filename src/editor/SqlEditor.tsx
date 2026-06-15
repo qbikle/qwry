@@ -29,6 +29,10 @@ import { FnSearch } from "./FnSearch";
 import { qwryHighlight, qwryTheme } from "./theme";
 import "./editor.css";
 
+/** what ⌘↵ / the Run button should execute: the selection if any, else the
+ * whole buffer. Set while the editor is mounted so the toolbar matches ⌘↵. */
+export const editorRunText: { current: (() => string) | null } = { current: null };
+
 export function SqlEditor() {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -137,6 +141,14 @@ export function SqlEditor() {
     });
     viewRef.current = view;
 
+    // toolbar Run/Explain read this so they honour the selection like ⌘↵ does
+    editorRunText.current = () => {
+      const sel = view.state.selection.main;
+      return sel.empty
+        ? view.state.doc.toString()
+        : view.state.sliceDoc(sel.from, sel.to);
+    };
+
     // reflect external sql changes (sidebar inserts, restores) into the doc
     const unsub = useConnections.subscribe((s) => {
       const doc = view.state.doc.toString();
@@ -172,6 +184,7 @@ export function SqlEditor() {
     return () => {
       unsub();
       unsubLint();
+      editorRunText.current = null;
       view.destroy();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -154,10 +154,78 @@ Order = daily-value + risk first, cosmetic mid, big-build last. Glide reeval (#1
 - [x] `postgres::connect(profile, password, addr: Option<(&str,u16)>)` — addr overrides host/port for the tunnel local endpoint; TLS no-verify so hostname mismatch is fine. Profile gained `ssh_host/ssh_port/ssh_user/ssh_key` (JSON blob → no DB migration). ProfileForm "SSH tunnel" section.
 - [x] Gate: connect + query through an SSH tunnel ✅ user-verified
 - NOTE: couldn't self-test (localhost sshd off; didn't touch prod) — user verified with their bastion.
+- [x] (v0.2) Tunnel **liveness**: `ensure_tunnel` health-checks the cached tunnel (`Tunnel::is_alive` — TCP to the local port) and restarts it if the ssh died (bastion idle / network drop) instead of reusing a dead one → fixed "connection failed" on a previously-working tunnel after it dropped.
+
+---
+
+# v0.2 — visual overhaul + UX/QOL (session 3+, iterative)
+
+Major UI overhaul to "best-looking DB client" + per-tab results. Iterative & communicative — features grow with user feedback, not fully pre-planned. Branch `v0.2` off `v0.1.5`.
+
+Design (from user wireframes): floating rounded cards on a themed-glass gutter — left **connection rail** (circular avatars) · **sidebar card** (Databases / Tables / Saved) · **main card** (tabs / query / results) · inspector slides in. Top breadcrumb. Feel = Linear/Arc (soft, springy).
+
+## P2.1 — layout shell ✅
+- [x] `v2-shell`: transparent window, vibrancy in gutters; floating cards (`.card` = radius-panel + shadow + hairline border + top sheen) with `--gutter`/`--rail-w` tokens. ConnectionRail (basic) + SidebarCard (DB head + SchemaTree + SavedQueries) + main-card; inspector as its own card + flush reopen tab. `panelIn`/`railItemIn` springs. Old `.app-shell/.sidebar/.main-area` removed.
+
+## P2.2 — theme system + colour overhaul ✅
+- [x] Engine `design/theme.ts`: palette = seeds → derive full token set as inline CSS vars at startup (no flash). TWO kinds: **hue** (curated: accent+hue+tint → tinted neutral ramp) and **anchors** (custom: bg/fg/primary/secondary → surfaces derived by sRGB mix). `--accent-fg` auto-contrast (Pikachu yellow → dark text); swapped all `color:white`-on-accent.
+- [x] 8 Pokémon palettes (Blastoise default) + mode system/light/dark (independent axis). Themed `--glass-tint` (gutter matches scheme).
+- [x] Custom themes = explicit anchors (AMOLED/neutral/high-contrast all reachable, no mangling). **Dual-mode**: authored once, engine synthesises the opposite light/dark variant (flip surface lightness, keep character+accents, contrast-adapt accent) → mode toggle flips custom themes too. Edit (pencil) custom; fork (copy) built-in → anchors. ThemePicker modal (swatchbook button in titlebar / ⌘K → Customize theme); active = ring (no check). Stable custom ids.
+- [x] Gate: palettes + modes + custom AMOLED/neutral + dual-mode flip ✅ user-verified
+
+## P2.3 — connection rail + customization + home ✅
+- [x] **P2.3a**: shared `Avatar` (color + glyph: letter/emoji/curated lucide icon, auto-contrast glyph) + `glyph` on Profile (JSON, no migration). Rail uses Avatar + 🏠 home button; ＋/right-click → editor; click green → instant open. Home surface (`homeMode` in connections store): **Dashboard** (connection grid + New, click connects / green opens instantly) + **ConnectionEditor** (full panel, replaces modal: avatar preview + name + color swatches/picker + glyph picker + connection fields + SSH + Delete/Cancel/Save/Save&Connect). App opens on home; sidebar hidden during home.
+- [x] **Connection liveness**: `connect` takes an `on_close` Box callback → driver task fires it when the socket dies (abort on intentional disconnect skips it); `commands::connect` emits `session-closed`. Frontend `markDisconnected` flips the dot gray + drops dead sessions; `ensureTabSession` auto-reconnects on next run; query-failure also flips the dot. Work view stays mounted when disconnected (gate = activeProfile, not live `connected`).
+- [x] Run/Explain **buttons** now honour the editor selection (via `editorRunText`), matching ⌘↵.
+- [x] **P2.3b**: DB-switcher (`DbSwitcher`) in the sidebar DB header → lists `pg_database` → picking another clones the connection (`clone_connection`: new sibling, password carried over) + connects. Recent-activity strip on the dashboard (`history_recent` across profiles → avatar + sql + time, click connects + opens in a tab).
+- [x] **Rail drag-reorder**: `motion` `Reorder.Group`/`Item` (spring layout, whileDrag lift); persisted via `set_profile_order` + a `position` column (additive migration, backfilled from rowid); debounced save after drop. Tap connects / right-click edits still work (threshold).
+
+## P2.4 — per-tab results ✅
+- [x] `useResults` + `useEdits` keyed **by tab** (`byTab`) with the active tab mirrored to the top-level fields — every consumer reads unchanged, and a background tab's stream can't corrupt the visible tab (each event/rAF-flush writes to its own tab id). Per-tab: statements/activeStatement/running/totalMs/executedSql/executedSessionId/globalError + editability maps/pending/flash. `committing`/`preview`/`lastError` stay global (one commit at a time). `patchStatement` patches the active tab on commit.
+- [x] `setActive`/`syncActive` driven by `useTabs.activeId` subscription; closed tabs cleared (`clearTab`/`resetTab`) via the same subscription (diff tab-id set) — no tabs→results import cycle.
+- [x] Gate: tab-switch keeps each tab's grid/edits; background run doesn't bleed; close drops state ✅ user-verified.
+
+## P2.5 — inspector redesign ✅
+- [x] Tidy chrome: header (col name + type pill + row + hide), status **chips** (read-only 🔒 / ctid ⚠ / pending ✎ / loading), compact **icon toolbar**. Sits transparently inside the floating inspector-card.
+- [x] **Structured formatting**: JSON *and* PG arrays (`text[]`, `int[]`, …) parse via `format.ts` (`structuredValue`/`parsePgArray`) → tree view. Arrays are **editable** too: `jsToPgArray` serializes the JS value back to a PG array literal, staged + cast `'{…}'::_text`/`::_int4` (verified PG coerces quoted elements). JSON stages as JSON.
+- [x] **Colorized raw view+edit** via a CodeMirror `JsonField` (`@codemirror/lang-json` + qwryHighlight, readOnly toggle). Replaced a transparent-textarea-over-`<pre>` overlay that WKWebView's native textarea background kept covering — 3 failed iterations; CM renders its own DOM, reliable. Raw = the editor (Stage/Discard on change); arrays read-only colorized.
+- [x] **Split copy button**: click = formatted; caret → Copy formatted / Copy raw.
+- [x] Gate: arrays + JSON formatted, colorized raw/edit, copy split ✅ user-verified
+- NOTE: GOTCHA — don't try transparent-textarea highlight overlays in WKWebView (opaque field bg wins); use CodeMirror for colorized editing.
+
+## P2.6 — breadcrumb + animation polish ✅
+- [x] Breadcrumb: `connection / database / context` (context = browsed table name or active tab name); fades on change (`swapIn`).
+- [x] Inspector open/close animates its **width** (CSS transition) so the main card reflows in lockstep — content right-anchored fixed-width (reads as a slide), transition disabled while drag-resizing (`resizing` flag), negative margin cancels the flex gutter when collapsed. (Replaced a motion x-slide that desynced from the instant flex shrink.)
+- [x] DB-switcher fixes: query a **live** session (active tab via ensureTabSession, then executedSessionId, then primary) — the primary introspect session goes stale across dev rebuilds; and **reuse an existing connection** for the picked db (same host/port/user) instead of always cloning.
+- [x] Gate: breadcrumb, smooth inspector push, DB switch reuses existing ✅ user-verified
+- NOTE: smooth "push" needs the content area to reflow over time (animate width), not a transform — accepted the grid re-measure cost.
+
+## P2.7 — connection-edit robustness + logo + inspector polish ✅
+- [x] **Editing a saved connection takes effect**: `connSig()` (host/port/dbname/user/sslmode/ssh_*) detects connection-affecting edits → `invalidateProfile` closes the profile's sessions + drops its cached tunnel (`invalidate_profile` command); cosmetic edits (name/color/glyph) leave the live connection alone. Tunnel carries a `spec`; `ensure_tunnel` rebuilds on mismatch so a repointed host can't keep forwarding to the old one (was hitting a read replica → "cannot execute UPDATE in a read-only transaction").
+- [x] **Commit/preview re-resolve a live session** via `ensureTabSession` instead of the result's `executedSessionId` — fixes "no such session" after a repoint / network drop / dev rebuild (edits are pk-based, apply cleanly on a fresh connection).
+- [x] **ConnectionEditor shortcuts** Esc/⌘S/⌘↵ via a capture-phase window listener (WKWebView buttons don't take focus on click, so keydown wasn't bubbling). Rail icons update live on customise (re-map items by id, no reload).
+- [x] **New app logo**: cylinder logo reshaped to Apple's icon grid (`scripts/make_icon.py` → `icon-master.png`), all sizes via `tauri icon`, favicon + window title refreshed.
+- [x] **Inspector scalar polish**: scalar values render in a rounded value card with double-click-to-edit; the scalar editor auto-grows to its content (no more full-panel balloon, actions stay put) with Esc/⌘↵ hints; same hints added to the JSON/array editor buttons.
 
 ---
 
 ## Session log
+
+### 2026-06-14/15 — v0.2 visual overhaul (session 3) — SHIPPED
+Major UI overhaul to a floating-card shell on a themed-glass gutter, plus a colour/theme engine and per-tab results. All gates user-verified against live staging. Bumped to **v0.2.0**.
+- **P2.1 layout shell**: transparent window + vibrancy gutters; floating `.card` panels (rail / sidebar / main / inspector) with `--gutter`/`--rail-w` tokens; `panelIn`/`railItemIn` springs.
+- **P2.2 theme engine** (`design/theme.ts`): palette = seeds → full token set as inline CSS vars (no flash); hue (8 Pokémon palettes) + anchors (custom) kinds; auto-contrast `--accent-fg`; dual-mode synthesis so custom themes flip with the light/dark toggle; ThemePicker.
+- **P2.3 rail + customization + home**: shared `Avatar` (colour+glyph), ConnectionRail with drag-reorder (`Reorder` + `position` column), home Dashboard + full-panel ConnectionEditor, DB-switcher, recent-activity strip, connection liveness (`on_close` → `session-closed` → auto-reconnect).
+- **P2.4 per-tab results**: `useResults`/`useEdits` keyed `byTab` with the active tab mirrored to top-level — zero consumer churn, background streams can't bleed into the visible tab.
+- **P2.5 inspector redesign**: chips + icon toolbar, structured formatting for JSON *and* PG arrays (arrays editable via `jsToPgArray`), colorized raw view/edit via CodeMirror `JsonField`, split copy button.
+- **P2.6 breadcrumb + anim**: connection/db/context breadcrumb (`swapIn`); inspector animates its *width* (CSS) so the main card reflows in lockstep; DB-switcher queries a live session + reuses an existing connection for the picked db.
+- **P2.7 robustness + logo + scalar polish**: saved-connection edits now invalidate stale sessions + tunnel (`connSig` + tunnel `spec`); commit/preview re-resolve a live session; editor shortcuts via capture listener; new macOS-grid app logo (`scripts/make_icon.py`); inspector scalar value card + auto-growing editor + shortcut hints.
+
+Gotchas burned this session:
+- WKWebView `<button>` doesn't take focus on click → click-then-⌘S won't bubble; use a capture-phase `window` keydown listener for surface-level shortcuts.
+- A cached SSH tunnel keeps forwarding to its *original* host — repointing a profile must drop/rebuild it (tunnel `spec` mismatch), else writes silently hit a read replica.
+- Never colorize text via a transparent textarea over a `<pre>` — WKWebView's opaque native field background covers it; use CodeMirror.
+- App icon: the raw logo PNG full-bleed reads as "pasted"; reshape to Apple's 824²-in-1024 rounded-squircle grid. Dev runs the bare binary (icon baked at compile time); macOS may cache — `tauri build` for the final.
 
 ### 2026-06-13/14 — v0.1.5 P1.1–P1.7 (session 2)
 Shipped the entire 11-feature backlog as v0.1.5 (P1.1→P1.7), every gate user-verified against live staging.

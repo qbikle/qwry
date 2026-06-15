@@ -13,6 +13,9 @@ use crate::driver::{DriverError, Profile, Result};
 
 pub struct Tunnel {
     pub local_port: u16,
+    /// the profile fields this tunnel was built for — if they change (e.g. the
+    /// DB host is repointed), the cached tunnel is stale and must be rebuilt
+    pub spec: String,
     // kept alive for the tunnel's lifetime; kill_on_drop reaps ssh on drop
     _child: Child,
 }
@@ -26,6 +29,19 @@ pub fn tunnel_host(profile: &Profile) -> Option<&str> {
         .filter(|h| !h.is_empty())
 }
 
+/// identity of a profile's tunnel: forward target + ssh connection params
+pub fn tunnel_spec(p: &Profile) -> String {
+    format!(
+        "{}|{}|{}|{}|{}|{}",
+        p.host,
+        p.port,
+        p.ssh_host.as_deref().unwrap_or(""),
+        p.ssh_port.unwrap_or(0),
+        p.ssh_user.as_deref().unwrap_or(""),
+        p.ssh_key.as_deref().unwrap_or(""),
+    )
+}
+
 fn free_local_port() -> Result<u16> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")
         .map_err(|e| DriverError::Connect(format!("tunnel: no local port: {e}")))?;
@@ -36,6 +52,17 @@ fn free_local_port() -> Result<u16> {
 }
 
 impl Tunnel {
+    /// is the forward still up? (ssh died / bastion dropped → local port closed)
+    pub async fn is_alive(&self) -> bool {
+        tokio::time::timeout(
+            Duration::from_millis(800),
+            tokio::net::TcpStream::connect(("127.0.0.1", self.local_port)),
+        )
+        .await
+        .map(|r| r.is_ok())
+        .unwrap_or(false)
+    }
+
     pub async fn start(profile: &Profile) -> Result<Tunnel> {
         let ssh_host = tunnel_host(profile)
             .ok_or_else(|| DriverError::Connect("tunnel: no ssh host".into()))?;
@@ -84,6 +111,7 @@ impl Tunnel {
         match wait_ready(local_port, &mut child).await {
             Ok(()) => Ok(Tunnel {
                 local_port,
+                spec: tunnel_spec(profile),
                 _child: child,
             }),
             Err(e) => {

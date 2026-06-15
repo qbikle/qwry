@@ -9,6 +9,8 @@ export interface Profile {
   user: string;
   sslmode: "disable" | "prefer" | "require";
   color?: string | null;
+  /** avatar glyph: a letter/emoji, or "icon:<name>" for a lucide icon; null = auto-initial */
+  glyph?: string | null;
   is_prod: boolean;
   /** SSH tunnel: when ssh_host is set, connect through `ssh -L`. host/port
    * above are then the DB address as seen from the ssh server. */
@@ -16,6 +18,15 @@ export interface Profile {
   ssh_port?: number | null;
   ssh_user?: string | null;
   ssh_key?: string | null;
+}
+
+export interface HistoryRow {
+  id: number;
+  profile_id: string;
+  sql: string;
+  ms: number;
+  rows: number;
+  ran_at: string;
 }
 
 export interface ColumnMeta {

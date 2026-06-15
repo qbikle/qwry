@@ -1,0 +1,137 @@
+.rail {
+  width: var(--rail-w);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 0 6px;
+}
+
+.rail-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* horizontal padding gives the active ring + indicator bar room inside the
+     clip box — overflow-y:auto forces overflow-x to clip, so they must fit */
+  overflow-x: hidden;
+  padding: 6px 11px;
+  margin: 0;
+  width: 100%;
+  list-style: none;
+  /* hide the scrollbar — the rail is narrow */
+  scrollbar-width: none;
+}
+.rail-list::-webkit-scrollbar {
+  display: none;
+}
+
+.rail-item {
+  position: relative;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.rail-item .qa-avatar {
+  transition: transform 180ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.rail-item:hover .qa-avatar {
+  transform: translateY(-1px);
+}
+/* active = a full ring in the connection's own colour, with a gap */
+.rail-item.active .qa-avatar {
+  box-shadow:
+    0 0 0 2px var(--bg-app),
+    0 0 0 4px var(--c, var(--avatar-ring)),
+    0 3px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* home button at the top of the rail */
+.rail-home {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: color 150ms, background 150ms, border-color 150ms;
+}
+.rail-home:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+.rail-home.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.rail-prod {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--danger);
+  border: 2px solid var(--bg-app);
+}
+
+.rail-dot {
+  position: absolute;
+  bottom: 1px;
+  right: calc(50% - 22px);
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+  border: 2px solid var(--bg-app);
+}
+.rail-dot.connected {
+  background: var(--ok);
+}
+.rail-dot.connecting {
+  background: var(--warn);
+}
+.rail-dot.disconnected {
+  display: none;
+}
+
+.rail-add {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-raised);
+  border: 1px dashed var(--border-strong);
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition:
+    border-radius 200ms cubic-bezier(0.2, 0.9, 0.3, 1.2),
+    color 150ms,
+    background 150ms;
+}
+.rail-add:hover {
+  border-radius: 11px;
+  color: var(--fg);
+  background: var(--bg-hover);
+  border-style: solid;
+  border-color: var(--accent);
+}

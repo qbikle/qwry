@@ -3,6 +3,7 @@ import type {
   EditabilityMap,
   EditOutcome,
   ExecOutcome,
+  HistoryRow,
   Profile,
   QueryEvent,
   RowEdit,
@@ -17,6 +18,21 @@ export const profileSave = (profile: Profile, password?: string) =>
   invoke<void>("profile_save", { profile, password: password ?? null });
 
 export const profileDelete = (id: string) => invoke<void>("profile_delete", { id });
+
+/** drop a profile's cached SSH tunnel so the next connect rebuilds it */
+export const invalidateProfile = (profileId: string) =>
+  invoke<void>("invalidate_profile", { profileId });
+
+export const setProfileOrder = (ids: string[]) =>
+  invoke<void>("set_profile_order", { ids });
+
+/** clone a connection onto a different database (DB switcher) */
+export const cloneConnection = (srcProfileId: string, dbname: string) =>
+  invoke<Profile>("clone_connection", { srcProfileId, dbname });
+
+/** most recent queries across all connections (home dashboard) */
+export const historyRecent = (limit?: number) =>
+  invoke<HistoryRow[]>("history_recent", { limit: limit ?? null });
 
 export const connect = (profileId: string) =>
   invoke<string>("connect", { profileId });
