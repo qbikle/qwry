@@ -42,6 +42,16 @@ fn pg_config(profile: &Profile, password: &str, addr: Option<(&str, u16)>) -> to
     cfg
 }
 
+/// turn a tokio-postgres connect error into a DriverError, preferring the
+/// server's own message (e.g. `password authentication failed for user …`)
+/// over the generic transport wrapper so the UI can show the real reason
+fn connect_err(e: tokio_postgres::Error) -> DriverError {
+    match e.as_db_error() {
+        Some(db) => DriverError::Connect(db.message().to_string()),
+        None => DriverError::Connect(e.to_string()),
+    }
+}
+
 /// spawn the connection driver task. When the connection ends (server drop /
 /// network error) `on_close` fires. An intentional disconnect aborts this task
 /// (PgSession::drop) before it reaches `on_close`, so it only signals a real
@@ -92,15 +102,20 @@ pub async fn connect(
             Ok((client, connection)) => {
                 return Ok(spawn_session(client, connection, TlsChoice::Tls, on_close));
             }
-            Err(e) if !try_plain => return Err(DriverError::Connect(e.to_string())),
-            Err(_) => {} // prefer: fall through to plain
+            // a server-sent error (bad password, pg_hba, missing db…) is the real
+            // reason — a plain retry would only mask it with a confusing
+            // "no encryption"/SSL error, so surface the true cause now
+            Err(e) if !try_plain || e.as_db_error().is_some() => {
+                return Err(connect_err(e));
+            }
+            Err(_) => {} // TLS negotiation/transport failure — fall through to plain
         }
     }
 
     let (client, connection) = cfg
         .connect(tokio_postgres::NoTls)
         .await
-        .map_err(|e| DriverError::Connect(e.to_string()))?;
+        .map_err(connect_err)?;
     Ok(spawn_session(client, connection, TlsChoice::Plain, on_close))
 }
 

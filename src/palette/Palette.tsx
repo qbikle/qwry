@@ -77,10 +77,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
   };
 
   const loadHistory = (sql: string) => {
-    void import("../stores/browser").then(({ useBrowser }) => {
-      useBrowser.getState().close();
-      useTabs.getState().newTab(sql, "history");
-    });
+    useTabs.getState().newTab(sql, "history");
     close();
   };
 

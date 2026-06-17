@@ -11,6 +11,9 @@ import * as ipc from "../ipc/commands";
 import type { EditabilityMap } from "../ipc/types";
 import { formatCells, type CopyFormat } from "./clipboard";
 import { useSelection, type DragMode, type SelRect } from "./useSelection";
+import { typeIcon } from "./typeIcon";
+import { useBrowser } from "../stores/browser";
+import { Plus } from "lucide-react";
 import "./grid.css";
 
 /** registered by TableBrowser for infinite scroll; null in plain editor mode */
@@ -18,6 +21,7 @@ export const nearEndHook: { current: (() => void) | null } = { current: null };
 
 const ROW_H = 26;
 const HEADER_H = 30;
+const DRAFT_H = 32;
 const ROWNUM_W = 52;
 const MIN_COL_W = 64;
 const MAX_COL_W = 480;
@@ -106,7 +110,13 @@ function CellEditor({
   );
 }
 
-export function Grid({ statement }: { statement: StatementState }) {
+export function Grid({
+  statement,
+  insertable = false,
+}: {
+  statement: StatementState;
+  insertable?: boolean;
+}) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [widths, setWidths] = useState<number[]>([]);
@@ -159,6 +169,22 @@ export function Grid({ statement }: { statement: StatementState }) {
   useEffect(() => {
     if (statement.done && !statement.error) ensureMap(statement.index);
   }, [statement.done, statement.error, statement.index, ensureMap]);
+
+  // pg type per result column (from the editability map; undefined until it loads)
+  const colType = (i: number): string | undefined =>
+    editMap && editMap !== "loading" && editMap !== "unavailable"
+      ? editMap.columns[i]?.type_name
+      : undefined;
+
+  // inline new-row draft (table browser only)
+  const draftRow = useBrowser((s) => s.draftRow);
+  const draftError = useBrowser((s) => s.draftError);
+  const setDraftCell = useBrowser((s) => s.setDraftCell);
+  const commitDraft = useBrowser((s) => s.commitDraft);
+  const cancelDraft = useBrowser((s) => s.cancelDraft);
+  const showDraft = insertable && draftRow !== null;
+  const draftH = showDraft ? DRAFT_H : 0;
+  const firstDraftCol = cols.findIndex((c) => c.name !== "ctid");
 
   const [editing, setEditing] = useState<{ r: number; c: number; draft: string } | null>(null);
 
@@ -423,7 +449,7 @@ export function Grid({ statement }: { statement: StatementState }) {
           className="vgrid-inner"
           style={{
             width: colVirt.getTotalSize() + ROWNUM_W,
-            height: rowVirt.getTotalSize() + HEADER_H,
+            height: rowVirt.getTotalSize() + HEADER_H + draftH,
           }}
         >
           {/* header: sticky top; scrolls horizontally with content */}
@@ -439,26 +465,103 @@ export function Grid({ statement }: { statement: StatementState }) {
                 sel.selectAll();
               }}
             />
-            {colVirt.getVirtualItems().map((vc) => (
-              <div
-                key={vc.key}
-                className="vgrid-hcell"
-                style={{
-                  transform: `translateX(${vc.start + ROWNUM_W}px)`,
-                  width: vc.size,
-                  height: HEADER_H,
-                }}
-                onMouseDown={(e) => beginDrag(e, { r: 0, c: vc.index }, "col")}
-                onMouseEnter={() => sel.dragOver({ r: 0, c: vc.index })}
-              >
-                <span className="vgrid-hname">{cols[vc.index].name}</span>
-                <span
-                  className="vgrid-resize"
-                  onMouseDown={(e) => onResizeStart(vc.index, e)}
-                />
-              </div>
-            ))}
+            {colVirt.getVirtualItems().map((vc) => {
+              const tn = colType(vc.index);
+              const glyph = typeIcon(tn);
+              return (
+                <div
+                  key={vc.key}
+                  className="vgrid-hcell"
+                  style={{
+                    transform: `translateX(${vc.start + ROWNUM_W}px)`,
+                    width: vc.size,
+                    height: HEADER_H,
+                  }}
+                  onMouseDown={(e) => beginDrag(e, { r: 0, c: vc.index }, "col")}
+                  onMouseEnter={() => sel.dragOver({ r: 0, c: vc.index })}
+                >
+                  {glyph && (
+                    <span className="vgrid-htype" style={{ color: glyph.color }} title={tn}>
+                      <glyph.Icon size={12} strokeWidth={2.2} />
+                    </span>
+                  )}
+                  <span className="vgrid-hname">{cols[vc.index].name}</span>
+                  <span
+                    className="vgrid-resize"
+                    onMouseDown={(e) => onResizeStart(vc.index, e)}
+                  />
+                </div>
+              );
+            })}
           </div>
+
+          {/* inline draft (new) row: sticky band pinned under the header */}
+          {showDraft && (
+            <div
+              className="vgrid-draft"
+              style={{ top: HEADER_H, height: DRAFT_H }}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  cancelDraft();
+                } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  void commitDraft();
+                }
+              }}
+            >
+              <div
+                className="vgrid-draft-corner"
+                style={{ width: ROWNUM_W, height: DRAFT_H }}
+                title="⌘↵ insert · Esc cancel"
+              >
+                <Plus size={13} />
+              </div>
+              {colVirt.getVirtualItems().map((vc) => {
+                const name = cols[vc.index].name;
+                const isCtid = name === "ctid";
+                const cell = draftRow?.[name] ?? { text: "", isNull: false };
+                return (
+                  <div
+                    key={vc.key}
+                    className="vgrid-draftcell"
+                    style={{
+                      transform: `translateX(${vc.start + ROWNUM_W}px)`,
+                      width: vc.size,
+                      height: DRAFT_H,
+                    }}
+                  >
+                    {isCtid ? (
+                      <span className="vgrid-draft-auto">auto</span>
+                    ) : (
+                      <>
+                        <input
+                          className="vgrid-draft-input"
+                          value={cell.isNull ? "" : cell.text}
+                          placeholder={cell.isNull ? "NULL" : "DEFAULT"}
+                          disabled={cell.isNull}
+                          // eslint-disable-next-line jsx-a11y/no-autofocus
+                          autoFocus={vc.index === firstDraftCol}
+                          spellCheck={false}
+                          onChange={(e) =>
+                            setDraftCell(name, { text: e.target.value, isNull: false })
+                          }
+                        />
+                        <button
+                          type="button"
+                          className={`vgrid-draft-null${cell.isNull ? " on" : ""}`}
+                          title="Set NULL"
+                          onClick={() => setDraftCell(name, { text: "", isNull: !cell.isNull })}
+                        >
+                          ∅
+                        </button>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* row numbers: sticky left wrapper, absolute children */}
           <div className="vgrid-rownums" style={{ width: ROWNUM_W }}>
@@ -492,7 +595,7 @@ export function Grid({ statement }: { statement: StatementState }) {
                   key={`${vr.key}:${vc.key}`}
                   className={`vgrid-cell${v === null ? " null" : ""}${selected ? " sel" : ""}${focused ? " focus" : ""}${pendingEdit ? " dirty" : ""}${flash.has(k) ? " flash" : ""}${warn ? " ctid-warn" : ""}`}
                   style={{
-                    transform: `translate(${vc.start + ROWNUM_W}px, ${vr.start + HEADER_H}px)`,
+                    transform: `translate(${vc.start + ROWNUM_W}px, ${vr.start + HEADER_H + draftH}px)`,
                     width: vc.size,
                     height: ROW_H,
                   }}
@@ -513,7 +616,7 @@ export function Grid({ statement }: { statement: StatementState }) {
           {editing && (
             <CellEditor
               x={colVirt.getVirtualItems().find((v) => v.index === editing.c)?.start ?? 0}
-              y={rowVirt.getVirtualItems().find((v) => v.index === editing.r)?.start ?? 0}
+              y={(rowVirt.getVirtualItems().find((v) => v.index === editing.r)?.start ?? 0) + draftH}
               width={colWidths[editing.c] ?? 160}
               draft={editing.draft}
               onDraft={(d) => setEditing((e) => (e ? { ...e, draft: d } : e))}
@@ -589,6 +692,8 @@ export function Grid({ statement }: { statement: StatementState }) {
           </motion.div>
         </div>
       )}
+
+      {showDraft && draftError && <div className="vgrid-draft-error">{draftError}</div>}
     </div>
   );
 }

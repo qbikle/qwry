@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { menuIn, popIn } from "../design/springs";
+import { menuIn } from "../design/springs";
 import { Plus, RefreshCw, X } from "lucide-react";
 import { FILTER_OPS, useBrowser, type Filter } from "../stores/browser";
 import { useResults } from "../stores/results";
+import { useTabs } from "../stores/tabs";
+import { useCloseGuard } from "../stores/closeGuard";
 import { nearEndHook } from "../grid/Grid";
 import { ResultsPane } from "../grid/ResultsPane";
 import { StructureTab } from "./StructureTab";
@@ -21,15 +23,10 @@ export function TableBrowser() {
   }, []);
   const tab = useBrowser((s) => s.tab);
   const setTab = useBrowser((s) => s.setTab);
-  const close = useBrowser((s) => s.close);
+  const requestClose = useCloseGuard((s) => s.request);
+  const activeId = useTabs((s) => s.activeId);
   const refresh = useBrowser((s) => s.refresh);
   const running = useResults((s) => s.running);
-  const [inserting, setInserting] = useState(false);
-
-  // close the insert panel when switching table or tab
-  useEffect(() => {
-    setInserting(false);
-  }, [table?.table_oid, tab]);
 
   if (!table) return null;
 
@@ -51,15 +48,6 @@ export function TableBrowser() {
             Structure
           </button>
         </div>
-        {tab === "data" && table.kind === "r" && (
-          <button
-            className={`icon-btn${inserting ? " active" : ""}`}
-            title="Add row"
-            onClick={() => setInserting((v) => !v)}
-          >
-            <Plus size={15} />
-          </button>
-        )}
         <button
           className="icon-btn"
           title="Refresh"
@@ -68,7 +56,11 @@ export function TableBrowser() {
         >
           <RefreshCw size={13} className={running ? "spin" : ""} />
         </button>
-        <button className="icon-btn" title="Close (back to editor)" onClick={close}>
+        <button
+          className="icon-btn"
+          title="Close tab ⌘W"
+          onClick={() => activeId && requestClose(activeId)}
+        >
           <X size={14} />
         </button>
       </div>
@@ -76,9 +68,8 @@ export function TableBrowser() {
       {tab === "data" ? (
         <>
           <FilterBar />
-          {inserting && <InsertPanel onClose={() => setInserting(false)} />}
           <div className="tb-results">
-            <ResultsPane />
+            <ResultsPane browser />
           </div>
         </>
       ) : (
@@ -92,6 +83,10 @@ function FilterBar() {
   const table = useBrowser((s) => s.table)!;
   const filters = useBrowser((s) => s.filters);
   const setFilters = useBrowser((s) => s.setFilters);
+  const draftRow = useBrowser((s) => s.draftRow);
+  const beginDraft = useBrowser((s) => s.beginDraft);
+  const cancelDraft = useBrowser((s) => s.cancelDraft);
+  const canInsert = table.kind === "r";
 
   const update = (i: number, patch: Partial<Filter>) =>
     setFilters(filters.map((f, j) => (j === i ? { ...f, ...patch } : f)));
@@ -152,6 +147,15 @@ function FilterBar() {
         </div>
       ))}
       <div className="tb-filter-actions">
+        {canInsert && (
+          <button
+            className={`tb-addrow${draftRow ? " active" : ""}`}
+            title="Add row"
+            onClick={() => (draftRow ? cancelDraft() : beginDraft())}
+          >
+            <Plus size={12} /> Add row
+          </button>
+        )}
         <button
           className="tb-addfilter"
           onClick={() =>
@@ -172,101 +176,6 @@ function FilterBar() {
         <SortSelect />
       </div>
     </div>
-  );
-}
-
-function InsertPanel({ onClose }: { onClose: () => void }) {
-  const table = useBrowser((s) => s.table)!;
-  const insertRow = useBrowser((s) => s.insertRow);
-  const [vals, setVals] = useState<Record<string, { text: string; isNull: boolean }>>({});
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  const cell = (name: string) => vals[name] ?? { text: "", isNull: false };
-  const setText = (name: string, text: string) =>
-    setVals((v) => ({ ...v, [name]: { text, isNull: false } }));
-  const toggleNull = (name: string) =>
-    setVals((v) => ({ ...v, [name]: { text: "", isNull: !cell(name).isNull } }));
-
-  const submit = async () => {
-    const cols: string[] = [];
-    const values: (string | null)[] = [];
-    for (const c of table.columns) {
-      const st = cell(c.name);
-      if (st.isNull) {
-        cols.push(c.name);
-        values.push(null);
-      } else if (st.text !== "") {
-        cols.push(c.name);
-        values.push(st.text);
-      }
-      // untouched → omit so the column default applies
-    }
-    setSaving(true);
-    setError(null);
-    const res = await insertRow(cols, values);
-    setSaving(false);
-    if (res.ok) onClose();
-    else setError(res.error ?? "insert failed");
-  };
-
-  return (
-    <motion.div
-      className="tb-insert"
-      {...popIn}
-      onKeyDown={(e) => {
-        if (e.key === "Escape") onClose();
-        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void submit();
-      }}
-    >
-      <div className="tb-insert-head">
-        <span>New row in {table.name}</span>
-        <span className="tb-insert-hint">blank = default · ∅ = NULL · ⌘↵ insert</span>
-      </div>
-      <div className="tb-insert-grid">
-        {table.columns.map((c) => {
-          const st = cell(c.name);
-          return (
-            <div key={c.name} className="tb-insert-field">
-              <div className="tb-insert-label">
-                <span className="tb-insert-name">{c.name}</span>
-                <span className="tb-insert-type">
-                  {c.type}
-                  {c.not_null ? " · not null" : ""}
-                </span>
-              </div>
-              <div className={`tb-insert-input${st.isNull ? " is-null" : ""}`}>
-                <input
-                  // eslint-disable-next-line jsx-a11y/no-autofocus
-                  autoFocus={c === table.columns[0]}
-                  value={st.isNull ? "" : st.text}
-                  placeholder={
-                    st.isNull ? "NULL" : c.default ? `default: ${c.default}` : "DEFAULT"
-                  }
-                  disabled={st.isNull}
-                  onChange={(e) => setText(c.name, e.target.value)}
-                />
-                <button
-                  type="button"
-                  className={`tb-null-btn${st.isNull ? " on" : ""}`}
-                  title="Set NULL"
-                  onClick={() => toggleNull(c.name)}
-                >
-                  ∅
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {error && <div className="tb-insert-error">{error}</div>}
-      <div className="tb-insert-actions">
-        <button onClick={onClose}>Cancel</button>
-        <button className="primary" disabled={saving} onClick={() => void submit()}>
-          {saving ? "Inserting…" : "Insert row"}
-        </button>
-      </div>
-    </motion.div>
   );
 }
 

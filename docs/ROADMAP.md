@@ -207,9 +207,27 @@ Design (from user wireframes): floating rounded cards on a themed-glass gutter �
 - [x] **New app logo**: cylinder logo reshaped to Apple's icon grid (`scripts/make_icon.py` → `icon-master.png`), all sizes via `tauri icon`, favicon + window title refreshed.
 - [x] **Inspector scalar polish**: scalar values render in a rounded value card with double-click-to-edit; the scalar editor auto-grows to its content (no more full-panel balloon, actions stay put) with Esc/⌘↵ hints; same hints added to the JSON/array editor buttons.
 
+## P2.8 — v0.2.5 QOL batch ✅
+- [x] **Tables open as tabs**: `Tab.kind` (query|table) + `table` ref; tables are session-only tabs beside query tabs with kind icons; multiple independent table tabs (per-tab `byTab` browser state); opening an open table focuses it.
+- [x] **Default tab name** `new qwry` (no number).
+- [x] **Data-type column-header icons** from the editability map's `type_name` (`grid/typeIcon.tsx`, `--syn-*` colored), in query results + browser.
+- [x] **Inline add-row**: sticky blank draft row at the grid top (⌘↵ insert / Esc cancel / ∅ NULL), replacing the overlay; add-row button moved to the bottom toolbar (left; Filter+Sort right).
+- [x] **Close-with-unsaved-edits prompt** (`closeGuard` + `CloseGuardModal`): Esc keep · Enter discard&close · ⌘↵ commit&close; covers query + table tabs.
+- [x] **Connect-error surfacing** (bonus): TLS→plain fallback no longer masks server errors (`as_db_error`); global `ConnToast` shows the real reason on any view.
+- [x] **Tab strip**: active tab smooth scroll-into-view (`inline:"nearest"`, reveals + for last tab); scrollbar hidden.
+
 ---
 
 ## Session log
+
+### 2026-06-17 — v0.2.5 QOL batch (session 4) — SHIPPED
+Tables-as-tabs, type-icon headers, inline add-row, toolbar reorg, close-with-edits guard, connect-error surfacing, tab auto-scroll. All gates user-verified against live staging. Bumped to **v0.2.5**.
+Gotchas burned this session:
+- **HMR cross-store desync** (the nasty one): stores wire via module-level `subscribe()` (`tabs.activeId → results.active → edits.active → browser`). After heavy store-file HMR, the wiring can bind to a stale/duplicate store instance → `edits.active` stops tracking `tabs.activeId`, so a staged edit lands under one key while a reader (close guard) checks another → silent miss. **Relaunch `tauri dev` after store-file churn before trusting cross-store behavior.** Production single-load is unaffected.
+- `height:100%` on a flex child breaks once it gains a sibling: `.tbrowser` under the new `TabBar` overflowed by the tab-bar height (pushed content up, clipped the bar). Use `flex:1; min-height:0`, never `height:100%`, for a flex column's growing child.
+- Simple-protocol `ColumnMeta` has no type — for header type icons reuse the editability map's `type_name` (already fetched eagerly), don't touch the Rust streaming path.
+- Inline draft row = a `position:sticky; top:HEADER_H` band rendered in normal flow (pushes the rownum column down automatically); data cells get an explicit `+draftH` Y offset since they're absolutely positioned.
+- TLS→plain connect fallback was masking auth/pg_hba failures — only fall back on transport errors (`e.as_db_error().is_none()`), else report the server's message.
 
 ### 2026-06-14/15 — v0.2 visual overhaul (session 3) — SHIPPED
 Major UI overhaul to a floating-card shell on a themed-glass gutter, plus a colour/theme engine and per-tab results. All gates user-verified against live staging. Bumped to **v0.2.0**.

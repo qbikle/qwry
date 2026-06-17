@@ -19,9 +19,11 @@ import { Inspector } from "../inspector/Inspector";
 import { TableBrowser } from "../browser/TableBrowser";
 import { Palette } from "../palette/Palette";
 import { DangerModal } from "./DangerModal";
+import { CloseGuardModal } from "./CloseGuardModal";
+import { ConnToast } from "./ConnToast";
 import { ExplainView } from "../explain/ExplainView";
-import { useBrowser } from "../stores/browser";
 import { useExplain } from "../stores/explain";
+import { useCloseGuard } from "../stores/closeGuard";
 import "./app.css";
 import "./v2.css";
 
@@ -46,10 +48,10 @@ export function App() {
   const connState = useConnections((s) => s.connState);
   const inspectorOpen = useInspector((s) => s.open);
   const inspectorWidth = useInspector((s) => s.width);
-  const browsing = useBrowser((s) => s.table !== null);
-  const browserTable = useBrowser((s) => s.table);
   const explainOpen = useExplain((s) => s.open);
-  const activeTabName = useTabs((s) => s.tabs.find((t) => t.id === s.activeId)?.name);
+  const activeTab = useTabs((s) => s.tabs.find((t) => t.id === s.activeId) ?? null);
+  const isTableTab = activeTab?.kind === "table";
+  const browserTable = activeTab?.kind === "table" ? activeTab.table : null;
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [resizing, setResizing] = useState(false);
 
@@ -61,15 +63,15 @@ export function App() {
     if (homeMode) return [homeMode === "edit" ? "Edit connection" : "Connections"];
     if (!activeProfile) return ["qwry"];
     const ctx =
-      browsing && browserTable
+      isTableTab && browserTable
         ? browserTable.schema === "public"
           ? browserTable.name
           : `${browserTable.schema}.${browserTable.name}`
-        : activeTabName;
+        : activeTab?.name;
     return [activeProfile.name || activeProfile.host, activeProfile.dbname, ctx].filter(
       Boolean,
     ) as string[];
-  }, [homeMode, activeProfile, browsing, browserTable, activeTabName]);
+  }, [homeMode, activeProfile, isTableTab, browserTable, activeTab?.name]);
 
   const startInspectorResize = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -108,10 +110,7 @@ export function App() {
       }
       if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "t") {
         e.preventDefault();
-        void import("../stores/browser").then(({ useBrowser }) => {
-          useBrowser.getState().close();
-          useTabs.getState().newTab();
-        });
+        useTabs.getState().newTab();
       }
       if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "t") {
         e.preventDefault();
@@ -119,15 +118,9 @@ export function App() {
       }
       if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "w") {
         e.preventDefault();
-        void import("../stores/browser").then(({ useBrowser }) => {
-          // in table view, ⌘W closes the table — not the query tab behind it
-          if (useBrowser.getState().table) {
-            useBrowser.getState().close();
-          } else {
-            const { activeId } = useTabs.getState();
-            if (activeId) useTabs.getState().closeTab(activeId);
-          }
-        });
+        // closes the active tab — query or table alike (prompts on unsaved edits)
+        const { activeId } = useTabs.getState();
+        if (activeId) useCloseGuard.getState().request(activeId);
       }
       if (e.key === "Escape" && useExplain.getState().open) {
         useExplain.getState().close();
@@ -236,17 +229,21 @@ export function App() {
             </motion.aside>
 
             <motion.main className="main-card card" {...panelIn}>
-              {browsing ? (
-                <TableBrowser />
-              ) : activeProfile ? (
+              {activeProfile ? (
                 <>
                   <TabBar />
-                  <section className="editor-pane">
-                    <QueryBox />
-                  </section>
-                  <section className="results-pane">
-                    {explainOpen ? <ExplainView /> : <ResultsPane />}
-                  </section>
+                  {isTableTab ? (
+                    <TableBrowser />
+                  ) : (
+                    <>
+                      <section className="editor-pane">
+                        <QueryBox />
+                      </section>
+                      <section className="results-pane">
+                        {explainOpen ? <ExplainView /> : <ResultsPane />}
+                      </section>
+                    </>
+                  )}
                 </>
               ) : (
                 <div className="main-empty">
@@ -284,6 +281,8 @@ export function App() {
       <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       <ThemePicker />
       <DangerModal />
+      <CloseGuardModal />
+      <ConnToast />
     </div>
   );
 }

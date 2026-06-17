@@ -22,13 +22,12 @@ export function SavedQueries() {
   }, [load]);
 
   const open = (q: { id: string; sql: string; name: string }) => {
-    void import("../stores/browser").then(({ useBrowser }) => {
-      useBrowser.getState().close();
-      const { tabs, select } = useTabs.getState();
-      const existing = tabs.find((t) => t.saved_id === q.id);
-      if (existing) select(existing.id);
-      else useTabs.getState().newTab(q.sql, q.name, q.id);
-    });
+    // selecting/creating a query tab makes the active tab a query tab, so any
+    // open table view is left automatically
+    const { tabs, select } = useTabs.getState();
+    const existing = tabs.find((t) => t.saved_id === q.id);
+    if (existing) select(existing.id);
+    else useTabs.getState().newTab(q.sql, q.name, q.id);
   };
 
   return (

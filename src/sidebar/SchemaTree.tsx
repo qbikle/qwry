@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Eye, Table2 } from "lucide-react";
-import { useConnections } from "../stores/connections";
 import { useResults } from "../stores/results";
+import { useTabs } from "../stores/tabs";
 import { useSchema, type TableInfo } from "../stores/schema";
 import "./sidebar.css";
 import "./sidebar-tree.css";
@@ -46,12 +46,10 @@ export function SchemaTree({ profileId }: { profileId: string }) {
   };
 
   const insertSelect = (t: TableInfo) => {
-    void import("../stores/browser").then(({ useBrowser }) => {
-      useBrowser.getState().close();
-      const ref = t.schema === "public" ? t.name : `${t.schema}.${t.name}`;
-      useConnections.getState().setSql(`SELECT * FROM ${ref} LIMIT 100`);
-      void useResults.getState().run();
-    });
+    const ref = t.schema === "public" ? t.name : `${t.schema}.${t.name}`;
+    // open the SELECT in a fresh query tab (sets editor sql) and run it
+    useTabs.getState().newTab(`SELECT * FROM ${ref} LIMIT 100`);
+    void useResults.getState().run();
   };
 
   return (

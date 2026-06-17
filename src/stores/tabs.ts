@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { useConnections } from "./connections";
+import type { TableInfo } from "./schema";
 
 export interface Tab {
   id: string;
@@ -9,6 +10,10 @@ export interface Tab {
   position: number;
   /** link to a saved query — keeps names/sql in sync */
   saved_id: string | null;
+  /** "query" = SQL editor tab; "table" = data-browser tab (session-only) */
+  kind: "query" | "table";
+  /** the browsed table when kind === "table" */
+  table: TableInfo | null;
 }
 
 interface TabsState {
@@ -20,6 +25,8 @@ interface TabsState {
 
   load: () => Promise<void>;
   newTab: (sql?: string, name?: string, savedId?: string | null) => void;
+  /** open (or focus) a data-browser tab for a table; returns the tab id */
+  openTableTab: (table: TableInfo) => string;
   closeTab: (id: string) => void;
   select: (id: string) => void;
   selectByIndex: (i: number) => void;
@@ -35,18 +42,23 @@ function persist() {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     const { tabs } = useTabs.getState();
-    void invoke("tabs_save", {
-      tabs: tabs.map((t, i) => ({ ...t, position: i })),
-    });
+    // table tabs are session-only; persist query tabs only, stripped to the
+    // fields the Rust appdb stores (id/name/sql/position/saved_id)
+    const rows = tabs
+      .filter((t) => t.kind === "query")
+      .map(({ id, name, sql, saved_id }, i) => ({ id, name, sql, position: i, saved_id }));
+    void invoke("tabs_save", { tabs: rows });
   }, 600);
 }
 
 const blank = (n: number): Tab => ({
   id: crypto.randomUUID(),
-  name: `Query ${n}`,
+  name: "new qwry",
   sql: "",
   position: n - 1,
   saved_id: null,
+  kind: "query",
+  table: null,
 });
 
 export const useTabs = create<TabsState>((set, get) => ({
@@ -56,8 +68,10 @@ export const useTabs = create<TabsState>((set, get) => ({
   closedStack: [],
 
   load: async () => {
-    const rows = await invoke<Tab[]>("tabs_list");
-    const tabs = rows.length > 0 ? rows : [blank(1)];
+    // appdb only stores query tabs (no kind/table) — normalize on the way in
+    const rows = await invoke<Omit<Tab, "kind" | "table">[]>("tabs_list");
+    const restored: Tab[] = rows.map((r) => ({ ...r, kind: "query", table: null }));
+    const tabs = restored.length > 0 ? restored : [blank(1)];
     set({ tabs, activeId: tabs[0].id, loaded: true });
     useConnections.getState().setSql(tabs[0].sql);
   },
@@ -67,12 +81,29 @@ export const useTabs = create<TabsState>((set, get) => ({
     const t = {
       ...blank(tabs.length + 1),
       sql,
-      name: name ?? `Query ${tabs.length + 1}`,
+      name: name ?? "new qwry",
       saved_id: savedId,
     };
     set({ tabs: [...tabs, t], activeId: t.id });
     useConnections.getState().setSql(sql);
     persist();
+  },
+
+  openTableTab: (table) => {
+    const { tabs } = get();
+    const id = crypto.randomUUID();
+    const t: Tab = {
+      id,
+      name: table.name,
+      sql: "",
+      position: tabs.length,
+      saved_id: null,
+      kind: "table",
+      table,
+    };
+    set({ tabs: [...tabs, t], activeId: id });
+    persist(); // no-op for the table tab itself; keeps query-tab order in sync
+    return id;
   },
 
   closeTab: (id) => {
