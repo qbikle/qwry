@@ -1,6 +1,6 @@
 [package]
 name = "qwry"
-version = "0.2.0"
+version = "0.2.5"
 description = "Fast, keyboard-first PostgreSQL client for macOS"
 authors = ["Manish Gudewar"]
 edition = "2021"

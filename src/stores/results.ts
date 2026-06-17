@@ -316,6 +316,7 @@ useTabs.subscribe((s, p) => {
       if (!ids.has(id)) {
         useResults.getState().clearTab(id);
         void import("./edits").then(({ useEdits }) => useEdits.getState().resetTab(id));
+        void import("./browser").then(({ useBrowser }) => useBrowser.getState().clearTab(id));
       }
     }
     prevTabIds = ids;

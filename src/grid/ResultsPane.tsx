@@ -4,7 +4,7 @@ import { EditPreview } from "./EditPreview";
 import { Grid } from "./Grid";
 import "./grid.css";
 
-export function ResultsPane() {
+export function ResultsPane({ browser = false }: { browser?: boolean }) {
   const statements = useResults((s) => s.statements);
   const active = useResults((s) => s.activeStatement);
   const setActive = useResults((s) => s.setActiveStatement);
@@ -57,7 +57,7 @@ export function ResultsPane() {
             <div className="ge-msg">{stmt.error.message}</div>
           </div>
         ) : stmt.columns.length > 0 ? (
-          <Grid statement={stmt} />
+          <Grid statement={stmt} insertable={browser} />
         ) : (
           <div className="grid-msg">
             {stmt.done ? `OK · ${stmt.affected ?? 0} rows affected` : "Running…"}

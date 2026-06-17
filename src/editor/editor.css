@@ -34,6 +34,10 @@
   background: var(--bg-sidebar);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
+  scrollbar-width: none; /* Firefox */
+}
+.tabbar::-webkit-scrollbar {
+  display: none; /* WebKit / WKWebView — no visible horizontal bar */
 }
 
 .tab {
@@ -49,6 +53,7 @@
   white-space: nowrap;
   border: 1px solid transparent;
   border-bottom: none;
+  flex-shrink: 0; /* tabs scroll, never squish */
 }
 .tab:hover {
   background: var(--bg-hover);
@@ -64,6 +69,17 @@
   text-overflow: ellipsis;
   display: inline-flex;
   align-items: center;
+}
+
+.tab-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-right: 6px;
+  color: var(--fg-faint);
+}
+.tab.active .tab-icon {
+  color: var(--accent);
 }
 
 .tab-tx {
@@ -115,6 +131,7 @@
   border-radius: var(--radius-sm);
   color: var(--fg-faint);
   cursor: pointer;
+  flex-shrink: 0;
 }
 .tab-new:hover {
   background: var(--bg-hover);

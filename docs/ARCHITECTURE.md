@@ -101,6 +101,15 @@ design/      tokens.css, theme.ts (palette engine), springs.ts, icons (lucide)
 - **Floating-card shell** (`app/v2.css`): transparent window, `window-vibrancy` material showing through `--gutter` between `.card` panels; inspector animates its *width* so the main card reflows in lockstep (no transform desync).
 - **Per-tab results/edits**: `useResults`/`useEdits` keyed `byTab` with the active tab mirrored to top-level store fields — every consumer reads unchanged and a background tab's stream can't corrupt the visible tab. `committing`/`preview` stay global.
 
+### v0.2.5 frontend designs
+
+- **Unified tabs**: `Tab.kind` is `query` | `table` (+ a `table` ref). The tab bar holds both; `App` renders the editor or `TableBrowser` by the active tab's kind. Query tabs persist (appdb); table tabs are session-only (`persist()` filters them out, stripped to the appdb fields). The store wiring is a chain of module-level `subscribe()`s — `tabs.activeId → results.active → edits.active → browser` — so all three follow the active tab. **(HMR caveat: heavy store-file hot-reload can bind this wiring to a stale store instance and desync `edits.active`; relaunch `tauri dev` after store churn.)**
+- **Per-tab browser state**: `useBrowser` keyed `byTab` (mirrored from the active tab), with the browsed table on the `Tab` — every table tab keeps its own filters/sort/scroll/draft.
+- **Type-icon headers**: `grid/typeIcon.tsx` maps a column's `type_name` (from the editability map, fetched eagerly per result) to a lucide glyph + `--syn-*` color, shown left of each header name.
+- **Inline add-row**: a `position:sticky` draft band under the grid header (outside the virtualizer; data cells offset `+draftH`), per-tab `draftRow` in `useBrowser`; ⌘↵ insert / Esc cancel.
+- **Close guard** (`closeGuard` + `app/CloseGuardModal`): every close affordance routes through `request(tabId)` → prompts on uncommitted cell edits (Esc keep · Enter discard · ⌘↵ commit). 
+- **Connect-error UX**: driver TLS→plain fallback reports server-sent errors instead of masking them; global `app/ConnToast` surfaces connect failures on any view.
+
 ### Completion engine (the intellisense)
 
 Day-one: `@codemirror/lang-sql` PostgreSQL dialect with schema from SchemaSnapshot.
