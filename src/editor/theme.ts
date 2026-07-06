@@ -10,7 +10,7 @@ export const qwryTheme = (dark: boolean) =>
     {
       "&": {
         height: "100%",
-        fontSize: "13px",
+        fontSize: "var(--editor-fs, 13px)",
         backgroundColor: "var(--bg-panel)",
         color: "var(--fg)",
       },

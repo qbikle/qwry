@@ -2,13 +2,16 @@ import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { menuIn } from "../design/springs";
 import { Plus, RefreshCw, X } from "lucide-react";
-import { FILTER_OPS, useBrowser, type Filter } from "../stores/browser";
+import { opNeedsValue, opsForType, useBrowser, type Filter } from "../stores/browser";
+import { useConnections } from "../stores/connections";
+import * as ipc from "../ipc/commands";
 import { useResults } from "../stores/results";
 import { useTabs } from "../stores/tabs";
 import { useCloseGuard } from "../stores/closeGuard";
 import { nearEndHook } from "../grid/Grid";
 import { ResultsPane } from "../grid/ResultsPane";
 import { StructureTab } from "./StructureTab";
+import { DdlTab } from "./DdlTab";
 import "./browser.css";
 
 export function TableBrowser() {
@@ -27,6 +30,7 @@ export function TableBrowser() {
   const activeId = useTabs((s) => s.activeId);
   const refresh = useBrowser((s) => s.refresh);
   const running = useResults((s) => s.running);
+  const [estBump, setEstBump] = useState(0);
 
   if (!table) return null;
 
@@ -37,9 +41,16 @@ export function TableBrowser() {
           {table.schema !== "public" && <span className="tb-schema">{table.schema}.</span>}
           {table.name}
         </span>
+        <RowEstimate table={table} bump={estBump} />
         <div className="tb-tabs">
           <button className={tab === "data" ? "active" : ""} onClick={() => setTab("data")}>
             Data
+          </button>
+          <button
+            className={tab === "ddl" ? "active" : ""}
+            onClick={() => setTab("ddl")}
+          >
+            DDL
           </button>
           <button
             className={tab === "structure" ? "active" : ""}
@@ -51,7 +62,10 @@ export function TableBrowser() {
         <button
           className="icon-btn"
           title="Refresh"
-          onClick={refresh}
+          onClick={() => {
+            refresh();
+            setEstBump((n) => n + 1);
+          }}
           disabled={running}
         >
           <RefreshCw size={13} className={running ? "spin" : ""} />
@@ -72,10 +86,86 @@ export function TableBrowser() {
             <ResultsPane browser />
           </div>
         </>
+      ) : tab === "ddl" ? (
+        <DdlTab table={table} />
       ) : (
         <StructureTab table={table} />
       )}
     </div>
+  );
+}
+
+/** locally-buffered filter value — the query fires on Enter/blur, not per
+ * keystroke (typing "manish" used to run six streaming SELECTs) */
+function FilterValue({
+  value,
+  placeholder,
+  onCommit,
+}: {
+  value: string;
+  placeholder: string;
+  onCommit: (v: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  return (
+    <input
+      className="tb-filter-value"
+      placeholder={placeholder}
+      value={draft}
+      spellCheck={false}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        if (draft !== value) onCommit(draft);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          onCommit(draft);
+        }
+      }}
+    />
+  );
+}
+
+/** planner row estimate for the whole table (reltuples — no COUNT scan).
+ * Honest tilde: it's statistics, refreshed by (auto)analyze. */
+function RowEstimate({ table, bump }: { table: { schema: string; name: string }; bump: number }) {
+  const activeProfileId = useConnections((s) => s.activeProfileId);
+  const [est, setEst] = useState<string | null>(null);
+  useEffect(() => {
+    setEst(null);
+    const conn = useConnections.getState();
+    const pid = conn.activeProfileId;
+    // primary preferred; any live tab session works (primary can be dead)
+    const sid = pid
+      ? (conn.sessions[pid] ??
+        Object.entries(conn.tabSessions).find(([k]) => k.startsWith(`${pid}::`))?.[1])
+      : undefined;
+    if (!sid) return;
+    let stale = false;
+    const lit = (v: string) => `'${v.replace(/'/g, "''")}'`;
+    void ipc
+      .execute(
+        sid,
+        `SELECT reltuples::bigint FROM pg_class WHERE oid = (quote_ident(${lit(table.schema)}) || '.' || quote_ident(${lit(table.name)}))::regclass`,
+      )
+      .then((out) => {
+        if (stale) return;
+        const n = Number(out.statements[0]?.rows[0]?.[0] ?? -1);
+        if (n >= 0) setEst(n.toLocaleString());
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+    // bump = header Refresh clicks — stats move after (auto)analyze
+  }, [table.schema, table.name, activeProfileId, bump]);
+  if (!est) return null;
+  return (
+    <span className="tb-rowest" title="Planner estimate (reltuples) — not an exact count">
+      ~{est} rows
+    </span>
   );
 }
 
@@ -112,7 +202,22 @@ function FilterBar() {
               <option value="OR">OR</option>
             </select>
           )}
-          <select value={f.col} onChange={(e) => update(i, { col: e.target.value })}>
+          <select
+            value={f.col}
+            onChange={(e) => {
+              const col = e.target.value;
+              // the new column's type may not support the current operator —
+              // normalize so the row always renders a consistent control set
+              const type = table.columns.find((c) => c.name === col)?.type ?? "";
+              const ops = opsForType(type);
+              let { op, value } = f;
+              if (!ops.includes(op)) {
+                op = ops[0];
+                value = op === "IS" || op === "IS NOT" ? "TRUE" : "";
+              }
+              update(i, { col, op, value });
+            }}
+          >
             {table.columns.map((c) => (
               <option key={c.name} value={c.name}>
                 {c.name}
@@ -121,21 +226,45 @@ function FilterBar() {
           </select>
           <select
             value={f.op}
-            onChange={(e) => update(i, { op: e.target.value as Filter["op"] })}
+            onChange={(e) => {
+              const op = e.target.value as Filter["op"];
+              // bool ops carry a fixed-choice value — normalize on switch so
+              // the row never renders an inconsistent state
+              const boolOp = op === "IS" || op === "IS NOT";
+              update(i, {
+                op,
+                value: boolOp && !["TRUE", "FALSE", "NULL"].includes(f.value) ? "TRUE" : f.value,
+              });
+            }}
           >
-            {FILTER_OPS.map((op) => (
+            {opsForType(table.columns.find((c) => c.name === f.col)?.type ?? "").map((op) => (
               <option key={op} value={op}>
                 {op}
               </option>
             ))}
           </select>
-          {!f.op.includes("NULL") && (
-            <input
-              className="tb-filter-value"
-              placeholder={f.op === "IN" ? "a, b, c" : "value"}
-              value={f.value}
+          {(f.op === "IS" || f.op === "IS NOT") && (
+            <select
+              className="tb-boolval"
+              value={["TRUE", "FALSE", "NULL"].includes(f.value) ? f.value : "TRUE"}
               onChange={(e) => update(i, { value: e.target.value })}
-              onKeyDown={(e) => e.key === "Enter" && setFilters([...filters])}
+            >
+              <option value="TRUE">TRUE</option>
+              <option value="FALSE">FALSE</option>
+              <option value="NULL">NULL</option>
+            </select>
+          )}
+          {f.op !== "IS" && f.op !== "IS NOT" && opNeedsValue(f.op) && (
+            <FilterValue
+              value={f.value}
+              placeholder={
+                f.op === "IN" || f.op === "NOT IN"
+                  ? "a, b, c"
+                  : f.op === "raw SQL"
+                    ? "created_at > now() - interval '1 day'"
+                    : "value"
+              }
+              onCommit={(v) => update(i, { value: v })}
             />
           )}
           <button
@@ -150,7 +279,7 @@ function FilterBar() {
         {canInsert && (
           <button
             className={`tb-addrow${draftRow ? " active" : ""}`}
-            title="Add row"
+            title="Add row ⌘⇧I"
             onClick={() => (draftRow ? cancelDraft() : beginDraft())}
           >
             <Plus size={12} /> Add row
@@ -158,18 +287,21 @@ function FilterBar() {
         )}
         <button
           className="tb-addfilter"
-          onClick={() =>
+          onClick={() => {
+            // seed a type-valid operator — "=" isn't offered for booleans
+            const first = table.columns[0];
+            const op = opsForType(first?.type ?? "")[0] ?? "=";
             setFilters([
               ...filters,
               {
-                col: table.columns[0]?.name ?? "",
-                op: "=",
-                value: "",
+                col: first?.name ?? "",
+                op,
+                value: op === "IS" || op === "IS NOT" ? "TRUE" : "",
                 enabled: true,
                 conj: "AND",
               },
-            ])
-          }
+            ]);
+          }}
         >
           <Plus size={12} /> Filter
         </button>

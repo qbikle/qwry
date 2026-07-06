@@ -1,0 +1,249 @@
+{
+ "surface": "sidebar-schema (SchemaTree, DbSwitcher, SavedQueries, schema/saved stores, introspect.rs)",
+ "works": [
+  "Single round-trip 5-statement introspection (tables+cols+pk, FKs, functions, schemas, indexes) as json_agg cells; refreshed on connect, \u2318R, DDL-sniff, and palette",
+  "Fuzzy subsequence filter with \u2318\u21e7F focus shortcut; per-schema grouping with counts, expand/collapse, filter auto-expands undecided schemas",
+  "Click=browse (dedupes into existing table tab), double-click=SELECT-in-new-tab+run; right-click menu: Browse / Open SELECT / Copy name / Copy qualified / Copy SELECT / Refresh",
+  "View+matview get distinct Eye icon; hover tooltip shows column count + pk",
+  "DbSwitcher lists live pg_database via a guaranteed-live session, reuses an existing sibling profile or clones one, checkmarks current db",
+  "Saved queries persist in appdb; open dedupes to the linked tab; inline rename syncs open tab names; Duplicate/Copy SQL/Delete (DangerModal via menu, 2-click arm via hover trash); \u2318S bookmarks the active tab; collapsible section with count + empty-state hint",
+  "Schema snapshots keyed per profile; fetch failure keeps the previous snapshot instead of clobbering; loading flag per profile",
+  "ContextMenu primitive is keyboard-navigable (arrows/Enter/Esc), clamped, supports submenus"
+ ],
+ "gaps": [
+  {
+   "title": "Generated SQL uses unquoted identifiers \u2014 breaks or silently queries the wrong table",
+   "detail": "SchemaTree.tsx:53-70 builds `SELECT * FROM ${ref}` and Copy SELECT/Copy qualified name with raw names. A mixed-case table (\"Users\"), reserved word (\"order\"), or name with spaces/unicode errors out \u2014 or worse, PG case-folds and reads a DIFFERENT lowercase table with the same folded name (violates 'never lies'). browser.ts:92 already has qi(); extract it to a shared util and quote-when-needed (regex ^[a-z_][a-z0-9_$]*$ + reserved-word list) in insertSelect, tableMenu, and Copy qualified name.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Double-click on a table fires single-click too \u2014 opens BOTH a browse tab and a query tab",
+   "detail": "SchemaTree.tsx:113-114: onClick (browse) fires twice before onDoubleClick (insertSelect+run) on every double-click, so the user gets a table tab AND a new query tab that immediately runs. Fix: disambiguate with a ~200ms single-click delay, or make double-click cancel the pending browse (store timeout id, clearTimeout in onDoubleClick).",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Introspection failure silently blanks the sidebar \u2014 no error, no retry",
+   "detail": "schema.ts:72-74 only console.errors; SchemaTree.tsx:43 returns null when no snapshot. If connect succeeds but introspect fails (statement_timeout, permissions, giant catalog), the user stares at an empty sidebar forever. Render an error row with the message + a Retry button; keep the filter input visible.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Every refresh blanks the whole tree to 'Loading schema\u2026'",
+   "detail": "SchemaTree.tsx:42 returns early on loading, so \u2318R and every DDL-sniff refetch unmounts the tree + filter input, losing scroll position and visual context for seconds on big catalogs. Stale-while-revalidate: keep rendering the old snapshot with a small spinner in the header; only show the loading message when there is no snapshot yet.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "No keyboard navigation from filter into tree \u2014 \u2318\u21e7F is a dead end",
+   "detail": "SchemaTree.tsx:86-92: after focusing the filter you must grab the mouse. Table-stakes in every mature client: ArrowDown/Up moves a selection through visible rows, Enter browses, \u2318Enter/Shift-Enter opens SELECT in editor, Esc clears filter then blurs, Left/Right collapses/expands schema headers. Roving selection index + scrollIntoView; this is the single biggest 'keyboard-first' violation on this surface.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Tree is not virtualized; every filter keystroke re-renders every row",
+   "detail": "SchemaTree.tsx:93-130 maps all schemas\u00d7tables into DOM; each row mounts 1-2 lucide SVGs and rebuilds a tooltip template string. At the stated 500-table/50-schema scale a keystroke re-render will blow the 16ms budget; at 5k tables (partitioned/multi-tenant DBs) mount alone janks. Fix: flatten to a row list + @tanstack/react-virtual (already a dependency for the grid), React.memo rows, precompute lowercase names once per snapshot.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "perf"
+  },
+  {
+   "title": "DbSwitcher lies on error: query failure renders 'No databases'",
+   "detail": "DbSwitcher.tsx:43-44 catch \u2192 setDbs([]) which line 93 renders as 'No databases' \u2014 indistinguishable from a real empty result (violates 'never lies'). Keep the error, render it with a retry; only show 'No databases' for a genuine empty list.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Table context menu missing the density that defines a mature client [known]",
+   "detail": "SchemaTree.tsx:59-82 has 6 items. Missing: Copy DDL (needs get_ddl backend), View source for views/matviews, Copy column list (comma-joined), Copy INSERT/UPDATE template, Copy count query, Count rows (live), Open in new tab, Export\u2026, Truncate/Drop behind DangerModal, Refresh matview for kind='m'. [known] ROADMAP v0.5 menu epic covers most \u2014 Copy column list / count-rows / refresh-matview are not in it and should be added.",
+   "severity": "P0",
+   "effort": "L",
+   "kind": "feature"
+  },
+  {
+   "title": "Filter matches table name only \u2014 no schema, qualified, or column matching; collapsed schemas hide matches",
+   "detail": "SchemaTree.tsx:34 tests t.name only: typing 'auth.users' or a schema name yields nothing; no ranking so prefix/exact matches drown in subsequence noise at 500 tables. Also line 94: open = openSchemas[schema] ?? !!filter \u2014 an explicitly-collapsed schema stays closed during filtering, so matches show a count but hidden rows. Fix: match against `${schema}.${name}`, rank exact>prefix>subsequence, and let an active filter force-expand.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "bug"
+  },
+  {
+   "title": "Filter/expand state leaks across profile switches",
+   "detail": "SchemaTree keeps useState filter+openSchemas but App.tsx:36 and the component aren't keyed by profileId \u2014 switch connections and profile A's filter still applies to profile B, making the tree mysteriously empty/filtered. Add key={profileId} at the render site or reset state in an effect on profileId change.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Functions, sequences, enums, extensions, triggers invisible in the sidebar",
+   "detail": "snapshot.functions is fetched (introspect.rs:121) but never rendered anywhere in the tree; sequences aren't introspected at all (relkind 'S' excluded at introspect.rs:94); enums are claimed by ARCHITECTURE.md but absent [known]; extensions never queried. A PG client that can't show functions/sequences loses to every competitor. Add collapsible per-schema sections (Tables/Views/Functions/Sequences/Enums) with lazy render.",
+   "severity": "P1",
+   "effort": "L",
+   "kind": "feature"
+  },
+  {
+   "title": "No visual distinction for matview vs view, foreign, partitioned; partitions flood the tree",
+   "detail": "SchemaTree.tsx:120-124 collapses kinds to two icons: 'm' shares Eye with 'v'; 'f' and 'p' render as plain tables. Declarative partitions (relispartition) each appear as an independent table \u2014 a daily-partitioned table adds 365 rows/year. Introspect relispartition + parent oid, nest partitions under the parent (collapsed by default), and give m/f/p distinct glyphs/badges.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "No table metadata: row estimates, sizes, comments [partially known]",
+   "detail": "TABLES_SQL (introspect.rs:68) could add reltuples + pg_total_relation_size for near-zero cost [known ROADMAP v0.4] shown as a right-aligned muted badge; pg_description comments (obj_description) are in NO plan and are table-stakes for shared DBs \u2014 show as tooltip + in Structure tab.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "No favorites/pinning or recents in the tree",
+   "detail": "At 50 schemas/500 tables you re-scroll to the same 5 tables all day. Add per-profile pinned tables (appdb or localStorage) rendered in a 'Pinned' section above schemas + 'Pin/Unpin' context-menu item; optionally an automatic 'Recent' section from browse history. ROADMAP descopes connection favorites, but table pins are a different, high-value feature.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Currently open table is not highlighted in the tree",
+   "detail": "sidebar-tree.css:48 .tree-table has hover but no .active state and SchemaTree never compares against the active tab's table. Orientation loss all day. Read activeTab from useTabs (kind==='table') and mark the matching row + auto-scrollIntoView.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "No sidebar refresh affordance or staleness indicator",
+   "detail": "Refresh exists only as \u2318R and a buried per-table context item (SchemaTree.tsx:73-80). DDL run by migrations/colleagues on other connections leaves a silently stale tree. Add a refresh icon-button + 'refreshed Xm ago' in the tree header; consider re-introspect on window focus after N minutes.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "DbSwitcher: no filter, no keyboard nav, Esc doesn't close [partially known]",
+   "detail": "DbSwitcher.tsx:89-107 is plain buttons: at 50+ databases there's no type-ahead/filter, no arrow-key selection, Esc is unhandled (not in the overlay stack \u2014 [known] ROADMAP step-2 followup), and the current db isn't scrolled into view. Fold into AnchoredOverlay + reuse the ContextMenu keyboard pattern + add a filter input for >10 dbs.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Saved queries unusable past ~20: no search, folders, or sort [known]",
+   "detail": "SavedQueries.tsx:81-144 renders a flat list inside a 40%-max-height scroll pane (sidebar.css:117-123). At 100+ queries this is the worst surface in the app. [known] ROADMAP has search-box only \u2014 folders/tags and sort (name/recent) should be pushed; minimum viable: search + most-recently-used ordering.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Saved queries are global with zero connection affinity",
+   "detail": "saved.ts has no profile/db association: a query written against DB A opens (SavedQueries.tsx:27-34) into a tab on whatever connection is active \u2014 \u2318Enter then runs it against the wrong database with no warning. Store origin profile/dbname on save; show a small db badge on the row and a mismatch hint when opened elsewhere.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "correctness"
+  },
+  {
+   "title": "Fixed 248px sidebar, not resizable; long names permanently ellipsized",
+   "detail": "v2.css:82-89 hardcodes width:248px. Long table names truncate (sidebar-tree.css:70-74) and the row tooltip shows column count, not the full name. Add a drag handle (pattern exists: inspector resize in App.tsx:76-88) with persisted width; include the full name in the tooltip meanwhile.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "looksLikeDdl misfires both ways \u2014 wasted refetches and stale schema",
+   "detail": "schema.ts:80-81 uses /^\\s*(create|alter|...)\\b/im: the m flag means ANY line starting with those words \u2014 a SELECT containing a string or comment line beginning 'grant' triggers a full re-introspection; meanwhile CALL proc(), DO $$...$$, and SELECT create_hypertable() are missed \u2192 silently stale tree. Run the existing statement splitter (execute.rs already lexes strings/comments) or strip literals+comments before the regex, and add CALL/DO to the verb list.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "FUNCS introspection pulls all ~3k pg_catalog functions on every refresh [known]",
+   "detail": "introspect.rs:121-131 includes pg_catalog and runs pg_get_function_identity_arguments per row on every connect/\u2318R/DDL-sniff. [known] ROADMAP v0.3/v0.4: scope to user schemas + ship builtins as a static list for completion.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "perf"
+  },
+  {
+   "title": "Stale schema snapshot survives disconnect/profile delete [known]",
+   "detail": "schema.ts has no clear/evict path \u2014 completion and tree keep serving a deleted or repointed profile's schema; snapshots also accumulate unbounded across profiles (multi-MB each). [known] ROADMAP v0.3. Add useSchema.clear(profileId) called from deleteProfile/invalidateProfile (connections.ts:94,216).",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "No schema-header context menu or expand/collapse-all",
+   "detail": "SchemaTree.tsx:97-106: schema rows only toggle. Right-click should offer Copy schema name, Refresh, Expand/Collapse all, Set as search_path/default, Hide schema (persisted). With 50 schemas, collapse-all is a daily need; Alt-click toggle-others is the mouse-delightful version.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "Tables can't expand to show columns inline in the tree",
+   "detail": "Column data is already in the snapshot (TableInfo.columns) \u2014 TablePlus/DataGrip/Beekeeper all expand a table node to columns (name+type, pk/fk glyphs) with per-column context menu (copy name, copy qualified). Currently only reachable via opening the browser's Structure tab. Add a disclosure level; pairs with virtualization work.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Empty states missing: zero filter matches, zero tables, empty schemas invisible",
+   "detail": "SchemaTree.tsx:93: when the filter matches nothing the tree just goes blank (no 'No tables match \u2014 clear filter'); a fresh/empty DB shows nothing below the input; snapshot.schemas (schema.ts:49) is never used, so a schema containing only functions/sequences cannot be seen or right-clicked at all.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Saved-query rename silently discards on blur; two inconsistent delete guards; full-SQL tooltip",
+   "detail": "SavedQueries.tsx:107 onBlur cancels the draft (platform convention is commit-on-blur; Esc cancels); hover-trash uses 2-click arm (127-141) while the context menu uses DangerModal (56-69) \u2014 pick one; title={q.sql} (line 110) puts the entire SQL into a native tooltip (a multi-MB saved query = pathological) \u2014 truncate to ~300 chars. No undo toast after delete despite 'cannot be undone'.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "DbSwitcher pick() failure is an unhandled rejection",
+   "detail": "DbSwitcher.tsx:48-79: try/finally without catch \u2014 if ipc.cloneConnection or loadProfiles throws, the rejection escapes void pick(db); busy resets but the user gets no feedback and the popup has already closed. Catch and route into the ConnToast error path.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Introspection ships one giant json_agg cell per statement \u2014 memory/parse spike at scale",
+   "detail": "introspect.rs:68-98: tables+all columns aggregate into a single text cell; at 10k relations \u00d7 30 columns that's a tens-of-MB string through the simple protocol, serde_json parse, then re-serialization over IPC to JS. No concurrent-fetch dedupe either (schema.ts:64 \u2014 \u2318R spam runs full duplicate round trips). Paginate/aggregate per schema or stream, and coalesce in-flight fetches per profile.",
+   "severity": "P2",
+   "effort": "M",
+   "kind": "perf"
+  },
+  {
+   "title": "FK introspection includes pg_temp schemas; PK ignores index validity",
+   "detail": "introspect.rs:117-118 filters only pg_catalog/information_schema (TABLES_SQL also excludes pg_toast%/pg_temp% at :96) \u2014 temp-table FKs reference relations absent from the tree; :90 uses indisprimary without indisvalid/indisready, so a concurrently-built invalid PK is reported as authoritative (affects editability mapping downstream).",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "No drag-to-editor, no cmd-click open-in-new-tab, no middle-click",
+   "detail": "SchemaTree rows (109-127) support click/dblclick/rightclick only: dragging a table name into the editor to insert the (quoted) identifier, cmd-click to open a browse tab in the background without focusing, are both muscle-memory affordances in DataGrip/TablePlus.",
+   "severity": "P2",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Dead code: ProfileList.tsx renders its own SchemaTree but is imported nowhere",
+   "detail": "src/sidebar/ProfileList.tsx (uses SchemaTree at :98) has zero importers \u2014 stale pre-v2 sidebar. Delete it or it will rot further (it duplicates delete-arm logic and renders SchemaTree without the sb-tables scroll container).",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  }
+ ],
+ "perf_risks": [
+  "SchemaTree renders ALL schemas\u00d7tables as DOM (no virtualization); each filter keystroke re-renders every row and re-runs fuzzyMatch with fresh toLowerCase() allocations on both needle and hay per table (SchemaTree.tsx:12-40) \u2014 precompute lowercase names per snapshot, virtualize, memo rows",
+  "Two lucide SVG components + a rebuilt tooltip template string per row per render (SchemaTree.tsx:108-126) \u2014 mount cost dominates at 1k+ tables",
+  "FUNCS_SQL fetches ~3k pg_catalog functions with pg_get_function_identity_arguments per row on EVERY connect/\u2318R/DDL-sniff (introspect.rs:121-131) [known]",
+  "Whole-catalog re-introspection triggered by looksLikeDdl false positives (schema.ts:80 'im' flags match any line, even inside string literals) \u2014 pointless multi-second round trips after ordinary queries",
+  "Single json_agg mega-cell per introspection statement: tens of MB string \u2192 serde_json parse \u2192 IPC re-serialize at 10k-relation scale; snapshots then retained per profile forever with no eviction (schema.ts:55) \u2014 unbounded frontend memory across many connections",
+  "No in-flight dedupe/cancel for introspect (schema.ts:64) \u2014 \u2318R spam or connect+DDL-sniff overlap runs duplicate full fetches; last write wins",
+  "DbSwitcher toggle may create a brand-new PG connection (ensureTabSession) just to list databases (DbSwitcher.tsx:30-42) \u2014 popup-open latency on cold tabs",
+  "SavedQueries refetches the entire list from appdb after every upsert/remove (saved.ts:33-46) and re-renders all rows \u2014 fine at 100, quadratic feel at 1k with autosave-style flows"
+ ]
+}

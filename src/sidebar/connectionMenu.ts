@@ -1,0 +1,91 @@
+// Shared right-click menu for a connection — used by the rail and the dashboard
+// so both surfaces offer the same actions.
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import * as ipc from "../ipc/commands";
+import type { MenuNode } from "../app/overlay/ContextMenu";
+import type { Profile } from "../ipc/types";
+import { useConnections } from "../stores/connections";
+
+export function connectionMenu(p: Profile, connected: boolean): MenuNode[] {
+  const c = useConnections.getState();
+  const items: MenuNode[] = [];
+
+  if (connected) {
+    items.push({
+      kind: "item",
+      label: "Open",
+      onSelect: () => {
+        c.setActive(p.id);
+        c.setHome(null);
+      },
+    });
+    items.push({ kind: "item", label: "Disconnect", onSelect: () => void c.invalidateProfile(p.id) });
+    items.push({
+      kind: "item",
+      label: "Reconnect",
+      onSelect: () =>
+        void (async () => {
+          await c.invalidateProfile(p.id);
+          await c.connect(p.id);
+        })(),
+    });
+  } else {
+    items.push({ kind: "item", label: "Connect", onSelect: () => void c.connect(p.id) });
+  }
+
+  items.push({ kind: "sep" });
+  items.push({ kind: "item", label: "Edit…", onSelect: () => c.editConnection(p) });
+  items.push({
+    kind: "item",
+    label: "Duplicate",
+    onSelect: () =>
+      void (async () => {
+        await ipc.cloneConnection(p.id, p.dbname);
+        await c.loadProfiles();
+      })(),
+  });
+  // password stays redacted on the default action; "with password" is the
+  // deliberate second click (locked decision #2)
+  items.push({
+    kind: "submenu",
+    label: "Copy URI",
+    items: [
+      {
+        kind: "item",
+        label: "Copy (no password)",
+        onSelect: () => void ipc.connectionUri(p.id, false).then(writeText),
+      },
+      {
+        kind: "item",
+        label: "Copy with password",
+        onSelect: () => void ipc.connectionUri(p.id, true).then(writeText),
+      },
+      { kind: "sep" },
+      {
+        kind: "item",
+        label: "Copy psql command",
+        onSelect: () =>
+          void writeText(`psql -h ${p.host} -p ${p.port} -U ${p.user} -d ${p.dbname}`),
+      },
+    ],
+  });
+
+  items.push({ kind: "sep" });
+  items.push({
+    kind: "item",
+    label: "Delete",
+    danger: true,
+    onSelect: () =>
+      void (async () => {
+        const { confirmDanger } = await import("../stores/danger");
+        const ok = await confirmDanger(
+          `Delete connection “${p.name || p.host}”?`,
+          "Removes the saved connection. This cannot be undone.",
+          "Delete",
+        );
+        if (ok) await c.deleteProfile(p.id);
+      })(),
+  });
+
+  return items;
+}

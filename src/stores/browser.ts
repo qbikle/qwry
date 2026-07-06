@@ -11,15 +11,49 @@ export type FilterOp =
   | "<"
   | ">="
   | "<="
+  | "contains"
+  | "starts with"
+  | "ends with"
   | "LIKE"
   | "ILIKE"
+  | "NOT LIKE"
+  | "NOT ILIKE"
+  | "~"
+  | "!~"
   | "IN"
+  | "NOT IN"
+  | "IS"
+  | "IS NOT"
   | "IS NULL"
-  | "IS NOT NULL";
+  | "IS NOT NULL"
+  | "IS TRUE"
+  | "IS FALSE"
+  | "raw SQL";
 
 export const FILTER_OPS: FilterOp[] = [
-  "=", "!=", ">", "<", ">=", "<=", "LIKE", "ILIKE", "IN", "IS NULL", "IS NOT NULL",
+  "=", "!=", ">", "<", ">=", "<=",
+  "contains", "starts with", "ends with",
+  "LIKE", "ILIKE", "NOT LIKE", "NOT ILIKE", "~", "!~",
+  "IN", "NOT IN", "IS NULL", "IS NOT NULL", "IS TRUE", "IS FALSE",
+  "raw SQL",
 ];
+
+/** operators that make sense for a column's type — everything else is noise
+ * (or a guaranteed server error, e.g. ILIKE on an integer) */
+export function opsForType(type: string): FilterOp[] {
+  const t = type.toLowerCase();
+  if (t === "boolean" || t === "bool") return ["IS", "IS NOT", "raw SQL"];
+  if (/int|numeric|decimal|real|double|float|money|serial|oid/.test(t))
+    return ["=", "!=", ">", "<", ">=", "<=", "IN", "NOT IN", "IS NULL", "IS NOT NULL", "raw SQL"];
+  if (/timestamp|date|time|interval/.test(t))
+    return ["=", "!=", ">", "<", ">=", "<=", "IS NULL", "IS NOT NULL", "raw SQL"];
+  if (/json|uuid|bytea/.test(t))
+    return ["=", "!=", "IS NULL", "IS NOT NULL", "raw SQL"];
+  return FILTER_OPS;
+}
+
+const NO_VALUE_OPS = new Set<FilterOp>(["IS NULL", "IS NOT NULL", "IS TRUE", "IS FALSE"]);
+export const opNeedsValue = (op: FilterOp) => !NO_VALUE_OPS.has(op);
 
 export interface Filter {
   col: string;
@@ -41,7 +75,7 @@ const PAGE = 1000;
 
 /** per-tab browse state (the browsed table itself lives on the Tab) */
 interface BrowseTab {
-  tab: "data" | "structure";
+  tab: "data" | "structure" | "ddl";
   filters: Filter[];
   sort: { col: string; dir: "ASC" | "DESC" } | null;
   limit: number;
@@ -67,11 +101,12 @@ interface BrowserState extends BrowseTab {
 
   /** re-mirror after the active tab changes (driven by useTabs) */
   syncActive: (tabId: string) => void;
-  /** open (or focus) a data-browser tab for a table */
-  openTable: (t: TableInfo) => void;
+  /** open (or focus) a data-browser tab for a table; optional initial
+   * filters land BEFORE the first query (FK navigation) */
+  openTable: (t: TableInfo, initialFilters?: Filter[]) => void;
   /** forget a closed tab's browse state */
   clearTab: (tabId: string) => void;
-  setTab: (t: "data" | "structure") => void;
+  setTab: (t: "data" | "structure" | "ddl") => void;
   setFilters: (f: Filter[]) => void;
   setSort: (s: BrowseTab["sort"]) => void;
   loadMore: () => void;
@@ -82,7 +117,8 @@ interface BrowserState extends BrowseTab {
     values: (string | null)[],
   ) => Promise<{ ok: boolean; error?: string }>;
   /** inline add-row: open a blank draft, edit cells, commit/cancel */
-  beginDraft: () => void;
+  /** inline add-row; optional prefill (duplicate-row minus PK) */
+  beginDraft: (prefill?: Record<string, DraftCell>) => void;
   cancelDraft: () => void;
   setDraftCell: (col: string, cell: DraftCell) => void;
   commitDraft: () => Promise<void>;
@@ -90,6 +126,9 @@ interface BrowserState extends BrowseTab {
 
 const ql = (v: string) => `'${v.replace(/'/g, "''")}'`;
 const qi = (v: string) => `"${v.replace(/"/g, '""')}"`;
+/** in-flight commit guards, per tab — a second ⌘↵ during the insert round
+ * trip must not fire a second identical INSERT */
+const draftCommitting = new Set<string>();
 
 export function browseSql(s: {
   table: TableInfo;
@@ -99,22 +138,47 @@ export function browseSql(s: {
 }): string {
   const t = `${qi(s.table.schema)}.${qi(s.table.name)}`;
   const active = s.filters.filter(
-    (f) => f.enabled && f.col && (f.op.includes("NULL") || f.value !== ""),
+    (f) => f.enabled && f.col && (!opNeedsValue(f.op) || f.value !== ""),
   );
+  const like = (v: string) => v.replace(/([%_\\])/g, "\\$1");
   const conds = active.map((f) => {
-    if (f.op === "IS NULL" || f.op === "IS NOT NULL") return `${qi(f.col)} ${f.op}`;
-    if (f.op === "IN") {
-      const vals = f.value.split(",").map((v) => ql(v.trim())).join(", ");
-      return `${qi(f.col)} IN (${vals})`;
+    switch (f.op) {
+      case "IS NULL":
+      case "IS NOT NULL":
+      case "IS TRUE":
+      case "IS FALSE":
+        return `${qi(f.col)} ${f.op}`;
+      case "IS":
+      case "IS NOT": {
+        // bool three-state — value comes from a fixed select, whitelisted
+        const kw = ["TRUE", "FALSE", "NULL"].includes(f.value) ? f.value : "TRUE";
+        return `${qi(f.col)} ${f.op} ${kw}`;
+      }
+      case "IN":
+      case "NOT IN": {
+        const vals = f.value.split(",").map((v) => ql(v.trim())).join(", ");
+        return `${qi(f.col)} ${f.op} (${vals})`;
+      }
+      case "contains":
+        return `${qi(f.col)} ILIKE ${ql(`%${like(f.value)}%`)}`;
+      case "starts with":
+        return `${qi(f.col)} ILIKE ${ql(`${like(f.value)}%`)}`;
+      case "ends with":
+        return `${qi(f.col)} ILIKE ${ql(`%${like(f.value)}`)}`;
+      case "raw SQL":
+        // explicit escape hatch — the value is a predicate, used verbatim
+        return `(${f.value})`;
+      default:
+        return `${qi(f.col)} ${f.op} ${ql(f.value)}`;
     }
-    return `${qi(f.col)} ${f.op} ${ql(f.value)}`;
   });
-  // chained left-to-right; SQL precedence still binds AND tighter than OR
+  // fold left-associatively so the SQL means what the linear UI reads:
+  // A OR B AND C compiles to ((A OR B) AND C), never A OR (B AND C)
   const where =
     conds.length > 0
       ? `\nWHERE ${conds
-          .map((c, i) => (i === 0 ? `(${c})` : `${active[i].conj} (${c})`))
-          .join("\n  ")}`
+          .map((c) => `(${c})`)
+          .reduce((acc, c, i) => (i === 0 ? c : `(${acc} ${active[i].conj} ${c})`))}`
       : "";
   const order = s.sort ? `\nORDER BY ${qi(s.sort.col)} ${s.sort.dir}` : "";
   // ordinary tables without a PK get ctid so they stay editable/deletable
@@ -159,18 +223,21 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     set((s) => ({ active: tabId, table, ...(s.byTab[tabId] ?? blankBrowse()) }));
   },
 
-  openTable: (t) => {
+  openTable: (t, initialFilters) => {
     const tabsApi = useTabs.getState();
-    // already open in a tab → just focus it
+    // already open in a tab → focus it (and apply the requested filter)
     const existing = tabsApi.tabs.find(
       (tb) => tb.kind === "table" && tb.table?.schema === t.schema && tb.table?.name === t.name,
     );
     if (existing) {
       tabsApi.select(existing.id);
+      if (initialFilters) get().setFilters(initialFilters);
       return;
     }
     const id = tabsApi.openTableTab(t); // creates + selects → fires syncActive
-    set((s) => ({ byTab: { ...s.byTab, [id]: blankBrowse() } }));
+    set((s) => ({
+      byTab: { ...s.byTab, [id]: { ...blankBrowse(), filters: initialFilters ?? [] } },
+    }));
     get().syncActive(id);
     run(get());
   },
@@ -184,8 +251,19 @@ export const useBrowser = create<BrowserState>((set, get) => ({
   setTab: (tab) => writeBrowse(set, get().active, { tab }),
 
   setFilters: (filters) => {
-    writeBrowse(set, get().active, { filters, limit: PAGE });
-    run(get());
+    // only hit the server when the effective SQL actually changed — toggling
+    // an incomplete filter row or picking a column before typing a value
+    // used to re-run the unfiltered SELECT
+    const s = get();
+    const before = s.table
+      ? browseSql({ table: s.table, filters: s.filters, sort: s.sort, limit: PAGE })
+      : "";
+    writeBrowse(set, s.active, { filters, limit: PAGE });
+    const after = get();
+    const afterSql = after.table
+      ? browseSql({ table: after.table, filters: after.filters, sort: after.sort, limit: PAGE })
+      : "";
+    if (afterSql !== before) run(after);
   },
 
   setSort: (sort) => {
@@ -199,8 +277,13 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     const stmt = res.statements[0];
     // only grow when the current page actually filled up
     if (res.running || !stmt || stmt.rows.length < s.limit) return;
-    writeBrowse(set, s.active, { limit: s.limit + PAGE });
-    run(get());
+    void import("./edits").then(({ useEdits }) => {
+      // parked while edits are staged — the loadMore re-run would wipe them
+      // (and a confirm modal on mere scrolling would be hostile)
+      if (Object.keys(useEdits.getState().byTab[s.active]?.pending ?? {}).length > 0) return;
+      writeBrowse(set, s.active, { limit: get().limit + PAGE });
+      run(get());
+    });
   },
 
   refresh: () => run(get()),
@@ -220,7 +303,8 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     }
   },
 
-  beginDraft: () => writeBrowse(set, get().active, { draftRow: {}, draftError: null }),
+  beginDraft: (prefill) =>
+    writeBrowse(set, get().active, { draftRow: prefill ?? {}, draftError: null }),
   cancelDraft: () => writeBrowse(set, get().active, { draftRow: null, draftError: null }),
   setDraftCell: (col, cell) =>
     writeBrowse(set, get().active, (t) =>
@@ -230,12 +314,28 @@ export const useBrowser = create<BrowserState>((set, get) => ({
   commitDraft: async () => {
     const s = get();
     if (!s.table || !s.draftRow) return;
-    const draft = s.draftRow;
+    if (draftCommitting.has(s.active)) return;
+    draftCommitting.add(s.active);
+    try {
+      await commitDraftInner(s, set, get);
+    } finally {
+      draftCommitting.delete(s.active);
+    }
+  },
+}));
+
+async function commitDraftInner(
+  s: BrowserState,
+  set: SetFn,
+  get: () => BrowserState,
+): Promise<void> {
+  {
+    const draft = s.draftRow!;
     const cols: string[] = [];
     const values: (string | null)[] = [];
     // iterate real table columns: NULL → explicit null, value → text,
     // untouched → omit so the column default applies
-    for (const c of s.table.columns) {
+    for (const c of s.table!.columns) {
       const cell = draft[c.name];
       if (!cell) continue;
       if (cell.isNull) {
@@ -249,8 +349,8 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     const res = await get().insertRow(cols, values);
     if (res.ok) writeBrowse(set, get().active, { draftRow: null, draftError: null });
     else writeBrowse(set, get().active, { draftError: res.error ?? "insert failed" });
-  },
-}));
+  }
+}
 
 // follow the editor's active tab (useTabs owns the canonical active tab id)
 if (useTabs.getState().activeId) useBrowser.getState().syncActive(useTabs.getState().activeId!);

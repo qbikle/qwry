@@ -3,6 +3,12 @@
 // tinted toward the palette, and applies them as CSS vars at runtime. Surfaces
 // are subtly tinted; syntax stays a fixed legible set per mode.
 
+/** gutter glass opacity (0..1) — Settings slider; applied on next theme apply */
+let glassAlpha = 0.55;
+export function setGlassAlpha(a: number) {
+  glassAlpha = Math.max(0, Math.min(1, a));
+}
+
 export type Mode = "system" | "dark" | "light";
 
 export interface Palette {
@@ -213,7 +219,7 @@ function deriveAnchors(p: Palette, dark: boolean): Record<string, string> {
   v["--accent-soft"] = withAlpha(primary, dark ? 0.18 : 0.14);
   v["--accent-fg"] = accentFg(primary);
   v["--accent-2"] = secondary;
-  v["--glass-tint"] = withAlpha(bg, 0.55);
+  v["--glass-tint"] = withAlpha(bg, glassAlpha);
   v["--card-border"] = dark ? "rgba(255, 255, 255, 0.06)" : withAlpha(fg, 0.1);
   v["--card-highlight"] = dark ? "rgba(255, 255, 255, 0.05)" : "rgba(255, 255, 255, 0.6)";
   v["--avatar-ring"] = dark ? "rgba(255, 255, 255, 0.16)" : withAlpha(fg, 0.2);
@@ -279,7 +285,7 @@ export function buildVars(p: Palette, dark: boolean): Record<string, string> {
     v["--shadow-panel"] = "0 6px 24px rgba(0, 0, 0, 0.34)";
     v["--shadow-pop"] = "0 8px 24px rgba(0, 0, 0, 0.45)";
     v["--cm-active-line"] = "rgba(255, 255, 255, 0.03)";
-    v["--glass-tint"] = hsla(H, 16 * T, 8, 0.55);
+    v["--glass-tint"] = hsla(H, 16 * T, 8, glassAlpha);
     v["--hl-bg"] = "#f5a623";
     v["--hl-fg"] = "#1a1a1a";
     v["--danger"] = "#ff5c69";
@@ -310,7 +316,7 @@ export function buildVars(p: Palette, dark: boolean): Record<string, string> {
     v["--shadow-panel"] = "0 6px 22px rgba(20, 30, 55, 0.16)";
     v["--shadow-pop"] = "0 8px 24px rgba(20, 30, 60, 0.18)";
     v["--cm-active-line"] = "rgba(0, 0, 0, 0.04)";
-    v["--glass-tint"] = hsla(H, 40 * T, 96, 0.5);
+    v["--glass-tint"] = hsla(H, 40 * T, 96, glassAlpha);
     v["--hl-bg"] = "#ffd866";
     v["--hl-fg"] = "#1c2128";
     v["--danger"] = "#d92d3a";

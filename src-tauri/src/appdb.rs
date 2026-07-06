@@ -17,6 +17,10 @@ pub struct TabRow {
     pub position: i64,
     #[serde(default)]
     pub saved_id: Option<String>,
+    /// owning connection; NULL = legacy tab (visible everywhere, adopted on
+    /// first edit under a profile)
+    #[serde(default)]
+    pub profile_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,6 +30,10 @@ pub struct SavedQuery {
     pub sql: String,
     #[serde(default)]
     pub created_at: String,
+    /// owning connection; NULL = legacy bookmark (visible everywhere until
+    /// next saved under a connection — adopt-on-touch, mirrors tabs)
+    #[serde(default)]
+    pub profile_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -47,7 +55,8 @@ impl AppDb {
         let conn = Connection::open(dir.join("qwry.sqlite"))
             .map_err(|e| DriverError::Internal(format!("appdb open: {e}")))?;
         conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
+            "PRAGMA busy_timeout = 2000;
+             PRAGMA journal_mode = WAL;
              CREATE TABLE IF NOT EXISTS profiles (
                  id   TEXT PRIMARY KEY,
                  data TEXT NOT NULL
@@ -73,11 +82,19 @@ impl AppDb {
                  name       TEXT NOT NULL,
                  sql        TEXT NOT NULL,
                  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+             );
+             CREATE TABLE IF NOT EXISTS schema_cache (
+                 profile_id TEXT PRIMARY KEY,
+                 sig        TEXT NOT NULL,
+                 data       TEXT NOT NULL,
+                 saved_at   TEXT NOT NULL DEFAULT (datetime('now'))
              );",
         )
         .map_err(|e| DriverError::Internal(format!("appdb init: {e}")))?;
         // additive migrations; fail harmlessly when the column already exists
         let _ = conn.execute("ALTER TABLE tabs ADD COLUMN saved_id TEXT", []);
+        let _ = conn.execute("ALTER TABLE tabs ADD COLUMN profile_id TEXT", []);
+        let _ = conn.execute("ALTER TABLE saved_queries ADD COLUMN profile_id TEXT", []);
         let _ = conn.execute("ALTER TABLE profiles ADD COLUMN position INTEGER", []);
         let _ = conn.execute("UPDATE profiles SET position = rowid WHERE position IS NULL", []);
         Ok(Self(Mutex::new(conn)))
@@ -133,10 +150,47 @@ impl AppDb {
     }
 
     pub fn delete_profile(&self, id: &str) -> Result<()> {
+        let conn = self.0.lock().unwrap();
+        conn.execute("DELETE FROM profiles WHERE id = ?1", [id])
+            .map_err(internal)?;
+        // its cached schema snapshot dies with it
+        conn.execute("DELETE FROM schema_cache WHERE profile_id = ?1", [id])
+            .map_err(internal)?;
+        Ok(())
+    }
+}
+
+/// Persisted stale-while-revalidate schema snapshots: the last introspection
+/// result per profile, hydrated INSTANTLY on connect (sidebar + completion at
+/// t=0) while the real introspect refreshes in the background. `sig` binds the
+/// cache to the profile's connection identity — a repointed profile (different
+/// host/db) never hydrates the old server's schema.
+impl AppDb {
+    pub fn schema_cache_get(&self, profile_id: &str, sig: &str) -> Result<Option<String>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT data FROM schema_cache WHERE profile_id = ?1 AND sig = ?2")
+            .map_err(internal)?;
+        let mut rows = stmt
+            .query(rusqlite::params![profile_id, sig])
+            .map_err(internal)?;
+        match rows.next().map_err(internal)? {
+            Some(row) => Ok(Some(row.get(0).map_err(internal)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn schema_cache_put(&self, profile_id: &str, sig: &str, data: &str) -> Result<()> {
         self.0
             .lock()
             .unwrap()
-            .execute("DELETE FROM profiles WHERE id = ?1", [id])
+            .execute(
+                "INSERT INTO schema_cache (profile_id, sig, data, saved_at)
+                 VALUES (?1, ?2, ?3, datetime('now'))
+                 ON CONFLICT(profile_id) DO UPDATE SET
+                   sig = excluded.sig, data = excluded.data, saved_at = excluded.saved_at",
+                rusqlite::params![profile_id, sig, data],
+            )
             .map_err(internal)?;
         Ok(())
     }
@@ -146,7 +200,7 @@ impl AppDb {
     pub fn tabs_list(&self) -> Result<Vec<TabRow>> {
         let conn = self.0.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, name, sql, position, saved_id FROM tabs ORDER BY position")
+            .prepare("SELECT id, name, sql, position, saved_id, profile_id FROM tabs ORDER BY position")
             .map_err(internal)?;
         let rows = stmt
             .query_map([], |r| {
@@ -156,6 +210,7 @@ impl AppDb {
                     sql: r.get(2)?,
                     position: r.get(3)?,
                     saved_id: r.get(4)?,
+                    profile_id: r.get(5)?,
                 })
             })
             .map_err(internal)?;
@@ -169,8 +224,8 @@ impl AppDb {
         tx.execute("DELETE FROM tabs", []).map_err(internal)?;
         for t in tabs {
             tx.execute(
-                "INSERT INTO tabs (id, name, sql, position, saved_id) VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![t.id, t.name, t.sql, t.position, t.saved_id],
+                "INSERT INTO tabs (id, name, sql, position, saved_id, profile_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![t.id, t.name, t.sql, t.position, t.saved_id, t.profile_id],
             )
             .map_err(internal)?;
         }
@@ -191,19 +246,26 @@ impl AppDb {
 
     pub fn history_search(
         &self,
-        profile_id: &str,
+        profile_id: Option<&str>,
         query: &str,
         limit: i64,
     ) -> Result<Vec<HistoryRow>> {
         let conn = self.0.lock().unwrap();
+        // profile_id NULL = search across every connection (history panel)
         let mut stmt = conn
             .prepare(
                 "SELECT id, profile_id, sql, ms, rows, ran_at FROM history
-                 WHERE profile_id = ?1 AND sql LIKE ?2
+                 WHERE (?1 IS NULL OR profile_id = ?1) AND sql LIKE ?2 ESCAPE '\\'
                  ORDER BY ran_at DESC, id DESC LIMIT ?3",
             )
             .map_err(internal)?;
-        let pattern = format!("%{}%", query.replace('%', "\\%"));
+        // escape LIKE metacharacters so searching SQL that CONTAINS % or _
+        // (i.e. most LIKE queries) matches literally
+        let escaped = query
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let pattern = format!("%{escaped}%");
         let rows = stmt
             .query_map(rusqlite::params![profile_id, pattern, limit], |r| {
                 Ok(HistoryRow {
@@ -248,7 +310,7 @@ impl AppDb {
     pub fn saved_list(&self) -> Result<Vec<SavedQuery>> {
         let conn = self.0.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, name, sql, created_at FROM saved_queries ORDER BY name")
+            .prepare("SELECT id, name, sql, created_at, profile_id FROM saved_queries ORDER BY name")
             .map_err(internal)?;
         let rows = stmt
             .query_map([], |r| {
@@ -257,6 +319,7 @@ impl AppDb {
                     name: r.get(1)?,
                     sql: r.get(2)?,
                     created_at: r.get(3)?,
+                    profile_id: r.get(4)?,
                 })
             })
             .map_err(internal)?;
@@ -268,9 +331,10 @@ impl AppDb {
             .lock()
             .unwrap()
             .execute(
-                "INSERT INTO saved_queries (id, name, sql) VALUES (?1, ?2, ?3)
-                 ON CONFLICT(id) DO UPDATE SET name = excluded.name, sql = excluded.sql",
-                rusqlite::params![q.id, q.name, q.sql],
+                "INSERT INTO saved_queries (id, name, sql, profile_id) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(id) DO UPDATE SET name = excluded.name, sql = excluded.sql,
+                                               profile_id = excluded.profile_id",
+                rusqlite::params![q.id, q.name, q.sql, q.profile_id],
             )
             .map_err(internal)?;
         Ok(())

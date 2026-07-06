@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Command } from "cmdk";
 import { motion } from "motion/react";
 import { popIn } from "../design/springs";
@@ -13,16 +13,21 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Settings,
+  SquareTerminal,
   Sun,
   SwatchBook,
   Table2,
+  Wand2,
+  X,
 } from "lucide-react";
 import { useConnections } from "../stores/connections";
 import { useResults } from "../stores/results";
 import { useSchema } from "../stores/schema";
 import { useSettings, type Mode } from "../stores/settings";
 import { useUI } from "../stores/ui";
-import { useTabs } from "../stores/tabs";
+import { useTabs, visibleTabs } from "../stores/tabs";
+import { Modal } from "../app/overlay/Overlay";
 import "./palette.css";
 
 interface HistoryRow {
@@ -38,16 +43,46 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
   const [history, setHistory] = useState<HistoryRow[]>([]);
 
   const profiles = useConnections((s) => s.profiles);
+  const allTabs = useTabs((s) => s.tabs);
+  const pinnedTabs = useTabs((s) => s.pinned);
+  const activeTabId = useTabs((s) => s.activeId);
   const activeProfileId = useConnections((s) => s.activeProfileId);
   const mode = useSettings((s) => s.mode);
   const setMode = useSettings((s) => s.setMode);
   const snapshot = useSchema((s) =>
     activeProfileId ? s.snapshots[activeProfileId] : undefined,
   );
+  // palette lists the CURRENT connection's workspace, like the strip
+  const tabs = visibleTabs(allTabs, pinnedTabs, activeProfileId);
 
   useEffect(() => {
     if (!open) setQuery("");
   }, [open]);
+
+  // fuzzy-match over the WHOLE catalog ourselves, render only the top hits —
+  // the old first-400 slice made every table past index 400 unfindable
+  const tableHits = useMemo(() => {
+    const all = snapshot?.tables ?? [];
+    const q = query.trim().toLowerCase();
+    if (!q) return all.slice(0, 50);
+    const scored: { t: (typeof all)[number]; score: number }[] = [];
+    for (const t of all) {
+      const hay = `${t.schema}.${t.name}`.toLowerCase();
+      // rank: exact name > prefix > substring > subsequence
+      let score = -1;
+      if (t.name.toLowerCase() === q) score = 0;
+      else if (t.name.toLowerCase().startsWith(q)) score = 1;
+      else if (hay.includes(q)) score = 2;
+      else {
+        let i = 0;
+        for (const ch of hay) if (ch === q[i]) i++;
+        if (i === q.length) score = 3;
+      }
+      if (score >= 0) scored.push({ t, score });
+    }
+    scored.sort((a, b) => a.score - b.score || a.t.name.length - b.t.name.length);
+    return scored.slice(0, 50).map((s) => s.t);
+  }, [snapshot, query]);
 
   // history search follows the query text
   useEffect(() => {
@@ -82,7 +117,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
   };
 
   return (
-    <div className="pal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}>
+    <Modal backdropClassName="pal-backdrop" onClose={close}>
       <motion.div className="pal-wrap" {...popIn}>
       <Command className="pal" shouldFilter={true} loop>
         <Command.Input
@@ -90,7 +125,6 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
           placeholder="Tables, actions, history…"
           value={query}
           onValueChange={setQuery}
-          onKeyDown={(e) => e.key === "Escape" && close()}
         />
         <Command.List>
           <Command.Empty>No results</Command.Empty>
@@ -142,9 +176,67 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
               <Plus size={13} /> Restore closed tab <kbd>⌘⇧T</kbd>
             </Command.Item>
             <Command.Item
-              value="clear history all"
+              value="format sql beautify"
               onSelect={() => {
-                // no confirm() in WKWebView; picking the explicit "(all)" item is the consent
+                void import("../editor/SqlEditor").then(({ editorFormat }) =>
+                  editorFormat.current?.(),
+                );
+                close();
+              }}
+            >
+              <Wand2 size={13} /> Format SQL <kbd>⌘⇧F</kbd>
+            </Command.Item>
+            <Command.Item
+              value="settings preferences"
+              onSelect={() => {
+                useSettings.getState().setSettingsOpen(true);
+                close();
+              }}
+            >
+              <Settings size={13} /> Settings… <kbd>⌘,</kbd>
+            </Command.Item>
+            <Command.Item
+              value="query history panel search"
+              onSelect={() => {
+                window.dispatchEvent(new CustomEvent("qwry:open-history"));
+                close();
+              }}
+            >
+              <Clock size={13} /> Query history panel <kbd>⌘Y</kbd>
+            </Command.Item>
+            <Command.Item
+              value="disconnect current connection"
+              onSelect={() => {
+                close();
+                // kills EVERY session on the profile (all tabs, tunnel) — the
+                // only bulk teardown without a guard until now
+                void (async () => {
+                  const { activeProfileId: pid, profiles } = useConnections.getState();
+                  if (!pid) return;
+                  const { useEdits } = await import("../stores/edits");
+                  const pending = Object.values(useEdits.getState().byTab).reduce(
+                    (n, t) => n + Object.keys(t.pending).length,
+                    0,
+                  );
+                  const name = profiles.find((p) => p.id === pid)?.name ?? "connection";
+                  const { confirmDanger } = await import("../stores/danger");
+                  const ok = await confirmDanger(
+                    `Disconnect ${name}?`,
+                    `Closes every tab's session on this connection${
+                      pending > 0 ? ` — ${pending} staged edit${pending === 1 ? "" : "s"} will be lost` : ""
+                    }. Open transactions roll back.`,
+                    "Disconnect",
+                  );
+                  if (ok) void useConnections.getState().invalidateProfile(pid);
+                })();
+              }}
+            >
+              <Database size={13} /> Disconnect current
+            </Command.Item>
+            <Command.Item
+              value="clear history connection"
+              onSelect={() => {
+                // no confirm() in WKWebView; picking the explicit item is the consent
                 if (activeProfileId) {
                   void invoke("history_clear", {
                     profileId: activeProfileId,
@@ -154,7 +246,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 close();
               }}
             >
-              <Clock size={13} /> Clear history (all)
+              <Clock size={13} /> Clear history (this connection)
             </Command.Item>
             <Command.Item
               value="clear history older than 7 days"
@@ -170,6 +262,39 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
             >
               <Clock size={13} /> Clear history older than 7 days
             </Command.Item>
+          </Command.Group>
+
+          <Command.Group heading="Open tabs">
+            {tabs.map((t, i) => (
+              <Command.Item
+                key={t.id}
+                // value must be UNIQUE — three "new qwry" tabs with the same
+                // value make cmdk collapse/misroute them; the index also makes
+                // "tab 2" searchable
+                value={`tab ${i + 1} ${t.name} ${t.kind}`}
+                onSelect={() => {
+                  useTabs.getState().select(t.id);
+                  close();
+                }}
+              >
+                {t.kind === "table" ? <Table2 size={13} /> : <SquareTerminal size={13} />}
+                <span className={t.id === activeTabId ? "pal-tab-active" : ""}>{t.name}</span>
+                <span className="pal-detail">tab {i + 1}</span>
+              </Command.Item>
+            ))}
+            {activeTabId && (
+              <Command.Item
+                value="close current tab"
+                onSelect={() => {
+                  void import("../stores/closeGuard").then(({ useCloseGuard }) =>
+                    useCloseGuard.getState().request(activeTabId),
+                  );
+                  close();
+                }}
+              >
+                <X size={13} /> Close current tab <kbd>⌘W</kbd>
+              </Command.Item>
+            )}
           </Command.Group>
 
           <Command.Group heading="Appearance">
@@ -203,11 +328,16 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
             ))}
           </Command.Group>
 
-          {snapshot && (
-            <Command.Group heading="Tables">
-              {snapshot.tables.slice(0, 400).map((t) => (
+          {snapshot && tableHits.length > 0 && (
+            // forceMount on the GROUP too — cmdk decides group visibility from
+            // MATCHING children, so force-mounted items alone leave it hidden
+            <Command.Group heading="Tables" forceMount>
+              {tableHits.map((t) => (
                 <Command.Item
                   key={t.table_oid}
+                  // pre-filtered above — exempt from cmdk's own scoring so a
+                  // match deep in the catalog can never be re-hidden
+                  forceMount
                   value={`table ${t.schema}.${t.name}`}
                   onSelect={() => browseTable(t.table_oid)}
                 >
@@ -223,7 +353,9 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
             {profiles.map((p) => (
               <Command.Item
                 key={p.id}
-                value={`connect ${p.name}`}
+                // p.id disambiguates — two profiles named "prod" would make
+                // cmdk activate whichever is first in the DOM, not the arrowed one
+                value={`connect ${p.name} ${p.id}`}
                 onSelect={() => {
                   void useConnections.getState().connect(p.id);
                   close();
@@ -231,7 +363,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
               >
                 <Database size={13} />
                 {p.name}
-                {p.is_prod && <span className="pal-prod">PROD</span>}
+                {p.is_prod && <span className="badge badge-danger">PROD</span>}
               </Command.Item>
             ))}
           </Command.Group>
@@ -256,6 +388,6 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
         </Command.List>
       </Command>
       </motion.div>
-    </div>
+    </Modal>
   );
 }

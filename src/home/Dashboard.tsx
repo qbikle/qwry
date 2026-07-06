@@ -6,8 +6,10 @@ import { useConnections } from "../stores/connections";
 import { useTabs } from "../stores/tabs";
 import { Avatar } from "../sidebar/avatar";
 import { blankProfile } from "../sidebar/ConnectionRail";
+import { ContextMenu } from "../app/overlay/ContextMenu";
+import { connectionMenu } from "../sidebar/connectionMenu";
 import * as ipc from "../ipc/commands";
-import type { HistoryRow } from "../ipc/types";
+import type { HistoryRow, Profile } from "../ipc/types";
 import "./home.css";
 
 function relTime(ranAt: string): string {
@@ -28,6 +30,7 @@ export function Dashboard() {
   const setHome = useConnections((s) => s.setHome);
   const editConnection = useConnections((s) => s.editConnection);
   const [recent, setRecent] = useState<HistoryRow[]>([]);
+  const [menu, setMenu] = useState<{ x: number; y: number; profile: Profile } | null>(null);
 
   useEffect(() => {
     void ipc.historyRecent(8).then(setRecent).catch(() => setRecent([]));
@@ -62,13 +65,17 @@ export function Dashboard() {
               key={p.id}
               className="dash-card"
               onClick={() => openConn(p.id)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setMenu({ x: e.clientX, y: e.clientY, profile: p });
+              }}
               title={state === "connected" ? `Open ${p.name || p.host}` : `Connect to ${p.name || p.host}`}
             >
               <Avatar profile={p} index={i} size={44} />
               <div className="dash-card-body">
                 <div className="dash-card-name">
                   {p.name || p.host}
-                  {p.is_prod && <span className="dash-prod">PROD</span>}
+                  {p.is_prod && <span className="badge badge-danger">PROD</span>}
                 </div>
                 <div className="dash-card-sub">
                   {p.host}:{p.port} · {p.dbname}
@@ -115,6 +122,17 @@ export function Dashboard() {
             );
           })}
         </div>
+      )}
+
+      {menu && (
+        <ContextMenu
+          point={menu}
+          items={connectionMenu(
+            menu.profile,
+            (connState[menu.profile.id] ?? "disconnected") === "connected",
+          )}
+          onClose={() => setMenu(null)}
+        />
       )}
     </motion.div>
   );

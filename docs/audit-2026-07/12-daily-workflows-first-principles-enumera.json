@@ -1,0 +1,305 @@
+{
+ "findings": [
+  {
+   "title": "Out-of-band query kill that ALWAYS works",
+   "surface": "driver",
+   "detail": "Incident workflow step 1 failure mode: you ran a bad join on prod and now the client is wedged. Cancel must never share the fate of the busy session. TablePlus's cancel sometimes hangs because it signals over the same socket. Leapfrog: keep a tiny dedicated control connection per profile; Cmd+. issues pg_cancel_backend(pid) out-of-band, escalates to pg_terminate_backend after N seconds, and finally drops the socket \u2014 with the escalation ladder visible ('cancelling\u2026 3s \u2192 terminating'). Pairs with the planned v0.5 force-kill but should be the one-keystroke, always-works primitive, not an escape hatch buried in a menu.",
+   "importance": "high"
+  },
+  {
+   "title": "Live elapsed timer + streaming progress while a query runs",
+   "surface": "shell",
+   "detail": "Every long query needs a heartbeat: status bar ticks '1.2s \u00b7 12,340 rows streamed \u00b7 still receiving'. Without it users can't distinguish 'slow query' from 'dead tunnel' and start force-quitting. TablePlus shows a spinner only. Leapfrog: tick elapsed at 100ms, show rows-received live from the streaming engine (qwry already streams in batches so the counter is free), and turn the timer red past the statement_timeout so the user knows the kill is imminent.",
+   "importance": "high"
+  },
+  {
+   "title": "Latency breakdown in the status bar (server / wire / decode / render)",
+   "surface": "shell",
+   "detail": "qwry's identity is 'latency is THE feature' \u2014 so expose it. After every run show 'server 34ms \u00b7 wire 120ms \u00b7 render 6ms' (server time from EXPLAIN-less pg timing or GetCompleted, wire from stream duration, render measured). Users love it because it answers 'is it my query or my VPN' instantly during incidents. No client does this; it's a pure-identity leapfrog and doubles as the enforcement mechanism for qwry's own perf budgets.",
+   "importance": "med"
+  },
+  {
+   "title": "Type-aware selection stats in the status bar",
+   "surface": "grid",
+   "detail": "Select a rect of cells \u2192 status bar instantly shows count \u00b7 distinct \u00b7 and for numerics sum/avg/min/max, for timestamps min/max/span, for booleans true/false split. This is the canonical 'of course it does that' affordance (Excel has it, TablePlus does NOT). Computed over loaded rows only \u2014 cheap, O(selection). Leapfrog: click the stat to copy it; show null-count in the selection so bulk-fix targeting is verifiable before you type.",
+   "importance": "high"
+  },
+  {
+   "title": "Run statement under cursor + run selection (promote from v0.5 P2 to P0)",
+   "surface": "editor",
+   "detail": "Query iteration IS the daily loop: buffer holds 5 exploratory statements, you re-run one, tweak, re-run. Cmd+Enter must mean 'run the statement my caret is in', Cmd+Shift+Enter 'run all', and a selection runs exactly the selection. statementRange() already exists in qwry. TablePlus/DataGrip both have this; without it every multi-statement buffer is a footgun (run-all on prod). This is scheduled P2 in v0.5 but it is a top-3 daily affordance and should ship with the editor find work.",
+   "importance": "high"
+  },
+  {
+   "title": "Run-CTE-as-standalone (debug a CTE chain at the cursor)",
+   "surface": "editor",
+   "detail": "Debugging a 5-CTE query means manually copying the chain into a scratch tab and adding SELECT * FROM cte_n \u2014 dozens of times a day. Leapfrog nobody has: caret inside a CTE definition \u2192 one keybind wraps everything up to and including that CTE and runs SELECT * FROM <that_cte> LIMIT 500. Pure text transformation over the parsed statement, no server support needed. This single feature would make query-debugging in qwry categorically better than DataGrip.",
+   "importance": "high"
+  },
+  {
+   "title": "Multiple result sets per script run",
+   "surface": "grid",
+   "detail": "Run 3 statements \u2192 see 3 results (stacked accordion or sub-tabs), not just the last. Currently deferred as 'notebook panes' but the daily case is mundane: a fix script is 'SELECT before; UPDATE; SELECT after' and you need all three outputs to verify the fix. TablePlus shows result-per-statement tabs. Minimum viable: keep the last result per statement of the run with row-count + duration chips; full notebook UI can stay deferred.",
+   "importance": "high"
+  },
+  {
+   "title": "Error \u2192 caret jump + server HINT/DETAIL + did-you-mean",
+   "surface": "editor",
+   "detail": "PG errors carry a byte position; map it to line/col, jump the caret, underline the token, and show the server's HINT and DETAIL fields (most clients drop them \u2014 they're often the actual answer, e.g. 'Perhaps you meant to reference column ...'). Leapfrog: when the error is undefined_column/undefined_table, fuzzy-match against the schema snapshot qwry already holds for completion and offer 'did you mean orders_v2.status?' as a one-click fix. Turns the most common failure of the day into a sub-second recovery.",
+   "importance": "high"
+  },
+  {
+   "title": "Smart paste transforms \u2014 spreadsheet column \u2192 IN-list / ARRAY / VALUES",
+   "surface": "editor",
+   "detail": "The teammate sends 40 order IDs in a Sheets column; today you regex them into quoted CSV by hand. Affordance: pasting multi-line clipboard content inside parens (or via a 'Paste as \u25b8' menu) offers IN-list (auto-quote by inferring numeric vs text), ARRAY[...], or VALUES rows. Inverse already planned (Copy column as IN-list); this is the paste half. TablePlus has neither direction. One of the highest daily-frequency leapfrogs available.",
+   "importance": "high"
+  },
+  {
+   "title": "Expand SELECT * into an explicit column list",
+   "surface": "editor",
+   "detail": "Caret on * \u2192 one keybind replaces it with the table's full quoted column list (from the schema snapshot; alias-prefixed if the FROM has an alias). Needed constantly when a query graduates from exploration to a fix script or code. DataGrip has it; TablePlus doesn't. Near-free given qwry's completion engine already resolves the FROM-clause table.",
+   "importance": "med"
+  },
+  {
+   "title": "FK-aware JOIN completion",
+   "surface": "editor",
+   "detail": "Type 'JOIN cart_product_variant ' \u2192 completion offers 'ON cpv.id = o.cart_product_variant_id' derived from FkInfo already introspected. Schema-aware intellisense is qwry's stated differentiator; join-condition synthesis is the step beyond column names that makes people say the client 'knows my database'. DataGrip does a weak version; TablePlus none.",
+   "importance": "med"
+  },
+  {
+   "title": "Hover a table name in SQL \u2192 structure peek popover",
+   "surface": "editor",
+   "detail": "Mid-query 'what was that column called again' currently means a sidebar detour. Hover (or a keybind on the identifier) pops columns/types/PK/FK from the in-memory schema snapshot \u2014 zero round trips. Anchored on the new overlay primitive so it clamps and Esc-closes for free. DataGrip's Ctrl+Q equivalent; absent in TablePlus.",
+   "importance": "med"
+  },
+  {
+   "title": "Fuzzy jump-to-table/column with frecency ranking",
+   "surface": "sidebar",
+   "detail": "Incidents hit the same 4 tables all day. Palette entry (Cmd+P style) fuzzy-matches across ALL schemas and objects \u2014 'ord v2 sta' \u2192 orders_v2.status \u2014 ranked by frecency of browse/query usage (qwry already logs history so the signal exists). Enter browses the table; on a column match, browses with that column scrolled into view. TablePlus's table filter is prefix-only and table-only. Sub-16ms over the schema snapshot fits the latency charter.",
+   "importance": "high"
+  },
+  {
+   "title": "Column comments (pg_description) surfaced everywhere",
+   "surface": "sidebar",
+   "detail": "Data spelunking in an unfamiliar schema lives or dies on comments, and most clients bury them in a DDL tab. Introspect col_description()/obj_description() once, then show comments in: schema-tree tooltips, completion detail text, grid header tooltips, and the structure tab. Leapfrog: allow editing the comment inline in StructureTab (COMMENT ON is a safe single statement) so tribal knowledge accretes where it's read.",
+   "importance": "med"
+  },
+  {
+   "title": "Distinct-value histogram in the column header menu",
+   "surface": "browser",
+   "detail": "The planned header menu has a distinct-value picker; step beyond: show top-K values WITH counts and percentages ('paid 78% \u00b7 pending 12% \u00b7 failed 3%') via one GROUP BY LIMIT 20 on demand, each row clickable to filter. This is the single fastest way to understand an unfamiliar column and doubles as an anomaly detector during incidents ('why is 40% suddenly NULL'). No mainstream client does counts \u2014 pure leapfrog, one query, cached per column until refresh.",
+   "importance": "high"
+  },
+  {
+   "title": "Reverse-FK lookup \u2014 'what references this row?'",
+   "surface": "grid",
+   "detail": "Forward FK-follow is planned (v0.45); the incident-debugging direction is usually backwards: from an orders row, find its order_items, payments, webhook_events. Right-click row \u2192 'Referenced by \u25b8' lists every table whose FK points at this table (already known from introspection), each with a live count badge, click \u2192 opens that table filtered to fk_col = this_pk. TablePlus can't do this; DataGrip hides it in a slow modal. This is the killer data-navigation leapfrog for relational spelunking.",
+   "importance": "high"
+  },
+  {
+   "title": "FK peek popover (glance without navigating away)",
+   "surface": "grid",
+   "detail": "Step beyond the planned click-FK-jump: hovering/keybinding an FK cell shows the referenced row transposed in a popover (SELECT * WHERE pk = value LIMIT 1) without losing your place in the current result. Navigation destroys context mid-incident; peeking preserves it. Esc closes (overlay primitive), Enter promotes the peek to a real jump.",
+   "importance": "med"
+  },
+  {
+   "title": "Transposed single-row record view with prev/next",
+   "surface": "inspector",
+   "detail": "A 60-column orders row is unreadable horizontally. Keybind (Space on a row / menu 'See details') opens the row vertically \u2014 column | value pairs, comments inline, NULLs dimmed \u2014 with j/k or arrow prev/next stepping through the result set while the view stays open. Postico's best-loved feature; TablePlus lacks it. qwry's Inspector already renders single values; this is the row-level generalization and the natural home for the FK peek.",
+   "importance": "high"
+  },
+  {
+   "title": "Row diff \u2014 select 2 rows, highlight differing columns",
+   "surface": "grid",
+   "detail": "The eternal incident question: 'this order succeeded, that one failed \u2014 what's different?' Select two rows \u2192 'Compare rows' renders them side-by-side (transposed) with only differing columns highlighted, identical ones collapsed. Pure client-side over loaded rows, trivially cheap, and no competitor has it. High-leverage leapfrog for debugging by example.",
+   "importance": "med"
+  },
+  {
+   "title": "Timestamp ergonomics: hover dual-tz + relative time",
+   "surface": "grid",
+   "detail": "UTC\u2194local toggle is planned (v0.35); the step beyond is the hover: any timestamp cell tooltips 'UTC 2026-07-02 09:14:22 \u00b7 IST 14:44:22 \u00b7 3h 12m ago'. Incident correlation is constant tz math done in your head; the relative form ('3h ago') is what you actually think in. Copy always yields the raw ISO server text \u2014 display sugar must never leak into the clipboard (ties to the copy-fidelity contract).",
+   "importance": "med"
+  },
+  {
+   "title": "Exact-count-on-demand footer in the table browser",
+   "surface": "browser",
+   "detail": "Browser footer shows the instant reltuples estimate ('~1.2M rows est.'), and one click runs the real count(*) \u2014 with the current filters applied \u2014 replacing it with the exact number. Never auto-count (count(*) on a 100M-row table is a self-inflicted incident) but never make the user write the count query by hand either. TablePlus shows nothing or lies with a page count. Estimate-then-promote is the honest-and-fast pattern that matches the never-lies invariant.",
+   "importance": "med"
+  },
+  {
+   "title": "pg_stats column hints while browsing (null-fraction, n_distinct)",
+   "surface": "browser",
+   "detail": "One cheap read of pg_stats per table gives null_frac, n_distinct, and most-common values per column. Surface as a subtle header affordance: 'created_by \u00b7 98% null' saves an entire exploratory query. Feeds the histogram menu for free when stats are fresh. Zero clients expose planner stats to humans \u2014 pure spelunking leapfrog, one catalog query.",
+   "importance": "low"
+  },
+  {
+   "title": "Copy fidelity contract \u2014 no formatting surprises, ever",
+   "surface": "grid",
+   "detail": "The prompt's canonical example: copy a cell \u2192 clipboard gets the exact raw value. Numerics never gain locale separators; timestamps copy raw ISO regardless of display toggle; NULL copies as empty (or configurable \\N in TSV) and NEVER the string 'NULL'; jsonb copies the exact server text not a re-serialization. Write this as a documented single value-serialization function shared by copy/export/INSERT-gen (the roadmap's value-rendering pass is the display half \u2014 this is the clipboard half). Trust invariant: one violation and users stop pasting your output into fix scripts.",
+   "importance": "high"
+  },
+  {
+   "title": "Copy-as-Slack / one-snippet share (query + result together)",
+   "surface": "grid",
+   "detail": "The last step of every incident is pasting evidence into Slack. Beyond the planned Copy \u25b8 formats: a 'Copy for sharing' action that emits one Markdown snippet \u2014 the SQL fenced, then the result as an aligned monospace table, then 'N rows \u00b7 120ms \u00b7 db_name'. One clipboard action replaces the copy-query/copy-result/format-by-hand dance. No client does this; costs almost nothing on top of the planned Markdown formatter.",
+   "importance": "med"
+  },
+  {
+   "title": "Pre-execution impact estimate for UPDATE/DELETE",
+   "surface": "driver",
+   "detail": "Before running a statement that writes, run EXPLAIN on it silently and surface the planner's row estimate in the confirm affordance: 'This UPDATE matches ~48,201 rows \u2014 run?'. Plus a hard lint on UPDATE/DELETE with no WHERE. Catches the classic fat-fingered bulk fix BEFORE the server does damage; the matched!=1 guard (planned) only protects grid edits, not hand-written SQL. TablePlus warns on no-WHERE only; the estimate is the leapfrog and it's one EXPLAIN round trip.",
+   "importance": "high"
+  },
+  {
+   "title": "Inverse-SQL undo after commit ('never lose work' for data, not just text)",
+   "surface": "driver",
+   "detail": "Grid-staged edits execute UPDATE ... RETURNING old columns (capture OLD via a CTE: WITH old AS (SELECT ...) UPDATE ...); persist the inverse UPDATE statements with the commit record; the success toast offers 'Undo' and a History-panel entry offers 'Generate revert script' forever after. Turns the scariest daily moment (wrong bulk fix on prod) into a recoverable one. No client has post-commit undo \u2014 this is the deepest possible expression of qwry's never-lose-work ideology.",
+   "importance": "high"
+  },
+  {
+   "title": "Visible transaction state chip with commit/rollback + idle-in-tx alarm",
+   "surface": "shell",
+   "detail": "The moment a session is inside BEGIN, show a persistent chip: 'TX open \u00b7 47s' with Commit/Rollback buttons; turn it alarming past ~60s idle (idle-in-transaction holds locks and blocks vacuum \u2014 a real prod incident vector). Detect via ReadyForQuery transaction status byte the driver already receives \u2014 literally free. TablePlus gives zero indication you're mid-transaction; users discover it when the table locks up for everyone else.",
+   "importance": "high"
+  },
+  {
+   "title": "Per-tab session model made visible (busy state + backend PID)",
+   "surface": "driver",
+   "detail": "A long query in tab A must not block tab B \u2014 and the user must SEE which tab is busy (spinner on the tab strip) and which backend PID each tab owns (click \u2192 copy pid for a teammate running pg_stat_activity). Defines the mental model that makes Cmd+. trustworthy: kill targets THIS tab's session, nothing else. TablePlus's connection-sharing is opaque and its users don't know why 'everything froze'.",
+   "importance": "med"
+  },
+  {
+   "title": "Minimal 'my sessions' panel (application_name='qwry')",
+   "surface": "driver",
+   "detail": "Not the deferred full server monitor \u2014 just SELECT pid, state, query_start, wait_event, left(query,80) FROM pg_stat_activity WHERE application_name='qwry', with a kill button per row. Answers 'did my cancelled query actually die' and 'what is my other window doing', which comes up weekly during incidents. Scoped-to-self keeps it out of admin-tool territory and inside the reliability charter.",
+   "importance": "med"
+  },
+  {
+   "title": "Parameterized re-run prompt for :name placeholders (promote from deferred)",
+   "surface": "editor",
+   "detail": "The single most common daily pattern: the same lookup query with a different order_id, 30 times a day. Detect :name / $1 placeholders on run \u2192 inline prompt bar pre-filled with last-used values (persisted per saved-query). Currently deferred as 'parameterized queries' but the lightweight version (text substitution with correct quoting, remembered values) is small and converts saved queries from static text into daily tools. DataGrip has it; TablePlus doesn't.",
+   "importance": "high"
+  },
+  {
+   "title": "Per-tab buffer time-machine (step back through executed versions)",
+   "surface": "persistence",
+   "detail": "Query iteration means destructive tweaking; 'what did this look like 3 runs ago, when it worked?' Every execution already writes history \u2014 additionally key it to the tab, and add a keybind to step the buffer back/forward through its own executed versions (with a diff gutter vs current). Beyond DataGrip's local history because it's scoped to the tab and one keystroke away. Complements never-lose-work: text you RAN is never gone.",
+   "importance": "med"
+  },
+  {
+   "title": "Crash-safe continuous buffer autosave with cursor position",
+   "surface": "persistence",
+   "detail": "Force-quit, crash, or reboot \u2192 reopen with every tab's exact text, cursor, scroll, and dirty state intact. Debounced write-through to qwry.sqlite on every edit (not on close \u2014 crashes don't call close). The planned restore-tabs item persists tabs; this is the stronger contract: the buffer can never be newer than what's on disk by more than ~500ms. Users only notice it once \u2014 and then they trust the app forever.",
+   "importance": "high"
+  },
+  {
+   "title": "History entries carry outcome metadata + one-key re-run",
+   "surface": "persistence",
+   "detail": "Beyond the planned failed-flag: every history row stores duration, row count, connection+database, and error text; the history panel filters by connection and by 'errors only', supports Enter re-run against the CURRENT tab's connection with a mismatch warning ('recorded on prod, re-running on staging'). Duration in history is quietly killer: 'this query was 40ms yesterday, 4s today' is an incident signal by itself.",
+   "importance": "med"
+  },
+  {
+   "title": "Search-everywhere across history + saved queries + open buffers",
+   "surface": "shell",
+   "detail": "'Where did I write that CTE last month?' \u2014 one palette-level search (Cmd+Shift+F style) that greps history, saved queries, and open tab buffers with source labels and match previews. All three stores are local sqlite/memory so it's instant and offline. TablePlus's history search is a scrollback; DataGrip's is per-console. One unified index is the small-app advantage.",
+   "importance": "med"
+  },
+  {
+   "title": "Index usage + health in StructureTab",
+   "surface": "browser",
+   "detail": "Next to each index show idx_scan from pg_stat_user_indexes with a dim 'never used' badge when 0, plus size. Schema-evolution and query-tuning both start with 'is this indexed and does the index get used'. One catalog query on structure-tab open. No GUI client shows usage; DBAs keep hand-rolled SQL for it \u2014 ship it built-in.",
+   "importance": "med"
+  },
+  {
+   "title": "Table health line: dead tuples, last vacuum/analyze",
+   "surface": "browser",
+   "detail": "Structure tab footer: n_dead_tup, last_autovacuum, last_analyze from pg_stat_user_tables. When a table 'suddenly got slow', bloat and stale stats are suspects #1 and #2; surfacing them turns a 20-minute catalog-spelunking detour into a glance. Cheap add riding the same introspection round trip as the planned size/reltuples item.",
+   "importance": "low"
+  },
+  {
+   "title": "DROP/TRUNCATE dependency preview in DangerModal",
+   "surface": "sidebar",
+   "detail": "Before confirming a drop, the DangerModal lists dependents from pg_depend/pg_constraint: '3 views, 2 FKs reference this table' with names. TRUNCATE preview lists FK-cascade implications. The difference between a confirm dialog users click through and one they actually read. Pairs with the planned type-the-table-name confirm for prod-flagged connections.",
+   "importance": "med"
+  },
+  {
+   "title": "Cross-connection DDL diff for one object (staging vs prod drift)",
+   "surface": "sidebar",
+   "detail": "Right-click a table \u2192 'Compare DDL with \u25b8 [other connection]' \u2192 side-by-side diff of get_ddl output. Bounded version of the deferred schema-diff epic: single object, text diff, read-only \u2014 catches the daily 'did the migration actually run on prod?' question. This user's world literally runs on staging/prod drift; full migration-gen stays deferred but a one-table DDL diff is a weekend of work on top of the planned get_ddl backend.",
+   "importance": "med"
+  },
+  {
+   "title": "Double-click column edge \u2192 auto-fit width (+ fit-all)",
+   "surface": "grid",
+   "detail": "Measure loaded rows (sample cap for huge results), fit the column; Alt-double-click fits all columns. Persist per table/query-shape (already planned P2 \u2014 the auto-fit gesture is the missing half). Everyone reaches for this within the first minute of a wide result; its absence reads as 'prototype'.",
+   "importance": "med"
+  },
+  {
+   "title": "Go-to-row + jump keys in results",
+   "surface": "grid",
+   "detail": "Ctrl+G \u2192 row N; Cmd+Home/End top/bottom (planned in v0.45 nav); plus 'jump to next/prev NULL in this column' as a spelunking bonus \u2014 scanning for the anomalous row in 50k loaded rows is a daily micro-task that arrows can't do. Next-NULL is trivially computed over loaded rows and no client has it.",
+   "importance": "low"
+  },
+  {
+   "title": "Browse-from-clipboard: open table filtered to the ID you were just sent",
+   "surface": "shell",
+   "detail": "The incident always starts with an ID pasted from Slack/Sentry. Palette action 'Browse <table> where <pk> = <clipboard>' \u2014 fuzzy-pick the table, PK inferred, clipboard pre-filled (editable). Collapses the open-table\u2192add-filter\u2192paste\u2192run ritual into two keystrokes. Also as a grid action: 'Filter this column by clipboard'. Nobody has it; it's the fastest possible path from alert to row.",
+   "importance": "med"
+  },
+  {
+   "title": "Prod identity bleeds into every surface + typed-confirm for danger ops",
+   "surface": "connections",
+   "detail": "The planned read-only-by-default for is_prod is the guardrail; the step beyond is ambient awareness: connection color tints the tab strip, grid chrome, and editor gutter, window title says PROD, and the write-enable toggle is a visible timed chip ('writes enabled \u00b7 4m left') that auto-reverts. Danger ops on prod (TRUNCATE/DROP/no-WHERE UPDATE) require typing the object name. TablePlus's yellow tab is famously too subtle \u2014 people still write to prod thinking it's staging.",
+   "importance": "high"
+  },
+  {
+   "title": "Tunnel/connection health: heartbeat, auto-reconnect, never-hang",
+   "surface": "driver",
+   "detail": "SSH-tunnel drop is this user's daily reality. Affordances: lightweight keepalive detects a dead link in seconds (not TCP's minutes); status chip flips to 'reconnecting\u2026' and auto-reestablishes tunnel+session, restoring search_path/read-only state; any in-flight query fails FAST with a clear 'connection lost, tab session restored' \u2014 never a spinner-forever, never a wedged UI (the v0.5 items cover kill; this adds detect+auto-heal). Leapfrog: offer 're-run the query that was in flight' after reconnect.",
+   "importance": "high"
+  },
+  {
+   "title": "bytea and long-value rendering: byte count, hex peek, image sniff",
+   "surface": "inspector",
+   "detail": "bytea cells render as '4.2 KB' (never megabytes of \\x hex in a 26px cell \u2014 a scroll-perf landmine too); inspector shows a hex dump with printable-ASCII gutter, and sniffs magic bytes to preview images inline (TablePlus users love its image preview). Extends the planned value-rendering pass into the inspector; keeps the never-feels-slow invariant safe from one fat blob column.",
+   "importance": "low"
+  },
+  {
+   "title": "Kill-and-explain: one keystroke from slow query to plan",
+   "surface": "editor",
+   "detail": "qwry has an ExplainView; wire the workflow: while a query is running (or right after a suspiciously slow one), one keybind re-runs it under EXPLAIN (ANALYZE only with explicit opt-in + read-only guard for write statements) and opens the plan with the slowest node pre-highlighted and seq-scans-on-big-tables flagged in red. The daily question isn't 'show me a plan tree', it's 'WHY was that slow' \u2014 pre-highlighting the answer is the leapfrog over every client's neutral plan viewer.",
+   "importance": "med"
+  },
+  {
+   "title": "Server NOTICE / RAISE NOTICE streamed live into results (promote from P2)",
+   "surface": "driver",
+   "detail": "Bulk fixes are routinely DO $$ ... RAISE NOTICE 'fixed %', ct; blocks \u2014 today qwry drops AsyncMessages entirely, so the fix script runs blind. Show notices as they stream (a collapsible messages strip under the grid), not after completion, so a long migration narrates its progress. psql-parity that GUI clients chronically fumble; for the bulk-fix workflow it's not P2 polish, it's the progress bar.",
+   "importance": "med"
+  },
+  {
+   "title": "Save staged grid edits as a reviewable fix-script",
+   "surface": "grid",
+   "detail": "The planned copy-SQL-from-EditPreview, one step further: 'Save as .sql' writes the exact UPDATE/INSERT/DELETE batch (with a header comment: connection, table, timestamp, row count) to a file for PR review or a teammate to run. Bridges qwry's edit-from-arbitrary-SQL superpower into the team's change-management reality \u2014 GUI edits stop being unauditable one-offs.",
+   "importance": "low"
+  },
+  {
+   "title": "Column header shows type + nullability at a glance, click-to-copy qualified name",
+   "surface": "grid",
+   "detail": "Header second-line (or hover) shows 'int8 \u00b7 not null \u00b7 FK\u2192users.id' from the introspection qwry already holds; click the header with a modifier copies table.column qualified. Removes the constant editor\u2194structure-tab shuttle while writing the next query from a result you're looking at. TypeIcon exists in qwry's grid \u2014 extend it to the full mini-contract of what a column IS.",
+   "importance": "med"
+  },
+  {
+   "title": "Hide/show columns with a picker + 'copy visible only' semantics",
+   "surface": "grid",
+   "detail": "Column-hide is planned (v0.4); the workflow completions: a column picker overlay (checkbox list with search) for wide tables, hidden-column count chip ('3 hidden \u2014 show'), and a contract that copy/export honor visible columns by default with an explicit 'include hidden' variant. Hiding that silently still exports 60 columns is a formatting surprise \u2014 the contract is what makes hide trustworthy.",
+   "importance": "low"
+  },
+  {
+   "title": "Result pinning: keep a reference result while iterating",
+   "surface": "grid",
+   "detail": "Pin the current result (snapshot) \u2192 subsequent runs render beside/below it, so you can eyeball before/after of a fix or two variants of a query without screenshotting. Lighter than split-pane editors: one pinned snapshot per tab, clearly labeled with its SQL and timestamp. The bulk-fix verify loop (SELECT before \u2192 UPDATE \u2192 SELECT after) becomes visual. No mainstream client has cheap result pinning.",
+   "importance": "med"
+  }
+ ],
+ "source": "daily-workflows first-principles enumeration (staff-engineer-8h/day lens), grounded against qwry docs/ROADMAP_v0.5.md and src/ surfaces so findings extend \u2014 not duplicate \u2014 the planned v0.3\u2013v0.5 work"
+}

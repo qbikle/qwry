@@ -62,14 +62,6 @@
   white-space: nowrap;
 }
 
-.pl-badge {
-  font-size: 9px;
-  font-weight: 700;
-  padding: 1px 4px;
-  border-radius: 3px;
-  background: var(--danger-soft);
-  color: var(--danger);
-}
 
 .pl-dot {
   color: var(--fg-faint);
@@ -145,7 +137,7 @@
   flex: 1;
   background: var(--bg-raised);
   border: 1px solid var(--accent);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   padding: 1px 5px;
   font-size: var(--text-sm);
   outline: none;
@@ -239,6 +231,7 @@
   border: 1px solid var(--border-strong);
   background: var(--bg-raised);
   cursor: pointer;
+  transition: background 120ms, border-color 120ms, color 120ms;
 }
 
 .pf-actions button.primary {
@@ -246,3 +239,74 @@
   border-color: var(--accent);
   color: var(--accent-fg);
 }
+
+.dbsw-err {
+  color: var(--danger);
+  white-space: normal;
+  word-break: break-word;
+}
+
+/* saved-query filter (shown past 8 entries) */
+.saved-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 8px 4px;
+  padding: 3px 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--fg-faint);
+}
+.saved-search input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--fg);
+  font-size: var(--text-xs);
+}
+
+/* server info ⓘ + modal */
+.sb-info-btn {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.sb-info-btn:hover { color: var(--fg); background: var(--bg-panel); }
+.srvinfo-modal {
+  width: var(--modal-w-sm);
+  max-width: 90vw;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  padding: var(--sp-4) var(--sp-4) var(--sp-4);
+  box-shadow: var(--shadow-lg);
+}
+.srvinfo-rows { margin-top: 8px; }
+.srvinfo-row {
+  display: flex;
+  gap: 12px;
+  padding: 4px 0;
+  font-size: var(--text-xs);
+  border-bottom: 1px solid var(--border);
+}
+.srvinfo-row:last-child { border-bottom: none; }
+.srvinfo-label { color: var(--fg-faint); min-width: 92px; flex-shrink: 0; }
+.srvinfo-value {
+  font-family: var(--font-mono);
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.srvinfo-loading, .srvinfo-err { padding: 16px 0 4px; font-size: var(--text-sm); color: var(--fg-faint); }
+.srvinfo-err { color: var(--danger); }

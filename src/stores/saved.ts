@@ -7,6 +7,15 @@ export interface SavedQuery {
   name: string;
   sql: string;
   created_at?: string;
+  /** owning connection; null/undefined = legacy, visible everywhere until
+   * next saved under a connection (adopt-on-touch, mirrors tabs) */
+  profile_id?: string | null;
+}
+
+/** the current connection's bookmarks (+ legacy unscoped ones) */
+export function visibleSaved(queries: SavedQuery[], pid: string | null): SavedQuery[] {
+  if (!pid) return queries;
+  return queries.filter((q) => !q.profile_id || q.profile_id === pid);
 }
 
 interface SavedState {
@@ -31,7 +40,13 @@ export const useSaved = create<SavedState>()(
       },
 
       upsert: async (q) => {
-        await invoke("saved_upsert", { q: { id: q.id, name: q.name, sql: q.sql } });
+        // saving under a connection adopts the bookmark into its workspace;
+        // explicit profile_id (rename path passes the existing one) wins
+        const { useConnections } = await import("./connections");
+        const profile_id = q.profile_id ?? useConnections.getState().activeProfileId;
+        await invoke("saved_upsert", {
+          q: { id: q.id, name: q.name, sql: q.sql, profile_id },
+        });
         await get().load();
       },
 
@@ -48,7 +63,8 @@ export const useSaved = create<SavedState>()(
       rename: async (id, name) => {
         const q = get().queries.find((q) => q.id === id);
         if (!q) return;
-        await get().upsert({ ...q, name });
+        // rename is not adoption — keep the bookmark's home connection
+        await get().upsert({ ...q, name, profile_id: q.profile_id ?? null });
         // reflect on any open tab linked to this saved query
         const { useTabs } = await import("./tabs");
         useTabs.setState((s) => ({

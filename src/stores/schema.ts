@@ -42,40 +42,106 @@ export interface IndexInfo {
   def: string;
 }
 
+export interface EnumInfo {
+  schema: string;
+  name: string;
+  labels: string[];
+}
+
 export interface SchemaSnapshot {
   tables: TableInfo[];
   foreign_keys: FkInfo[];
   functions: FuncInfo[];
   schemas: string[];
   indexes: IndexInfo[];
+  /** user-defined enum types — powers type-aware cell editors */
+  enums: EnumInfo[];
 }
 
 interface SchemaState {
   /** keyed by profileId */
   snapshots: Record<string, SchemaSnapshot>;
   loading: Record<string, boolean>;
+  /** last introspection failure per profile — a silently blank sidebar lies */
+  errors: Record<string, string | null>;
+  /** provenance per profile. Ordering guard for the persisted-cache path: a
+   * cache hydrate may NEVER overwrite server data (any completed fetch is
+   * fresher than any persisted snapshot), while a fetch always overwrites. */
+  source: Record<string, "cache" | "server">;
+  /** instant sidebar/completion at connect time: apply the last persisted
+   * snapshot (stale-while-revalidate) while the real introspect runs */
+  hydrate: (profileId: string) => Promise<void>;
   fetch: (profileId: string, sessionId: string) => Promise<void>;
 }
 
-export const useSchema = create<SchemaState>((set) => ({
+/** connection identity the cache is bound to — must match connections.connSig
+ * (dynamic import avoids a static store cycle at module-eval time) */
+async function cacheSig(profileId: string): Promise<string | null> {
+  const { useConnections, connSig } = await import("./connections");
+  const p = useConnections.getState().profiles.find((x) => x.id === profileId);
+  return p ? connSig(p) : null;
+}
+
+export const useSchema = create<SchemaState>((set, get) => ({
   snapshots: {},
   loading: {},
+  errors: {},
+  source: {},
+
+  hydrate: async (profileId) => {
+    // something is already showing (from this run) — never regress it to disk
+    if (get().snapshots[profileId]) return;
+    try {
+      const sig = await cacheSig(profileId);
+      if (!sig) return;
+      const { schemaCacheGet } = await import("../ipc/commands");
+      const raw = await schemaCacheGet(profileId, sig);
+      if (!raw) return;
+      const snap = JSON.parse(raw) as SchemaSnapshot;
+      if (!Array.isArray(snap.tables)) return; // corrupt cache — ignore
+      set((s) => {
+        // re-check at apply time: an in-flight fetch may have landed while we
+        // read the cache — server data always wins over a hydrate
+        if (s.snapshots[profileId]) return s;
+        return {
+          snapshots: { ...s.snapshots, [profileId]: snap },
+          source: { ...s.source, [profileId]: "cache" },
+        };
+      });
+    } catch {
+      // cache is an accelerator only — any failure means "no hydrate"
+    }
+  },
 
   fetch: async (profileId, sessionId) => {
     set((s) => ({ loading: { ...s.loading, [profileId]: true } }));
     try {
-      const snap = await invoke<SchemaSnapshot>("introspect", { sessionId });
+      // cache_key/sig make the backend persist the fresh snapshot for the
+      // NEXT connect's instant hydrate
+      const sig = await cacheSig(profileId);
+      const snap = await invoke<SchemaSnapshot>("introspect", {
+        sessionId,
+        cacheKey: sig ? profileId : null,
+        cacheSig: sig,
+      });
       set((s) => ({
         snapshots: { ...s.snapshots, [profileId]: snap },
+        source: { ...s.source, [profileId]: "server" },
         loading: { ...s.loading, [profileId]: false },
+        errors: { ...s.errors, [profileId]: null },
       }));
     } catch (e) {
       console.error("introspect failed", e);
-      set((s) => ({ loading: { ...s.loading, [profileId]: false } }));
+      set((s) => ({
+        loading: { ...s.loading, [profileId]: false },
+        errors: {
+          ...s.errors,
+          [profileId]: (e as { message?: string }).message ?? String(e),
+        },
+      }));
     }
   },
 }));
 
-/** crude DDL sniff — refresh the schema cache after these */
-export const looksLikeDdl = (sql: string) =>
-  /^\s*(create|alter|drop|comment|grant|revoke|truncate)\b/im.test(sql);
+// (the old whole-buffer looksLikeDdl sniff is gone — results.ts now checks
+// the EXECUTED statements' heads, which can't false-positive inside literals)

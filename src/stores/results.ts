@@ -24,9 +24,20 @@ interface TabResult {
   statements: StatementState[];
   activeStatement: number;
   running: boolean;
+  /** establishing this tab's DB session (first run in a fresh tab) */
+  connecting: boolean;
   totalMs: number | null;
   executedSql: string | null;
+  /** char offset of executedSql within the editor buffer at run time — lets
+   * the error squiggle land right when only a statement/selection ran */
+  executedOffset: number;
+  /** server NOTICEs (RAISE NOTICE, …) received on this tab's session since
+   * the last run — psql prints these; dropping them hides real information */
+  notices: { severity: string; message: string }[];
   executedSessionId: string | null;
+  /** profile the result came from — commits must target THIS, never the
+   * currently-active rail selection (staging→prod misfire class) */
+  executedProfileId: string | null;
   globalError: DriverError | null;
 }
 
@@ -34,9 +45,13 @@ const blankTab = (): TabResult => ({
   statements: [],
   activeStatement: 0,
   running: false,
+  connecting: false,
   totalMs: null,
   executedSql: null,
+  executedOffset: 0,
+  notices: [],
   executedSessionId: null,
+  executedProfileId: null,
   globalError: null,
 });
 
@@ -49,11 +64,16 @@ interface ResultsState extends TabResult {
 
   setActive: (tabId: string) => void;
   clearTab: (tabId: string) => void;
-  run: (sqlOverride?: string) => Promise<void>;
+  run: (sqlOverride?: string, offset?: number) => Promise<void>;
   cancel: () => Promise<void>;
   setActiveStatement: (i: number) => void;
-  /** patch one statement's rows in the active tab (used by edits commit) */
-  patchStatement: (stmtIndex: number, patchRows: (rows: (string | null)[][]) => (string | null)[][]) => void;
+  /** patch one statement's rows (edits commit); tabId defaults to the active
+   * tab but commits pass their own — the user may switch tabs mid-flight */
+  patchStatement: (
+    stmtIndex: number,
+    patchRows: (rows: (string | null)[][]) => (string | null)[][],
+    tabId?: string,
+  ) => void;
 }
 
 const blankStatement = (index: number, sql = ""): StatementState => ({
@@ -86,6 +106,11 @@ function writeTab(
     return tabId === s.active ? { byTab, ...next } : { byTab };
   });
 }
+
+/** synchronous per-tab run guard — `running` only flips true AFTER the
+ * confirm prompts, so a second ⌘↵ during a modal would overwrite the danger
+ * resolver and orphan the first invocation */
+const runInflight = new Set<string>();
 
 // Row batches arrive faster than React should render. Buffer per tab+statement
 // and flush on a rAF tick.
@@ -132,6 +157,8 @@ export const useResults = create<ResultsState>((set, get) => ({
   byTab: {},
   active: "",
 
+  // "" = no active tab (zen screen): mirror resets to blank so nothing
+  // downstream (inspector, status bar, find) keeps referencing a closed tab
   setActive: (tabId) => set((s) => ({ active: tabId, ...(s.byTab[tabId] ?? blankTab()) })),
 
   clearTab: (tabId) =>
@@ -142,33 +169,114 @@ export const useResults = create<ResultsState>((set, get) => ({
 
   setActiveStatement: (i) => writeTab(set, get().active, { activeStatement: i }),
 
-  patchStatement: (stmtIndex, patchRows) =>
-    writeTab(set, get().active, (t) => ({
+  patchStatement: (stmtIndex, patchRows, tabId) =>
+    writeTab(set, tabId ?? get().active, (t) => ({
       statements: t.statements.map((st) =>
         st.index === stmtIndex ? { ...st, rows: patchRows(st.rows) } : st,
       ),
     })),
 
-  run: async (sqlOverride?: string) => {
+  run: async (sqlOverride?: string, offset = 0) => {
     const conn = useConnections.getState();
     const { activeProfileId } = conn;
     const sql = sqlOverride ?? conn.sql;
     const tabId = get().active;
     if (!tabId) return;
     const cur = get().byTab[tabId] ?? blankTab();
-    if (cur.running || !activeProfileId || !sql.trim()) return;
+    if (runInflight.has(tabId) || cur.running || !activeProfileId || !sql.trim()) return;
+    // a commit in flight builds PK locators against the CURRENT result set —
+    // replacing it mid-commit could aim UPDATEs at the wrong rows
+    {
+      const { useEdits } = await import("./edits");
+      if (useEdits.getState().committing) return;
+    }
+    if (runInflight.has(tabId) || (get().byTab[tabId] ?? blankTab()).running) return; // re-check after await
+    runInflight.add(tabId);
 
+    // the first run in a fresh tab establishes its dedicated session — say so
+    // instead of sitting silent for the tunnel handshake
+    writeTab(set, tabId, { connecting: true });
     const sessionId = await conn.ensureTabSession(activeProfileId, tabId);
-    if (!sessionId) return;
+    writeTab(set, tabId, { connecting: false });
+    if (!sessionId) {
+      runInflight.delete(tabId);
+      return;
+    }
 
-    const { dangerousStatements, confirmDanger } = await import("./danger");
+    // staged edits die with the old result set — never silently. (Scroll-
+    // triggered loadMore parks itself instead of prompting; this covers
+    // explicit re-runs, filter/sort changes and refresh.)
+    {
+      const { useEdits } = await import("./edits");
+      const pendingN = Object.keys(useEdits.getState().byTab[tabId]?.pending ?? {}).length;
+      if (pendingN > 0) {
+        const { confirmDanger } = await import("./danger");
+        const ok = await confirmDanger(
+          `Discard ${pendingN} staged edit${pendingN === 1 ? "" : "s"}?`,
+          "Re-running replaces this result set; uncommitted cell edits will be lost.\nCommit with ⌘S first to keep them.",
+          "Discard & run",
+        );
+        if (!ok) {
+          runInflight.delete(tabId);
+          return;
+        }
+      }
+    }
+
+    const { dangerousStatements, confirmDangerLive } = await import("./danger");
     const danger = dangerousStatements(sql);
     if (danger.length > 0) {
-      const ok = await confirmDanger(
+      // the confirm opens IMMEDIATELY listing the statements; planner
+      // estimates ("no WHERE clause" reads very differently at 12 rows vs
+      // 4.2M) STREAM into the open modal. Plain EXPLAIN (no ANALYZE) plans
+      // without executing — but planning still waits on locks, so it runs on
+      // the PRIMARY session (never queued in front of the user's own run on
+      // the tab session) with a 2s UI deadline → "estimate unavailable".
+      const est: string[] = danger.map(() => "≈ estimating…");
+      const render = () => danger.map((stmt, i) => `${est[i]}\n${stmt}`).join("\n\n");
+      const { done, update } = confirmDangerLive(
         `${danger.length === 1 ? "Statement has" : `${danger.length} statements have`} no WHERE clause`,
-        danger.join(";\n\n"),
+        render(),
       );
-      if (!ok) return;
+      const primary = useConnections.getState().sessions[activeProfileId];
+      if (primary) {
+        danger.forEach((stmt, i) => {
+          const explain = (async (): Promise<number | null> => {
+            const out = await ipc.execute(primary, `EXPLAIN (FORMAT JSON) ${stmt}`);
+            const txt = out.statements[0]?.rows[0]?.[0];
+            if (!txt) return null;
+            // DML plans root at ModifyTable whose own Plan Rows is 0 (no
+            // RETURNING) — the row estimate lives in its child scan node
+            interface PlanNode {
+              "Node Type"?: string;
+              "Plan Rows"?: number;
+              Plans?: PlanNode[];
+            }
+            let node = (JSON.parse(txt) as { Plan?: PlanNode }[])[0]?.Plan;
+            while (node && node["Node Type"] === "ModifyTable" && node.Plans?.length) {
+              node = node.Plans[0];
+            }
+            const rows = node?.["Plan Rows"];
+            return typeof rows === "number" ? rows : null;
+          })();
+          const deadline = new Promise<null>((r) => setTimeout(() => r(null), 2000));
+          void Promise.race([explain.catch(() => null), deadline]).then((rows) => {
+            est[i] =
+              rows != null
+                ? `≈ ${rows.toLocaleString()} rows (planner estimate)`
+                : "estimate unavailable";
+            update(render()); // no-ops if the prompt already resolved
+          });
+        });
+      } else {
+        est.fill("estimate unavailable (no primary session)");
+        update(render());
+      }
+      const ok = await done;
+      if (!ok) {
+        runInflight.delete(tabId);
+        return;
+      }
     }
 
     if (pendingRows) pendingRows.delete(tabId);
@@ -178,11 +286,18 @@ export const useResults = create<ResultsState>((set, get) => ({
       running: true,
       totalMs: null,
       executedSql: sql,
+      executedOffset: sqlOverride === undefined ? 0 : offset,
+      notices: [],
       executedSessionId: sessionId,
+      executedProfileId: activeProfileId,
       globalError: null,
     });
     // this tab's stale editability + pending edits die with its old result set
     void import("./edits").then(({ useEdits }) => useEdits.getState().resetTab(tabId));
+
+    // history timing/rows come from the events themselves — reading the store
+    // after the invoke resolves races the rAF row flush and logged ms=0
+    let historyRows = 0;
 
     const onEvent = (ev: QueryEvent) => {
       switch (ev.type) {
@@ -216,6 +331,7 @@ export const useResults = create<ResultsState>((set, get) => ({
           break;
         }
         case "statement_done":
+          historyRows += ev.row_count;
           writeTab(set, tabId, (t) => ({
             statements: t.statements.map((st) =>
               st.index === ev.index
@@ -234,7 +350,13 @@ export const useResults = create<ResultsState>((set, get) => ({
         case "error":
           writeTab(set, tabId, (t) => {
             const exists = t.statements.some((st) => st.index === ev.index);
-            const err = { message: ev.message, position: ev.position, code: ev.code };
+            const err = {
+              message: ev.message,
+              position: ev.position,
+              code: ev.code,
+              detail: ev.detail,
+              hint: ev.hint,
+            };
             return exists
               ? {
                   statements: t.statements.map((st) =>
@@ -250,6 +372,14 @@ export const useResults = create<ResultsState>((set, get) => ({
           break;
         case "finished":
           writeTab(set, tabId, { totalMs: ev.total_ms });
+          void import("@tauri-apps/api/core").then(({ invoke }) =>
+            invoke("history_add", {
+              profileId: activeProfileId,
+              sql,
+              ms: ev.total_ms,
+              rows: historyRows,
+            }),
+          );
           break;
       }
     };
@@ -268,20 +398,19 @@ export const useResults = create<ResultsState>((set, get) => ({
       }
       useConnections.getState().setTxTab(txKey, inTx);
 
-      const { looksLikeDdl, useSchema } = await import("./schema");
-      if (looksLikeDdl(sql)) {
+      // schema-affecting statement heads (real statement boundaries from the
+      // executed run — not a whole-buffer regex) → refresh the snapshot AND
+      // every tab's cached editability maps (they carry table/column/pk
+      // identity that DDL can invalidate)
+      const ranDdl = (get().byTab[tabId]?.statements ?? []).some(
+        (st) => !st.error && /^\s*(create|alter|drop|comment|grant|revoke|truncate)\b/i.test(st.sql),
+      );
+      if (ranDdl) {
+        const { useSchema } = await import("./schema");
         const primary = useConnections.getState().sessions[activeProfileId];
         if (primary) void useSchema.getState().fetch(activeProfileId, primary);
+        void import("./edits").then(({ useEdits }) => useEdits.getState().refreshMapsAfterDdl());
       }
-      const tabRes = get().byTab[tabId] ?? blankTab();
-      void import("@tauri-apps/api/core").then(({ invoke }) =>
-        invoke("history_add", {
-          profileId: activeProfileId,
-          sql,
-          ms: tabRes.totalMs ?? 0,
-          rows: tabRes.statements.reduce((n, st) => n + st.rowCount, 0),
-        }),
-      );
     } catch (e) {
       const err = e as DriverError;
       writeTab(set, tabId, (t) => ({
@@ -295,12 +424,38 @@ export const useResults = create<ResultsState>((set, get) => ({
       }
     } finally {
       writeTab(set, tabId, { running: false });
+      runInflight.delete(tabId);
     }
   },
 
   cancel: async () => {
     const sessionId = get().executedSessionId;
-    if (sessionId) await ipc.cancel(sessionId);
+    if (!sessionId) return;
+    try {
+      await ipc.cancel(sessionId);
+    } catch (e) {
+      // cancel needs a NEW connection to the server — through a dead tunnel it
+      // times out. Escape hatch: kill the tab's session outright (drops the
+      // socket, unsticks the UI; the server reaps the query via keepalives)
+      const { confirmDanger } = await import("./danger");
+      const msg = (e as { message?: string }).message ?? String(e);
+      const ok = await confirmDanger(
+        "Cancel didn't reach the server",
+        `${msg}\n\nForce-disconnect this tab's session? The query stops client-side immediately; a fresh session is created on the next run.`,
+        "Force disconnect",
+      );
+      if (!ok) return;
+      void ipc.disconnect(sessionId);
+      // forget the dead session so the next run builds a fresh one
+      const { useConnections } = await import("./connections");
+      const conns = useConnections.getState();
+      const entry = Object.entries(conns.tabSessions).find(([, sid]) => sid === sessionId);
+      if (entry) {
+        const [key] = entry;
+        const tabId = key.split("::").slice(1).join("::");
+        conns.closeTabSessions(tabId);
+      }
+    }
   },
 }));
 
@@ -309,7 +464,9 @@ export const useResults = create<ResultsState>((set, get) => ({
 if (useTabs.getState().activeId) useResults.getState().setActive(useTabs.getState().activeId!);
 let prevTabIds = new Set(useTabs.getState().tabs.map((t) => t.id));
 useTabs.subscribe((s, p) => {
-  if (s.activeId && s.activeId !== p.activeId) useResults.getState().setActive(s.activeId);
+  // (first-run latency is handled by the spare-session pool in connections.ts
+  // — a fresh tab claims the pre-warmed standby instantly on its first run)
+  if (s.activeId !== p.activeId) useResults.getState().setActive(s.activeId ?? "");
   const ids = new Set(s.tabs.map((t) => t.id));
   if (ids.size !== prevTabIds.size) {
     for (const id of prevTabIds) {
@@ -322,3 +479,30 @@ useTabs.subscribe((s, p) => {
     prevTabIds = ids;
   }
 });
+
+// server NOTICEs → the tab whose session raised them (session ids are unique
+// per tab session, so routing is exact; notices from unknown sessions —
+// primary/spare/introspection — are dropped, matching psql's per-session view)
+void import("@tauri-apps/api/event").then(({ listen }) =>
+  listen<{ session_id: string; severity: string; message: string }>("pg-notice", (e) => {
+    const { byTab } = useResults.getState();
+    const entry = Object.entries(byTab).find(
+      ([, t]) => t.executedSessionId === e.payload.session_id,
+    );
+    if (!entry) return;
+    const [tabId, tab] = entry;
+    const notices = [
+      ...tab.notices,
+      { severity: e.payload.severity, message: e.payload.message },
+    ].slice(-50); // runaway RAISE loops must not grow memory unbounded
+    useResults.setState((s) => {
+      const cur = s.byTab[tabId];
+      if (!cur) return s;
+      const next = { ...cur, notices };
+      return {
+        byTab: { ...s.byTab, [tabId]: next },
+        ...(s.active === tabId ? { notices } : {}),
+      };
+    });
+  }),
+);

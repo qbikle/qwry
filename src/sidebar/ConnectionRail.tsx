@@ -5,6 +5,8 @@ import { useConnections } from "../stores/connections";
 import * as ipc from "../ipc/commands";
 import type { Profile } from "../ipc/types";
 import { Avatar, avatarColor } from "./avatar";
+import { ContextMenu } from "../app/overlay/ContextMenu";
+import { connectionMenu } from "./connectionMenu";
 import "./rail.css";
 
 export const blankProfile = (): Profile => ({
@@ -39,6 +41,7 @@ export function ConnectionRail() {
   // local order drives the drag animation; keep our order but always adopt the
   // latest profile objects (so a customise — color/glyph — shows immediately)
   const [items, setItems] = useState<Profile[]>(profiles);
+  const [menu, setMenu] = useState<{ x: number; y: number; profile: Profile } | null>(null);
   useEffect(() => {
     setItems((cur) => {
       const byId = new Map(profiles.map((p) => [p.id, p]));
@@ -97,7 +100,7 @@ export function ConnectionRail() {
               }}
               onContextMenu={(e: React.MouseEvent) => {
                 e.preventDefault();
-                editConnection(p);
+                setMenu({ x: e.clientX, y: e.clientY, profile: p });
               }}
             >
               <Avatar profile={p} index={i} size={40} />
@@ -111,6 +114,17 @@ export function ConnectionRail() {
       <button className="rail-add" title="New connection" onClick={() => editConnection(blankProfile())}>
         <Plus size={18} />
       </button>
+
+      {menu && (
+        <ContextMenu
+          point={menu}
+          items={connectionMenu(
+            menu.profile,
+            (connState[menu.profile.id] ?? "disconnected") === "connected",
+          )}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </div>
   );
 }

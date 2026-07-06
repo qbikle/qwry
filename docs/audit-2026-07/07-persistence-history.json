@@ -1,0 +1,248 @@
+{
+ "surface": "persistence-history",
+ "works": [
+  "Query tabs (id/name/sql/position/saved_id) persist via debounced (600ms) replace-all transactional tabs_save; restored on launch with blank fallback",
+  "App SQLite (WAL) in app-data dir; profiles as JSON blobs with position ordering; passwords in Keychain, never appdb",
+  "History: per-profile row (sql/ms/rows/ran_at UTC) on successful run; (profile_id, ran_at DESC) index; palette search (120ms debounce, limit 20); dashboard recent-8 across profiles with relative timestamps; clear all / older-than-7d actions",
+  "Saved queries CRUD linked to tabs via saved_id; \u2318S save-to-sidebar; rename keeps sidebar in sync",
+  "Closed-tab stack (cap 20) with \u2318\u21e7T restore; close guard prompts on uncommitted cell edits for \u2318W/click paths",
+  "Tab shortcuts wired: \u2318T/\u2318W/\u2318\u21e7T/\u2303Tab/\u2303\u21e7Tab/\u23181-9(0); tab context menu (Rename/Duplicate/Copy SQL/Close variants); inline rename; tx-open dot; kind icons",
+  "Additive migrations (tabs.saved_id, profiles.position) run idempotently at open; per-tab results keyed byTab so background streams can't corrupt the visible tab"
+ ],
+ "gaps": [
+  {
+   "title": "Quit/reload loses the last \u2264600ms of typing \u2014 debounced persist never flushed on close",
+   "detail": "persist() (src/stores/tabs.ts:44-56) is the ONLY write path and it's a 600ms trailing debounce; there is no beforeunload handler, no Tauri onCloseRequested hook, and no flush-on-blur anywhere in src/ (grepped). Type SQL \u2192 \u2318Q immediately = the last edit burst silently gone; a tab created <600ms before quit vanishes entirely. Direct 'never lose work' charter violation a daily user hits daily. Fix: keep the debounce but add (a) window beforeunload \u2192 synchronous fire of the pending timer, (b) getCurrentWindow().onCloseRequested flush, (c) flush on window blur. Persist is tiny; flushing is cheap.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Failed tabs_list at startup \u2192 next persist WIPES all saved tabs (replace-all + no loaded gate)",
+   "detail": "App.tsx:92 does `void useTabs.getState().load()` with no .catch. If tabs_list rejects (SQLITE_BUSY from a second instance \u2014 no busy_timeout is set in appdb.rs:47 \u2014 or transient IO), tabs=[] and loaded=false, but persist() (tabs.ts:45) has NO loaded guard: the user's first \u2318T/close action fires tabs_save, which is DELETE FROM tabs + insert current in-memory state (appdb.rs:169) \u2014 every previously saved tab is destroyed. Fix: (1) persist() returns early until loaded===true, (2) load() catches, retries with backoff, and surfaces an error state instead of silently starting empty, (3) `PRAGMA busy_timeout=2000` in AppDb::open.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "tabs_save failures are silently swallowed \u2014 a whole session can silently never persist",
+   "detail": "tabs.ts:54 `void invoke(\"tabs_save\", ...)` \u2014 no .catch, no retry, no user-visible signal. If the appdb is locked/corrupt/disk-full, every save for the rest of the session fails invisibly and the user discovers the loss at next launch. Fix: .catch \u2192 bounded retry \u2192 sticky 'work not saving' toast/status-bar indicator (the app must never lie about persistence).",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Failed/cancelled queries never enter history [known]",
+   "detail": "[known \u2014 ROADMAP_v0.5 v0.35] execute.rs:70 propagates Err on any statement error \u2192 invoke rejects \u2192 results.ts:285 catch path skips the history_add at results.ts:277 (success-path only). Daily 'where did my typo query go'. Cancelled queries also vanish. Fix: history_add in finally with an `error TEXT`/`ok INTEGER` column (needs migration, see versioning gap); render failed rows red in palette/panel.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "History records 0ms / undercounted rows due to Channel-vs-invoke race",
+   "detail": "results.ts:276-284 reads `tabRes.totalMs ?? 0` and sums st.rowCount immediately after `await ipc.executeStream(...)` resolves \u2014 but Channel events (`finished`, trailing `rows` batches held in the rAF queue, results.ts:92-128) may not have flushed into the store yet. History intermittently logs ms=0 and low row counts \u2014 it lies about timing. Fix: capture ms/rows inside the `finished`/`statement_done` handlers and fire history_add from there.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "history_search LIKE escaping is broken \u2014 searching SQL containing % or _ returns wrong results",
+   "detail": "appdb.rs:206 builds `%{q.replace('%',\"\\\\%\")}%` but the LIKE has NO `ESCAPE '\\'` clause, so `\\%` matches a literal backslash + anything: searching for `LIKE '%foo` (a query the user actually ran) finds nothing. `_` is never escaped \u2192 single-char wildcard false positives. Fix: escape `\\`, `%`, `_` and append `ESCAPE '\\'` to the query.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Palette hides real history matches: cmdk re-filters on an 80-char prefix",
+   "detail": "Palette.tsx:244 sets item value to `history ${id} ${sql.slice(0,80)}` while Command has shouldFilter (Palette.tsx:88) \u2014 rows the server matched beyond char 80 fail cmdk's client filter and disappear \u2192 'No results' with matches in the DB. Fix: forceMount/keywords with the full match snippet, or exempt the History group from client filtering (it is already server-filtered).",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "No appdb schema versioning \u2014 migrations are `let _ = ALTER` that swallow ALL errors",
+   "detail": "appdb.rs:80-82 ignores every ALTER failure, not just 'duplicate column' (disk-full/locked/readonly also vanish), and there is no PRAGMA user_version, so every future schema change (error flag on history, tab meta, widths) must be another idempotent-ALTER hack ordered by hope. Fix: read `PRAGMA user_version`, run a numbered migration Vec inside a transaction, bump the version; only tolerate the specific duplicate-column error message.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "tabs schema rigidity blocks all planned per-tab state (cursor, scroll, pin, kind)",
+   "detail": "TabRow (appdb.rs:12-20) is fixed columns; adding anything means Rust struct + ALTER + commands.rs + tabs.ts persist/load all hand-synced. Roadmap already needs: active-tab persist, pinned flag, cursor/scroll restore, column widths. Fix: add `meta TEXT NOT NULL DEFAULT '{}'` JSON column (mirrors the profiles.data pattern) and route new per-tab state through it; keep hot columns (sql, position) as-is.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "One corrupt profile row bricks ALL connections",
+   "detail": "appdb.rs:97-99: list_profiles aborts with Err on the first serde_json parse failure \u2192 profiles_list fails \u2192 dashboard/rail render zero connections and connect-by-history breaks, because of one bad row (e.g. a future field added without #[serde(default)], or partial write). Fix: skip unparseable rows, log them, return the rest; optionally surface 'N profiles could not be read'.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Two app instances silently clobber each other's tabs; no busy_timeout",
+   "detail": "No tauri-plugin-single-instance; tabs_save is replace-all last-writer-wins, so an accidentally opened second window erases the first window's tab changes at its next debounce tick. Plus no `PRAGMA busy_timeout` (appdb.rs:47) means concurrent access errors instantly instead of waiting. Fix: single-instance plugin (focus existing window) + busy_timeout.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Active tab not persisted \u2014 every launch lands on tab 0 [known]",
+   "detail": "[known \u2014 ROADMAP_v0.5 v0.5] tabs.ts:79 `activeId: tabs[0].id`. A 12-tab daily user re-hunts their tab every morning. Fix: store active tab id (appdb key-value or tabs.meta) and restore; falls out nearly free once the meta column exists.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "Table tabs vanish on restart [known \u2014 locked decision, still a daily loss]",
+   "detail": "[known \u2014 ROADMAP_v0.5 decision #5] persist() filters kind==='table' (tabs.ts:52); a browse session with 5 table tabs reopens as query tabs only. Locked to protect cold-start, but the middle ground is unbuilt: persist the table ref (schema.table + profile) and restore as a LAZY placeholder tab that connects on first focus \u2014 zero cold-start cost.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Window geometry not persisted [known]",
+   "detail": "[known \u2014 ROADMAP_v0.5 v0.5] hardcoded 1240\u00d7800; every launch forgets size/position/display. Fix: tauri-plugin-window-state.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "No dedicated history panel: timestamps fetched but never shown anywhere searchable [known]",
+   "detail": "[known \u2014 ROADMAP_v0.5 v0.5] History is palette-only: Palette.tsx:249 renders rows\u00b7ms but NOT ran_at (fetched and dropped); no profile column in a multi-profile day, no error status, no re-run-in-place vs open-in-new-tab choice, no copy-SQL right-click, no pagination past limit 20, no date grouping (Today/Yesterday). Fix: sidebar History section or \u2318Y panel over history_search with timestamps, profile chips, error badges, copy/re-run context menu, infinite scroll.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "History has no dedup/grouping \u2014 one hot query drowns the list",
+   "detail": "Running the same SELECT 50 times inserts 50 identical rows (appdb.rs:180); palette's 20-row window fills with duplicates hiding older distinct queries. TablePlus/DataGrip collapse repeats. Fix: display-collapse consecutive identical sql, or schema change to UNIQUE(profile_id, sql-hash) + last_ran_at + run_count (needs migration framework).",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "History growth unbounded + unbounded per-row SQL size [known, plus size angle]",
+   "detail": "[known \u2014 ROADMAP_v0.5 v0.35 lists the row-count cap] No retention (appdb.rs:180); additionally an 8MB pasted INSERT statement is stored verbatim on EVERY run \u2014 qwry.sqlite bloats and every palette LIKE scan drags it. Fix: retention cap (last N per profile, pruned in history_add) + truncate stored sql at ~64KB with an ellipsis marker; consider FTS5 for search.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "perf"
+  },
+  {
+   "title": "\"Clear history (all)\" only clears the active profile [known]",
+   "detail": "[known \u2014 ROADMAP_v0.5 v0.35] Palette.tsx:149 passes activeProfileId; appdb.rs:289 filters by it. Label lies. Fix: relabel to 'Clear history (this connection)' + add a true global clear (profile_id IS NULL branch).",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "closeOthers/closeToRight/closeAll bypass the close guard \u2014 staged edits silently discarded [known]",
+   "detail": "[known \u2014 tabs.ts:36 comment says 'see ROADMAP followup'] tabs.ts:142-172 call closeTab directly, skipping useCloseGuard.request; a tab with uncommitted cell edits is destroyed without the Esc/Enter/\u2318\u21b5 prompt that \u2318W gives. Fix: route each id through requestClose sequentially (await each decision), or one aggregate prompt listing dirty tabs.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Rename tab silently overwrites the linked saved query's SQL with the unsaved draft",
+   "detail": "tabs.ts:206-209: rename() upserts {id: saved_id, name, sql: t.sql} \u2014 if the tab's sql diverged from the saved version, a mere rename pushes the draft into the sidebar entry without consent (and there's no undo). Fix: rename should update name only; sql updates stay exclusive to \u2318S saveActive.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Restore-closed loses table tabs, saved_id links, and dies on restart",
+   "detail": "tabs.ts:118-121 only remembers tabs with non-empty sql \u2192 closed table tabs are unrestorable via \u2318\u21e7T; tabs.ts:199 restores via newTab(sql,name) dropping saved_id (restored tab no longer syncs with its sidebar entry); closedStack is memory-only so the undo-close safety net vanishes every launch. Fix: stack entries carry {kind, table, saved_id}; persist the stack (bounded) in appdb.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "No middle-click close on tabs",
+   "detail": "TabBar.tsx:72-129 tab div has no onAuxClick \u2014 middle-click-to-close is universal muscle memory (browsers, TablePlus, editors). Fix: onAuxClick e.button===1 \u2192 requestClose(t.id).",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "No drag-to-reorder tabs",
+   "detail": "Tab order is frozen at creation order; TabBar.tsx has no DnD and the store has no move(id, toIndex). Every mature client reorders tabs (roadmap only lists Pin). Fix: pointer-based drag on .tab with a move action; persist() already recomputes positions so persistence is free.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "IPC type-sync drift: HistoryRow re-declared locally, TabRow has no TS mirror, QueryEvent missing Notice",
+   "detail": "Palette.tsx:29-35 re-declares HistoryRow (already omits profile_id) instead of importing ipc/types.ts; Rust TabRow (appdb.rs:12) has no entry in types.ts \u2014 tabs.ts:76 fakes it with Omit<Tab,...> so a Rust field change type-checks green while breaking at runtime; types.ts QueryEvent lacks the Notice variant ARCHITECTURE.md specifies. Fix: adopt ts-rs or specta to generate types.ts from the Rust structs (kills the whole hand-sync class); at minimum export TabRow and delete local duplicates.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "correctness"
+  },
+  {
+   "title": "History is blind to database and orphaned by profile deletion; DB-switcher clones fragment it",
+   "detail": "history rows key only profile_id (appdb.rs:61-68); clone_connection (commands.rs:59) mints a new profile per database so one logical server's history shards across clones and palette search (active profile only) can't see siblings; delete_profile (appdb.rs:135) leaves that profile's history forever unreachable (clear is active-profile-only) and Dashboard renders '\u2014' for it (Dashboard.tsx:119). Fix: store dbname in history; on profile delete, delete (or re-parent) its history; palette option to search across a clone family/all profiles.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Editor cursor/scroll/undo per tab not restored (in-session or across restart)",
+   "detail": "Only sql text round-trips (tabs.ts:80,92); switching tabs rebuilds the doc via setSql so caret/scroll/undo history reset, and restart loses them entirely \u2014 TablePlus/DataGrip land you exactly where you were. Fix: per-tab CodeMirror EditorState cache in-session; persist {anchor, head, scrollTop} in the tabs meta column for restart.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Column widths / grid state not persisted [known]",
+   "detail": "[known \u2014 ROADMAP_v0.5 v0.5] widths reset every run/reopen; no appdb surface exists for them. Fix: small key-value map keyed by table-oid or query-shape hash in appdb (rides the migration framework).",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "Out-of-order persist race: older tabs snapshot can overwrite newer",
+   "detail": "tabs.ts:54 fires invoke without awaiting; two in-flight tabs_save calls (600ms apart under load) run on Tauri's sync-command thread pool with no ordering guarantee \u2014 a stale snapshot can commit last. Rare but silent. Fix: chain saves through a single in-flight promise (queue latest, drop intermediates).",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Tab names never deduplicated; \u23181-9 targets are unguessable; \u23180 convention wrong",
+   "detail": "Every new tab is 'new qwry' (tabs.ts:60) \u2014 five identical names defeat \u23181-9 (App.tsx:136-140), and \u23180 selects tab 10 where macOS convention is last-tab. Fix: auto-number ('new qwry 2'), \u23189/\u23180 \u2192 last tab, show the index in the tab tooltip.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "No dirty-vs-saved indicator on tabs linked to saved queries",
+   "detail": "ARCHITECTURE wireframe promises 'orders.sql \u25cf' but TabBar.tsx renders no divergence marker when tab.sql !== saved sql \u2014 the user can't tell what \u2318S would change. Fix: compare against useSaved entry and render a dot; also give \u2318S on an empty/table tab some feedback instead of silently returning (tabs.ts:217).",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Palette history items: no timestamp, no full-SQL preview, no copy affordance",
+   "detail": "Palette.tsx:241-253 shows a 90-char single line + rows\u00b7ms; ran_at is dropped, long SQL is unidentifiable, and there's no way to copy without opening a tab. Fix: relative-time on the right, \u2318-hover tooltip or footer preview of full SQL, and an alt-action (\u2318\u21b5 = copy SQL / \u21b5 = open in tab).",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "History/saved-queries not exportable; appdb location undocumented",
+   "detail": "No export of history or saved queries (deferred in roadmap), and qwry.sqlite's path isn't surfaced anywhere in-app \u2014 users can't back up or migrate machines confidently, which undercuts 'never lose work' trust. Fix: 'Export saved queries / history' JSON + a Settings row revealing the app-data path in Finder.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "feature"
+  }
+ ],
+ "perf_risks": [
+  "history_search runs LIKE '%q%' (unindexable) full-table scans per palette keystroke (120ms debounce) over an unbounded, uncapped-row-size history table \u2014 with months of usage this hits hundreds of ms per keypress; needs retention cap + sql-length cap, or FTS5 (appdb.rs:192-220, Palette.tsx:54-64)",
+  "Single Mutex<Connection> serializes ALL appdb work (appdb.rs:41): a slow history scan blocks concurrent history_add and tabs_save on Tauri's sync-command threads \u2014 persistence stalls behind search at scale",
+  "tabs_save is replace-all: every 600ms debounce tick rewrites EVERY tab's full SQL text (DELETE + N inserts, appdb.rs:166-178); with a few large scratchpad tabs (500KB+ pasted SQL) that's megabytes of JSON serialization on the JS thread plus WAL churn per pause \u2014 switch to dirty-tab upsert or move serialization off the hot path",
+  "persist() itself maps/filters/serializes all tabs on the UI thread each tick (tabs.ts:45-56) \u2014 O(total sql bytes) IPC payload; fine at 10 small tabs, degrades with giant docs",
+  "useConnections.subscribe in tabs.ts:231 fires on EVERY connections-store change (each keystroke, each conn-state churn) and rebuilds the tabs array on sql changes; TabBar subscribes to the full tabs array so it re-renders per keystroke [known narrow-selector roadmap item]",
+  "closeOthers/closeAll do N sequential closeTab store writes \u2192 N TabBar re-renders + a burst of N disconnect IPC calls (tabs.ts:142-172); batch into one set() + one disconnect sweep",
+  "Tab strip smooth scrollIntoView animates on every tab switch (TabBar.tsx:34) [known \u2014 violates never-animate-scroll]",
+  "history_recent/history_search return full unbounded sql TEXT per row across IPC; one 8MB stored statement makes the dashboard recent-8 fetch a multi-MB JSON deserialize at startup \u2014 truncate at write or SELECT substr()"
+ ]
+}

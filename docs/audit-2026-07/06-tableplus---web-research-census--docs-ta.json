@@ -1,0 +1,251 @@
+{
+ "source": "tableplus \u2014 web research census (docs.tableplus.com, tableplus.com blog/changelogs, GitHub issues, HN 28706250, Capterra/ProductHunt reviews, releasebot 2025-2026 release notes)",
+ "findings": [
+  {
+   "title": "Stage-then-commit editing model (Cmd+S)",
+   "importance": "high",
+   "surface": "grid",
+   "detail": "Every GUI edit (cell change, row insert/delete, structure change) is pending locally until Cmd+S commits it to the server; Cmd+Shift+Delete discards. Users love it because the grid feels like a spreadsheet but nothing touches the DB until an explicit, muscle-memory keystroke \u2014 it is THE TablePlus signature. BEYOND: a persistent staged-change ledger panel (not just a modal) with per-change revert checkboxes, cross-tab pending-count badge, commit-as-single-transaction toggle, and post-commit undo via auto-generated inverse SQL (UPDATE back to old values) within a grace window."
+  },
+  {
+   "title": "Code Review / preview pending SQL (Cmd+Shift+P)",
+   "importance": "high",
+   "surface": "grid",
+   "detail": "Before committing, TablePlus shows the exact generated SQL for every pending GUI change ('Code Review'). Loved because the GUI never lies \u2014 you see precisely what will run. BEYOND: side-by-side old\u2192new value diff alongside the SQL, per-statement selective commit, editable generated SQL before commit, and a dry-run that reports 'this UPDATE matches 1 row' via a wrapped transaction/EXPLAIN before anything is applied \u2014 directly serves qwry's 'never lies about data' invariant."
+  },
+  {
+   "title": "Safe mode with 5 escalating levels",
+   "importance": "high",
+   "surface": "shell",
+   "detail": "Silent \u2192 alert-all-queries \u2192 alert-except-SELECT/EXPLAIN \u2192 password-for-everything \u2192 password-except-SELECT/EXPLAIN, toggled via a lock icon, with TouchID unlock option. Loved as insurance against fat-fingering production. BEYOND: bind safe-mode level to the connection's environment tag (prod auto-elevates), add semantic guardrails TablePlus lacks \u2014 block/confirm UPDATE/DELETE with no WHERE, warn when affected-row estimate exceeds N, require typing the table name for TRUNCATE/DROP \u2014 and show WHY a cell is read-only inline (qwry already aims at this)."
+  },
+  {
+   "title": "Open Anything fuzzy quick-open (Cmd+P)",
+   "importance": "high",
+   "surface": "shell",
+   "detail": "Spotlight-style fuzzy search over databases, schemas, tables, views, functions, snapshots; arrow keys + Enter to jump. Users cite it as the single biggest navigation win. Known gap (GitHub TablePlus-Linux #129): can't jump straight to a table in a DIFFERENT database. BEYOND: one palette that spans connections AND databases, and also indexes columns, saved queries, query history, and app actions (merged command palette), with a live preview pane (first rows / DDL) for the highlighted item and recents-first ranking."
+  },
+  {
+   "title": "Row filter UI with stacked, toggleable predicates (Cmd+F)",
+   "importance": "high",
+   "surface": "browser",
+   "detail": "Filter rows stack with +/- (Cmd+I / Cmd+Shift+I), checkboxes enable/disable each, Cmd+Return applies all, an SQL button reveals the generated WHERE, default filter column is configurable (Raw SQL / PK / any column), and last filter state can auto-restore per table. Loved for filtering without writing SQL while staying transparent. BEYOND: type-aware operator menus per column (dates get ranges, enums get pickers, jsonb gets path expressions), saved named filter presets per table, a recent-filters history, filter chips rendered above the grid, and instant find-as-you-type across the loaded page with one keystroke to promote it to a server-side WHERE."
+  },
+  {
+   "title": "Quick filter from cell right-click",
+   "importance": "high",
+   "surface": "grid",
+   "detail": "Right-click any cell \u2192 'Quick filter' to filter the table by that value; also filter via column-header right-click. Loved because it turns browsing into interrogation with zero typing. BEYOND: operator submenu on the same gesture (=, \u2260, >, <, IS NULL, contains), multi-cell selection \u2192 'filter IN (\u2026)', and 'exclude this value'; stack quick filters as removable chips."
+  },
+  {
+   "title": "Copy cell/rows in ~7 formats",
+   "importance": "high",
+   "surface": "grid",
+   "detail": "Right-click copy menu: Copy Cell, Copy Row, Copy All Column Value, as plain text / JSON / HTML / Markdown table / CSV / CSV-with-header / SQL INSERT (Copy-as-Markdown and copy-cell-value were added by popular demand). Loved for pasting straight into Slack/PRs/scripts. BEYOND: add Copy as UPDATE, as WHERE pk IN (\u2026), as tuple list, as TSV-for-Excel, and copy-column-as-comma-list; user-configurable default format bound to plain Cmd+C, format preview in the submenu, and respect for NULL vs empty-string fidelity in every format."
+  },
+  {
+   "title": "Quick Look popup (Space / middle-click)",
+   "importance": "med",
+   "surface": "inspector",
+   "detail": "A big popup that pretty-prints JSON, renders BLOB images, and even shows foreign-key data in tabs (multiple FKs split into tabs). Loved for inspecting fat cells without leaving the grid. BEYOND: make Quick Look editable (JSON tree editor with validation before staging), add hex view for bytea, show a diff against the staged value, and keep it keyboard-navigable (Space to open, arrows to move cells while it stays open)."
+  },
+  {
+   "title": "Row detail / vertical record sidebar",
+   "importance": "med",
+   "surface": "inspector",
+   "detail": "Space toggles a row-detail view; a right sidebar enables single-record vertical editing \u2014 HN commenters specifically praised 'editor sidebar for single records'. Loved for wide tables where horizontal scanning fails. BEYOND: a pinned record inspector that follows grid selection live, is fully editable (staged like the grid), resolves FK columns to human-readable display values, and highlights which fields differ from the previous selected row."
+  },
+  {
+   "title": "Foreign-key hop navigation",
+   "importance": "high",
+   "surface": "grid",
+   "detail": "FK cells show a reference arrow; clicking jumps to the referenced row, and Quick Look can preview FK targets. Loved because it makes relational data walkable. BEYOND: reverse-FK lookup ('show all rows referencing this row' across child tables), a breadcrumb trail of hops with back/forward, and a peek-popover (preview referenced row inline without navigating) \u2014 TablePlus only goes forward and navigates away."
+  },
+  {
+   "title": "Set NULL / EMPTY / DEFAULT from context menu",
+   "importance": "med",
+   "surface": "grid",
+   "detail": "Right-click a cell to set NULL, empty string, or column DEFAULT \u2014 solves the classic 'how do I type NULL?' GUI problem. BEYOND: extend with type-aware generators (now(), gen_random_uuid(), arbitrary SQL expression as value), and render NULL vs '' visually distinct in the grid by default so state is never ambiguous."
+  },
+  {
+   "title": "Duplicate row, insert row, spreadsheet paste",
+   "importance": "med",
+   "surface": "grid",
+   "detail": "Cmd+D duplicates a row, Cmd+I inserts, Cmd+C/Cmd+V copies and pastes whole rows \u2014 including from external spreadsheets. Loved for seeding test data fast. BEYOND: duplicate-with-PK-cleared (auto-null serial/identity/default columns), multi-row paste from Excel/Sheets with a column-mapping preview dialog and type-coercion warnings before staging."
+  },
+  {
+   "title": "Fixed 300-rows-per-page pagination \u2014 a weakness to beat",
+   "importance": "high",
+   "surface": "browser",
+   "detail": "TablePlus pages table data at 300 rows/page with next/prev buttons; GitHub issues (#987, #547, Windows #535) show users want configurable page size, disable-pagination, and complain the total count is sometimes wrong; SQL Server views ignore offset entirely (#3234). BEYOND: this is qwry's invariant-#1 moment \u2014 virtualized infinite scroll over keyset pagination so there is no visible page boundary at any table size, with estimated row count instantly and exact count on demand."
+  },
+  {
+   "title": "Cancel-running-query is TablePlus's most chronic complaint",
+   "importance": "high",
+   "surface": "driver",
+   "detail": "A decade of GitHub issues (#68, #198, #296, #377, #619, #783, #1604, #1440, #3240): cancel hangs the UI showing 'Cancelling\u2026', takes 30s+, sometimes never works, and Capterra reviewers say they 'rarely have the ability to kill a query'. BEYOND: a separate control connection issuing pg_cancel_backend() so Esc cancels instantly regardless of the data connection's state; show backend PID + elapsed time live on every running query; escalate to pg_terminate_backend after timeout with confirmation. The UI must never block on cancellation."
+  },
+  {
+   "title": "Streaming result sets",
+   "importance": "high",
+   "surface": "driver",
+   "detail": "TablePlus streams large query results and renders rows as they arrive instead of waiting for the full set. Loved because big queries feel alive, not frozen. BEYOND: cursor/portal-based streaming with backpressure feeding a virtualized grid, first-row latency displayed, and progressive aggregate footer (rows so far, bytes, elapsed) \u2014 plus the ability to stop consuming while keeping already-fetched rows."
+  },
+  {
+   "title": "Query history sidebar tab",
+   "importance": "high",
+   "surface": "persistence",
+   "detail": "Every executed query is logged to a History tab; double-click inserts into the current editor, right-click opens in a new tab. Loved as a safety net ('what did I run yesterday?'). BEYOND: full-text searchable history with per-entry metadata (connection, database, duration, row count, success/error), grouping by day/connection, one-key re-run, pin-from-history, and infinite local retention (SQLite-backed) \u2014 TablePlus's history is a flat list with weak search."
+  },
+  {
+   "title": "Query favorites with keyword binding",
+   "importance": "med",
+   "surface": "persistence",
+   "detail": "Save queries as favorites in folders; bind a keyword so typing it in the editor expands the saved query. Loved as a personal snippet system. Known annoyance (#592): editing a favorite auto-saves over it. BEYOND: parameterized snippets with tab-stop placeholders (${1:table}), explicit save vs save-as semantics, project/folder-scoped snippet files stored as plain .sql on disk (greppable, git-able), and snippet suggestions inside autocomplete."
+  },
+  {
+   "title": "Autocomplete \u2014 good enough, but the acknowledged gap vs DataGrip",
+   "importance": "high",
+   "surface": "editor",
+   "detail": "Completes databases, tables, keywords, columns; auto-uppercases keywords; options configurable from the editor's bottom-left config button. Reviewers consistently rank DataGrip's completion 'smarter' (alias-aware, JOIN-aware) and HN rated Postico's autocomplete above TablePlus's. BEYOND: alias resolution ('u.' completes users' columns), JOIN-clause inference from FK metadata, CTE and subquery column tracking, and completion served from a locally cached catalog so suggestions appear <16ms even over a slow tunnel."
+  },
+  {
+   "title": "SQL beautify / uglify / comment toggle",
+   "importance": "med",
+   "surface": "editor",
+   "detail": "Cmd+I beautifies selected SQL, Cmd+Shift+I minifies it back to one line, Cmd+/ toggles comments. The uglify direction is a sleeper hit for pasting SQL into logs/code. BEYOND: configurable format style (comma-first, keyword case, indent width), format-selection-only, and format-preserving round trips so formatting never changes semantics or user-chosen identifier casing."
+  },
+  {
+   "title": "Multi-cursor + select-next-occurrence editing",
+   "importance": "med",
+   "surface": "editor",
+   "detail": "Cmd+Click adds cursors, Ctrl+Shift+\u2191/\u2193 adds cursors vertically, Cmd+D selects next occurrence, Cmd+Ctrl+G selects all occurrences \u2014 Sublime-grade editing inside a DB client, rare among competitors. BEYOND: full VS Code-parity keymap (column-select drag, expand-selection, move-line), plus multi-cursor that works in the GRID too (edit the same column across selected rows at once, staged as N updates)."
+  },
+  {
+   "title": "Run-behavior: Cmd+Enter, statement-at-cursor, multi-statement result tabs",
+   "importance": "high",
+   "surface": "editor",
+   "detail": "Cmd+Enter executes; semicolon-separated statements produce multiple result sets; Cmd+Shift+D splits the pane; results can be split into tabs for side-by-side comparison; 2026 added multi-result export in tab mode. BEYOND: visible highlight of the statement-at-cursor before running (no ambiguity about what Cmd+Enter will execute), pin a result set so re-runs open beside it for diffing, and per-result-set timing/rowcount chips."
+  },
+  {
+   "title": "Console log \u2014 the GUI shows its own SQL",
+   "importance": "high",
+   "surface": "shell",
+   "detail": "Cmd+Shift+C toggles a console logging every query TablePlus itself sends. Power users love it because the tool is auditable \u2014 nothing hidden. BEYOND: an always-recording per-connection query log distinguishing user-typed vs GUI-generated statements, with timings, error text, and one-click copy; this is the trust surface that makes 'never lies about data' verifiable."
+  },
+  {
+   "title": "Multi-tab / multi-window workspace",
+   "importance": "high",
+   "surface": "shell",
+   "detail": "Cmd+T tabs, Cmd+1..9 jump, Cmd+[ / Cmd+] cycle, split panes, multiple windows, vertical connection tabs (praised on HN). Complaints: trial caps at 2 tabs/2 windows (a notorious gripe), and Capterra reviewers report windows 'randomly close' when a remote connection blips. BEYOND: connection loss NEVER closes anything \u2014 tabs grey out and auto-reconnect preserving grid position, filters, and unsaved SQL; detachable/re-dockable tabs; and unlimited tabs since qwry has no trial wall."
+  },
+  {
+   "title": "Full session restore \u2014 TablePlus does it imperfectly",
+   "importance": "high",
+   "surface": "persistence",
+   "detail": "TablePlus reopens connections/tabs but loses scroll positions, uncommitted filter state, and sometimes unsaved editor content after crashes; 'never lose work' is only partial. BEYOND: continuous journaling of everything ephemeral \u2014 open tabs, editor buffers (dirty ones included), grid scroll offset, active filters, staged-but-uncommitted edits \u2014 restored byte-identical after quit OR crash. This is qwry's 'never lose work' pillar made concrete."
+  },
+  {
+   "title": "Cmd+K database switcher / Cmd+Shift+K connection switcher",
+   "importance": "med",
+   "surface": "shell",
+   "detail": "Dedicated fuzzy switchers for jumping databases and connections without touching the mouse. Loved by people juggling staging/prod. BEYOND: recents-first ordering, env-color badges inside the picker so prod is visually loud, and preserving per-database tab state when switching back."
+  },
+  {
+   "title": "Sidebar table list with instant filtering and dense right-click menu",
+   "importance": "high",
+   "surface": "sidebar",
+   "detail": "Type-to-filter table list; right-click offers open in new tab, export table, truncate, delete/drop, duplicate, rename, copy name \u2014 plus History and Favorites as sidebar tabs. Loved for one-gesture destructive-and-safe ops alike. BEYOND: row-estimate and size badges per table, schema grouping with pinned favorites, multi-select for bulk export/drop, 'copy qualified name', and 'generate SELECT/INSERT/UPDATE template into editor' per table."
+  },
+  {
+   "title": "Structure tab \u2014 GUI schema editing with staged DDL",
+   "importance": "high",
+   "surface": "inspector",
+   "detail": "Cmd+Shift+] flips a table to its structure editor: edit columns (name/type/nullable/default/PK), add indexes (+Index / Cmd+I), define FK constraints \u2014 all staged through the same Cmd+S commit + code-review flow. Complaints: FKs historically invisible in structure view (#1870, Linux #165), FK editor lacked constraint naming (#540), reviewers call table creation 'less intuitive'. BEYOND: one screen showing columns+indexes+FKs+checks+triggers+RLS policies together, staged DDL preview that includes lock-safety intelligence (suggest CREATE INDEX CONCURRENTLY, warn which ALTERs take ACCESS EXCLUSIVE and estimate rewrite cost) \u2014 no mainstream client does lock-safety hints."
+  },
+  {
+   "title": "DDL/definition views for objects",
+   "importance": "med",
+   "surface": "inspector",
+   "detail": "Views and functions expose their SQL definition for inline editing; tables lack a first-class always-visible CREATE TABLE DDL pane (users ask for it). BEYOND: every object gets a one-keystroke DDL pane with pg_dump-fidelity output, copyable, plus 'diff this table's DDL against another connection' for staging-vs-prod schema drift checks."
+  },
+  {
+   "title": "Import connection from URL",
+   "importance": "high",
+   "surface": "connections",
+   "detail": "Paste a postgres:// DSN and the connection form fills itself \u2014 tip #1 in TablePlus's own productivity list. Loved because credentials usually arrive as URLs anyway. BEYOND: auto-detect a DSN already on the clipboard when the new-connection sheet opens, round-trip export-as-URL, and import from .pg_service.conf, .pgpass, and environment variables \u2014 meet developers where their creds already live."
+  },
+  {
+   "title": "Connection colors, environment tags, and groups",
+   "importance": "high",
+   "surface": "connections",
+   "detail": "Assign a color + environment tag (5 tags; red=production convention) shown in the status bar; drag-drop connections into named groups with icons; credentials stored in the OS Keychain, never cloud-synced (privacy-respecting, matches qwry's local-only stance). BEYOND: make the tag behavioral, not just cosmetic \u2014 prod tag defaults the session to read-only with explicit unlock, tints window chrome and tab strip (not just a thin status bar), auto-elevates safe mode, and stamps the tag into the query-log."
+  },
+  {
+   "title": "Native SSH tunnel in the connection form",
+   "importance": "med",
+   "surface": "connections",
+   "detail": "'Over SSH' section takes host/port/user with password or private key; widely used for RDS/bastion setups, with a well-known 127.0.0.1-for-DB-host gotcha and occasional modern-key/agent friction (#1221, #3579). BEYOND: SSH-agent and ProxyJump support, tunnel health indicator with auto-reconnect + backoff, and inline diagnosis ('tunnel up, DB refused') instead of one opaque failure message."
+  },
+  {
+   "title": "Native-app speed as identity",
+   "importance": "high",
+   "surface": "shell",
+   "detail": "TablePlus's core brand is 'native, fast, low memory' vs Electron rivals \u2014 instant cold start, no lag on tab switches; every review leads with this. qwry (Tauri) must not merely match it: BEYOND means measurably beating it \u2014 <500ms cold start, <16ms interactions at 10M-row tables \u2014 and surfacing the speed (subtle timing readouts) so users FEEL the invariant. Any regression here erases qwry's reason to exist."
+  },
+  {
+   "title": "Large-JSON handling is a known sore spot",
+   "importance": "med",
+   "surface": "inspector",
+   "detail": "Reviewers report sluggishness with large JSON values; long-standing requests for a collapsible tree view of jsonb instead of a text string (#2663, #1804, #899); 2026 finally added pretty-JSON viewing and JSON import. BEYOND: lazy-parsed, virtualized JSON tree in the cell inspector that opens instantly on multi-MB values, jsonb path breadcrumbs you can click to copy a `->>` extraction expression, and search-within-value."
+  },
+  {
+   "title": "Export/import breadth \u2014 with a page-scope trap",
+   "importance": "med",
+   "surface": "browser",
+   "detail": "Export table (sidebar right-click) or current results to CSV/JSON/SQL, Excel added 2026, CSV import with mapping; BUT right-clicking the data grid exports only the CURRENT PAGE \u2014 a documented gotcha reviewers call 'inconvenient'. BEYOND: export always offers explicit scope (selection / loaded rows / full query re-run) with a streaming-to-disk progress bar and cancel; never silently truncate an export \u2014 that's a 'never lies' issue."
+  },
+  {
+   "title": "Geometry/spatial and image-blob preview",
+   "importance": "low",
+   "surface": "inspector",
+   "detail": "Hovering a PostGIS geometry value pops a map visualization; bytea image blobs render as image previews (build 290+, PG/MySQL/MariaDB). A pure delight feature users show off. BEYOND: same-quality inline previews for more types \u2014 intervals as human durations, tsvector highlights, arrays as chips \u2014 making qwry's inspector the richest type-renderer among clients."
+  },
+  {
+   "title": "Plugin system exists but ecosystem is dead \u2014 a non-moat",
+   "importance": "low",
+   "surface": "shell",
+   "detail": "Cmd+L opens a plugin manager (JS-based plugins), but reviewers note 'not easy to find plugins on the market'; the ecosystem never took off. Lesson for qwry: don't invest in a plugin marketplace; instead ship the long tail of affordances first-party, and expose scriptability through files/CLI (run .sql, pipe results) which developers actually use."
+  },
+  {
+   "title": "AI chat + MCP (2026) \u2014 TablePlus's newest bet, qwry's ideological fork",
+   "importance": "med",
+   "surface": "shell",
+   "detail": "2026 TablePlus ships a native BYOK LLM chat with built-in MCP functions that auto-fetch schema context for query writing, plus Codex CLI support. Users like schema-aware SQL drafting; qwry's no-telemetry/local-only stance argues against embedding chat. BEYOND without betrayal: qwry as an MCP SERVER \u2014 let the user's own Claude Code/agent drive qwry (open table, run query, read staged changes) so AI assistance lives outside the app, keys and data stay under user control."
+  },
+  {
+   "title": "Customizable shortcuts arrived late (Windows first) \u2014 Mac users still stuck",
+   "importance": "med",
+   "surface": "shell",
+   "detail": "Shortcut customization shipped on Windows (2025/2026); macOS keys remain largely fixed, a recurring gripe for people with muscle memory from other tools. BEYOND: fully remappable keymap day one with conflict detection and importable presets ('TablePlus', 'DataGrip', 'Postico') so switchers keep their hands \u2014 cheap to build early, brutal to retrofit."
+  },
+  {
+   "title": "No visual EXPLAIN \u2014 an open flank",
+   "importance": "high",
+   "surface": "editor",
+   "detail": "TablePlus runs EXPLAIN as text only; DataGrip/pgAdmin's plan visualizers are the main reason people keep a second tool installed. BEYOND: one-keystroke EXPLAIN ANALYZE on the statement-at-cursor rendered as a flame/tree view with per-node rows/time/buffers, hot-node highlighting, and 'plan changed since last run' diffing \u2014 a headline feature TablePlus users would defect for."
+  },
+  {
+   "title": "Postico polish delta \u2014 the last 10-20%",
+   "importance": "med",
+   "surface": "grid",
+   "detail": "HN's verdict: TablePlus is '80-90% as capable as Postico' for Postgres-specific work \u2014 Postico wins on autocomplete, filter feel, and copy/paste consistency ('excellent copy/paste consistency' was called out explicitly). The lesson: parity checklists aren't enough; the winner is decided by consistency of small behaviors (paste always round-trips, NULL never becomes '', filters never forget state). qwry should treat cross-surface consistency as a tested invariant, not a vibe."
+  },
+  {
+   "title": "Trial/licensing friction drove real resentment",
+   "importance": "low",
+   "surface": "shell",
+   "detail": "The 2-tab/2-window trial cap, per-device licensing, and paid upgrades after one year of updates are the most repeated non-technical complaints (Capterra, ProductHunt). qwry is personal and free of these walls \u2014 worth remembering that a large slice of TablePlus's negative sentiment is artificial scarcity, not missing features; qwry should never gate core affordances."
+  }
+ ]
+}

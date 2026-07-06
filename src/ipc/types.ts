@@ -54,6 +54,10 @@ export interface DriverError {
   message: string;
   position: number | null;
   code: string | null;
+  /** PG DETAIL — often the actual answer ("Key (email)=(x) already exists") */
+  detail?: string | null;
+  /** PG HINT */
+  hint?: string | null;
 }
 
 export interface ColumnEditMeta {
@@ -80,7 +84,40 @@ export interface RowEdit {
   table_oid: number;
   col: number;
   value: string | null;
+  /** SET col = DEFAULT (value ignored) */
+  use_default?: boolean;
   pk: [number, string | null][];
+}
+
+/** oid → identity from the schema snapshot (mirror of Rust TableIdentityHint).
+ * Lets `editability` skip its pg_class round trip — 1 RTT (the prepare). */
+export interface TableIdentityHint {
+  table_oid: number;
+  /** "schema.name" exactly as the derived path renders it */
+  dotted: string;
+  /** PK attnums in index order; empty = no primary key */
+  pk_attnums: number[];
+}
+
+/** one column of a frontend-supplied edit mapping (Rust ColumnMapHint) */
+export interface EditColumnHint {
+  col: number;
+  table_oid: number;
+  attnum: number;
+  editable: boolean;
+  type_name: string;
+  is_ctid: boolean;
+  /** real column name; null only allowed for ctid columns */
+  name: string | null;
+}
+
+/** cached mapping fed back to preview/apply/delete so planning does ZERO
+ * catalog round trips (Rust EditMapHint). Built from the EditabilityMap the
+ * frontend already fetched + attnum→name from the schema snapshot. */
+export interface EditMapHint {
+  columns: EditColumnHint[];
+  pk_cols: Record<number, number[]>;
+  tables: Record<number, string>;
 }
 
 export interface EditResult {
@@ -117,5 +154,7 @@ export type QueryEvent =
       message: string;
       position: number | null;
       code: string | null;
+      detail: string | null;
+      hint: string | null;
     }
   | { type: "finished"; total_ms: number };

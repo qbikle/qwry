@@ -1,0 +1,26 @@
+/* Shared overlay primitive (app/overlay). Existing call sites pass their own
+   backdrop/layer class, so these are defaults for new usages (e.g. the v0.3
+   context-menu system). */
+
+.ov-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* transparent full-screen click-catcher for anchored popups */
+.ov-anchor-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+/* wrapper the primitive measures + positions; shrinks to its content so the
+   clamp math sees the real popup size */
+.ov-anchor-pos {
+  width: max-content;
+}

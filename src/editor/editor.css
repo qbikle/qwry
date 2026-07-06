@@ -62,6 +62,12 @@
   background: var(--bg-panel);
   color: var(--fg);
   border-color: var(--border);
+  /* pinned tabs keep their ORIGIN connection's color (--tab-conn) */
+  box-shadow: inset 0 2px 0 var(--tab-conn, var(--conn-color, var(--accent)));
+}
+/* inactive pinned tab: faint origin-colored topline — spottable at a glance */
+.tab.is-pinned:not(.active) {
+  box-shadow: inset 0 2px 0 color-mix(in srgb, var(--tab-conn, var(--accent)) 45%, transparent);
 }
 
 .tab-name {
@@ -83,8 +89,8 @@
 }
 
 .tab-tx {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   margin-right: 6px;
   border-radius: 50%;
   background: var(--warn);
@@ -96,7 +102,7 @@
   width: 110px;
   background: var(--bg-raised);
   border: 1px solid var(--accent);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   padding: 1px 5px;
   font-size: var(--text-sm);
   outline: none;
@@ -104,11 +110,14 @@
 }
 
 .tab-close {
-  display: inline-flex;
-  padding: 2px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
   border: none;
   background: none;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   color: var(--fg-faint);
   cursor: pointer;
   visibility: hidden;
@@ -121,6 +130,23 @@
   background: var(--bg-active);
   color: var(--fg);
 }
+/* saved-drift indicator OWNS the close slot: dot at rest, ✕ on tab hover —
+   one slot, no bolted-on markers drifting after the name (VS Code grammar) */
+.tab-close .tc-dot { display: none; }
+.tab-close .tc-x { display: grid; place-items: center; }
+.tab-close.dirty {
+  visibility: visible; /* the drift must be visible on INACTIVE tabs too */
+}
+.tab-close.dirty .tc-dot {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn, #eab308);
+}
+.tab-close.dirty .tc-x { display: none; }
+.tab:hover .tab-close.dirty .tc-dot { display: none; }
+.tab:hover .tab-close.dirty .tc-x { display: grid; }
 
 .tab-new {
   display: inline-flex;
@@ -154,7 +180,6 @@
 }
 
 .ed-menu {
-  position: fixed;
   display: flex;
   flex-direction: column;
   min-width: 230px;
@@ -162,7 +187,7 @@
   background: var(--bg-raised);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-sm);
 }
 
 .ed-menu button {
@@ -207,7 +232,7 @@
   background: var(--bg-raised);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-md);
   overflow: hidden;
 }
 
@@ -315,4 +340,190 @@
 .qb-cancel {
   background: var(--danger-soft);
   color: var(--danger);
+}
+
+/* ---- @codemirror/search panel (⌘F find/replace) ---- */
+.sql-editor .cm-panels {
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+}
+.sql-editor .cm-panel.cm-search {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 26px 5px 8px;
+}
+.sql-editor .cm-panel.cm-search input.cm-textfield {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  padding: 2px 6px;
+}
+.sql-editor .cm-panel.cm-search input.cm-textfield:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.sql-editor .cm-panel.cm-search .cm-button {
+  background: var(--bg-hover);
+  background-image: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-size: var(--text-xs);
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.sql-editor .cm-panel.cm-search .cm-button:hover {
+  background: var(--bg-active);
+}
+.sql-editor .cm-panel.cm-search label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+.sql-editor .cm-panel.cm-search input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+.sql-editor .cm-panel.cm-search [name="close"] {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  font-size: var(--text-lg);
+  padding: 0 4px;
+  cursor: pointer;
+}
+.sql-editor .cm-panel.cm-search [name="close"]:hover {
+  color: var(--fg);
+}
+.sql-editor .cm-searchMatch {
+  background: var(--warn-soft);
+}
+.sql-editor .cm-searchMatch-selected {
+  background: rgba(245, 166, 35, 0.32);
+  outline: 1px solid var(--warn);
+}
+.sql-editor .cm-selectionMatch {
+  background: var(--accent-soft);
+}
+
+/* persistence-failure warning in the tab strip */
+.tab-save-warn {
+  align-self: center;
+  margin-left: 4px;
+  padding: 1px 7px;
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+/* tab drag-reorder */
+.tab.dragging { opacity: 0.45; }
+.tab.drop-before { box-shadow: inset 2px 0 0 var(--accent); }
+.tab.drop-after { box-shadow: inset -2px 0 0 var(--accent); }
+
+/* the statement ⌘↵ would run — only shown in multi-statement buffers */
+.cm-stmt-scope {
+  /* background-IMAGE: composes with .cm-activeLine's background-color
+     instead of fighting it in the cascade */
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--accent) 4.5%, transparent),
+    color-mix(in srgb, var(--accent) 4.5%, transparent)
+  );
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* pinned marker + saved-query drift dot */
+.tab-pin {
+  color: var(--accent);
+  flex-shrink: 0;
+  transform: rotate(30deg);
+}
+
+
+/* pin glyph: origin-colored marker — click shows INFO (never unpins).
+   No chip background: a button look begged for a destructive click */
+.tab-pin-glyph {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 1px;
+  flex-shrink: 0;
+  opacity: 0.85;
+  transition: opacity 0.12s, filter 0.12s, transform 0.12s;
+}
+.tab-pin-glyph:hover {
+  opacity: 1;
+  filter: brightness(1.35);
+  transform: scale(1.15);
+}
+
+/* pin info popover */
+.pin-info {
+  width: 260px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  box-shadow: var(--shadow-md);
+  font-size: var(--text-xs);
+}
+.pin-info-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 6px;
+}
+.pin-info-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.pin-info-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--fg-muted);
+  padding: 1px 0;
+}
+.pin-info-name {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pin-info-sql {
+  margin-top: 5px;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--fg-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pin-info-hint {
+  margin-top: 7px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: var(--text-2xs);
+  line-height: 1.5;
+  color: var(--fg-faint);
 }

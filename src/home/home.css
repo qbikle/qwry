@@ -53,14 +53,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.dash-prod {
-  font-size: 9px;
-  font-weight: 700;
-  padding: 1px 4px;
-  border-radius: 3px;
-  background: var(--danger-soft);
-  color: var(--danger);
-}
 .dash-card-sub {
   font-size: var(--text-xs);
   color: var(--fg-faint);
@@ -90,7 +82,7 @@
   right: 8px;
   display: inline-flex;
   padding: 4px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--bg-active);
   border: none;
   color: var(--fg-muted);
@@ -145,7 +137,7 @@
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: 7px 9px;
+  padding: var(--row-y) 9px;
   border: none;
   border-radius: var(--radius-sm);
   background: none;
@@ -221,8 +213,8 @@
   align-items: center;
 }
 .ce-swatch {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   border: 2px solid transparent;
   cursor: pointer;
@@ -238,7 +230,7 @@
   justify-content: center;
   color: var(--fg-muted);
   border: 1px dashed var(--border-strong);
-  font-size: 13px;
+  font-size: var(--text-md);
   overflow: hidden;
 }
 .ce-custom-color input {
@@ -376,13 +368,14 @@
   border-top: 1px solid var(--border);
 }
 .ce-actions button {
-  padding: 6px 14px;
+  padding: 5px 12px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
   background: var(--bg-raised);
   color: var(--fg);
   cursor: pointer;
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
+  transition: background 120ms, border-color 120ms, color 120ms;
 }
 .ce-actions button.primary {
   background: var(--accent);
@@ -400,7 +393,6 @@
   cursor: default;
 }
 .ce-actions .ce-del {
-  margin-right: auto;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -411,4 +403,36 @@
 .ce-actions .ce-del.armed {
   background: var(--danger);
   color: #fff;
+}
+
+/* paste-DSN hint next to the Connection section label */
+.ce-hint {
+  margin-left: 8px;
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.ce-hint.ok {
+  color: var(--ok);
+}
+
+/* test-connection probe */
+.ce-test {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* the gap between the left cluster (Test/Delete) and the right (Cancel/Save…) */
+.ce-actions .ce-cancel { margin-left: auto; }
+.ce-test .spin { animation: ce-spin 0.9s linear infinite; }
+@keyframes ce-spin { to { transform: rotate(360deg); } }
+.ce-test-ok {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: var(--text-xs);
+  color: var(--ok);
 }

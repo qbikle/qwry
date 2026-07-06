@@ -1,0 +1,388 @@
+{
+ "surface": "results-grid",
+ "works": [
+  "Dual-axis virtualization (TanStack rows+cols, overscan 12/4) with sticky header, sticky row-number gutter, and a sticky draft-row band \u2014 handles 50k rows without DOM blowup",
+  "Streaming rows buffered per tab+statement and flushed on rAF (results.ts:92-128); background tab streams never touch the visible tab (byTab mirror)",
+  "Selection: rect/row/col/select-all via drag, shift-extend, arrows, \u2318+arrow edge-jump, \u2318A; corner click selects all",
+  "Copy in 5 formats (TSV/CSV/JSON/Markdown/INSERT) via \u2318C + right-click Copy-as submenu on a real keyboard-navigable nested ContextMenu",
+  "Inline cell editing: double-click/Enter, Esc cancels without blur-save race, \u2318\u21e7\u232b stages NULL, JSON cells route to inspector; dirty \u270e badge, commit-preview modal (one transaction, SQL shown), green flash on success",
+  "Editability map drives per-column type icons, read-only reasons on hover, ctid-edit amber warning; Set NULL / Set EMPTY over selection; multi-row delete gated on single-table locator with confirm preview",
+  "Inline draft insert row with NULL vs DEFAULT semantics (untouched \u2192 column default), \u2318\u21b5/Esc, error band",
+  "Column resize by drag with sane min/max; initial widths estimated from a 100-row sample",
+  "Multi-statement chips with per-statement error/rowcount/timing; status bar shows rows, capped indicator, ms, pending-edit count with Commit/Discard links",
+  "Truncated-cell (\u2026\u29c9) marker wired to inspector full-value fetch; NULL rendered dim-italic; danger confirm for no-WHERE statements before run"
+ ],
+ "gaps": [
+  {
+   "title": "Stale selection survives re-run/filter/statement-switch \u2192 crash or corrupt staged edits",
+   "detail": "useSelection state (Grid.tsx:161) is never reset when statement.index changes, rows shrink after a re-run/filter, or the user switches statement chips. copySelection (Grid.tsx:251) does rows[r].slice on rows that no longer exist \u2192 TypeError crash on \u2318C; setSelectionValue (Grid.tsx:322-330) stages edits with undefined original against phantom rows; deleteSelectedRows (Grid.tsx:363) builds locators from undefined rows. Repro: select 200 rows, add a filter that returns 50, \u2318C \u2192 crash. Fix: reset anchor/focus in an effect keyed on (statement.index, rows.length shrink, columns identity) and clamp rect to bounds inside copySelection/setSelectionValue/deleteSelectedRows.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Any re-run silently destroys pending edits \u2014 including infinite-scroll load-more",
+   "detail": "results.run (results.ts:185) unconditionally calls edits.resetTab, wiping staged edits with zero warning. Browser load-more (browser.ts:196) re-runs the query, so merely SCROLLING a table you're editing discards your staged cell edits; same for sort/filter change or \u2318Enter re-run. Direct 'never lose work' violation. Fix: if pending edits exist for the tab, route through the existing closeGuard-style confirm (keep/discard/commit) before run(); long-term key edits by PK so they survive re-fetch.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "correctness"
+  },
+  {
+   "title": "Opening the editor on a NULL cell and clicking away stages NULL \u2192 '' silently",
+   "detail": "startEdit seeds draft with current ?? '' (Grid.tsx:223) and blur always saves (Grid.tsx:91-94), so double-click a NULL cell + click elsewhere stages an edit changing NULL to empty string \u2014 a data corruption footgun invisible until commit. Fix: track that the draft started as NULL; on save, if the text was never modified, keep NULL (no edit staged); render a NULL placeholder inside the editor instead of ''.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Right-click doesn't retarget selection; no menu at all without a selection",
+   "detail": "onContextMenu (Grid.tsx:429-432) only opens the menu if sel.rect exists and never moves selection to the cell under the cursor \u2014 right-clicking cell X while cells Y are selected runs Copy/Set NULL/Delete against Y (wrong data), and right-clicking a fresh grid does nothing. Every mature client selects-then-menus. Fix: on contextmenu, hit-test the cell; if outside the current rect, set anchor=focus=that cell before opening the menu.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Copy-as-INSERT emits `your_table`, unquoted identifiers, and includes ctid",
+   "detail": "[known] clipboard.ts:16 hardcodes table='your_table' \u2014 Grid.tsx:255 never passes the real name even though editMap.tables has it. Also names.join(', ') (clipboard.ts:48) emits unquoted identifiers (breaks on mixed-case/reserved words like \"order\"), and in browser mode the injected ctid column (browser.ts:121) is included \u2192 invalid INSERT. Fix: thread editMap.tables[oid] into formatCells, quote idents with the existing qi(), and exclude is_ctid columns from all copy formats.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "NULL vs empty-string vs literal 'NULL' text render identically",
+   "detail": "[known] Grid.tsx:606 renders v===null as the text 'NULL' (styled) but a text cell containing 'NULL' looks identical at a glance, and '' renders as blank indistinguishable from whitespace. The grid lies about data. Fix: dedicated dim NULL chip element (not text), an \u2205/\u00b7empty\u00b7 marker for '', part of one value-rendering pass shared with copy/find.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "correctness"
+  },
+  {
+   "title": "No find-in-results (\u2318F)",
+   "detail": "[known] Zero find over loaded rows \u2014 no match highlight, count, next/prev, jump-to-cell. Table stakes in every competitor; the roadmap's honest-loaded-rows design (\"found N in X loaded of M\") is right. Wire \u2318F on the focused grid surface in Grid.tsx keydown.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "No click-header-to-sort or client-side sort for query results",
+   "detail": "[known] Header click starts column-selection drag (Grid.tsx:479) \u2014 no sort anywhere for editor-mode results; browser mode hides sort in a separate toolbar popover (TableBrowser.tsx:192) so the two grids behave inconsistently. Fix: header click (or dedicated affordance) = tri-state client-side sort over loaded rows with a sort glyph in the header; keep a stable row-index map so edits/selection survive.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "No export to file (CSV/JSON/SQL)",
+   "detail": "[known] Copy is clipboard-only; a 50k-row result cannot be saved. Needs save dialog + streamed writer (or COPY TO STDOUT via backend) reachable from grid context menu + palette.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Grid keyboard nav is arrows-only: no PageUp/Down, Home/End, Tab, Enter-advance, type-to-edit, Delete",
+   "detail": "[known, partially] onKeyDown (Grid.tsx:274-312) handles only arrows/\u2318arrows/\u2318C/\u2318A/Enter. Missing: PageUp/Down (viewport jump), Home/End (row start/end), \u2318Home/End, Tab/Shift-Tab move-and-edit, Enter-saves-then-advances-down, F2, typing a printable char replaces cell content and opens editor (spreadsheet standard), Delete/Backspace stages NULL/empty on selection, Esc clears selection, \u21e7Space/\u2303Space row/col select. 'Keyboard-first' ideology; only arrows exist.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Cells unmemoized \u2014 entire visible window re-renders on every arrow key, drag step, and stream flush",
+   "detail": "[known] Grid.tsx:581-612 renders cells inline in the map with fresh closures; any sel/focus/pending/flash change re-renders ~all visible cells (500-col tables = thousands). React.memo a Cell component keyed on (value, selected, focused, dirty, flash, width, truncated, warn) \u2014 the single biggest perf win.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "perf"
+  },
+  {
+   "title": "Drag-select writes to the store per cell crossed, no pointer capture, no autoscroll",
+   "detail": "[known, partially] dragOver fires setFocus per mouseenter (Grid.tsx:603, useSelection.ts:63-73) \u2014 O(cells) full re-renders per swipe, and fast drags skip cells entirely since mouseenter misses. Also no edge-autoscroll: dragging below/right of the viewport cannot extend selection past visible rows (Excel/TablePlus scroll automatically). Fix: pointer capture + document-level pointermove hit-testing from coordinates + rAF-coalesced focus writes + edge autoscroll loop.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "perf"
+  },
+  {
+   "title": "No undo/redo of staged edits",
+   "detail": "[known] \u2318Z does nothing; a fat-fingered Set NULL over 500 cells is only recoverable by Discard ALL edits. Per-tab undo stack over immutable pending snapshots in edits.ts.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "TSV/CSV copy corrupts values: NULL and '' both copy as empty, embedded newlines break row structure, tabs lossily become 4 spaces",
+   "detail": "clipboard.ts:21-29 \u2014 TSV replaces tabs with spaces (silent data mutation) and leaves \\n raw so a multiline cell splits into two rows when pasted into Sheets/Excel; CSV escape misses \\r (clipboard.ts:7). NULL vs '' indistinguishable in both. Fix: Excel-convention quote TSV cells containing \\t/\\n/\", add \\r to csvEscape, and offer a NULL-sentinel option.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Missing copy variants: copy-with-headers, copy cell raw, copy column name(s), copy as IN-list",
+   "detail": "[known] TSV (the \u2318C default) has no header option (clipboard.ts:21); no single-cell 'Copy value' (raw, unformatted); no 'Copy column name' / 'Copy as IN (\u2026)' from a selected column. Add \u2318\u21e7C copy-with-headers + menu items; IN-list from column selection is a daily SQL-author move.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "A late global error wipes streamed results off the screen",
+   "detail": "ResultsPane.tsx:15-23 early-returns the error pane whenever globalError is set \u2014 a mid-stream connection drop replaces 30k already-visible rows with an error page ('never lose work' violation). Fix: render globalError as a banner above the grid when statements exist; keep the data browsable.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Scroll and active-statement position not reset on new run \u2014 new results open scrolled to the bottom",
+   "detail": "No scrollTo on statement change in Grid.tsx: re-running while scrolled deep leaves scrollTop clamped to the new (smaller) scrollHeight, so results appear starting mid/bottom. Fix: rowVirt.scrollToIndex(0) + colVirt reset when statement.index/executedSql changes (but NOT on browser load-more append).",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Drag mode gets stuck when mouseup lands outside the grid/window",
+   "detail": "endDrag only fires on the container's onMouseUp (Grid.tsx:428); press, drag out of the window, release, re-enter \u2192 selection keeps following the cursor with no button held until the next click. Fix: window-level mouseup/pointerup listener (or pointer capture, which fixes this and drag-skips together).",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Column widths reset on every re-run; no autofit; not persisted",
+   "detail": "widthsInitialized resets on statement.columns identity change (Grid.tsx:124-126) which happens EVERY run \u2014 hand-resized widths vanish on refresh, filter change, and browser load-more. No double-click-divider autofit, no fit-all-columns. Fix: key widths by column-name signature so identical shapes keep widths across runs; dbl-click divider = autofit from loaded rows; persist per table/query-shape in appdb [known, v0.5 P2 for persistence \u2014 the reset-on-rerun part is unlisted and worse].",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "bug"
+  },
+  {
+   "title": "No selection stats in status bar (count/sum/avg/min/max) or cell coordinates",
+   "detail": "Status bar (ResultsPane.tsx:68-81) shows row count + ms only. TablePlus/DataGrip show 'SUM 4,502 \u00b7 AVG 37.5 \u00b7 COUNT 120' for a numeric selection \u2014 the user explicitly wants this. Compute lazily from sel.rect over loaded rows (numeric-parse with locale-safe fallback), plus 'R12:C4' focused-cell indicator and column count.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "No paste into grid, no fill-down, no type-once-fill-selection",
+   "detail": "[known] \u2318V does nothing; setSelectionValue machinery (Grid.tsx:315) exists but only NULL/EMPTY. Paste single value into whole selection, paste TSV block into matching rect, \u2318D fill-down.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Cell editor is a single-line input \u2014 multiline text values can't be edited or entered",
+   "detail": "CellEditor (Grid.tsx:71-95) uses <input>; Enter always saves, so \\n can neither be seen nor typed \u2014 editing a multiline text value flattens your view of it and there is no \u2325Enter. Fix: auto-grow textarea; Enter saves, \u2325/\u21e7Enter inserts newline; or route multiline values to the inspector like JSON.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "Text starting with [ or { is misrouted to the JSON inspector editor",
+   "detail": "[known, adjacent] startEdit heuristic (Grid.tsx:213-216) sends any cell matching /^\\s*[[{]/ to the inspector even when type_name is text \u2014 e.g. value '[draft]' can't be edited inline and risks the known structuredValue JSON-corruption path (format.ts). Fix: gate on type_name \u2208 {json,jsonb,array} only.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Cell editor renders at (0,0) when the target cell is scrolled out of the virtual window",
+   "detail": "[known] Grid.tsx:617-618 uses find() over virtual items with ?? 0 fallback \u2014 scrolling while editing teleports the editor to the top-left corner where blur-save can silently fire. Fix: compute position from rowVirt offsets directly (start = index*ROW_H) and clamp to viewport, or close/park the editor when the cell leaves the window.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "'unavailable' editability gives no reason; double-click on read-only is a silent no-op",
+   "detail": "When editMap is 'unavailable' (editability fetch failed / view / non-SELECT), colEditMeta returns undefined \u2192 cells have no title, no reason, and double-click does nothing with zero feedback (Grid.tsx:590-604). Violates 'read-only cells say why'. Fix: statement-level banner or per-cell title ('editability unknown: <error>'), and a subtle shake/toast on rejected edit attempts.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Context menu density: no Filter-by-value, Open-in-inspector, Copy cell, Set DEFAULT, Revert cell, Duplicate row, row-detail",
+   "detail": "[known \u2014 menu epic] Current menu (Grid.tsx:638-673) = Copy, Copy-as, Set NULL/EMPTY, Delete. Missing the per-surface density that makes clients feel mature: cell \u2192 Filter by this value / exclude value / open inspector / copy raw / set DEFAULT / revert this cell (clearEdit exists unwired, edits.ts:139); row-number gutter \u2192 select/duplicate/copy-as-INSERT/delete; header \u2192 sort/hide/copy name/IN-list/distinct values. Build on the existing ContextMenu primitive.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "No FK follow / jump-to-referenced-row",
+   "detail": "[known] FK columns render as plain text; no cmd-click or menu item to open the referenced table filtered to that key \u2014 the loved 'magic' affordance in TablePlus/DataGrip. FkInfo exists in introspection; wire cell \u2192 openTable(fk target) with a filter preset.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "No column hide, pin/freeze, or reorder",
+   "detail": "[known] 500-column tables force horizontal scrolling with no way to hide noise or freeze id/name. Hide is cheap (filter the column index map before virtualization); pin/reorder are the v0.45 stretch.",
+   "severity": "P1",
+   "effort": "L",
+   "kind": "feature"
+  },
+  {
+   "title": "\u2318A + Copy on a 50k-row result freezes the main thread; copy failures are silent",
+   "detail": "copySelection (Grid.tsx:245-258) synchronously builds the full string (JSON pretty-print of 50k\u00d730 can be >100MB) then ships it over Tauri IPC; multi-second beachball, possible clipboard failure reported only to console (line 255 .catch(console.error)). Fix: size guard + toast ('copied 50,000 rows'), chunked/deferred formatting for large rects, error toast on failure.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "perf"
+  },
+  {
+   "title": "Focus movement triggers a dynamic import + inspector store write per arrow key",
+   "detail": "Grid.tsx:191-199 runs import('../stores/inspector') then setTarget on every focus change \u2014 a promise tick + inspector re-render (JSON tree work) per keystroke while arrowing through cells. Hoist to a static import and debounce/idle-schedule setTarget (~80ms) so held-arrow navigation stays 60fps [known adjacent: hoist-imports track].",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "perf"
+  },
+  {
+   "title": "No quick-look/tooltip for overflowed cells",
+   "detail": "[known] Ellipsized cells show no hover preview and Space does nothing; only route is selecting + reading the inspector. Space-to-peek popover + delayed hover tooltip with the full (loaded) value.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "No client-side quick-filter over loaded rows",
+   "detail": "[known] Editor-mode results have zero filtering; browser filters re-query the server per change. A local 'show only rows where col = value' / text filter over loaded rows complements find-in-results.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Numerics not right-aligned; no bytea/date/array-aware rendering",
+   "detail": "[known \u2014 value-rendering pass] All cells left-aligned mono (grid.css:273); numeric columns should right-align with tabular-nums, bytea should show '\\x\u2026 (N bytes)', timestamptz needs the UTC/local toggle. Type info is available via editMap type_name.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "polish"
+  },
+  {
+   "title": "Browser-mode ctid column is shown and copied as if it were data",
+   "detail": "browseSql injects ctid for PK-less tables (browser.ts:121) and the grid renders it as an ordinary first column \u2014 included in TSV/CSV/JSON/INSERT copies and row selections. Fix: hide locator columns from display/copy (keep for locators), or at minimum badge it and exclude from copy formats.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Draft row cannot insert an empty string; autofocus fails when first column is virtualized out",
+   "detail": "commitDraft skips cells with text==='' (browser.ts:244) so '' is unreachable \u2014 only NULL or DEFAULT; no explicit DEFAULT vs empty control. Draft autofocus is tied to the first draft col being IN the virtual window (Grid.tsx:543). Fix: track touched-vs-untouched per cell (touched+'' \u2192 insert ''), scrollTo first col on beginDraft.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Commit result/index misalignment risk between stmtEdits and outcome.results",
+   "detail": "buildRowEdits filters out non-editable edits (edits.ts:77 continue) while commit maps outcome.results[i] positionally onto the UNFILTERED stmtEdits (edits.ts:214-227) \u2014 if the two ever diverge (map refetch, future code paths), wrong cells get patched with wrong new_values and flashed. Latent today (edits only staged on editable cols) but a data-lie time bomb. Fix: build a parallel array of the edits actually sent and map results against that.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Commit clears pending edits for statements whose editability map was loading/unavailable",
+   "detail": "commit skips those statements (edits.ts:207-210) but then writeEdits(pending:{}) (edits.ts:232) wipes ALL pending \u2014 the skipped statements' edits are silently dropped, never applied. Fix: clear only the keys actually committed; surface 'N edits skipped (no editability)' in lastError.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Delete rows nukes scroll/selection via full re-run; no Delete-key shortcut",
+   "detail": "deleteSelectedRows re-runs executedSql (Grid.tsx:390) \u2014 scroll position, selection, and column widths all reset after deleting one row. Fix: splice deleted rows from the statement locally (patchStatement exists) and reconcile on next manual refresh; wire \u2318\u232b to delete-selected-rows with the same confirm.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "First ArrowDown with no selection skips row 0",
+   "detail": "moveFocus bases on focus ?? {r:0,c:0} then ADDS the delta (useSelection.ts:80-82) \u2014 pressing ArrowDown in a fresh grid focuses row 1, never row 0. Fix: when focus is null, land on (0,0) regardless of direction.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "CJK/emoji columns sized too narrow by width estimation",
+   "detail": "estimateWidths uses UTF-16 v.length \u00d7 CHAR_W 7.3 (Grid.tsx:27-39) \u2014 double-width CJK and emoji-heavy columns get ~half the needed width, ellipsizing everything. Fix: cheap wide-char heuristic (codepoint ranges count \u00d72) or canvas measureText on the sample.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Copy-as-JSON emits all values as strings and collides duplicate column names",
+   "detail": "clipboard.ts:31-34 \u2014 numbers/booleans/null-vs-'null' all become strings, and SELECT a.id, b.id yields one 'id' key (Object.fromEntries keeps last). Fix: type-aware coercion via editMap type_name; suffix duplicate keys id, id_2.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Markdown copy breaks on newlines in cells",
+   "detail": "clipboard.ts:36-42 escapes | but leaves \\n raw, splitting the markdown table row. Replace \\n with <br> inside cells.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Statement chips overflow unmanaged; no keyboard statement switching",
+   "detail": "A 30-statement script renders 30 chips in a no-wrap flex row (grid.css:34-39) with no overflow-x scroll; no \u23181-9/\u2303Tab to switch statements; clicking a chip mid-run gets yanked back because every statement_start forces activeStatement (results.ts:194).",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Zero-row result renders a blank void",
+   "detail": "Columns render but the body is empty with no '0 rows' hint in the grid area (only tiny status-bar text) \u2014 looks broken on first use. Centered 'Query OK \u2014 0 rows' empty state under the header.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Column resize re-measures the whole column virtualizer per mousemove",
+   "detail": "onResizeStart's onMove calls setWidths per pixel (Grid.tsx:404-408) which triggers colVirt.measure() (Grid.tsx:157-159) + full re-render each event \u2014 visible jank on 200+ column results. rAF-throttle the move handler; measure once on mouseup or per frame.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "perf"
+  },
+  {
+   "title": "No discontiguous selection (\u2318-click rows/cells) or keyboard row/col selection",
+   "detail": "Selection model is a single rect (useSelection.ts) \u2014 no \u2318-click to add ranges, no \u21e7Space/\u2303Space select row/column. TablePlus supports multi-row discontiguous selection for delete/copy. Requires rect-list selection model.",
+   "severity": "P2",
+   "effort": "L",
+   "kind": "feature"
+  },
+  {
+   "title": "No stop/cancel affordance in the results pane while running",
+   "detail": "Status bar shows '\u23f3 running' (ResultsPane.tsx:69) but no cancel button \u2014 \u2318. is the only path and it's undiscoverable mid-stream on a runaway query. Add a Stop button next to the running indicator wired to results.cancel().",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Row-number gutter breaks past ~7-digit rows and numbers aren't locale-formatted",
+   "detail": "ROWNUM_W fixed 52px (Grid.tsx:24); once load-more-past-50k lands, 1,000,000+ overflows the gutter. Compute gutter width from rows.length digits.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Flash-clear timer races across quick successive commits",
+   "detail": "commit schedules setTimeout(clear all flash, 900) per commit (edits.ts:229) \u2014 a second commit within 900ms gets its flash wiped early by the first timer. Track per-key timestamps or a generation counter.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Per-cell inline closures and string-built classNames churn GC at scale",
+   "detail": "Each visible cell allocates 3 event handlers + template className per render (Grid.tsx:592-609); with 500 visible cells \u00d7 re-render-per-drag-step this compounds the unmemoized-cell cost. After memoizing cells, move mouse handling to container-level event delegation using data-r/data-c attributes.",
+   "severity": "P2",
+   "effort": "M",
+   "kind": "perf"
+  },
+  {
+   "title": "EditPreview lacks copy-SQL and per-edit control",
+   "detail": "[known, partially] Modal (EditPreview.tsx) shows the batch SQL but has no Copy button, no per-statement checkbox/discard, no old\u2192new value diff \u2014 it's commit-all-or-cancel. Copy-SQL is trivial (statements already strings).",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  }
+ ],
+ "perf_risks": [
+  "Unmemoized cell render: every selection/focus/drag/pending/flash/stream-flush change re-renders all visible cells (Grid.tsx:581-612); at 500-col \u00d7 40-row windows this is thousands of React elements per keystroke \u2014 the primary 60fps threat [known]",
+  "dragOver \u2192 setFocus store write per cell crossed with no rAF coalescing or pointer capture (useSelection.ts:63, Grid.tsx:603) \u2014 O(cells) full re-renders per drag swipe, plus mouseenter misses cells on fast drags [known]",
+  "Column resize: setWidths + colVirt.measure() per mousemove pixel (Grid.tsx:404-408, 157-159) \u2014 full column re-layout per event on wide results",
+  "Focus-change effect runs a dynamic import + inspector setTarget per arrow key (Grid.tsx:191-199) \u2192 promise tick + inspector subtree re-render per navigation keystroke",
+  "copySelection builds the entire formatted string synchronously then one giant Tauri IPC clipboard call (Grid.tsx:245-258) \u2014 \u2318A+\u2318C on 50k\u00d730 (especially JSON pretty-print) freezes the main thread for seconds",
+  "Streaming: each rAF flush rebuilds the statements array (results.ts:118-124) \u2192 full ResultsPane+Grid re-render per flush; combined with unmemoized cells, ~100 whole-window repaints during a 50k-row stream; rows appended via O(n) array spread per flush",
+  "setSelectionValue issues one setEdit store write per cell in the rect, each spreading the whole pending Record \u2014 O(N\u00b2) for large rects, one full grid re-render per cell (Grid.tsx:315-335) [known]",
+  "Browser infinite scroll re-runs the whole query with LIMIT+1000 each page (browser.ts:196-204) \u2014 O(n\u00b2) rows streamed/decoded over a deep-scroll session, and each re-run resets widths/selection/pending edits [known \u2014 keyset pagination]",
+  "estimateWidths re-runs O(100\u00d7cols) on every statement columns-identity change, i.e. every run including load-more pages (Grid.tsx:124-133)",
+  "Per-cell handler closure allocation (3/cell) + template className construction per render \u2014 GC churn that compounds once cell memoization lands unless handlers are hoisted/delegated",
+  "Unbounded in-DOM cell text: 8KB backend cap \u00d7 ~500 visible cells \u2248 up to 4MB of text nodes in the layout pass on pathological wide-text results \u2014 consider a display-length clamp (~1KB) with the full value in inspector only",
+  "PendingEditsStatus selector Object.keys(s.pending).length allocates a key array on every edits-store change (ResultsPane.tsx:88) \u2014 trivial today, avoidable with a counter"
+ ]
+}

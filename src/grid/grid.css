@@ -40,7 +40,7 @@
 
 .stmt-chip {
   padding: 2px 10px;
-  border-radius: 99px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   background: transparent;
   color: var(--fg-muted);
@@ -278,7 +278,7 @@
   align-items: center;
   padding: 0 10px;
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  font-size: var(--grid-fs, var(--text-sm)); /* cells only — header/rownum are chrome, fixed size (deliberate) */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -346,7 +346,7 @@
   display: flex;
   background: var(--bg-raised);
   border: 1.5px solid var(--accent);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
@@ -417,14 +417,14 @@
 }
 
 .ep-modal {
-  width: min(640px, 90%);
+  width: min(var(--modal-w-lg), 90%);
   max-height: 70vh;
   display: flex;
   flex-direction: column;
-  background: var(--bg-panel);
+  background: var(--bg-raised);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-md);
   padding: var(--sp-4);
   gap: var(--sp-3);
 }
@@ -454,6 +454,13 @@
   font-size: var(--text-sm);
 }
 
+/* commit hit a schema change — the SQL was regenerated and needs re-review */
+.ep-notice {
+  color: var(--warn, #d9a13c);
+  font-size: var(--text-sm);
+  padding: 2px 0 6px;
+}
+
 .ep-actions {
   display: flex;
   justify-content: flex-end;
@@ -461,11 +468,12 @@
 }
 
 .ep-actions button {
-  padding: 5px 14px;
+  padding: 5px 12px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
   background: var(--bg-raised);
   cursor: pointer;
+  transition: background 120ms, border-color 120ms, color 120ms;
 }
 .ep-actions button.primary {
   background: var(--accent);
@@ -484,7 +492,6 @@
 }
 
 .vgrid-menu {
-  position: fixed;
   display: flex;
   flex-direction: column;
   min-width: 170px;
@@ -492,7 +499,7 @@
   background: var(--bg-raised);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-sm);
 }
 
 .vgrid-menu button {
@@ -521,4 +528,594 @@
   height: 1px;
   margin: 4px 6px;
   background: var(--border-strong);
+}
+
+/* ---- find-in-results bar (⌘F) ---- */
+.find-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 4px 8px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+}
+.find-icon {
+  color: var(--fg-faint);
+  flex-shrink: 0;
+}
+.find-bar input {
+  flex: 0 1 240px;
+  min-width: 120px;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+}
+.find-count {
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+.find-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.find-btn:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.find-capped {
+  margin-left: auto;
+  color: var(--warn);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.vgrid-cell.find-hit {
+  background: var(--warn-soft);
+}
+.vgrid-cell.find-cur {
+  background: rgba(245, 166, 35, 0.32);
+  outline: 1.5px solid var(--warn);
+  outline-offset: -1.5px;
+}
+
+/* late global error rendered as a banner — streamed rows stay browsable */
+.ge-banner {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: var(--text-xs);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- value-rendering truth: NULL chip · ∅ empty marker · numeric align ---- */
+.vgrid-nullchip,
+.vgrid-emptychip {
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  color: var(--fg-faint);
+  font-size: var(--text-2xs);
+  font-style: normal;
+  line-height: 16px;
+  letter-spacing: 0.4px;
+  vertical-align: 1px;
+  user-select: none;
+}
+.vgrid-cell.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.vgrid-cell.num .vgrid-nullchip,
+.vgrid-cell.num .vgrid-emptychip {
+  float: right;
+}
+
+/* PG DETAIL / HINT lines under the error message */
+.ge-detail,
+.ge-hint {
+  margin-top: 6px;
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+}
+.ge-hint {
+  color: var(--ok);
+}
+
+/* ---- header sort affordance + reorder feedback ----------------------------
+   Ghost ⇅ materializes on hover, morphs to a single chevron that spring-flips
+   between asc/desc; the sorted column earns a gradient accent baseline. The
+   header name fades under a mask instead of reflowing — nothing ever jumps. */
+.vgrid-hcell.reordering {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+.vgrid-sortbtn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  translate: 0 -50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.82);
+  transition:
+    opacity 0.16s cubic-bezier(0.2, 0, 0, 1),
+    transform 0.16s cubic-bezier(0.2, 0, 0, 1),
+    background 0.16s cubic-bezier(0.2, 0, 0, 1),
+    color 0.16s cubic-bezier(0.2, 0, 0, 1);
+}
+.vgrid-hcell:hover .vgrid-sortbtn,
+.vgrid-sortbtn.on {
+  opacity: 1;
+  transform: scale(1);
+}
+.vgrid-sortbtn:hover {
+  background: var(--bg-active);
+  color: var(--fg);
+}
+.vgrid-sortbtn:active {
+  transform: scale(0.84);
+}
+.vgrid-sortbtn.on {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.vgrid-sortbtn.on:hover {
+  color: var(--accent);
+  filter: brightness(1.15);
+}
+/* the chevron itself spring-flips between asc and desc */
+.vgrid-sortbtn .chev {
+  transition: transform 0.22s cubic-bezier(0.34, 1.4, 0.44, 1);
+}
+.vgrid-sortbtn.desc .chev {
+  transform: rotate(180deg);
+}
+/* sorted column: gradient accent baseline with a soft glow */
+.vgrid-hcell.sorted::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--accent) 20%,
+    var(--accent) 80%,
+    transparent
+  );
+  box-shadow: 0 0 10px var(--accent-soft);
+  pointer-events: none;
+}
+/* long names fade under the arrow instead of shifting */
+.vgrid-hcell:hover .vgrid-hname,
+.vgrid-hcell.sorted .vgrid-hname {
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    #000 calc(100% - 36px),
+    transparent calc(100% - 14px)
+  );
+  mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent calc(100% - 14px));
+}
+
+/* column-reorder insertion guide: accent line the full grid height with a
+   beacon dot at the top — sits above the sticky header so the drop point
+   reads even while the columns scroll */
+.vgrid-dropline {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: linear-gradient(
+    180deg,
+    var(--accent),
+    color-mix(in srgb, var(--accent) 30%, transparent)
+  );
+  box-shadow: 0 0 8px var(--accent-soft);
+  pointer-events: none;
+  z-index: 4;
+}
+.vgrid-dropline::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  translate: -50% -45%;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+}
+
+/* staged SET DEFAULT chip */
+.vgrid-defaultchip {
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--text-2xs);
+  line-height: 16px;
+  letter-spacing: 0.4px;
+  user-select: none;
+}
+
+/* type-aware cell editors */
+.vgrid-celledit textarea {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  border: none;
+  outline: none;
+  background: none;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 18px;
+  padding: 3px 6px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.vgrid-boolpick {
+  display: flex;
+  gap: 4px;
+  padding: 3px 4px;
+  flex: 1;
+}
+.vgrid-boolpick button {
+  flex: 1;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  color: var(--fg);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.vgrid-boolpick button:hover {
+  background: var(--bg-hover);
+}
+.vgrid-boolpick button.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.vgrid-enumpick {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: var(--bg-panel);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  padding: 3px 4px;
+}
+
+/* transposed single-row viewer (Space) */
+.rowpeek {
+  width: min(560px, 80vw);
+  max-height: 76vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+.rowpeek-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+.rowpeek-title {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--fg);
+}
+.rowpeek-of {
+  color: var(--fg-muted);
+  font-weight: 400;
+}
+.rowpeek-keys {
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}
+.rowpeek-body {
+  overflow-y: auto;
+  padding: 6px 0;
+}
+.rowpeek-row {
+  display: flex;
+  gap: 12px;
+  padding: 4px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+}
+.rowpeek-row:last-child {
+  border-bottom: none;
+}
+.rowpeek-col {
+  flex: 0 0 180px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rowpeek-type {
+  flex-shrink: 0;
+  translate: 0 1px;
+}
+.rowpeek-val {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+/* row peek: structured display + inline editing */
+.rowpeek-row.dirty {
+  background: color-mix(in srgb, var(--warn-soft) 55%, transparent);
+}
+.rowpeek-dirty {
+  margin-left: 5px;
+  color: var(--warn);
+  font-size: var(--text-2xs);
+}
+.rowpeek-val.structured {
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+.rowpeek-val.editable {
+  cursor: text;
+  position: relative;
+  border-radius: var(--radius-sm);
+  padding: 1px 4px;
+  margin: -1px -4px;
+}
+.rowpeek-val.editable:hover {
+  background: var(--bg-hover);
+}
+.rowpeek-pencil {
+  visibility: hidden;
+  margin-left: 6px;
+  color: var(--fg-faint);
+}
+.rowpeek-val.editable:hover .rowpeek-pencil {
+  visibility: visible;
+}
+/* pop-out single-value editor (opens above the row peek) */
+.valuepop {
+  width: min(var(--modal-w-lg), 84vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+.valuepop-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+.valuepop-title {
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--fg);
+}
+.valuepop-type {
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--text-xs);
+}
+.valuepop textarea {
+  height: min(46vh, 420px);
+  resize: none;
+  border: none;
+  outline: none;
+  background: var(--bg-panel);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  padding: 12px 14px;
+}
+.valuepop-err {
+  padding: 6px 14px;
+  color: var(--danger);
+  font-size: var(--text-xs);
+  border-top: 1px solid var(--border);
+}
+.valuepop-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+.valuepop-actions button {
+  padding: 5px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  color: var(--fg);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms, color 120ms;
+}
+.valuepop-actions button:hover {
+  background: var(--bg-hover);
+}
+.valuepop-actions button.primary {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* selection aggregates in the status bar */
+.status-stats {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* server NOTICE strip (RAISE NOTICE etc.) — cleared on next run */
+.notice-strip {
+  max-height: 84px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  padding: 4px 10px;
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+.notice-line {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--fg-muted);
+  white-space: pre-wrap;
+}
+.notice-sev {
+  color: var(--accent);
+  font-weight: 600;
+}
+.notice-more { opacity: 0.6; }
+
+/* quick-filter in the status bar */
+.status-qf { display: inline-flex; align-items: center; gap: 5px; }
+.status-qf-btn {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+.status-qf-btn:hover, .status-qf.on .status-qf-btn { color: var(--accent);   background: var(--bg-hover, var(--bg-panel));
+}
+.status-qf input {
+  width: 140px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-size: var(--text-2xs);
+  font-family: var(--font-mono);
+  padding: 2px 6px;
+  outline: none;
+}
+.status-qf input:focus { border-color: var(--accent); }
+
+/* open-transaction chip */
+.status-tx {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  font-size: var(--text-2xs);
+  letter-spacing: 0.05em;
+  color: var(--warn, #eab308);
+}
+
+/* re-run affordance */
+.status-rerun {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+.status-rerun:hover { color: var(--accent);   background: var(--bg-hover, var(--bg-panel));
+}
+
+/* syntax-highlighted structured values in the row peek */
+.rowpeek-val .jsonfield {
+  width: 100%;
+  max-height: 200px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+}
+
+/* ValuePop's CodeMirror editor — same footprint as the textarea it replaces */
+.valuepop-cm {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  max-height: 46vh;
+  overflow: auto;
+}
+.valuepop-cm .jsonfield { min-height: 120px; }
+.valuepop-format { margin-right: auto; }
+
+.ep-loading {
+  padding: 22px;
+  font-size: var(--text-sm);
+  color: var(--fg-faint);
 }

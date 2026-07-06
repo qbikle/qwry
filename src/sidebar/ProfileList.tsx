@@ -59,7 +59,7 @@ export function ProfileList() {
           >
             <Database size={14} className={p.is_prod ? "prod" : ""} />
             <span className="pl-name">{p.name || p.host}</span>
-            {p.is_prod && <span className="pl-badge">PROD</span>}
+            {p.is_prod && <span className="badge badge-danger">PROD</span>}
             <Circle
               size={8}
               className={`pl-dot ${state}`}

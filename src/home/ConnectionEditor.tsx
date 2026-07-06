@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Loader2, ShieldCheck, Trash2, Zap } from "lucide-react";
+import * as ipc from "../ipc/commands";
 import { useConnections } from "../stores/connections";
 import type { Profile } from "../ipc/types";
 import { Avatar, AVATAR_ICONS, AVATAR_PALETTE } from "../sidebar/avatar";
+import { looksLikeDsn, parseDsn } from "./dsn";
 import "./home.css";
 
 export function ConnectionEditor({ profile }: { profile: Profile }) {
@@ -18,9 +20,56 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
   const [err, setErr] = useState<string | null>(null);
   const [armed, setArmed] = useState(false);
   const [tunnel, setTunnel] = useState(!!profile.ssh_host?.trim());
+  const [pastedDsn, setPastedDsn] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<
+    { ok: true; ms: number; version: string; tls: boolean } | { ok: false; error: string } | null
+  >(null);
+
+  // probe the CURRENT form values — nothing is saved; an unsaved password is
+  // passed along, otherwise the keychain entry for this profile id is used
+  const testConn = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const r = await ipc.testConnection(p, password || undefined);
+      setTestResult({
+        ok: true,
+        ms: r.latency_ms,
+        // "PostgreSQL 16.4 on aarch64-…" → keep the part that matters
+        version: r.server_version.split(" on ")[0],
+        tls: r.tls,
+      });
+    } catch (ex) {
+      setTestResult({ ok: false, error: (ex as { message?: string }).message ?? String(ex) });
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const field = <K extends keyof Profile>(k: K, v: Profile[K]) =>
     setP((prev) => ({ ...prev, [k]: v }));
+
+  // paste a postgres:// DSN anywhere in the form → fill the fields from it
+  const onPaste = (e: React.ClipboardEvent) => {
+    const text = e.clipboardData.getData("text");
+    if (!looksLikeDsn(text)) return;
+    const d = parseDsn(text);
+    if (!d || !d.host) return;
+    e.preventDefault();
+    setP((prev) => ({
+      ...prev,
+      host: d.host ?? prev.host,
+      port: d.port ?? prev.port,
+      dbname: d.dbname ?? prev.dbname,
+      user: d.user ?? prev.user,
+      sslmode: d.sslmode ?? prev.sslmode,
+      name: prev.name.trim() || d.dbname || prev.name,
+    }));
+    if (d.password) setPassword(d.password);
+    setPastedDsn(true);
+    setTimeout(() => setPastedDsn(false), 3000);
+  };
 
   // glyph: text (letter/emoji) lives in the input; `icon:<name>` picks an icon
   const glyphIsIcon = p.glyph?.startsWith("icon:");
@@ -41,6 +90,23 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
 
   const valid = !saving && !!p.name.trim() && !!p.host && !!p.dbname && !!p.user;
 
+  // a dirty 8-field form must not vanish on one stray Esc
+  const dirty = password !== "" || JSON.stringify(p) !== JSON.stringify(profile);
+  const requestCancel = () => {
+    if (!dirty) {
+      setHome("dashboard");
+      return;
+    }
+    void import("../stores/danger").then(async ({ confirmDanger }) => {
+      const ok = await confirmDanger(
+        "Discard connection changes?",
+        "Edits to this connection form will be lost.",
+        "Discard",
+      );
+      if (ok) setHome("dashboard");
+    });
+  };
+
   // capture-phase window listener: fires regardless of focus (WKWebView buttons
   // don't take focus on click) and beats the global ⌘S/Esc handlers
   const keyRef = useRef<(e: KeyboardEvent) => void>(() => {});
@@ -48,7 +114,7 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
-      setHome("dashboard");
+      requestCancel();
     } else if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
       e.stopPropagation();
@@ -66,7 +132,7 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
   }, []);
 
   return (
-    <div className="ce">
+    <div className="ce" onPaste={onPaste}>
       <div className="ce-scroll">
         {/* customization */}
         <div className="ce-custom">
@@ -124,7 +190,14 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
 
         {/* connection */}
         <div className="ce-section">
-          <div className="ce-label">Connection</div>
+          <div className="ce-label">
+            Connection
+            {pastedDsn ? (
+              <span className="ce-hint ok">filled from pasted URI</span>
+            ) : (
+              <span className="ce-hint">paste a postgres:// URI to fill</span>
+            )}
+          </div>
           <div className="ce-grid">
             <label className="ce-field ce-span3">
               <span>Host</span>
@@ -214,9 +287,23 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
         </div>
 
         {err && <div className="ce-error">{err}</div>}
+        {testResult &&
+          (testResult.ok ? (
+            <div className="ce-test-ok">
+              <ShieldCheck size={13} />
+              {testResult.version} · {Math.round(testResult.ms)}ms
+              {testResult.tls ? " · TLS" : " · no TLS"}
+            </div>
+          ) : (
+            <div className="ce-error">{testResult.error}</div>
+          ))}
       </div>
 
       <div className="ce-actions">
+        <button className="ce-test" disabled={!valid || testing} onClick={() => void testConn()}>
+          {testing ? <Loader2 size={13} className="spin" /> : <Zap size={13} />}
+          {testing ? "Testing…" : "Test"}
+        </button>
         {!isNew && (
           <button
             className={`ce-del${armed ? " armed" : ""}`}
@@ -233,7 +320,7 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
             <Trash2 size={14} /> {armed ? "Click again" : "Delete"}
           </button>
         )}
-        <button onClick={() => setHome("dashboard")}>
+        <button className="ce-cancel" onClick={requestCancel}>
           Cancel <span className="ce-key">esc</span>
         </button>
         <button disabled={!valid} onClick={() => void save(false)}>

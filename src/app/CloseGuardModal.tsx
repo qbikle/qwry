@@ -1,9 +1,9 @@
-import { useEffect } from "react";
 import { motion } from "motion/react";
 import { popIn } from "../design/springs";
 import { useCloseGuard } from "../stores/closeGuard";
 import { useTabs } from "../stores/tabs";
 import { useEdits } from "../stores/edits";
+import { Modal } from "./overlay/Overlay";
 import "./app.css";
 
 /** confirm before closing a tab that has uncommitted cell edits.
@@ -18,35 +18,20 @@ export function CloseGuardModal() {
     pending ? Object.keys(s.byTab[pending]?.pending ?? {}).length : 0,
   );
 
-  // buttons don't take focus in WKWebView → handle keys on a capture-phase
-  // window listener while the prompt is open
-  useEffect(() => {
-    if (!pending) return;
-    const h = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        cancel();
-      } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        e.stopPropagation();
-        void commit();
-      } else if (e.key === "Enter") {
-        e.preventDefault();
-        e.stopPropagation();
-        discard();
-      }
-    };
-    window.addEventListener("keydown", h, true);
-    return () => window.removeEventListener("keydown", h, true);
-  }, [pending, cancel, discard, commit]);
-
   if (!pending) return null;
 
   return (
-    <div
-      className="danger-backdrop"
-      onMouseDown={(e) => e.target === e.currentTarget && cancel()}
+    <Modal
+      backdropClassName="danger-backdrop"
+      onClose={cancel}
+      onKey={(e) => {
+        // Enter = discard, ⌘/Ctrl+Enter = commit — only while topmost.
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (e.metaKey || e.ctrlKey) void commit();
+        else discard();
+      }}
     >
       <motion.div className="cg-modal" {...popIn}>
         <div className="cg-title">Unsaved edits</div>
@@ -65,6 +50,6 @@ export function CloseGuardModal() {
           </button>
         </div>
       </motion.div>
-    </div>
+    </Modal>
   );
 }

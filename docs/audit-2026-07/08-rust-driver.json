@@ -1,0 +1,280 @@
+{
+ "surface": "rust-driver",
+ "works": [
+  "Streaming exec over PG simple protocol: <=500-row batches, 50k ROW_CAP with drain, 8KB CELL_CAP with UTF-8-boundary-safe truncation + per-cell truncated markers, per-statement timing (execute.rs)",
+  "Statement splitter handles '', \"\", $tag$ dollar quotes, line + nested block comments, drops empty/comment-only chunks to stay aligned with CommandComplete indexes; unit-tested (splitter.rs)",
+  "Editability via prepare() RowDescription table_oid/attnum: full-PK detection, ctid fallback with warning, per-column read-only reasons \u2014 matches the 'cells say why' ideology (edit.rs)",
+  "Edit SQL gen quotes identifiers (\"\" doubling) and literals ('' doubling), casts values to column type, NULL as SET NULL / WHERE IS NULL, RETURNING to refresh, one grouped UPDATE per row, one transaction, preview command for the commit modal",
+  "delete_rows refuses empty locators; insert_row omits untouched cols so defaults apply, DEFAULT VALUES path",
+  "Error mapping preserves PG position + SQLSTATE; connect errors prefer the server's own message over the TLS transport wrapper; TLS->plain fallback never masks server-sent auth errors (postgres/mod.rs)",
+  "Cancel via CancelToken with TLS-choice-aware cancel connection",
+  "Sessions are Arc'd so command handlers never hold the map lock across await; on_close callback -> session-closed event for status dot + auto-reconnect",
+  "SSH tunnel: spec-based staleness detection, is_alive probe, race-safe ensure_tunnel, ssh stderr surfaced on failure, kill_on_drop reaping",
+  "Introspection in one round trip (5 json_agg statements); appdb (profiles/tabs/history/saved) in WAL SQLite with additive migrations"
+ ],
+ "gaps": [
+  {
+   "title": "Multi-statement run: earlier statements reported committed, then silently rolled back on later error",
+   "detail": "execute_stream sends the whole buffer through one simple_query (execute.rs:36-40), so PG wraps ALL statements in one implicit transaction. Run 'UPDATE a...; UPDATE b...; SELECT oops' \u2014 the UI emits StatementDone with affected counts for the UPDATEs, then the error on stmt 3 rolls back everything. User believes the first UPDATEs committed; they did not. Direct violation of 'never lies about data'. Also breaks VACUUM / CREATE INDEX CONCURRENTLY / CREATE DATABASE in any multi-statement run ('cannot run inside a transaction block'). Fix: execute split statements one simple_query each (psql autocommit semantics, indexes already come from the splitter), or at minimum emit a batch-rolled-back event that retroactively flips earlier StatementDone to 'rolled back' in the UI.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "correctness"
+  },
+  {
+   "title": "apply_edits/delete_rows COMMIT even when matched != 1",
+   "detail": "edit.rs:399-431 and 499-523: the BEGIN...COMMIT batch runs as one string; when an UPDATE/DELETE matches 0 or 2+ rows the code marks the cell result failed but the COMMIT already executed \u2014 EditOutcome{committed:true} after writing 2 rows or a stale ctid hit a different row. [known \u2014 v0.35 'matched != 1 -> ROLLBACK']. Fix: run BEGIN, the statements, verify each RETURNING count == 1, then COMMIT or ROLLBACK explicitly (needs statement-at-a-time execution, not one joined string).",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "ROW_CAP hit: driver drains the entire result over the wire with no auto-cancel",
+   "detail": "execute.rs:107-110 'continue; // drain without buffering' \u2014 a bare SELECT on a 10M-row table stops feeding the grid at 50k but the connection keeps parsing 10M SimpleQueryRow messages for minutes; the session is blocked (next run/edit queues behind it), the UI looks finished-but-stuck. Same when the sink hung up (tab closed, execute.rs:44-48): full drain continues. Violates 'never feels slow at any scale'. Fix: when row_count first exceeds ROW_CAP (or sink dies) and this is the last/only statement, fire self.cancel and swallow the 57014 error; otherwise emit a 'draining N rows\u2026' progress event so it never looks hung.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "perf"
+  },
+  {
+   "title": "No fetch-full-value command: cells truncated at 8KB can be silently corrupted on edit",
+   "detail": "CELL_CAP truncation (driver/mod.rs:111, execute.rs:116-123) has no backend counterpart to retrieve the full value \u2014 commands.rs has no cell_full_value. The inspector hand-rolls SQL in the frontend (breaks on quoted idents, roadmap-known), and nothing stops staging an edit of a truncated cell: committing writes the 8KB prefix back over an 8MB value. Fix: add a driver command fetch_cell(sql, statement_index, pk locator, col) that reuses the editability locator to SELECT the single full value (plus octet_length for bytea), and have plan_edits refuse edits whose base cell was truncated unless the full value was fetched.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "correctness"
+  },
+  {
+   "title": "PG error DETAIL / HINT / constraint name dropped from every error",
+   "detail": "map_pg_err (postgres/mod.rs:211-229) keeps only message/position/code; db.detail(), db.hint(), db.where_(), constraint/table/column are discarded. For a daily user the DETAIL line IS the error: 'duplicate key value violates unique constraint' without 'Key (email)=(x@y) already exists' forces a mental round trip psql wouldn't. Fix: extend DriverError::Db (+ QueryEvent::Error and the TS mirror) with detail/hint/constraint fields; same for connect_err.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "Server notices (RAISE NOTICE / WARNING) silently discarded",
+   "detail": "spawn_session (postgres/mod.rs:71-76) plain-awaits the connection future, which drops AsyncMessage::Notice. ARCHITECTURE.md even specifies a QueryEvent::Notice variant that doesn't exist in driver/mod.rs:75-107. DO blocks, triggers, and 'NOTICE: truncate cascades to\u2026' vanish \u2014 psql-parity table stakes. [known \u2014 v0.5 'Surface server NOTICE']. Fix: drive the connection with poll_message, forward notices through a per-session broadcast the active execute_stream sink taps into (indexed to the current statement).",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Error position semantics wrong: whole-buffer offset documented as per-statement, chars documented as bytes",
+   "detail": "driver/mod.rs:118-119 claims '1-based byte position into the failing statement'; PG actually reports a 1-based CHARACTER offset into the ENTIRE query string sent (the whole multi-statement buffer, since execute_stream sends it unsplit). Any frontend that anchors the squiggle relative to the failing statement is wrong for statement index > 0, and byte-vs-char drift misplaces the caret in any SQL containing non-ASCII. Fix: have the splitter return (sql, char_offset) spans, subtract the statement's start offset in Rust before emitting, and document 'characters, not bytes'.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "bug"
+  },
+  {
+   "title": "Splitter mis-lexes E'\u2026' escape strings \u2014 wrong labels and wrong editability statement",
+   "detail": "splitter.rs:36-51 treats every quote as standard-conforming; in E'\\'; DROP\u2026' the \\' is an escaped quote, so the splitter closes the string early and splits at the interior ';'. Server-side execution is unaffected (buffer sent whole) but statement indexes/labels desync from CommandComplete order, and editability(sql, statement_index) (edit.rs:94-98) then prepares the WRONG statement \u2014 edit preview/apply can target the wrong SQL. Fix: track an E/e prefix before the opening quote and honor backslash escapes inside it (also U&'' for completeness).",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "COPY FROM STDIN / COPY TO STDOUT: cryptic failure instead of a clear message (or support)",
+   "detail": "tokio-postgres simple_query cannot do COPY; pasting the psql-native export idiom 'COPY (SELECT\u2026) TO STDOUT CSV' or a pg_dump script with COPY\u2026FROM stdin + data lines yields an opaque protocol error, and the splitter (splitter.rs) happily splits the inline data on ';'. Fix now: detect leading COPY\u2026STDIN/STDOUT in the splitter and return a clean 'COPY isn't supported yet \u2014 use INSERTs / export UI'. Fix later: wire client.copy_out/copy_in for the v0.4 export path [known \u2014 export is roadmapped, the clear-error guard is not].",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Edit casts break on schema-qualified / mixed-case / custom types",
+   "detail": "edit.rs:335, 350 and 481 emit '{literal}::{type_name}' with tokio-postgres Type::name() \u2014 bare, unquoted, unschema'd. A camelCase enum ('MyStatus') becomes ::mystatus (unknown type), a type in a schema off search_path fails to resolve, and a type named with spaces breaks the statement. Fix: build the cast from Type::schema()+name with qi() quoting on both parts (skip schema for pg_catalog), e.g. ::\"sales\".\"MyStatus\"; alternatively cast via the OID: ::pg_catalog.regtype form.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Generated / identity-ALWAYS columns marked editable \u2014 edit fails only at commit",
+   "detail": "editability (edit.rs:187-245) never consults pg_attribute.attgenerated / attidentity, so GENERATED ALWAYS AS \u2026 STORED and identity-always columns show as editable; the UPDATE then errors at commit time. Violates 'read-only cells say why'. Fix: the table-metadata query at edit.rs:121-127 already hits pg_catalog \u2014 join pg_attribute and return attgenerated/attidentity, mark those columns editable:false with reason 'generated column' / editable-with-warning 'identity (ALWAYS)' (needs OVERRIDING SYSTEM VALUE for insert).",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "ctid edits can UPDATE/DELETE a different row after row movement",
+   "detail": "edit.rs:169-185 ctid fallback: between the SELECT and the commit, an UPDATE (new row version) or VACUUM slot reuse can leave the old ctid pointing at a DIFFERENT tuple \u2014 WHERE ctid='(0,1)' then writes the wrong row and (with the matched!=1 bug fixed it would still match exactly 1) commits cleanly. Corruption within the 'never corrupts' invariant, beyond what the soft warning covers. Fix: for ctid-located writes, add the old values of the edited columns (and a couple of stable columns) as extra WHERE predicates, or SELECT \u2026 WHERE ctid FOR UPDATE inside the tx and compare before applying.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "correctness"
+  },
+  {
+   "title": "apply_edits sends BEGIN\u2026COMMIT on a session that may already be inside the user's transaction",
+   "detail": "edit.rs:394-397: if the user typed BEGIN in the editor (same per-tab session) and hasn't committed, the cell-edit batch's BEGIN is a no-op warning and its COMMIT commits ALL the user's uncommitted work \u2014 a silent commit they never asked for. Fix: track transaction state per session (lexical BEGIN/COMMIT/ROLLBACK tracking, see tx-state gap) and either wrap edits in SAVEPOINT/RELEASE when already in-tx, or refuse with 'session has an open transaction'.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "correctness"
+  },
+  {
+   "title": "No transaction-state tracking or autocommit affordance",
+   "detail": "Nothing in PgSession knows whether the connection is idle / in-tx / in-failed-tx. After BEGIN + an error, every subsequent run returns 'current transaction is aborted' with no explanation or one-click ROLLBACK; there's no status-bar indicator, no auto-ROLLBACK option, no autocommit toggle (DataGrip/TablePlus table stakes). Fix: lexically track BEGIN/COMMIT/ROLLBACK/END through split statements + result success in execute_stream, expose tx_state on StatementDone/Finished events, add a rollback affordance; longer-term expose ReadyForQuery status if the driver ever surfaces it.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "attnames catalog query per edited row \u2014 committing 200 edits = 200 sequential round trips",
+   "detail": "plan_edits loops groups (one per edited row) and awaits self.attnames() inside the loop (edit.rs:301-317). Editing a column across 500 rows and hitting commit does 500 serialized pg_attribute queries before even generating SQL \u2014 seconds of preview latency on a tunnel. Fix: collect attnums per table_oid across ALL groups first, one attnames call per table (usually 1), then build all statements.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "perf"
+  },
+  {
+   "title": "StatementStart for non-SELECT statements only fires at completion \u2014 progress UI lies",
+   "detail": "execute.rs:139-143: for UPDATE/DDL, StatementStart is emitted inside the CommandComplete arm, i.e. when the statement FINISHES; a 90s UPDATE in a batch shows no 'running statement 2/5' and ms is measured as ~0 (StmtState only created on RowDescription \u2014 non-rowset statements report ms:0.0 via the None arm at execute.rs:163). Fix: emit StatementStart{0} before the loop and StatementStart{i+1} right after each CommandComplete, and start a timer there so DDL/UPDATE durations are real.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "No statement_timeout, no TCP keepalive tuning, no timeout on cancel \u2014 dead tunnel = stuck forever",
+   "detail": "pg_config (postgres/mod.rs:32-43) sets only connect_timeout; tokio-postgres default keepalive idle is 2h, so a dropped bastion leaves a query hanging with \u2318. failing too (CancelToken opens a NEW connection to the dead local port \u2014 cancel() at postgres/mod.rs:201-208 has no timeout so it can itself hang). [known \u2014 v0.5 'Connection-time session setup' + 'graceful dropped-connection']. Fix: keepalives_idle(30s)+interval+retries on the Config, SET statement_timeout at connect (default 30s per locked decision), and tokio::time::timeout(3s) around cancel_query with a force-disconnect fallback.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "disconnect doesn't cancel an in-flight query; no force-kill escape hatch",
+   "detail": "commands.rs:124-128 just removes the map entry; a running execute_stream holds its own Arc<PgSession> and keeps streaming (and draining) until completion \u2014 the server keeps burning through the query. Fix: look up the session, call cancel() best-effort, then remove; expose it as the 'force disconnect this tab session' command [known \u2014 v0.5 lists the escape hatch; the cancel-on-disconnect half is not listed].",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "type_oid always 0 on the streaming path \u2014 grid has no type info until editability lands",
+   "detail": "execute.rs:83-88 and postgres/mod.rs:150-155 hardcode type_oid/table_oid/attnum to 0 because tokio-postgres SimpleColumn hides them (the wire RowDescription HAS them). Right-alignment of numerics, type icons, NULL-vs-empty treatments all wait on a second prepare() round trip, and never work for statements that can't be re-prepared. [known \u2014 v0.5 'Server / connection info \u2026 fixes hardcoded type_oid=0']. Fix: vendor/patch simple_query to expose RowDescription fields, or switch the rowset path to extended-protocol query_raw with text results.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "No get_ddl backend (pg_get_viewdef/indexdef/functiondef/constraintdef + CREATE TABLE synth)",
+   "detail": "commands.rs has nothing DDL-shaped; the entire sidebar 'Copy DDL / view source / structure row copy' epic is blocked on it. [known \u2014 v0.4 'get_ddl backend']. Fix: one command get_ddl(session, kind, oid) dispatching to pg_get_*def and a hand-assembled CREATE TABLE (pg_attribute + pg_constraint + pg_indexes).",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "No export path in the driver (CSV/JSON/SQL to file)",
+   "detail": "Grid copy is clipboard-only and capped at 50k in-memory rows; there is no copy_out/COPY TO STDOUT streaming to a file, so 'export this 2M-row query to CSV' \u2014 a weekly TablePlus action \u2014 is impossible. [known \u2014 v0.4 'Export results/table to file']. Fix: driver command export_query(sql, format, path) using client.copy_out('COPY (\u2026) TO STDOUT CSV HEADER') streamed straight to disk with progress events.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "is_prod is cosmetic \u2014 no enforced read-only session mode",
+   "detail": "Profile.is_prod (driver/mod.rs:26) only tints the UI; nothing issues SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY / default_transaction_read_only at connect (postgres/mod.rs:89-120). One mistyped UPDATE on a prod profile executes. [known \u2014 v0.5 P0 'Enforced read-only / prod safe-mode'].",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Introspection pulls every pg_catalog function on each connect/refresh; no enums; no size/comment metadata",
+   "detail": "FUNCS_SQL (introspect.rs:121-131) json_aggs ~3k builtin functions per introspect [known \u2014 v0.4 scope-to-user-schemas]. pg_enum is absent entirely though ARCHITECTURE claims it and type-aware editors need it [known \u2014 v0.45]. Also missing: table/column comments (pg_description), reltuples + pg_total_relation_size [known], sequences, relispartition flag (partition children appear as ordinary tables), and pg_temp_N schemas leak into FUNCS (only pg_toast is filtered, introspect.rs:128-130).",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "perf"
+  },
+  {
+   "title": "Two edits to the same cell in one commit generate 'SET a=\u2026, a=\u2026' \u2014 PG errors",
+   "detail": "plan_edits (edit.rs:326-340) appends every edit to set_parts without deduping by column; if the frontend ever sends two edits for one (row,col) \u2014 replayed staging, fill-down overlap \u2014 the UPDATE fails with 'multiple assignments to same column'. Fix: last-wins dedupe on (table_oid, pk sig, attnum) while grouping.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Missing keychain password silently becomes empty string",
+   "detail": "commands.rs:94 secrets::get_password(...).unwrap_or_default() \u2014 a lost/denied Keychain entry turns into 'password authentication failed for user\u2026' instead of 'no saved password for this profile (Keychain error: \u2026)'. Fix: distinguish NotFound (prompt to re-enter) from other keyring errors (surface them).",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Group-signature delimiter collision can merge two different rows' edits",
+   "detail": "edit.rs:282-288 builds the dedupe key by joining pk values with '|' and '=' and a '\\u{0}NULL' sentinel \u2014 text PK values containing those delimiters (or the literal sentinel) can produce identical sigs for different rows, merging their SETs into one UPDATE (wrong row gets both writes). Contrived but it's the data path. Fix: length-prefix each component (or hash (col,len,value) tuples).",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Indexing/unwrap panics on the edit path (violates repo no-unwrap rule)",
+   "detail": "edit.rs:130 and 574 index out.statements[0] unchecked; edit.rs:330 col_meta(*c).unwrap(). A surprising server response (e.g. proxy strips a result) panics the async task instead of returning DriverError. [known \u2014 v0.35 '.first() on introspection statements']. Fix: .first().ok_or(Internal) and propagate.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Literal quoting assumes standard_conforming_strings=on",
+   "detail": "ql (edit.rs:80-82) only doubles quotes; on a server/session with standard_conforming_strings=off, a trailing backslash in an edited value ('foo\\' -> 'foo\\') makes \\' an escaped quote \u2014 statement corruption/injection. Fix: SET standard_conforming_strings=on at connect (one line in session setup) or emit E''-style escaping when a backslash is present.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Splitter dollar-tag rules diverge from PG: no non-ASCII tags, digit-first tags accepted",
+   "detail": "splitter.rs:68-93 accepts only ASCII [A-Za-z0-9_] tags \u2014 $funci\u00f3n$\u2026$funci\u00f3n$ falls through to bare-$ and interior ';' mis-splits (labels/editability desync); conversely $1$ is accepted as an opener though PG lexes it as param $1 + $. Fix: accept identifier chars per PG rules (any non-ASCII byte >= 0x80 counts) and reject digit-first tags.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "session-closed event carries no reason; connection death reason lost to stderr",
+   "detail": "spawn_session (postgres/mod.rs:71-76) eprintln!s the tokio-postgres error and SessionClosed (commands.rs:13-16) has only ids \u2014 the UI can flip the dot but can never say 'server closed the connection: terminating connection due to administrator command'. Fix: pass the error text into on_close and add reason to the payload.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "bytea/huge cells: no save-to-file, no length report \u2014 8MB blob is a truncated hex string",
+   "detail": "Simple-protocol text means an 8MB bytea arrives as 16MB of hex then gets cut at 8KB (execute.rs:116-123) with no octet_length surfaced and no 'save cell to file' command. TablePlus shows byte size + lets you dump the blob. Fix: piggyback on the fetch-full-value command with a write-to-path variant and return octet_length in editability/columns meta.",
+   "severity": "P2",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Read-only reasons misleading for views/matviews/foreign tables",
+   "detail": "edit.rs:213-230 tells matview/complex-view columns 'no primary key \u2014 add ctid to the SELECT to edit', but UPDATE on a matview always fails \u2014 the advice sends the user down a dead end. relkind is already fetched in introspect but not in editability's table query (edit.rs:121-127). Fix: fetch relkind there and word reasons per kind ('materialized view \u2014 read-only', 'view without INSTEAD OF trigger', etc.).",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "history_search LIKE escaping is broken",
+   "detail": "appdb.rs:206 replaces % with \\% but the query (appdb.rs:201-204) has no ESCAPE clause \u2014 SQLite treats \\ literally, so searching any SQL containing '%' (LIKE queries \u2014 a DB user's bread and butter) matches nothing/wrong rows; '_' isn't escaped at all. Fix: escape %, _ and \\ and append ESCAPE '\\'.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Non-streaming execute command has no row cap",
+   "detail": "commands.rs:131-140 execute() materializes every row (postgres/mod.rs:126-199) with no ROW_CAP/CELL_CAP \u2014 any frontend surface that routes arbitrary/user SQL through it (edits path is fine; risk is future misuse) can OOM the process on a fat SELECT. Fix: cap it like the streaming path or restrict it to internal catalog use.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "perf"
+  },
+  {
+   "title": "Tunnel probe connections spam the DB server log; local-port TOCTOU flake",
+   "detail": "wait_ready and is_alive (tunnel.rs:56-64, 135-147) open bare TCP connections through the forward and drop them \u2014 PG logs 'incomplete startup packet' every connect/health-check (DBA-visible noise on prod bastions). free_local_port (tunnel.rs:45-52) binds then releases the port before ssh grabs it \u2014 another process can steal it, yielding a flaky 'ssh exited early'. Fix: probe with a real PG startup+terminate (or just rely on ssh's ExitOnForwardFailure + child liveness), and pass port 0 semantics via ssh itself or retry on bind failure.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "UPDATE/INSERT\u2026RETURNING loses the affected count",
+   "detail": "execute.rs:168 sets affected:None whenever the statement had columns, so 'UPDATE \u2026 RETURNING id' shows row_count but the status bar can never render psql's 'UPDATE 42' alongside \u2014 both facts are known (CommandComplete carries the count) and one is thrown away. Fix: always pass affected through; let the frontend choose.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  }
+ ],
+ "perf_risks": [
+  "ROW_CAP overflow drains the full result set over the wire with no cancel (execute.rs:107-110) \u2014 a careless SELECT on a 10M-row table pegs the connection for minutes and queues every subsequent command on that session; same full-drain when the frontend sink hangs up",
+  "plan_edits awaits one pg_attribute round trip per edited ROW (edit.rs:317 inside the group loop) \u2014 commit of a 500-row fill-down issues 500 sequential catalog queries over the tunnel before generating a single UPDATE",
+  "String-per-cell allocation + per-batch JSON serialization over the Tauri Channel: 50k rows x 500 cols = 25M small Strings materialized then JSON-escaped through WKWebView IPC (execute.rs:112-127) [known stretch item \u2014 columnar/borrowed batching]",
+  "FUNCS introspection json_aggs ~3k pg_catalog functions on every connect / manual refresh / DDL sniff (introspect.rs:121-131) [known]",
+  "Introspection is one giant json_agg cell per category \u2014 a 50-schema/10k-table DB produces multi-MB single-row payloads parsed in one shot with no incremental/per-schema path (introspect.rs:68-98)",
+  "editability() re-prepares the statement and re-queries the catalog for every result render, on the SAME connection as the user's query \u2014 type icons and editability block behind any long-running statement on that tab",
+  "Non-streaming execute (commands.rs:131) has no row/cell caps \u2014 unbounded materialization if ever pointed at user SQL",
+  "TCP keepalive left at the 2h default and no statement_timeout: a dead bastion looks like an infinitely-running query, and cancel() itself can hang (no timeout around cancel_query, postgres/mod.rs:201-208)",
+  "apply_edits builds the whole batch as one joined string \u2014 a 5k-row staged commit produces a single multi-MB SQL string parsed server-side at once (edit.rs:394-397)"
+ ]
+}

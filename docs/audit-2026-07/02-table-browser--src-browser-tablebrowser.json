@@ -1,0 +1,308 @@
+{
+ "surface": "table-browser (src/browser/TableBrowser.tsx, src/browser/StructureTab.tsx, src/browser/browser.css, src/stores/browser.ts + browse-mode paths in grid/Grid.tsx, grid/ResultsPane.tsx, stores/results.ts, stores/tabs.ts)",
+ "works": [
+  "Per-tab browse state (filters/sort/limit/draft) keyed byTab, mirrored to active tab; survives tab switches",
+  "Multi-filter builder: enable checkbox, AND/OR conjunction chain, 11 ops incl. IN / IS NULL / IS NOT NULL; correct identifier ('\"\"') and literal ('') escaping \u2014 injection-safe",
+  "Fuzzy-searchable sort popover with PK+time quick group, click-to-flip direction, clear-sort, Enter picks first match",
+  "Infinite scroll via nearEndHook: grows LIMIT by 1000 when grid nears bottom, guarded on running + page-full",
+  "Data/Structure toggle; Structure shows columns (attnum/type/nullable/default/PK badge), FKs both directions, index defs; text is selectable",
+  "Inline draft row: sticky band under header, per-cell NULL toggle, untouched-column\u2192DB DEFAULT semantics, cmd-Enter insert / Esc cancel, server error surfaced inline",
+  "ctid auto-added to SELECT for PK-less ordinary tables so rows stay editable/deletable",
+  "Open-or-focus dedupe of table tabs; views/matviews correctly get no Add-row",
+  "Refresh button with spinner; close routes through closeGuard (uncommitted-edit prompt)",
+  "Insert runs on the same tab session as the browse query (transaction-coherent), reloads after commit"
+ ],
+ "gaps": [
+  {
+   "title": "Scrolling, filtering, or refreshing silently discards staged cell edits",
+   "detail": "results.ts:185 \u2014 every run() calls useEdits.resetTab(tabId). browser.ts loadMore (196), setFilters (186), setSort (191), and refresh (206) all re-run the browse SQL. So: stage edits in the browse grid, scroll near the bottom \u2192 loadMore fires \u2192 all pending edits vanish with zero warning. Direct 'never lose work' violation, and it's triggered by mere scrolling. Fix: block/park loadMore while edits.pending is non-empty (or rebase edits keyed by PK values instead of rowIdx); prompt via closeGuard-style modal on explicit filter/sort/refresh when edits exist (TablePlus warns).",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "correctness"
+  },
+  {
+   "title": "Mixed AND/OR filters return wrong rows: UI implies left-to-right chaining, SQL applies precedence",
+   "detail": "browser.ts:113-117 \u2014 each condition is individually parenthesized then joined with the row's conj, so 'A OR B AND C' compiles to A OR (B AND C) while the linear UI reads ((A OR B) AND C). User builds 3 filters, silently gets a different result set. Fix: nest left-associatively \u2014 fold conditions as ((A) OR (B)) AND (C) \u2014 one-line change in the reduce; or add explicit group parens UI.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Filter value input fires a full streaming SELECT per keystroke [known]",
+   "detail": "TableBrowser.tsx:137 onChange \u2192 update() \u2192 setFilters (browser.ts:186) \u2192 run(). Typing 'manish' = 6 queries against the server, each resetting edits and re-streaming up to LIMIT rows. Also fires on every column/op dropdown change mid-configuration (TableBrowser.tsx:115,123) \u2014 picking a column before typing a value still reruns the unfiltered SELECT. Fix: apply on Enter/blur (Enter handler already exists at :138) + explicit debounce; only auto-run on structural changes that are complete.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "perf"
+  },
+  {
+   "title": "Infinite scroll is O(n\u00b2) re-fetch and dups/drops rows without a unique sort [known]",
+   "detail": "browser.ts:196-204 + :122 \u2014 loadMore re-runs SELECT ... LIMIT n+1000 from row 0 every page (page 50 of a 1M-row table re-streams 50k rows), and with no ORDER BY (or a non-unique sort column, no PK tiebreaker) Postgres may return a different row order per execution \u2192 duplicated/missing rows across page boundaries: the grid lies. Fix: keyset pagination (WHERE (sortcol, pk) > (:last, :lastpk) ORDER BY sortcol, pk) appending rows; always add PK/ctid tiebreaker to ORDER BY.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "correctness"
+  },
+  {
+   "title": "Status bar implies the loaded page is the whole table",
+   "detail": "ResultsPane.tsx:70-75 \u2014 a browse of a 5M-row table shows '1,000 rows' (capped flag only covers the backend 50k cap, never the browse LIMIT). Daily user reads it as the table's total. Fix: browser knows limit \u2014 show 'first 1,000 rows \u00b7 ~5.2M total' using reltuples estimate from introspection (pairs with the [known] v0.4 table-size/row-estimate item), and 'all N rows' when rows.length < limit.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "No way to cancel a running browse query from a table tab",
+   "detail": "cmd-. cancel lives only in the SqlEditor keymap (SqlEditor.tsx:65) and QueryBox button \u2014 neither is mounted in a table tab. The refresh button is disabled while running (TableBrowser.tsx:55). Sort a 1M-row table on an unindexed column \u2192 the tab is stuck until the server finishes; no statement_timeout either yet. Fix: turn the refresh button into a Stop button while running (useResults.cancel is already in the store) + register cmd-. globally in App.tsx.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Draft row double-commit: cmd-Enter twice inserts the row twice",
+   "detail": "browser.ts:230-252 commitDraft has no in-flight guard; draftRow stays set until the await resolves, so a second cmd-Enter (or Add-row button interplay) during the insert round-trip fires a second identical INSERT \u2192 duplicate row in the DB. Fix: committing flag in BrowseTab (set before await, cleared in finally); disable the draft band while committing.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Impossible to insert an empty string via draft row; cleared cell silently becomes DEFAULT",
+   "detail": "browser.ts:244 \u2014 commitDraft only includes a column when cell.text !== '' (or isNull). Typing then clearing a cell reverts it to DEFAULT/omitted with no state change visible beyond the placeholder; '' can never be inserted. Fix: track touched-ness explicitly (cell exists in draftRow = touched \u2192 send '' as empty string); add a per-cell 'default' reset affordance next to the \u2205 toggle so all three states (DEFAULT / NULL / '') are expressible and visible.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Table tab silently re-runs against a different connection after profile switch",
+   "detail": "browser.ts run() \u2192 results.run uses the *current* activeProfileId to ensureTabSession. A table tab opened on profile A, after switching the rail to profile B, will refresh/loadMore against B's database \u2014 wrong data or a confusing 'relation does not exist'. openTable dedupe (browser.ts:165-171) also matches schema+name across profiles, focusing the wrong profile's tab. Fix: stamp profileId on the table Tab; refuse/deactivate browse actions when activeProfileId differs; dedupe by (profileId, schema, name).",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "bug"
+  },
+  {
+   "title": "Stale TableInfo after DDL: filters, sort, draft row and Structure show the columns from tab-open time",
+   "detail": "tabs.ts:96-111 stores a TableInfo snapshot on the Tab; nothing updates it when useSchema refetches (DDL sniff, cmd-R). ALTER TABLE ADD COLUMN \u2192 data grid shows the new column (SELECT *) but the filter column dropdown, sort popover, draft band and Structure tab don't have it; dropped columns linger and generate erroring SQL. Fix: on schema snapshot update, re-resolve each table tab's TableInfo by (schema, name) via a subscribe in browser.ts (or resolve table lazily from the snapshot instead of storing it).",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "bug"
+  },
+  {
+   "title": "Filter operator set is thin: no NOT IN / NOT LIKE / BETWEEN / regex / contains shortcuts / IS TRUE-FALSE / jsonb-array ops",
+   "detail": "browser.ts:20-22 FILTER_OPS. Table-stakes vs TablePlus: NOT IN, NOT LIKE/ILIKE, BETWEEN, ~ / ~*, 'contains / starts with / ends with' (auto-wrap %\u2026% so users needn't type wildcards), IS TRUE/IS FALSE for bools, IS DISTINCT FROM, @> for jsonb/arrays, ANY(=) for arrays. Fix: extend FilterOp union + browseSql compile arms; group ops in the select by relevance.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Filters are type-blind: operators and value inputs ignore column type",
+   "detail": "TableBrowser.tsx:122-140 \u2014 ILIKE offered on integer columns (server error), no bool dropdown, no enum value list, no date input, everything quoted as a text literal (browser.ts:110 works via implicit cast but LIKE on non-text just errors). Fix: TableInfo.columns has type/type_oid \u2014 filter the op list per type class and swap the value editor (bool select, date input, enum options); optionally a distinct-values picker (SELECT DISTINCT col LIMIT 50).",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Filter column picker is a raw <select>: unusable on wide tables, no search",
+   "detail": "TableBrowser.tsx:115-121 \u2014 a 300-column table gives a native 300-option dropdown, while the sort popover right next to it already has fuzzy search. Fix: reuse the SortSelect fuzzy-popover pattern (or a shared searchable-combobox primitive) for the filter column field.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "No raw-WHERE escape hatch and no way to see/copy the generated SQL",
+   "detail": "The browse SQL (browser.ts:94-123) is invisible to the user \u2014 violates SQL-first/'never lies' spirit: you can't verify what WHERE was built (especially given the precedence bug), can't copy it, can't 'open as query tab' to go beyond the builder, and there's no raw-WHERE input mode like TablePlus's. Fix: 'Open in SQL editor' + 'Copy query' actions in the header/filter bar; a raw-WHERE mode toggle on the filter bar.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "No header-click sort, no sort indicator in the grid, single-column sort only",
+   "detail": "Grid.tsx:479 \u2014 clicking a column header starts a column drag-select; in browser mode it should sort server-side (toggle ASC\u2192DESC\u2192clear), with an arrow glyph in the header cell. Sort state is only visible in the small popover button (TableBrowser.tsx:238). Multi-column sort (shift-click) missing entirely; browser.ts:46 sort is a single {col,dir}. [known: v0.4 lists click-header sort for query results; the browser needs the server-side variant]",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Zero keyboard shortcuts on the whole surface",
+   "detail": "App.tsx:107-167 has no browser bindings: no refresh-data key (cmd-R is schema refresh), no Data\u2194Structure toggle (cmd-1/2 or ctrl-tab-like), no focus-filter-bar (cmd-F once find lands should coexist), no add-filter, no add-row (cmd-N in TablePlus), no cancel (cmd-.), Esc doesn't clear/blur a filter input. 'Keyboard-first' ideology \u2014 this surface is 100% mouse today. Fix: a small browser-scoped key handler in TableBrowser + entries in the keyboard map.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "Column widths reset on every refresh/filter/sort/page and on Data\u2194Structure toggle",
+   "detail": "Grid.tsx:124-133 \u2014 widthsInitialized resets whenever statement.columns changes identity, and every browse re-run produces a fresh statements array; toggling to Structure unmounts the Grid entirely. Hand-resized widths are lost multiple times a minute during normal browsing. Fix: key widths by (schema.table, column-name list) in a small store/appdb map [known: v0.5 persist-column-widths is the durable half; the in-session reset is fixable now by keying on column names not array identity].",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Draft-row autoFocus steals focus back to the first column when horizontal scroll remounts it",
+   "detail": "Grid.tsx:543 \u2014 autoFocus={vc.index === firstDraftCol} on a *virtualized* cell: scroll right to fill later columns of a wide table, the first draft cell unmounts; scroll back (or any remount) \u2192 autoFocus fires again and yanks focus mid-typing. Fix: focus once imperatively on draft open (ref + effect keyed on showDraft), never via autoFocus on virtual items.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Partitioned tables (kind 'p') get no Add-row and no ctid fallback consideration",
+   "detail": "TableBrowser.tsx:89 canInsert = kind === 'r' \u2014 but partitioned parents are routinely INSERTed into in PG; they're excluded. (Foreign tables 'f' are also often writable.) browser.ts:121 similarly only 'r' gets ctid. Fix: allow insert for kinds r+p (and f), keep ctid restricted to 'r' (ctid is not unique across partitions \u2014 correctly excluded).",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Every filter keystroke / scroll page writes browse SQL into query history",
+   "detail": "results.ts:277-284 history_add runs for browser-generated queries too \u2014 typing a 6-char filter value logs 6 SELECTs; an afternoon of browsing floods history/sqlite and buries real queries (compounds the [known] unbounded-history bug). Fix: pass a source flag through run() and skip (or tag) history for browser-originated SQL.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Structure tab is ~20% of table-stakes depth: no constraints, triggers, partitions, comments, DDL, size",
+   "detail": "StructureTab.tsx renders columns/FKs/indexes only. Missing vs TablePlus/DataGrip: UNIQUE/CHECK/EXCLUSION constraints, triggers, partition list + partition key, table/column comments, view/matview definition SQL (a view's Structure shows columns with no source \u2014 glaring), identity/generated-column info, FK ON DELETE/ON UPDATE actions, table size + row estimate, owner, RLS policies. Fix: extend introspection (or lazy per-table queries) + sections; DDL pane rides the [known] v0.4 get_ddl backend.",
+   "severity": "P1",
+   "effort": "L",
+   "kind": "feature"
+  },
+  {
+   "title": "No jump-to-row / go-to-end / page controls \u2014 the tail of a big table is unreachable",
+   "detail": "Only forward infinite scroll exists (browser.ts:196). Seeing the last rows of a 1M-row table means loading 1000 pages at O(n\u00b2) cost; no 'jump to row N', no last-page, no page-size control. Fix: with keyset pagination, add 'jump to end' (flip sort + fetch) and a go-to-offset field; meta-ArrowDown currently only jumps within loaded rows (Grid.tsx:297).",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "No duplicate-row action [known]",
+   "detail": "Row context menu (Grid.tsx:633-674) has Copy/Set NULL/Set EMPTY/Delete only. 'Duplicate row (minus PK, opens as draft for tweak-then-insert)' is a daily TablePlus flow; insertRow + draftRow machinery already exists in browser.ts \u2014 wire selection row values into beginDraft. [known: v0.45]",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "No context menus on browser chrome: title, filter rows, structure rows, sort button [known]",
+   "detail": "tb-title has no right-click (Copy name / Copy schema.name / Copy SELECT / Open in editor); Structure rows have no Copy column name / Copy type / Copy DDL / follow-FK; filter rows have no duplicate-filter/move. The grid cell menu also lacks 'Filter by this value' which is *the* browse affordance. [known: context-menu epic covers most \u2014 filter-row menu and 'Filter by value' wiring into useBrowser.setFilters are browser-specific work]",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "No export from the browser [known]",
+   "detail": "No 'Export table / current filter result to CSV/JSON/SQL' anywhere on the surface (header or context menu). [known: v0.4 export lands the engine; browser needs the entry point that exports the *filtered* set via the generated WHERE]",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Refresh button on Structure tab reruns the data query instead of re-introspecting",
+   "detail": "TableBrowser.tsx:51-58 \u2014 refresh always calls browser.refresh() (data SQL); on the Structure tab the visible content (snapshot-derived columns/FKs/indexes) doesn't change, so the button appears dead while silently burning a query. Fix: when tab==='structure', trigger useSchema.fetch for the active profile instead.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "IN value parsing: naive comma split",
+   "detail": "browser.ts:107 \u2014 values containing commas can't be expressed (no quoting), trailing comma yields an empty-string member, no NULL member support, whitespace-only members become ''. Fix: CSV-quote-aware split ('a,\"b,c\"'), drop empty trailing tokens, document in placeholder.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Filter rows keyed by array index \u2014 remove/reorder reuses component state",
+   "detail": "TableBrowser.tsx:97 key={i}: deleting filter 1 of 3 shifts state; controlled inputs mask most of it but focus/selection jump to the wrong row. Fix: stable id per filter (crypto.randomUUID on add).",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Incomplete filter (empty value) is silently inactive while looking enabled",
+   "detail": "browser.ts:101-102 \u2014 a filter with value='' is skipped from WHERE but its row still shows a checked checkbox; user believes 'col = <empty>' is filtering (and genuinely cannot express col = '' at all). Fix: dim/badge incomplete rows ('needs value'), and add an explicit empty-string token (e.g. '' literal or a \u2205/empty toggle) so = '' is expressible.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Sort popover paper cuts: row click doesn't close, stale search text, no arrow-key navigation, no per-row ASC/DESC",
+   "detail": "TableBrowser.tsx:216-233 pick() leaves the popover open (only Enter/backdrop close); query state persists across open/close (stale search on reopen \u2014 clear on open); no ArrowUp/Down + Enter through the list; choosing DESC requires two clicks. Fix: close on pick, reset query on open, roving keyboard focus, small asc/desc affordance per row.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Empty result set renders a blank grid with no explanation",
+   "detail": "ResultsPane.tsx:59-65 \u2014 0 rows with columns \u2192 headers over void; no 'No rows match your 2 filters \u2014 clear filters' vs 'Table is empty \u2014 add a row' distinction/CTA. Fix: empty-state overlay in browse mode aware of active filter count (useBrowser.filters).",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Browse SQL errors point at positions in SQL the user never wrote",
+   "detail": "A bad filter (e.g. LIKE on int, bad date literal) surfaces the raw PG error with a character position into the generated SELECT (ResultsPane.tsx:51-58). Fix: in browse mode, map the failing condition back to its filter row (mark it red) and show the generated SQL alongside.",
+   "severity": "P2",
+   "effort": "M",
+   "kind": "polish"
+  },
+  {
+   "title": "Grid scroll position leaks across table tabs and dies on Data\u2194Structure toggle",
+   "detail": "browser.ts:61 comment claims per-tab 'scroll' but nothing stores it: switching tab A\u2192B keeps A's scrollTop on B's data (same mounted Grid), and Data\u2192Structure\u2192Data resets to top (Grid unmounts). Fix: store scrollTop in BrowseTab, restore on activate; keep Grid mounted (hidden) or restore imperatively.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Inserted row invisible after commit \u2014 no locate/scroll-to or 'hidden by filter' notice",
+   "detail": "browser.ts:216 run() reloads; with a sort or filters the new row often isn't in the loaded window. TablePlus highlights/scrolls to the new row. Fix: after insert, RETURNING pk \u2192 find row in reloaded set \u2192 scroll+flash; else toast 'inserted (outside current filter/sort window)'.",
+   "severity": "P2",
+   "effort": "M",
+   "kind": "polish"
+  },
+  {
+   "title": "FK section: directions mixed, no schema qualification, not navigable",
+   "detail": "StructureTab.tsx:11-16 merges outgoing and incoming FKs into one unlabeled list rendered src\u2192dst; on self-referencing or cross-schema FKs you can't tell which side this table is, and rows aren't clickable to open the referenced table (openTable exists). Fix: two subsections ('References' / 'Referenced by'), schema-qualify foreign side, click\u2192openTable.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Draft-row \u2205 buttons sit in the Tab order between inputs",
+   "detail": "Grid.tsx:549-556 \u2014 tabbing across draft cells hits input, \u2205, input, \u2205\u2026; slows the type-Tab-type-Tab insert flow. Fix: tabIndex={-1} on the null toggles (keyboard NULL already exists as a pattern via cmd-shift-Backspace in CellEditor \u2014 mirror it here).",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "No table-kind badge or read-only explanation in the header",
+   "detail": "TableBrowser.tsx:36-39 \u2014 a view, matview, or foreign table looks identical to a table; the only tell is the missing Add-row button. 'Direct manipulation: read-only cells say why' \u2014 the surface should say 'view (read-only)' up front. Fix: kind chip next to tb-title from table.kind.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "No last-refreshed indicator or auto-refresh interval",
+   "detail": "After an hour in a tab the data is silently stale; TablePlus shows reload affordances and DataGrip offers auto-refresh (5s/30s/1m) for monitoring workflows. Fix: 'refreshed 4m ago' next to the refresh button + optional interval menu on long-press/right-click of refresh.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "loadMore double-fire race and boundary waste",
+   "detail": "Grid.tsx:437-445 unthrottled onScroll can call nearEndHook twice before results.running flips true \u2192 limit jumps 2 pages (browser.ts:196-204 guard reads stale running). Also when rowcount is an exact multiple of 1000, one extra full re-query returns the identical set before growth stops. Fix: in-flight flag in loadMore itself; compare returned rows < limit after each load.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "perf"
+  },
+  {
+   "title": "Unbounded LIMIT growth vs the 50k in-memory cap",
+   "detail": "browser.ts:202 limit grows forever (51k, 52k\u2026) while the frontend/backend cap sits at 50k \u2014 past the cap each scroll-triggered re-run re-streams 50k rows to add nothing visible (capped flag set), i.e., an expensive no-op loop at the bottom of big tables. Fix: stop growing at the cap and show 'loaded 50k of ~N \u2014 refine filters or export' (dissolves with keyset pagination).",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "perf"
+  }
+ ],
+ "perf_risks": [
+  "Full streaming SELECT per keystroke in filter value input, plus one per col/op dropdown change (browser.ts:186 setFilters\u2192run; TableBrowser.tsx:115-140) \u2014 network+server round-trip per char, each also resetting edits and refetching the editability map",
+  "Infinite scroll re-streams rows 0..N every page (browser.ts:196-204): O(n\u00b2) total rows transferred; page 500 of a 1M-row table re-decodes 500k rows; refresh() at a grown limit re-fetches the entire loaded window in one query",
+  "Unbounded in-memory row growth: limit += 1000 forever with no tie-in to the 50k cap; a bottom-scroll on a huge table pins memory and makes every subsequent re-run maximally expensive",
+  "Unthrottled grid onScroll near-end check (Grid.tsx:437-445) + stale-running race \u2192 duplicate loadMore growth in one frame",
+  "Every browse re-run triggers ensureMap (editability introspection IPC) and a history_add sqlite write (results.ts:169-284) \u2014 per keystroke when combined with the filter-input issue",
+  "estimateWidths + full widths-state reset on every new statements array (Grid.tsx:124-133) \u2192 whole-grid re-layout on each page/filter/sort/refresh",
+  "StructureTab filters the whole snapshot's foreign_keys and indexes arrays on every render with no memo (StructureTab.tsx:11-20) \u2014 O(all-indexes) per render; noticeable on 10k+-object schemas",
+  "Grid cells unmemoized (rows\u00d7cols re-render on any selection/store change) \u2014 [known, grid surface] but amplified in browser mode by 500-column SELECT * tables",
+  "FilterBar re-renders every filter row per keystroke (fine at n<10, but rebuilds the full 300-option column <select> per row per char on wide tables)"
+ ]
+}

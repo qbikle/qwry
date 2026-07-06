@@ -1,0 +1,251 @@
+{
+ "surface": "app-shell-keyboard",
+ "works": [
+  "Global shortcut set on window keydown (\u2318K palette, \u2318T/\u2318W/\u2318\u21e7T tabs, \u23181-9/0, Ctrl(+Shift)+Tab cycle, \u2318E explain, \u2318S dual save/commit-preview, \u2318I inspector, \u2318\u21e7D discard-all, \u2318R schema refresh, \u2318\u21e7F schema filter) with e.defaultPrevented dedupe against CodeMirror",
+  "Centralized escStack (src/app/overlay/escStack.ts): one capture-phase listener, topmost-overlay-only Esc + onKey \u2014 stacked modals can't both act on one keystroke",
+  "Shared overlay primitive (Overlay.tsx): portal-to-body, outside-click, viewport clamp with edge-flip, measured via offsetWidth so entrance springs don't skew position",
+  "ContextMenu primitive: one-level submenu, full arrow-key nav, disabled/danger/hint support, focusless mousedown to dodge WKWebView focus quirks",
+  "Palette (cmdk): actions, appearance, tables, connections, history with 120ms-debounced sqlite-backed search; \u2318K toggles open/closed",
+  "Theme engine: seed palettes \u2192 full CSS-var token set, custom themes synthesize the opposite light/dark variant, applied at module import (no flash), system-mode media-query listener",
+  "CloseGuard flow: every tab-close routes through request(); commit-and-close keeps tab open on commit failure",
+  "ConnToast: global connect-failure toast with profile name + Edit action, 8s auto-dismiss, selectable error text",
+  "noAutocorrect: stamps autocorrect/autocapitalize/spellcheck off on every current+future field (kills WKWebView 'Fifth' substitution in SQL fields)",
+  "Floating-card shell: vibrancy gutters, drag-region titlebar, animated breadcrumb, prod red strip, inspector width resize + persist (zustand persist), never-zero-tabs invariant, \u2318\u21e7T closed-tab stack (20 deep)"
+ ],
+ "gaps": [
+  {
+   "title": "Global shortcuts fire behind open modals; overlay z-index contradicts esc-stack order",
+   "detail": "App.tsx:104-179 window keydown handler has no overlay-awareness: with Palette/DangerModal/CloseGuardModal open, \u2318W/\u2318T/\u23181-9/Ctrl+Tab/\u2318E/\u2318S/\u2318R all act on the hidden surface (\u2318W while CloseGuardModal is open overwrites closeGuard.pending \u2014 the first close request is silently dropped, closeGuard.ts:22; \u2318S while CloseGuard is open stacks an EditPreview; \u2318E runs EXPLAIN behind a destructive confirm). Worse, \u2318K opens the Palette (pal-backdrop z-40, palette.css:4) UNDER a DangerModal (danger-backdrop z-50, app.css:29) \u2014 the palette is invisible but topmost in escStack, so it silently steals Esc and all keys. Fix: export depth() from escStack.ts and early-return in App's onKey when depth>0; make Overlay assign z-index from stack position instead of per-callsite CSS so paint order always matches key order.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "\u2318Enter/\u2318. only exist inside CodeMirror + no focus restore on overlay close \u2014 keyboard flow breaks constantly",
+   "detail": "Run and Cancel are bound only in the editor keymap (SqlEditor.tsx:51,63). Focus in the grid, sidebar, or on <body> (which is where focus lands after EVERY overlay closes \u2014 Modal never restores focus to the invoker, Overlay.tsx:41) means \u2318Enter does nothing and \u2014 critically \u2014 \u2318. cannot cancel a runaway query without first mousing into the editor. 'The grid is the app' but you can't re-run or cancel from the grid. Fix: add app-level fallback \u2318Enter\u2192run(editorRunText.current?.()) and \u2318.\u2192cancel in App.tsx onKey; store document.activeElement on pushOverlay and restore it on close; add \u2318L (or similar) to focus the editor. Cross-pane focus model is [known] v0.45 but the run/cancel fallback + focus restore is a 20-line fix needed now.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "App.tsx re-renders the entire shell tree on every editor keystroke",
+   "detail": "App.tsx:52 subscribes with s.tabs.find(t=>t.id===s.activeId) which returns a fresh object identity on every keystroke (tabs.ts:231-241 remaps the active tab on each setSql), so App \u2014 and with it TabBar, ResultsPane/grid subtree, SchemaTree, ConnectionRail \u2014 reconciles per keystroke. With a 50k-row/500-col result mounted this eats the <16ms typing budget. Same shape during inspector drag: inspectorWidth subscription (App.tsx:50) re-renders the tree per mousemove AND useInspector's persist middleware does a localStorage JSON write per mousemove (inspector.ts:40). Fix: select scalars only (activeId, kind, name, table ref) with useShallow; drive drag width via a CSS var on the DOM node + commit to store on mouseup.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "perf"
+  },
+  {
+   "title": "\u2318Q / window close silently loses work \u2014 no CloseRequested guard, no persist flush",
+   "detail": "Nothing handles window close: no onCloseRequested (src-tauri/src/lib.rs has no on_window_event) and no beforeunload. Quitting with uncommitted cell edits skips the CloseGuard entirely (it's only wired to tab-close, App.tsx:119-124) \u2014 staged edits vanish. Separately tabs persist() is debounced 600ms with no flush (tabs.ts:44-56): quit within 600ms of typing loses the last SQL edits. Directly violates 'never lose work'. Fix: getCurrentWindow().onCloseRequested \u2192 flush persist synchronously + if any byTab pending edits, preventDefault and show CloseGuard; also flush on visibilitychange/blur.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "correctness"
+  },
+  {
+   "title": "Palette caps tables at first 400 BEFORE filtering \u2014 most tables unfindable at scale",
+   "detail": "Palette.tsx:208 snapshot.tables.slice(0,400) then lets cmdk filter the rendered 400. On a 50-schema / 2000-table DB (user's crawler_data_production shape), any table past index 400 in snapshot order can never be found via \u2318K \u2014 the palette lies by showing 'No results' for a table that exists. Fix: shouldFilter={false} for the tables group, run your own fuzzy match over ALL tables against query, render top ~50; same pattern keeps per-keystroke cost bounded.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "No native macOS menu bar",
+   "detail": "[known \u2014 ROADMAP v0.5 P0] Zero menus registered in lib.rs; Tauri's default menu gives bare Quit/Copy/Paste only. No About, no Preferences item, no File/Edit/View/Window/Help, and every custom shortcut (\u2318T/\u2318W/\u2318K/\u2318E/\u2318I\u2026) is undiscoverable \u2014 the single biggest 'not a real Mac app' tell vs TablePlus. Native menu accelerators would also fix the e.key layout-dependence (App.tsx:107 matching breaks on non-Latin keyboard layouts). Build Menu in Rust with accelerators emitting events the frontend already handles.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "No Settings/Preferences surface (\u2318, does nothing)",
+   "detail": "[known \u2014 ROADMAP v0.5 P0] settings.ts only holds theme + fnInComplete (the latter reachable ONLY via editor right-click, SqlEditor.tsx:212). No home for row limit, statement timeout, NULL rendering, font size, confirm toggles, restore-tabs. Add a Settings modal on \u2318, + menu item, backed by the existing zustand persist store.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Palette command coverage ~30% of what the app can do",
+   "detail": "Palette.tsx has 8 actions. Missing: switch-to-open-tab (can't jump between 10 tabs by name \u2014 table-stakes), close tab, rename tab, disconnect/reconnect, cancel running query, commit pending edits / discard edits, open table structure (only browse), open saved query, copy connection URI, new connection, toggle explain, clear filters. Also no keyboard-shortcut cheat-sheet anywhere (\u2318/ overlay). [known partial \u2014 'Palette: more commands' is v0.5 P2, but tab-switching belongs now]. Each command is ~5 lines against existing store actions.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Table-tab close guard ignores the browser draft row",
+   "detail": "closeGuard.ts:15 counts only edits.byTab pending cell edits. A half-typed inline add-row (draftRow in useBrowser) is silently destroyed by \u2318W/tab close with no prompt \u2014 same 'never lose work' violation class the guard exists to prevent. Fix: pendingCount should also consult useBrowser draftRow for table tabs.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "\u2318\u21e7D discard-all has zero confirmation and no undo",
+   "detail": "App.tsx:161-166 discards every staged edit across the active tab instantly. One mistyped chord (\u2318D duplicate-line is adjacent muscle memory) silently destroys possibly dozens of careful cell edits; edit undo/redo is [known] v0.45 but until then this needs a confirm modal or an in-toast 'Undo' holding the discarded snapshot.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "CloseGuard: plain Enter = destructive discard",
+   "detail": "CloseGuardModal.tsx:27-34 maps Enter\u2192discard-and-close, \u2318Enter\u2192commit. Enter as the destructive default inverts Mac convention (Return = safe/primary); a user hammering Enter to dismiss what they think is a notice loses edits. Make Enter=Keep (or commit), require an explicit key (\u2318\u232b / click) for discard.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "No general toast system \u2014 non-connect errors are swallowed silently",
+   "detail": "Only connect failures surface (ConnToast). tabs_save/saved_upsert/history_clear/tabs persist are all fire-and-forget `void invoke` (tabs.ts:54, Palette.tsx:150) \u2014 if the appdb write fails, tabs/saved queries are lost on quit with zero warning. Single-slot error state: a second failure overwrites the first; ensureTabSession sets error without errorProfileId (connections.ts:171) so the toast loses its title context and Edit button. Fix: small toast queue store (info/warn/error), catch-path writes from every IPC call, hover-pauses the 8s timer, Esc dismisses (join escStack).",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Missing standard macOS tab shortcuts",
+   "detail": "App.tsx:132-140: only Ctrl+Tab and \u23181-9/0 exist. Missing \u2318\u21e7[ / \u2318\u21e7] and \u2318\u2325\u2190/\u2192 (the shortcuts Mac users actually use \u2014 Safari/Chrome/TablePlus/iTerm all honor them); \u23180 goes to tab 10 instead of the Mac convention \u23189 = last tab; Ctrl+Tab is positional, not MRU. Also no 'move tab left/right' (\u2318\u21e7\u2190/\u2192 or drag already exists?).",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "\u2318\u21e7F is double-booked: schema filter today, SQL-format in the v0.5 plan",
+   "detail": "App.tsx:141-144 binds \u2318\u21e7F to focus #schema-filter (and silently no-ops on the dashboard or when the element is missing). ROADMAP_v0.5.md's v0.5 gate says '\u2318\u21e7F formats SQL'. Resolve now before muscle memory sets: convention is \u2318\u21e7F = format (VS Code), sidebar filter should be \u2318\u21e7E or via \u2318K. Also give the no-op case feedback.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Window size/position not persisted",
+   "detail": "[known \u2014 v0.5 P1] tauri.conf.json hardcodes 1240\u00d7800; every launch forgets size/position/display. Add tauri-plugin-window-state (2 lines) \u2014 cheap, daily-felt.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "Context menu primitive gaps: no max-height, no type-ahead, no checkbox items, no re-open on second right-click",
+   "detail": "contextmenu.css has no max-height/overflow-y on .ctx-menu \u2014 a long menu (future schema-tree menus on 50-schema DBs) clamps to the top margin and its tail is unreachable off-screen. No type-ahead (typing 'c' should jump to Copy \u2014 native menus do), no Home/End, no checked/radio MenuNode kind (SqlEditor.tsx:212 fakes a toggle with 'ON/OFF' label text), right-click at a new spot while a menu is open just closes it (AnchoredOverlay layer swallows the event \u2014 native re-opens at the new point; forward contextmenu from the layer), and no re-clamp on window resize [known followup in ROADMAP].",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "polish"
+  },
+  {
+   "title": "Modal accessibility/focus basics absent",
+   "detail": "Overlay.tsx Modal: no role=dialog/aria-modal, no focus trap (Tab walks into the obscured background \u2014 you can tab to and activate hidden buttons behind a DangerModal), no autofocus-first-focusable contract, no focus return on close. ContextMenu items are bare divs (no role=menu/menuitem, invisible to VoiceOver). Full screen-reader support is out-of-charter, but trap+restore+roles is ~40 lines in the shared primitive and fixes real keyboard bugs.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "polish"
+  },
+  {
+   "title": "Escape during IME composition closes the overlay",
+   "detail": "escStack.ts:18-28 doesn't check e.isComposing/keyCode 229. Typing Japanese/Chinese/Korean in the palette input or tab rename: Esc pressed to cancel the composition instead nukes the whole overlay (and preventDefault breaks the composition cancel). Guard: if (e.isComposing) return.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Window title / breadcrumb dead ends",
+   "detail": "index.html title 'qwry' is never updated \u2014 \u2318Tab switcher, Mission Control, and screen-recording labels never show which connection/db you're on (dangerous when prod + staging windows look identical someday; the in-app crumb does but the OS surfaces don't). Breadcrumb is pointer-events:none (v2.css:28): clicking connection \u21d2 dashboard, db \u21d2 DbSwitcher, table \u21d2 structure are all expected affordances. Sync document.title + window.setTitle from crumbs; make crumb segments clickable.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Palette 'Run query' ignores the editor selection",
+   "detail": "Palette.tsx:99 calls useResults.run() (whole buffer) while \u2318\u21b5 and the toolbar honor the selection via editorRunText (SqlEditor.tsx:33). Selecting one statement then running via palette executes EVERYTHING \u2014 on prod that's a correctness/safety divergence between two 'run' affordances. Route through editorRunText.current?.().",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Palette items not state-aware; 'Clear history (all)' scope lie",
+   "detail": "Run/Refresh schema/Save query/Clear history render enabled with no connection or empty tab \u2014 selecting them silently no-ops (Palette.tsx:99-172). Items need disabled state or hiding. 'Clear history (all)' only clears the ACTIVE profile [known \u2014 ROADMAP v0.35]. Also add per-item \u2318-hints consistently (Explain, Discard have none anywhere).",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Corrupt stored custom theme bricks the whole UI at startup",
+   "detail": "theme.ts hexToRgb/hexToHsl parseInt NaN on a malformed hex (hand-edited or corrupted qwry.settings localStorage, or a future schema change) \u2192 every derived CSS var becomes invalid \u2192 app paints with no backgrounds/text colors, at import time (settings.ts:101) before any UI exists to fix it. Validate palette shape on rehydrate; on any NaN fall back to DEFAULT_PALETTE.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "No UI zoom (\u2318+ / \u2318\u2212 / \u23180)",
+   "detail": "Every Mac app and every DB client has view zoom; qwry has none and no font-size pref (Settings gap). WKWebView zoom or a root font-size var scaled by shortcut; persists in settings. Matters daily on externals/projectors.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "noAutocorrect MutationObserver scans every DOM insertion \u2014 taxes grid scroll",
+   "detail": "noAutocorrect.ts:29-39 runs matches()+querySelectorAll('input, textarea, [contenteditable]') on every added element. The virtualized grid mounts/unmounts row nodes continuously during 60fps scroll, so this observer does per-frame selector work over row subtrees that contain no inputs. Fix: set the attributes in React (a shared <Input> or via editing-cell mount) and scope/disconnect the observer, or observe only shell containers.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "perf"
+  },
+  {
+   "title": "\u2318W on the dashboard closes invisible work-view tabs",
+   "detail": "App.tsx:119-124 runs closeGuard.request regardless of homeMode \u2014 on the connections dashboard \u2318W closes tabs you cannot see (recoverable via closedStack only if sql non-empty; table tabs are not remembered at all, tabs.ts:118-121). On home, \u2318W should no-op or close the window per Mac convention.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "session-closed listener race / StrictMode leak",
+   "detail": "App.tsx:95-102: if the effect cleans up before the dynamic import + listen() promise resolves, unlistenClosed is still undefined \u2192 listener leaks; under React StrictMode dev double-mount you get duplicate markDisconnected firings. Track a cancelled flag and unlisten inside the .then when cancelled.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Inspector resize: no pointer capture, no window-relative clamp",
+   "detail": "App.tsx:76-88 uses window mousemove/mouseup \u2014 releasing the button outside the window (fast drag past screen edge) can strand 'resizing'. setWidth clamps 220-640 absolute (inspector.ts:40) but not against window width: 640 inspector + 248 sidebar at the 800px min window crushes the main card to ~0. Use setPointerCapture and clamp to a fraction of innerWidth.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "ThemePicker keyboard + affordance gaps",
+   "detail": "ThemePicker.tsx: swatch grid has no arrow-key navigation; the edit/duplicate affordance is a nested <span onClick> inside a <button> (ThemePicker.tsx:123-133) \u2014 not keyboard reachable and invalid interactive nesting; Delete theme is instant with no confirm/undo; draft color changes don't live-preview (must Save to see); no theme export/import. Also the titlebar theme button (App.tsx:200) has no aria-label and no shortcut.",
+   "severity": "P2",
+   "effort": "M",
+   "kind": "polish"
+  },
+  {
+   "title": "DangerModal lacks keyboard confirm and severity tiers",
+   "detail": "DangerModal.tsx: 'Run anyway' has no \u2318Enter binding (Modal onKey unused) \u2014 mouse-only confirm in a keyboard-first app; no typed-confirmation tier for the TRUNCATE/DROP class coming in v0.4; Enter activates whatever's focused with no visual default-button ring beyond autoFocus on Cancel.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Empty states are dead ends",
+   "detail": "main-empty 'Pick a connection from the rail.' and sb-empty 'Select a connection' (App.tsx:227,249) have no clickable CTA, no \u2318K hint, no recent-connections shortcut. First-run and post-disconnect moments teach nothing about the keyboard-first model.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "prefers-reduced-motion ignored",
+   "detail": "[known \u2014 ROADMAP perf track] springs.ts presets applied unconditionally; no matchMedia('(prefers-reduced-motion: reduce)') guard. Also panelIn replays on every home\u2194work swap [known]. Accessibility + feel.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Shortcut matching is keyboard-layout dependent",
+   "detail": "App.tsx:107+ matches e.key.toLowerCase() \u2014 on Cyrillic/Hebrew/Greek layouts e.key is the localized char so \u2318T/\u2318W/\u2318K silently die. Use e.code (KeyT) for letter chords, or let the native menu bar (P0 item) own accelerators which macOS localizes correctly.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "bug"
+  }
+ ],
+ "perf_risks": [
+  "App.tsx broad zustand selectors (activeTab object identity, inspectorWidth) re-render the ENTIRE shell tree \u2014 TabBar, grid subtree, sidebar \u2014 on every editor keystroke and every inspector-drag mousemove; the single biggest shell-side threat to the <16ms budget with a large grid mounted (App.tsx:50-52 + tabs.ts:231-241)",
+  "Inspector drag writes localStorage synchronously per mousemove via zustand persist (inspector.ts:40 setWidth \u2192 persist middleware serializes on every set)",
+  "Palette renders + cmdk-scores up to 400 table Command.Items (plus history/actions) on every keystroke; unbounded if the 400-slice is removed naively \u2014 needs pre-filter + capped render (Palette.tsx:208); history invoke fires every 120ms pause while typing",
+  "applyTheme does ~40 individual style.setProperty calls per palette/mode change [known \u2014 batch into one cssText write], and the editor fully remounts on theme change [known], so theme switching double-pays",
+  "noAutocorrect MutationObserver runs matches()+querySelectorAll over every inserted subtree \u2014 virtualized grid row churn during 60fps scroll makes this per-frame selector work (noAutocorrect.ts:29-39)",
+  "tabs persist() re-serializes EVERY query tab's full SQL over IPC on each 600ms pause \u2014 grows linearly with tab count \u00d7 SQL size (tabs.ts:44-56); closedStack (20 full SQL bodies) lives only in memory but rides every set",
+  "escStack is O(1) and capture-phase \u2014 good; but every AnchoredOverlay/Modal mount pays a portal + layout-measure (useClampedPosition useLayoutEffect) which re-runs on point identity change \u2014 fine now, watch if menus become hover-follow",
+  "motion springs on panelIn replay on every home\u2194work layout swap re-animating the whole main card [known \u2014 ROADMAP perf track]"
+ ]
+}
