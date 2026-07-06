@@ -1,0 +1,265 @@
+{
+ "surface": "connections",
+ "works": [
+  "Profiles persisted in SQLite as JSON with drag-reorder (rail) persisted via debounced set_profile_order; passwords keychain-only, carried across Duplicate",
+  "ConnectionEditor: avatar color/glyph customization, SSL mode select, prod flag, SSH tunnel block, \u2318S save / \u2318\u21b5 save+connect / Esc cancel, armed-click delete, inline save error",
+  "Connect lifecycle dots (disconnected/connecting/connected) on rail + dashboard; failure toast names the profile and offers Edit; success auto-enters work view",
+  "Per-tab PG sessions isolate transactions; ensureTabSession transparently reconnects a dropped primary on next run; backend session-closed event flips the dot",
+  "connSig-based invalidation: cosmetic edits (name/color/glyph) leave live conns alone; connection-field edits close sessions and drop the tunnel (awaited, so Save&Connect rebuilds correctly)",
+  "SSH tunnels via system ssh -N -L (honors ~/.ssh/config, ProxyJump, aliases), ServerAlive keepalives, per-profile cache keyed by spec + liveness probe, stderr surfaced on failed start, race-safe ensure_tunnel",
+  "TLS prefer/require/disable with psql-style no-verify; server-sent auth/db errors are surfaced instead of being masked by the plain-retry fallback",
+  "Shared right-click menu on rail + dashboard card: Open/Connect/Disconnect/Reconnect/Edit/Duplicate/Delete (DangerModal-confirmed)",
+  "Dashboard recent-queries strip; DbSwitcher lists pg_database and reuses an existing sibling profile before cloning",
+  "PROD badge on card/rail + full-width prod strip while a prod connection is active"
+ ],
+ "gaps": [
+  {
+   "title": "Save&Connect shows a blank new-connection form during and after connect",
+   "detail": "saveProfile sets editing:null (connections.ts:89) while homeMode stays 'edit'; Home.tsx:12 then renders ConnectionEditor with blankProfile(). So for the whole connect duration (seconds through a tunnel) the user stares at an empty New Connection form, and if connect FAILS (connect() swallows errors, connections.ts:145-151) they are stranded on that blank form \u2014 the profile they just edited is gone from view; ConnectionEditor's saving flag also never resets (save() at ConnectionEditor.tsx:29-40 never throws on connect failure). Fix: keep editing set until connect resolves; on failure re-open the editor on the saved profile with the error inline, not just a transient toast.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "bug"
+  },
+  {
+   "title": "Recent-strip click on an already-connected profile destroys all tab sessions/open transactions",
+   "detail": "Dashboard.tsx:49-52 openRecent calls connect(row.profile_id) unconditionally; connect() (connections.ts:118-130) rebuilds the primary and disconnects every per-tab session for that profile \u2014 silently rolling back any open transactions. Fix: reuse openConn's connected-check (setActive+setHome when green). Also guard the whole invalidate path: if txTabs has entries for the profile, confirm before killing sessions. ([known] the separate deleted-profile-guard for openRecent is in the roadmap; this connected-profile case is not.)",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "One dead tab session marks the whole profile disconnected AND leaks live backend sessions",
+   "detail": "App.tsx:97 ignores payload.session_id; markDisconnected (connections.ts:196-214) drops the primary and every tab-session map entry for the profile WITHOUT calling ipc.disconnect on them \u2014 those PgSessions stay in AppState.sessions (state.rs:12) forever holding sockets/memory. It also lies: kill one tab's backend pid (pg_terminate_backend) and the dot flips to disconnected while the primary and other tabs are actually alive. Fix: handle per-session \u2014 disconnect+remove only the dead session's key; flip the dot only when the primary's session_id died; ipc.disconnect every sid removed frontend-side.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "correctness"
+  },
+  {
+   "title": "is_prod is cosmetic \u2014 no enforced read-only",
+   "detail": "[known, v0.5] Nothing prevents writes on a PROD-flagged connection; the badge is decoration. Shape: on connect (primary + every tab session) for is_prod profiles run SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY (or default_transaction_read_only=on); persistent READ-ONLY chip in the titlebar with a per-session unlock behind confirmDanger; grid editability map should return reason 'prod read-only' so read-only cells say why (direct-manipulation ideology); DbSwitcher clones and Duplicate must inherit the flag (they do today via clone).",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Keychain failure is silently converted to an empty password \u2014 app lies about why connect failed",
+   "detail": "commands.rs:94 get_password(...).unwrap_or_default(): a locked keychain / denied ACL (common after dev rebuilds re-sign the binary) becomes password='' and the user sees 'password authentication failed for user X', pointing them at the wrong problem. secrets.rs:20-24 also wraps NoEntry and real errors identically. Fix: distinguish keyring::Error::NoEntry (legit no-password profiles) from other errors; surface 'Keychain access denied \u2014 unlock your keychain / re-grant access' as the connect error.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Disconnect / Reconnect / connection-field save silently roll back open transactions",
+   "detail": "connectionMenu.ts:23-31 and saveProfile's invalidateProfile (connections.ts:87-91) close every session for the profile with zero warning even when txTabs shows open explicit transactions. Violates never-lose-work. Fix: before invalidating, scan txTabs for `${profileId}::` keys; if any, confirmDanger('Tab \"N\" has an open transaction \u2014 disconnect and roll back?').",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Dead tunnel mid-query = hung query AND hung cancel",
+   "detail": "[known, v0.5 graceful-drop/force-kill] No statement_timeout or TCP keepalive is set at connect (only application_name, mod.rs:32-43); a bastion drop mid-query hangs until kernel TCP timeout (minutes). Worse: \u2318. cancel (mod.rs:201-208) opens a NEW connection via the token \u2014 through the same dead forward \u2014 so cancel hangs too. Fix: connect-time SET statement_timeout/idle_in_transaction_session_timeout + socket keepalives, plus a force-disconnect command that aborts conn_handle and removes the session immediately without touching the network.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "bug"
+  },
+  {
+   "title": "Zero keyboard path to connect \u2014 dashboard/rail are 100% mouse",
+   "detail": "Keyboard-first is charter, yet: no arrow/Enter navigation or type-ahead filter on the dashboard grid (Dashboard.tsx), no shortcut to focus the rail or connect to profile N, no \u2318N for New Connection, and the palette has no connect/disconnect/switch-connection verbs. Fix: roving tabindex on dash-grid (arrows move, Enter connects, E edits, \u232b deletes), '/' or just-type filters cards, \u2318N opens blank editor, palette gains 'Connect to\u2026' fuzzy list.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "TLS outcome invisible \u2014 sslmode=prefer can silently downgrade to plaintext",
+   "detail": "mod.rs:100-119 falls back to NoTls on any TLS transport failure and the resulting TlsChoice is never surfaced to the UI. A user who believes they're encrypted may not be \u2014 a lie by omission. Fix: return tls choice in connect result; lock / open-lock indicator in titlebar + connection-info popover; one-time warning toast when prefer downgrades to plain against a non-localhost, non-tunnel host. [known partial: v0.5 server/connection info]",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Deleting a connected profile leaks its primary session and ssh tunnel",
+   "detail": "connections.ts:94-105 deleteProfile closes tab sessions only \u2014 sessions[profileId] (primary) is never disconnected and stays in the zustand map + backend AppState.sessions; commands.rs:37 profile_delete never touches sessions or tunnels, so the ssh child lives until app quit. Fix: deleteProfile calls invalidateProfile(id) first (closes primary + tabs + drops tunnel), then profile_delete; also purge connState/activeProfileId entries for the deleted id.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "connect() is re-entrant \u2014 double-click while connecting spawns duplicate primaries",
+   "detail": "Dashboard.tsx:40-47 and ConnectionRail.tsx:93-100 call connect() whenever state !== 'connected'; connections.ts:111 has no guard for connState==='connecting', so an impatient second click during a slow tunnel start runs two parallel connects: two tunnels raced (backend dedupes), two primary sessions \u2014 the loser leaks in AppState.sessions. Fix: early-return (or turn the click into cancel) when already connecting.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "ssh stderr never drained after startup \u2014 pipe backpressure can wedge a long-lived tunnel",
+   "detail": "tunnel.rs:101-131 pipes stderr but only reads it on the failure path. A chatty ssh (banners, 'Permanently added\u2026', keepalive warnings, MOTD) writing >64KB over a days-long tunnel fills the pipe and blocks the ssh process \u2192 forwarding stalls with no error anywhere. Fix: after wait_ready succeeds, take stderr and spawn a drain task (log lines, keep last N for diagnostics).",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Connection death is silent \u2014 dot flips, nobody told",
+   "detail": "App.tsx:97 markDisconnected just changes the dot; the user discovers the drop on their next failed/laggy run. Table stakes: a non-error toast 'Lost connection to <name> \u2014 will reconnect on next query [Reconnect now]', and the sidebar/work view should show a subtle disconnected banner when the active profile is down. Fix: emit toast from the session-closed listener when the primary dies.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "Connect-error surfacing too weak: 8s auto-dismiss, one line, no copy, no persistent error state",
+   "detail": "ConnToast.tsx:18 auto-dismisses after 8s \u2014 multi-line ssh/host-key errors are unreadable in time and unrecoverable after; no copy-error button; connState has no 'error' value so a failed card shows the same gray dot as never-tried, with the last error stored nowhere (connections.ts:5). Fix: add connState 'error' + lastError per profile; red dot + card tooltip/click shows full error with Copy; toast persists on hover and for error-class messages.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "No Test Connection button",
+   "detail": "[known, v0.5] Only way to validate is Save&Connect, which commits the profile and bounces surfaces. Shape: backend test_connection(profile, password) that builds an ephemeral tunnel (not cached), connects, runs SELECT version(), returns {latency_ms, server_version, tls_used, via_tunnel}; button in ConnectionEditor works off the CURRENT unsaved form values + password field; result shown inline (green check w/ 'PG 16.3 \u00b7 42ms \u00b7 TLS' or full error).",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "No Copy URI / no paste-URI-to-create",
+   "detail": "[known, v0.3] connectionMenu.ts:1-4 explicitly defers it. Shape: Copy URI \u25b8 (redacted default / with password behind confirm) building postgres://user@host:port/db?sslmode=\u2026, plus Copy psql command; paste detection in ConnectionEditor (and on the dashboard: \u2318V with a postgres:// string on clipboard offers 'New connection from clipboard') parsing both URI and key=value conninfo forms, incl. percent-encoded unicode passwords.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "One corrupt profile row hides ALL connections",
+   "detail": "appdb.rs:97-99 list_profiles returns Err on the first row whose JSON fails to parse (e.g. after a field-type change or manual sqlite edit), and App.tsx:91 loadProfiles() has no .catch \u2014 result: silently empty dashboard, every connection 'gone'. Fix: skip-and-log unparseable rows (keep them in the table for recovery), and surface a 'N profiles could not be loaded' notice; add .catch + retry UI on loadProfiles.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Editor Esc/Cancel discards a dirty form with no confirmation",
+   "detail": "ConnectionEditor.tsx:47-51: fill in 8 fields, brush Esc (muscle memory from closing overlays) \u2192 everything gone. Violates never-lose-work. Fix: track dirty (form !== original profile || password entered); Esc/Cancel on dirty asks 'Discard changes?'; clean form closes instantly.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "ensureTabSession races create duplicate sessions; its error toast loses profile context",
+   "detail": "connections.ts:157-174: two concurrent callers (run + explain + DbSwitcher all use it) both pass the `existing` check and both ipc.connect \u2014 the second write clobbers the first sid, which leaks in the backend. Also the catch sets {error} without errorProfileId, so the toast reads 'Couldn't connect' with no name and no Edit action. Fix: per-key in-flight promise dedup; set errorProfileId: profileId in the catch.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Worst-case ~30s 'connecting' with no way to abort",
+   "detail": "Tunnel wait budget 10s (tunnel.rs:137) + TLS attempt 10s + plain retry 10s (mod.rs:41 connect_timeout, :100-119 two attempts under sslmode=prefer) stack sequentially; the pulsing dot offers no cancel. Fix: single shared deadline across attempts; skip the plain retry when the TLS failure was a timeout/unreachable (transport-class); clicking a connecting card cancels (abort the connect future backend-side).",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "bug"
+  },
+  {
+   "title": "Password field affordances missing: reveal, clear, forget",
+   "detail": "ConnectionEditor.tsx:149-157: no show-password eye toggle while typing; no way to REMOVE a stored password (empty input means '(unchanged)' \u2014 switching a profile to trust/pgpass auth is impossible without deleting the profile); no 'Forget password' in the connection menu. Fix: eye toggle; explicit 'clear stored password' x-button when a keychain entry exists (profile_save gains password: null|''|undefined tri-state); menu item Forget password.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "Connection context menu is thin vs mature clients",
+   "detail": "connectionMenu.ts has 7 items; missing: Copy URI \u25b8 [known], Copy host:port, Copy psql command, Set color \u25b8 swatch row [known, roadmap lists it], Test connection, Forget password, Open in new tab, 'Show connection info'; no keyboard shortcut hints rendered on any item; no Connect-all/Disconnect-all anywhere. Fix: extend the shared menu (both rail + dashboard get it for free) once Copy-URI lands.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "DbSwitcher clones pollute the rail/dashboard permanently",
+   "detail": "Every database you peek at via the switcher becomes a persistent profile 'base \u00b7 db' (commands.rs:59-80, DbSwitcher.tsx:73-76) \u2014 a 40-database server turns the rail into soup with no cleanup path. Fix: mark clones (parent_id field) and group them under the parent on rail/dashboard (expandable), or make DB-switch open a per-session connection without persisting a profile until the user pins it; add bulk-delete of clones.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Host-key UX: silent TOFU on first connect, raw wall of text on rotation",
+   "detail": "tunnel.rs:78 StrictHostKeyChecking=accept-new silently trusts unknown hosts (MITM-accepting by design \u2014 fine, but undisclosed), and when a bastion's key rotates, ssh fails and the toast gets the multi-line 'REMOTE HOST IDENTIFICATION HAS CHANGED' banner clipped into one line. Fix: pattern-match that stderr; show a targeted dialog explaining key rotation with a copyable `ssh-keygen -R <host>` remediation (never auto-run it).",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "Port inputs snap to defaults mid-edit and accept garbage",
+   "detail": "ConnectionEditor.tsx:138 (`Number(v) || 5432`) and :201 (`|| 22`): clearing the field to retype instantly rewrites 5432/22 under the cursor; negative/float/65536+ values pass the frontend and die at serde u16 deserialization as a cryptic IPC error. Fix: string-buffered input, validate/clamp 1\u201365535 on blur and in `valid`.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "No trimming/validation of host, dbname, user, ssh fields",
+   "detail": "ConnectionEditor.tsx:42 accepts whitespace-only dbname; a trailing space in host (paste artifact) yields a DNS failure indistinguishable from a real outage; connSig (connections.ts:59) compares raw values so ' host' vs 'host' also counts as a repoint. Fix: trim all connection fields on save; treat whitespace-only as empty in `valid`.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Duplicate creates a same-named twin and drops you nowhere",
+   "detail": "connectionMenu.ts:39-47 Duplicate \u2192 clone_connection(p.id, p.dbname) yields name 'base \u00b7 samedb' (commands.rs:70-74) \u2014 two visually identical cards with the same name/db and no editor opened on the copy. Fix: 'name (copy)' naming when dbname is unchanged; select the clone and open the editor on it.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Two different delete confirmations; no warning when deleting a live connection",
+   "detail": "Editor uses a 2s armed double-click (ConnectionEditor.tsx:222-231) while the context menu uses DangerModal (connectionMenu.ts:52-62); neither mentions the profile is currently CONNECTED (and deletion also orphans its keychain entry only after the fact). Fix: unify on DangerModal; body notes 'currently connected \u2014 sessions will be closed' when applicable.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Blocking keychain (and rusqlite) calls run on tokio runtime threads",
+   "detail": "commands.rs:94 secrets::get_password inside async connect: macOS Keychain can throw a user-interaction prompt and park that runtime worker for minutes, stalling other IPC. Fix: tauri::async_runtime::spawn_blocking around keyring ops (and audit appdb Mutex<Connection> use in async commands).",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "perf"
+  },
+  {
+   "title": "Empty dashboard has no first-run state",
+   "detail": "With zero profiles Dashboard.tsx:60 renders only the small 'New connection' card. First-run should be a hero empty state: 'Add your first connection (\u2318N)' + 'Paste a postgres:// URI' + note that passwords live in the Keychain. Cheap trust-builder.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "SSL select overpromises \u2014 'require' does not verify certificates; no verify-ca/verify-full",
+   "detail": "[known deferred] tls.rs is deliberately no-verify (psql require semantics) but the editor (ConnectionEditor.tsx:160-164) just says 'require'. Minimum honesty fix now: label it 'require (encrypt, no verify)' + a help hint; verify-full/client-certs stay deferred. Also missing an ssh identity-file picker button (raw text path today, ConnectionEditor.tsx:210).",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Rail reorder debounce clobbers concurrent profile updates",
+   "detail": "ConnectionRail.tsx:58-65: 350ms after a drag, useConnections.setState({profiles: items}) replaces the store list wholesale \u2014 a save/clone/delete that landed during the window is reverted in-memory until next loadProfiles. Fix: merge by id (order from items, objects from current store) before setState.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "No visibility or ceiling on real PG connection count",
+   "detail": "N tabs = N+1 server connections per profile (state.rs sessions; ensureTabSession per tab), invisible to the user \u2014 on a small RDS (max_connections\u2248100) or behind pgbouncer session-mode this exhausts slots with a confusing server-side error. Fix: session count in connection info/menu ('4 sessions'); reap tab sessions idle >X min (recreate transparently via ensureTabSession); optional per-profile cap.",
+   "severity": "P2",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "No disconnect-all / connect-on-launch / auto-reconnect preferences",
+   "detail": "No way to close everything before sleep/VPN switch (menu or palette 'Disconnect all'), no per-profile 'connect at launch', and reconnect-after-drop is only implicit-on-next-run with no opt-in eager retry/backoff. All are daily-driver conveniences in TablePlus/DataGrip; wire as palette verbs + profile flags once Settings (v0.5) exists.",
+   "severity": "P2",
+   "effort": "M",
+   "kind": "feature"
+  }
+ ],
+ "perf_risks": [
+  "Tunnel connects pay fixed latency quanta: wait_ready polls at 200ms granularity (tunnel.rs:137-146) so every tunnel start rounds up to the next 200ms; ensure_tunnel's is_alive probe burns up to 800ms deciding a dead tunnel before rebuilding (state.rs:38, tunnel.rs:56-64). Poll at ~20ms with backoff; on dead-probe start rebuilding immediately.",
+  "Every new tab session is a full TCP+TLS+auth handshake through the tunnel (100\u2013300ms on a real bastion), and revival after a drop is sequential \u2014 primary connect THEN tab connect (connections.ts:161-168) \u2014 doubling perceived first-run latency. Consider a pre-warmed spare session per connected profile.",
+  "sslmode=prefer against an unreachable/blackholed host stacks two 10s connect_timeout attempts (mod.rs:100-119) \u2192 20s frozen 'connecting'; plus 10s tunnel wait ahead of it. Share one deadline.",
+  "markDisconnected leaks PgSession objects in backend AppState.sessions (never ipc.disconnect'ed) \u2014 unbounded map growth across a day of flaky-network drops; each leaked session also keeps its aborted-task/cancel-token memory.",
+  "Blocking keyring and rusqlite calls execute on tokio runtime threads (commands.rs) \u2014 a Keychain ACL prompt can stall unrelated IPC (query results, introspection) behind it.",
+  "One ssh child per profile with no ControlMaster multiplexing: several profiles through the same bastion = N ssh processes and N full ssh handshakes; a ControlMaster/ControlPersist socket would make second tunnels near-instant.",
+  "connect command does list_profiles() (full table scan + JSON parse of every profile) per connect/tab-session (commands.rs:88-93) \u2014 trivial at 10 profiles, but it's per-tab-session; a get_profile(id) lookup is the right shape.",
+  "Frontend session/tab maps are rebuilt by full Object.entries iteration on every connect/close/disconnect (connections.ts:121-135, 182-214) \u2014 fine at current scale, but each call is an O(tabs) new-object store write that re-renders all subscribers; keep an eye on it once tab counts grow."
+ ]
+}

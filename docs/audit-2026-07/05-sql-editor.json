@@ -1,0 +1,244 @@
+{
+ "surface": "sql-editor",
+ "works": [
+  "Custom zero-IPC completion engine: clause-aware (from/join/on/into/update/select), alias-scoped columns, FK-driven one-pick JOIN...ON suggestions, schema-qualified tables, usage-frequency ranking, snippets + keyword fallback, 3.5k functions gated behind ^Space/settings toggle",
+  "Run flow: Mod-Enter runs selection-else-buffer with toolbar parity via editorRunText; Mod-. cancel; Mod-E EXPLAIN ANALYZE plan tree with executes-the-statement confirm on mutations; Mod-Shift-U fuzzy function palette",
+  "PG error position mapped to an inline squiggle + lint gutter (whole-buffer runs, single simple_query so positions are globally correct)",
+  "Multi-tab editor: appdb-persisted query tabs, per-tab DB sessions + open-transaction dot, rename/duplicate/close-others/right/all, Cmd-Shift-T reopen stack, tab context menu with Copy SQL",
+  "Safety net: UPDATE/DELETE-without-WHERE confirm before run; danger modal reused by EXPLAIN",
+  "Streaming results decoupled from typing (rAF-batched row flushes, per-tab byTab isolation); DDL sniff auto-refreshes schema snapshot; successful runs recorded to history",
+  "Token-driven CM theme follows light/dark palette; bracket matching, close-brackets, Mod-/ comment (via defaultKeymap + lang-sql commentTokens), undo/redo"
+ ],
+ "gaps": [
+  {
+   "title": "Cross-tab undo corrupts another tab's SQL",
+   "detail": "One shared EditorView/EditorState + one shared undo history serves all tabs. Tab switch is applied as a plain whole-doc replace (SqlEditor.tsx:152-159 dispatch without Transaction.addToHistory.of(false)), so it lands ON the undo stack. Repro: type in tab A, switch to tab B, hit Cmd-Z -> tab B's buffer becomes tab A's SQL, updateListener (SqlEditor.tsx:133) writes it into tab B's store and it persists to appdb 600ms later. Redo does the inverse. Direct violation of 'never lose work'. Fix: keep a per-tab EditorState and swap via view.setState() on tab switch (also preserves per-tab cursor/scroll/undo, and kills the full-doc re-parse per switch); at minimum annotate all external sync dispatches with addToHistory:false and clear history on switch.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "bug"
+  },
+  {
+   "title": "No find/replace in the editor (Mod-F is dead)",
+   "detail": "[known \u2014 v0.3 P0] @codemirror/search is not even a dependency (package.json:13-31); no search panel, no replace, no highlightSelectionMatches, no gotoLine (Cmd-L/Cmd-G), no selectNextOccurrence. Fix: add search({top:true}) + searchKeymap + highlightSelectionMatches to SqlEditor.tsx extensions and restyle the panel with theme tokens; selectNextOccurrence also delivers the Cmd-D that ARCHITECTURE.md:141 already promises but nothing binds.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "No run-statement-under-cursor",
+   "detail": "[known \u2014 but parked at v0.5 P2; for a multi-statement scratchpad user this is the single most-used action in TablePlus/DataGrip and belongs in the next milestone] Mod-Enter runs the WHOLE buffer unless you hand-select (SqlEditor.tsx:51-60). statementRange() already exists (completion/context.ts:107-120). Fix: Mod-Enter = statement containing the cursor (selection wins, fallback whole buffer), Mod-Shift-Enter = run all; add a subtle background highlight of the statement range that will run + a gutter run marker; make the Run button honor and label the same scope.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Completion is blind to CTEs, derived tables and subquery scope",
+   "detail": "context.ts:130-168 does a flat token walk of the statement: (a) WITH x AS (...) \u2014 x is never a TableRef, so 'x.' completes nothing and x isn't offered in FROM; (b) derived-table alias '(SELECT ...) t' is never captured (consumeTableList bails at '(' , context.ts:212); (c) tables inside subqueries leak into the outer scope's suggestions; (d) UPDATE target is lost when a CTE precedes it (context.ts:158 requires tables.length===0). CTEs are daily bread for a serious SQL user and DataGrip resolves all of this. Fix: track paren depth during the walk, register WITH bindings as pseudo-tables (columns parsed from their projected select list when they're plain column refs), capture post-paren aliases, and scope table collection to the cursor's depth.",
+   "severity": "P0",
+   "effort": "L",
+   "kind": "feature"
+  },
+  {
+   "title": "600ms persist debounce with no flush on quit loses the last edits",
+   "detail": "tabs.ts:44-56 debounces tabs_save 600ms; typing then Cmd-Q (or a crash) inside the window silently drops the newest SQL \u2014 violates 'never lose work'. Fix: flush the pending timer on window blur, on Tauri onCloseRequested, and on tab switch; keep the debounce for steady-state typing.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Editor right-click menu has no Cut/Copy/Paste/Select All",
+   "detail": "SqlEditor.tsx:195-217 preventDefault()s the native WKWebView menu and replaces it with only Run / Search functions / fn-toggle \u2014 a mouse-first user literally cannot paste via right-click anywhere in the editor. Fix: add Cut/Copy/Paste (navigator.clipboard + dispatch), Select All, Run selection, Explain, Format (when it lands), Save as snippet; gate items on selection presence. [known \u2014 the v0.3 menu epic enumerates other surfaces but not this content gap]",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "Error squiggle never appears for selection runs; char-vs-UTF16 offset drift",
+   "detail": "SqlEditor.tsx:162-181 requires s.executedSql === whole doc, but the primary multi-statement workflow is select-and-run \u2014 those errors get no squiggle at all. Fix: when the executed text came from a selection, record its doc offset at run time and translate error.position by it. Separately, PG positions are measured in CHARACTERS while JS slicing is UTF-16 code units \u2014 any astral char (emoji in a string literal) before the error skews the squiggle; convert with a code-point-aware offset walk (SqlEditor.tsx:166).",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "PG DETAIL/HINT/CONTEXT are thrown away",
+   "detail": "map_pg_err (src-tauri/src/driver/postgres/mod.rs:211-228) keeps only message/position/code; db.detail(), db.hint(), db.where_() are dropped. PG hints ('Perhaps you meant to reference the column ...') are exactly what a user needs at the squiggle. Fix: extend DriverError::Db + ipc types with detail/hint, render them in the lint tooltip and the results error panel.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "Quoted mixed-case identifiers break completion end-to-end",
+   "detail": "unquote() preserves case for quoted idents (context.ts:122-123) but resolveTables compares t.name.toLowerCase() === ref.name (engine.ts:66-68), so '\"Users\" u' resolves nothing and 'u.' offers zero columns; quoted schema qualifier misses the lowercased schemaNames set (engine.ts:290); aliasOptions/joinOptions emit aliases/conds without q() so a quoted alias round-trips as invalid SQL (engine.ts:119-126,176). Any camelCase (Prisma/Rails) schema hits this constantly. Fix: carry a quoted flag on TableRef; compare case-sensitively when quoted, case-folded otherwise; apply q() to aliases in generated text.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Completion pops up inside string literals and comments",
+   "detail": "engine.ts:276-282 only checks the char before the cursor; typing ident chars or '.' inside '...' or -- comments triggers the popup (activateOnTyping). Fix: resolve the syntaxTree node at pos and bail when inside String/LineComment/BlockComment.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Results subscriber dispatches an editor transaction on every streamed batch",
+   "detail": "SqlEditor.tsx:162-181 runs on EVERY results store write: doc.toString() (O(doc)) plus an unconditional setDiagnostics(view.state, []) dispatch per rAF row-flush while a query streams \u2014 editor transactions churn exactly while you might be typing the next query. Fix: track whether diagnostics are currently set and only dispatch on transition; subscribe with a selector on (statements' error, executedSql) instead of the whole store. [known \u2014 'lint stops dispatching editor txns during streaming']",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "perf"
+  },
+  {
+   "title": "O(doc) work per keystroke \u2014 16ms budget breaks on big buffers",
+   "detail": "Every keystroke: updateListener does u.state.doc.toString() (SqlEditor.tsx:133-137), connections.subscribe re-toString()s and string-compares (SqlEditor.tsx:152-154), tabs subscriber compares again (tabs.ts:231-241), and queryContext re-tokenizes the whole statement \u2014 which is the whole doc for a semicolon-free buffer (context.ts:74-104), with a doc.toString()+lastIndexOf fallback when no Statement node resolves (context.ts:115-119). Paste a 2MB dump and typing lags. Fix: store a doc version/ref instead of a string compare, debounce setSql mirroring, cache tokenization keyed on (statement range, doc.changes), keep the editor as source of truth.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "perf"
+  },
+  {
+   "title": "Dynamic import() in completion and keydown hot paths",
+   "detail": "[known \u2014 v0.4 P0] qwryCompletion awaits Promise.all of 3 store imports on every invocation, making the source needlessly async (engine.ts:254-258); Mod-E and Mod-I import stores inside keydown (SqlEditor.tsx:83,93). Fix: hoist to static module imports (no cycle risk here) so completion is truly synchronous as ARCHITECTURE.md:116 claims.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "perf"
+  },
+  {
+   "title": "No-WHERE danger scan naive-splits on raw ';' and misses wrapped DML",
+   "detail": "dangerousStatements (stores/danger.ts:26-31) splits on every ';': a dollar-quoted function body containing 'DELETE FROM x' false-positives, a string literal containing ';' splits a real UPDATE in half and can MASK its missing WHERE, and 'WITH d AS (DELETE FROM t) SELECT...' is never flagged (regex anchors ^(update|delete)). The Rust splitter already handles $tag$/quotes/comments (splitter.rs). Fix: port split_statements to TS (or expose via IPC) and scan wrapped DML inside CTEs too \u2014 this is the app's data-safety net, it must not lie.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "No SQL format/beautify",
+   "detail": "[known \u2014 v0.5 P1] No formatter at all; table stakes in every competitor. Fix: sql-formatter with PostgreSQL dialect, Cmd-Shift-F (or Alt-Shift-F) formatting selection-else-buffer as a single undoable transaction, exposed in the editor context menu and palette.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "No multi-cursor, no Tab-indent, no line wrap",
+   "detail": "[known \u2014 v0.5 'Multi-cursor / rectangular selection + Tab-indents + line-wrap'] EditorState.allowMultipleSelections is never enabled, so Alt-click/Cmd-D multi-cursor doesn't exist; rectangularSelection/crosshairCursor unwired; indentWithTab unbound so Tab moves focus OUT of the editor mid-query (daily annoyance); no EditorView.lineWrapping toggle so long INSERTs scroll horizontally. All are one-line @codemirror wirings in SqlEditor.tsx:106-138.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "Theme change remounts the editor, dropping undo/cursor/scroll",
+   "detail": "[known \u2014 v0.35] useEffect keyed on [isDark] (SqlEditor.tsx:190) destroys and rebuilds the whole view; system auto dark-mode mid-edit nukes undo history and selection, and re-parses the doc. Fix: wrap qwryTheme in a Compartment and reconfigure on theme change.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "bug"
+  },
+  {
+   "title": "No completion after 'FROM ' / 'JOIN ' until a character is typed",
+   "detail": "engine.ts:278-282 suppresses the popup unless the previous char is an ident char or '.'; TablePlus/DataGrip pop the table list immediately after FROM/JOIN/INTO. Fix: also auto-trigger when the token before the cursor is one of the table-expecting keywords (clause is already computed); keep the noise gate everywhere else.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Usage-based ranking is frozen, global across profiles, and unbounded",
+   "detail": "builtLists caches tables/functions WITH their usage boosts baked in, keyed by snapshot object (engine.ts:230-245) \u2014 picking a table doesn't improve its rank until the next schema refresh, defeating the ranking design. usage.ts:4 claims 'per-profile' but the localStorage key has no profile component, so crawler_data ranking pollutes auth_new. Counts grow unboundedly and the whole map is re-stringified per save tick (usage.ts:21-31). Fix: compute usageBoost at query time (cache labels only), key by profile, cap entries (LRU/decay).",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "FnSearch inserts broken names and leaks global shortcuts",
+   "detail": "FnSearch.tsx:50 inserts `${f.name}()` \u2014 schema is dropped (a fn in a non-search_path schema errors at run) and q() quoting is never applied to mixed-case names; the sort ignores the bumpUsage data it records; while the palette is open, App.tsx:104's window keydown still fires Cmd-T/Cmd-W/etc (no overlay guard) and Esc only works while the input has focus. Fix: schema-qualify when schema is not in search_path, apply q(), add usageBoost to the sort, fold into the Overlay/escStack primitive [known step-2 followup].",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Accidental unbounded SELECT drains the entire wire with no guard",
+   "detail": "Past ROW_CAP the backend keeps draining every row over the socket (execute.rs:108-110 'continue') \u2014 'SELECT * FROM events' on a 100M-row table saturates the SSH tunnel for minutes with only a manual Cmd-. as the out. Editor-side fix options: offer an opt-in auto-LIMIT for interactive bare SELECTs (TablePlus's limit dropdown), or a 'row cap reached \u2014 stop / keep counting' prompt that issues the cancel; at minimum surface a live 'draining N rows\u2026' indicator.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "perf"
+  },
+  {
+   "title": "No in-editor query history stepping",
+   "detail": "[known \u2014 'in-editor history stepping' is parked past v0.5; pushing back: Alt-Up/Alt-Down through recent statements on an empty buffer is psql muscle memory and cheap \u2014 history is already recorded in appdb (results.ts:277-284). Also a dedicated searchable history panel is v0.5 P1.] Fix: keybinding cycles history for the active profile into the buffer without clobbering unsaved text (stash the draft at position -1).",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "EXPLAIN is all-or-nothing and breaks on multi-statement text",
+   "detail": "explain.ts:88-91 always runs EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) \u2014 there is no non-executing cost-only EXPLAIN for the common 'is this indexed?' check on a slow/prod query (the confirm on mutations helps but SELECTs still execute fully). And prefixing the raw text means a selection containing 'a; b' or a trailing comment produces a PG syntax error. Fix: Cmd-Shift-E = plain EXPLAIN; scope to the statement under cursor via statementRange; strip trailing semicolon/comments; error clearly on multi-statement input.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "Keyword completion forces UPPERCASE; LIMIT suggests columns",
+   "detail": "engine.ts:145-151 always inserts 'SELECT' even when the user types lowercase everywhere \u2014 mature editors follow typed case (derive case from the typed prefix). CLAUSE_KEYWORDS maps limit->'where' (context.ts:60) so after LIMIT the popup offers column names where only a number/ALL is valid \u2014 suppress instead.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "No completion info panel (column metadata)",
+   "detail": "Options carry only label/detail; ColumnInfo already has not_null/default (schema.ts:4-11) and pk/FKs are in the snapshot, but nothing renders nullability, default, PK/FK badges, or table row estimates in an info side-panel (Completion.info). DataGrip's docs-on-hover is a big part of feeling mature. Fix: add info renderers to columnOptions/tableOptions in engine.ts:75-108.",
+   "severity": "P2",
+   "effort": "M",
+   "kind": "polish"
+  },
+  {
+   "title": "Snippets: 4 hardcoded, no user-defined snippets",
+   "detail": "[known \u2014 snippet-management UI deferred past v0.5] engine.ts:35-60 ships sel/ins/upd/cnt only; no way to add 'my favorite 12-line query' as a snippet. Cheap interim: a snippets table in appdb + palette command 'Save selection as snippet', surfaced in the start-clause options.",
+   "severity": "P2",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Editor chrome micro-affordances missing",
+   "detail": "(a) Blank editor shows nothing \u2014 add CM placeholder('\u2318\u21b5 run \u00b7 \u2318K palette \u00b7 \u2318\u21e7U functions') for the first-run empty state; (b) font size hardcoded 13px (theme.ts:13), no Cmd-+/- zoom [known \u2014 Settings v0.5]; (c) Run button never signals scope \u2014 when a selection exists it should read 'Run selection' (QueryBox.tsx:44) like TablePlus.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Tab navigation lacks macOS-standard cycle shortcuts",
+   "detail": "Only Ctrl-Tab cycles (App.tsx:132-135); Cmd-Shift-[ / Cmd-Shift-] and Cmd-Alt-Left/Right do nothing \u2014 those are the muscle-memory bindings in every macOS tabbed app. Fix: add both pairs to the App keydown handler (guard against CM's defaultPrevented).",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "No .sql file open/save/drag-drop",
+   "detail": "[known \u2014 deferred past v0.5] No way to open a .sql file into a tab, save a tab to disk, or drop a file onto the editor. Cheap subset worth pulling forward: drag-drop a .sql file onto the editor -> new tab named after the file (Tauri file-drop event is already available).",
+   "severity": "P2",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Server NOTICE/RAISE output silently dropped",
+   "detail": "[known \u2014 v0.5 P2] execute.rs:178 discards all other SimpleQueryMessage variants and the async-message path drops notices; RAISE NOTICE debugging (every plpgsql user) shows nothing. Fix: emit QueryEvent::Notice (already in the ARCHITECTURE enum) and render a notices strip in the results area.",
+   "severity": "P2",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Table-valued functions in FROM produce bogus completion refs",
+   "detail": "consumeTableList treats 'generate_series(1,10) g' as table name 'generate_series' and never captures alias g (context.ts:216-232) \u2014 'g.' completes nothing and a phantom table ref pollutes scope. Fix: when the next token after the name is '(', skip the paren group (tokens are flattened, so track depth) and then read the alias.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "bug"
+  }
+ ],
+ "perf_risks": [
+  "O(doc) per keystroke, three times over: updateListener doc.toString() (SqlEditor.tsx:133) -> connections.subscribe re-toString+compare (SqlEditor.tsx:152) -> tabs subscriber compare (tabs.ts:231). A pasted multi-MB dump makes every keystroke linear in file size \u2014 direct 16ms-budget breach.",
+  "queryContext re-tokenizes the entire statement per keystroke; with no semicolons the 'statement' is the whole doc, and the no-Statement-node fallback calls doc.toString()+lastIndexOf per keystroke (context.ts:74-119).",
+  "Results-store subscriber runs doc.toString() and dispatches a setDiagnostics editor transaction on EVERY store write \u2014 i.e. once per rAF row-flush for the entire duration of a streaming query (SqlEditor.tsx:162-181). [known]",
+  "qwryCompletion awaits 3 dynamic imports on every invocation, making the completion source async when the whole design is built to be synchronous (engine.ts:254). [known]",
+  "resolveTables does a linear scan of snap.tables per table-ref per keystroke (engine.ts:65); at 50-schema/10k-table scale this alone eats the budget \u2014 index name->TableInfo per snapshot in the same WeakMap cache.",
+  "columnOptions allocates fresh Completion objects for every column of every in-scope table per keystroke (engine.ts:75-96) \u2014 a 500-column table in FROM means thousands of allocations per keypress.",
+  "Tab switch replaces the whole doc in one dispatch -> full lezer re-parse of the new buffer (SqlEditor.tsx:155); theme change remounts and re-parses again (SqlEditor.tsx:190). Per-tab EditorState fixes both.",
+  "Backend drains all rows over the wire past the 50k ROW_CAP with no auto-stop (execute.rs:108-110) \u2014 an accidental unbounded SELECT over the SSH tunnel stays 'running' for minutes; feels like the app is slow when it's the drain.",
+  "usage.ts re-serializes the entire unbounded counts map on each save tick and keys ranking data in a single global localStorage entry (usage.ts:21-31) \u2014 grows forever across profiles.",
+  "FnSearch scores all ~3.5k functions per keystroke and its useMemo is keyed on snapshot object identity, so every schema refresh churns the memo (FnSearch.tsx:33-42) \u2014 fine today, degrades on function-heavy catalogs.",
+  "tabs persist() re-serializes every query tab's full SQL on each debounce tick (tabs.ts:44-56) \u2014 many tabs x big buffers = periodic main-thread JSON stringify spikes."
+ ]
+}

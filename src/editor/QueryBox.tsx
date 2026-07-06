@@ -3,8 +3,8 @@ import { useResults } from "../stores/results";
 import { SqlEditor, editorRunText } from "./SqlEditor";
 import "./editor.css";
 
-/** selection if any, else the whole buffer — matches ⌘↵ */
-const runText = () => editorRunText.current?.();
+/** selection if any, else statement under caret — matches ⌘↵ */
+const runTarget = () => editorRunText.current?.();
 
 export function QueryBox() {
   const connectError = useConnections((s) => s.error);
@@ -14,6 +14,7 @@ export function QueryBox() {
   const run = useResults((s) => s.run);
   const cancel = useResults((s) => s.cancel);
   const running = useResults((s) => s.running);
+  const connecting = useResults((s) => s.connecting);
 
   return (
     <div className="query-box">
@@ -24,7 +25,7 @@ export function QueryBox() {
           className="qb-explain"
           onClick={() =>
             void import("../stores/explain").then(({ useExplain }) =>
-              useExplain.getState().run(runText()),
+              useExplain.getState().run(runTarget()?.text),
             )
           }
           disabled={!connected || !sql.trim()}
@@ -35,10 +36,17 @@ export function QueryBox() {
           <button className="qb-cancel" onClick={() => cancel()}>
             Cancel ⌘.
           </button>
+        ) : connecting ? (
+          <button className="qb-run" disabled>
+            Connecting…
+          </button>
         ) : (
           <button
             className="qb-run"
-            onClick={() => run(runText())}
+            onClick={() => {
+              const t = runTarget();
+              void run(t?.text, t?.offset);
+            }}
             disabled={!connected || !sql.trim()}
           >
             Run ⌘↵

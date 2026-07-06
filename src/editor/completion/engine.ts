@@ -12,6 +12,9 @@ import type { EditorView } from "@codemirror/view";
 import type { SchemaSnapshot, TableInfo } from "../../stores/schema";
 import { queryContext, type QueryCtx, type TableRef } from "./context";
 import { bumpUsage, usageBoost } from "./usage";
+import { useConnections } from "../../stores/connections";
+import { useSchema } from "../../stores/schema";
+import { useSettings } from "../../stores/settings";
 
 const KEYWORDS =
   `select from where join left right inner outer full cross on as and or not in is null distinct group by order having limit offset insert into values update set delete returning union all exists between like ilike case when then else end asc desc with using primary key create table index view alter drop add column constraint references default unique check cascade begin commit rollback explain analyze vacuum count sum avg min max coalesce nullif cast interval true false`.split(
@@ -222,6 +225,9 @@ function joinOptions(ctx: QueryCtx, snap: SchemaSnapshot): Completion[] {
 
 interface BuiltLists {
   allTables: Completion[];
+  /** allTables with the default-clause demotion pre-applied — the per-keystroke
+   * `.map(spread)` over the whole catalog was pure allocation churn */
+  allTablesDemoted: Completion[];
   allFunctions: Completion[];
   allSchemas: Completion[];
   schemaNames: Set<string>;
@@ -233,8 +239,10 @@ const listCache = new WeakMap<SchemaSnapshot, BuiltLists>();
 function builtLists(snap: SchemaSnapshot): BuiltLists {
   let lists = listCache.get(snap);
   if (!lists) {
+    const allTables = tableOptions(snap, null);
     lists = {
-      allTables: tableOptions(snap, null),
+      allTables,
+      allTablesDemoted: allTables.map((t) => ({ ...t, boost: (t.boost ?? 0) - 2.5 })),
       allFunctions: functionOptions(snap),
       allSchemas: schemaOptions(snap),
       schemaNames: new Set(snap.schemas.map((s) => s.toLowerCase())),
@@ -251,11 +259,6 @@ function builtLists(snap: SchemaSnapshot): BuiltLists {
 export async function qwryCompletion(
   cmCtx: CompletionContext,
 ): Promise<CompletionResult | null> {
-  const [{ useConnections }, { useSchema }, { useSettings }] = await Promise.all([
-    import("../../stores/connections"),
-    import("../../stores/schema"),
-    import("../../stores/settings"),
-  ]);
   const { activeProfileId } = useConnections.getState();
   const snap = activeProfileId
     ? useSchema.getState().snapshots[activeProfileId]
@@ -269,7 +272,7 @@ export async function qwryCompletion(
 }
 
 export function makeCompletionSource(snap: SchemaSnapshot, fnInComplete = false) {
-  const { allTables, allFunctions, allSchemas, schemaNames } = builtLists(snap);
+  const { allTables, allTablesDemoted, allFunctions, allSchemas, schemaNames } = builtLists(snap);
   const allKeywords = ALL_KEYWORDS;
 
   return (cmCtx: CompletionContext): CompletionResult | null => {
@@ -332,7 +335,7 @@ export function makeCompletionSource(snap: SchemaSnapshot, fnInComplete = false)
             ...columnOptions(scoped, { detailAlias: true }),
             ...aliasOptions(ctx),
             ...(cmCtx.explicit || fnInComplete ? allFunctions : []),
-            ...allTables.map((t) => ({ ...t, boost: (t.boost ?? 0) - 2.5 })),
+            ...allTablesDemoted,
             ...allKeywords,
           ];
       }

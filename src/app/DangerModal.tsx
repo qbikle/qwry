@@ -1,6 +1,7 @@
 import { motion } from "motion/react";
 import { popIn } from "../design/springs";
 import { useDanger } from "../stores/danger";
+import { Modal } from "./overlay/Overlay";
 import "./app.css";
 
 export function DangerModal() {
@@ -10,24 +11,31 @@ export function DangerModal() {
   if (!prompt) return null;
 
   return (
-    <div
-      className="danger-backdrop"
-      onMouseDown={(e) => e.target === e.currentTarget && resolve(false)}
-      onKeyDown={(e) => e.key === "Escape" && resolve(false)}
-      tabIndex={-1}
+    <Modal
+      backdropClassName="danger-backdrop"
+      onClose={() => resolve(false)}
+      // explicit keyboard grammar: Esc cancels (stack), ⌘↵ confirms. Plain
+      // Enter deliberately does NOT confirm a destructive action — but it must
+      // not silently hit the focused Cancel either, that reads as "broken".
+      onKey={(e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (e.metaKey || e.ctrlKey) resolve(true);
+      }}
     >
       <motion.div className="danger-modal" {...popIn}>
         <div className="danger-title">⚠ {prompt.title}</div>
         <pre className="danger-detail">{prompt.detail}</pre>
         <div className="danger-actions">
           <button autoFocus onClick={() => resolve(false)}>
-            Cancel
+            Cancel <span className="danger-key">esc</span>
           </button>
           <button className="danger-go" onClick={() => resolve(true)}>
-            Run anyway
+            {prompt.confirmLabel} <span className="danger-key">⌘↵</span>
           </button>
         </div>
       </motion.div>
-    </div>
+    </Modal>
   );
 }

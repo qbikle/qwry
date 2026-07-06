@@ -55,3 +55,18 @@ export const useInspector = create<InspectorState>()(
     },
   ),
 );
+
+
+// the target indexes INTO the active result set — when that set is replaced
+// or cleared (tab closed, new run, tab switch), stale coordinates would show
+// another dataset's value. Drop the target the moment it stops resolving.
+void import("./results").then(({ useResults }) => {
+  useResults.subscribe((s) => {
+    const t = useInspector.getState().target;
+    if (!t) return;
+    const stmt = s.statements.find((st) => st.index === t.stmtIndex);
+    if (!stmt || t.row >= stmt.rows.length || t.col >= stmt.columns.length) {
+      useInspector.getState().setTarget(null);
+    }
+  });
+});

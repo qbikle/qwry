@@ -1,0 +1,273 @@
+{
+ "surface": "inspector-json",
+ "works": [
+  "Cell inspector panel with column name, pg type chip, row number, hide toggle (persisted open/width)",
+  "Structured detection: JSON parse + PG array literal parse (nested, quoted elems, NULL) with tree and raw CodeMirror views",
+  "JsonTree: collapsible, depth<2 auto-open, per-type coloring, \u2318F search with filter+highlight+hit nav (Enter/\u21e7Enter), path tooltip, \u2325-click copies path, click-to-copy leaf/subtree",
+  "In-place leaf edit with type coercion (number/bool/null), key rename preserving order, immutable setIn staging via edits store",
+  "Raw JSON edit in CodeMirror with live parse validation, Mod-Enter save / Esc cancel, error display, disabled save on invalid",
+  "Truncated (>8KB) cells auto-fetch full value by pk when editability map resolves",
+  "Split copy button (formatted/raw), scalar copy, pending-edit / read-only-reason / warn chips",
+  "Scalar textarea editor auto-grows, \u2318\u21b5 stage / Esc cancel; NULL state with 'set value' affordance",
+  "Arrays stage back as PG array literal via jsToPgArray; JSON stages as JSON text; grid dbl-click on JSON routes to inspector raw mode (editSeq)"
+ ],
+ "gaps": [
+  {
+   "title": "Editing a truncated cell stages the 8KB prefix \u2014 commits corruption",
+   "detail": "Inspector.tsx:113-118 (editSeq path), :226 (Pencil), :318 (dblclick): while a truncated cell's full value is still loading (or the fetch silently failed \u2014 no .catch at :98), `value` is the 8KB prefix; structuredValue(prefix) fails \u2192 setEditingText(prefix); staging + \u2318S UPDATEs the column to the truncated prefix, silently destroying everything past 8KB. Fix: gate ALL edit entry points on `truncated && fullValueFor !== k` (disable Pencil/dblclick/editSeq with a 'fetching full value\u2026' state), and never treat a truncated prefix as the editable original.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "[known] structuredValue treats any text starting {/[ as JSON \u2014 text-column corruption",
+   "detail": "format.ts:65-79: a text cell containing `[\"a\",\"b\"]` or `{\"k\":1}` parses as JSON, renders as an editable tree, and any edit stages JSON.stringify output \u2014 rewriting a text column's formatting/content. Fix: gate the JSON branch on type_name \u2208 {json,jsonb} (and array branch on isArrayType), falling back to plain text when editMeta is undefined (map loading).",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Whole-doc re-serialize corrupts `json` (non-jsonb) columns and big numbers everywhere",
+   "detail": "Inspector.tsx:148,161-167 + JsonTree edits: one leaf edit stages JSON.stringify of the reparsed doc \u2192 (a) `json` type columns (which DO preserve text: whitespace, key order, duplicate keys) get minified, integer-like keys reordered ('10' before '2' becomes 2,10), dup keys dropped; (b) any doc (json OR jsonb) containing integers >2^53 or high-precision decimals gets silently rounded by JSON.parse \u2014 an UNTOUCHED sibling field corrupts when you edit a different leaf. Fix: for `json` type stage rawDraft verbatim (validate only); detect precision-lossy numbers (raw-scan for long digit runs) and refuse tree editing / warn; long-term use a lossless JSON parser (e.g. lossless-json) for the tree.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "correctness"
+  },
+  {
+   "title": "[known] Full-value fetch: hand-rolled SQL uses the RESULT ALIAS, breaks on quoted/dotted idents, has no error path",
+   "detail": "Inspector.tsx:86-101: `colName = stmt.columns[target.col].name` is the result alias \u2014 `SELECT big_col AS b` generates `SELECT \"b\" FROM \u2026` which errors; `table.split(\".\")` breaks on identifiers containing dots; embedded double-quotes in idents aren't doubled; the promise has no .catch \u2192 'Loading full value\u2026' chip forever. Fix: backend `full_value(session, table_oid, attnum, pk)` command using quote_ident/attnum from ColumnEditMeta (already has attnum, Inspector never uses it), plus a visible error/retry chip.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "bug"
+  },
+  {
+   "title": "Truncated cell in non-editable results shows a silently cut value forever",
+   "detail": "Inspector.tsx:76-102: when editMap is 'unavailable' (joins/aggregates/table_oid=0) the fetch effect bails, but the chip at :205 still renders 'Loading full value\u2026' forever and the body shows the 8KB prefix with no truncation marker \u2014 the inspector lies about the data. Fix: distinct states \u2014 'truncated at 8KB, source row not addressable' honest chip + a visible \u22efcut marker at the end of the value; ideally a backend re-run-single-cell fallback.",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "8MB values: JSON.parse + pretty-stringify run on EVERY Inspector render, unmemoized",
+   "detail": "Inspector.tsx:146-148: structuredValue(value) (full JSON.parse) and JSON.stringify(structured,null,2) execute on every render; Inspector subscribes to whole `statements`/`pending`/`maps` (:49-51) so it re-renders on every streamed batch and every pending edit anywhere \u2192 multi-hundred-ms stalls per repaint with a big cell. Fix: useMemo keyed on (value, type_name); narrow store selectors to the focused cell [known: narrow-subscriptions roadmap item].",
+   "severity": "P0",
+   "effort": "S",
+   "kind": "perf"
+  },
+  {
+   "title": "Raw JSON editing is O(doc) per keystroke \u2014 full parse, full toString, full string compare",
+   "detail": "Inspector.tsx:287-295 JSON.parse(v) of the entire doc on every keystroke; :163 rawDirty compares 8MB strings per render; JsonField.tsx:95-100 the [value] effect calls v.state.doc.toString() (8MB alloc) + compare on every rawDraft echo. Blows the <16ms budget on any large doc. Fix: debounce validation (or validate only on save via CM's jsonParseLinter), track dirty via a boolean from CM update flags, and skip the echo-back effect when the change originated from the editor itself.",
+   "severity": "P0",
+   "effort": "M",
+   "kind": "perf"
+  },
+  {
+   "title": "JsonTree has no virtualization and no child cap \u2014 50k-element arrays / wide docs freeze",
+   "detail": "JsonTree.tsx:333-374: depth<2 means the root AND all its direct children render open on mount \u2014 a doc with 20k top-level keys paints 20k+ DOM rows immediately; expanding a 50k array mounts 50k Node components. Also Node's registerRef useEffect (:317-320) has NO dependency array \u2192 every render re-registers every visible node into the ref Map. Fix: cap rendered children (~200 + 'show N more'), or virtualize the flattened visible-node list; give the effect [id] deps.",
+   "severity": "P0",
+   "effort": "L",
+   "kind": "perf"
+  },
+  {
+   "title": "Pending edit hidden by full-value fetch \u2014 inspector shows DB value instead of your staged edit",
+   "detail": "Inspector.tsx:66-68: `value = truncated && fullValueFor === k ? fullValue : rawCell` \u2014 when a truncated cell has a pendingEdit, fullValue (fetched from DB) wins over pendingEdit.value, so the inspector displays the old DB content while the chip says 'Pending edit'. Fix: pendingEdit.value must always take precedence over fullValue.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "Silent draft loss on Esc / cell switch \u2014 violates never-lose-work",
+   "detail": "Inspector.tsx:105-110 resets editingText/rawDraft on any target change; :249 Esc discards scalar text; :297-300 Esc discards raw JSON draft. A 10-minute hand-edit dies from one stray arrow-key in the grid or one Esc, no confirm, no undo. Fix: confirm-on-discard when dirty (or auto-stage as pending), and keep draft keyed by cell so returning to the cell restores it.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "bug"
+  },
+  {
+   "title": "Key rename silently overwrites an existing key \u2014 data loss",
+   "detail": "JsonTree.tsx:52-63 renameKeyIn: renaming `a`\u2192`b` when `b` exists rebuilds the object with the collision winning silently (one value vanishes). Fix: reject rename when newKey already exists (red border like coerce err).",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "Tree display lies about strings: newlines/tabs/multi-spaces collapse, no quotes",
+   "detail": "JsonTree.tsx:238 + inspector.css: leaf strings render in a normal-whitespace span \u2014 \"a\\nb\" displays identically to \"a b\"; leading/trailing spaces invisible; string \"null\"/\"123\" distinguishable from null/123 only by color. Fix: render strings quoted with visible escapes (\\n, \\t) or white-space:pre-wrap, and clamp long leaf strings (>~200 chars) with an expand toggle (also a perf win).",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "bytea is raw hex soup \u2014 no hex dump, no image preview, no save-to-file, no size",
+   "detail": "No bytea handling anywhere in Inspector.tsx: an image column shows `\\x89504e47\u2026` (16MB of hex text for an 8MB blob, or a truncated prefix). Table stakes vs TablePlus: byte-size display, hex+ASCII dump view, magic-byte sniffing \u2192 inline image preview (PNG/JPEG/GIF/WebP), 'Save to file\u2026', 'decode as UTF-8' toggle. Gate on type_name==='bytea'.",
+   "severity": "P1",
+   "effort": "L",
+   "kind": "feature"
+  },
+  {
+   "title": "No find within plain-text values; no search in raw JSON mode",
+   "detail": "\u2318F only exists when JsonTree is mounted. An 8MB text/log value (Inspector.tsx:315-321 insp-value) has zero find; JsonField.tsx omits @codemirror/search so raw JSON mode has no \u2318F either. Fix: add CM search extension to JsonField, and render large plain text through a read-only CM (search + no 8MB DOM text node) with the same find bar chrome [known: \u2318F consistency pass].",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "JsonTree \u2318F hijacks find globally while mounted",
+   "detail": "JsonTree.tsx:417-427: document-level keydown intercepts \u2318F regardless of focus \u2014 with a JSON cell inspected, pressing \u2318F while typing in the SQL editor or grid steals focus into the tree search. Fix: scope the listener to the inspector container (or check e.target containment / a focus-owner registry).",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "bug"
+  },
+  {
+   "title": "No diff of pending edit vs original, no revert from inspector",
+   "detail": "Inspector.tsx:200-204: the chip says 'Pending edit \u2014 \u2318S to commit' but you can't see WHAT changed (old vs new, per-key JSON diff) or revert this one cell (store has clearEdit, UI never exposes it). Fix: chip gains 'view diff' (side-by-side or inline +/- on the tree) and 'revert' actions.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "No context menu anywhere in the inspector or tree",
+   "detail": "Right-click on a tree node, the value body, or the header does nothing. Expected per-node menu: Copy value / Copy key / Copy path / Copy subtree as JSON / Copy as pg path expr (col->'a'->>0) / Expand subtree / Collapse others / Edit / Set null; on the value body: Copy / Copy as SQL literal / Set NULL / Save to file. Alt-click-for-path is undiscoverable (tooltip only, JsonTree.tsx:290).",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "No expand-all / collapse-all / expand-subtree",
+   "detail": "JsonTree.tsx:314 open state is per-node useState only. Deep docs require clicking every level. Fix: toolbar buttons + \u2325-click chevron = expand/collapse entire subtree (standard in every JSON viewer), keyboard \u2190/\u2192 collapse/expand.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "No copy feedback anywhere; editable leaves can't be copied at all",
+   "detail": "CopySplit (Inspector.tsx:23-42), leaf click-copy (JsonTree.tsx:283), brace click-copy (:349-356) give zero visual confirmation. Worse, when editable=true a leaf click ENTERS EDIT \u2014 there is no click path to copy a leaf value on an editable cell. Fix: transient \u2713/'Copied' feedback on every copy; move copy to context menu/modifier so editable cells keep a copy affordance.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Leaf type is locked \u2014 can't change type, can't set null, null\u2192number impossible",
+   "detail": "JsonTree.tsx:66-82 coerce: editing a null leaf that you type `123` into yields STRING \"123\"; a string leaf can never become null/number/bool (typing null gives the literal string); a number can't be nulled. Fix: type-aware editor \u2014 parse input as JSON first (123\u2192number, true\u2192bool, null\u2192null, \"x\"\u2192string, quoted keeps string), with a small type badge/picker; per-node Set null in the context menu.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "correctness"
+  },
+  {
+   "title": "[known] Array-vs-JSON serialization gated on not-yet-loaded editability map",
+   "detail": "Inspector.tsx:149,161: isArr = isArrayType(editMeta?.type_name) \u2014 undefined while the map loads, so serialize() picks JSON.stringify for a PG array cell; also jsToPgArray (format.ts:60) silently JSON.stringifies a non-array root (user types {\"a\":1} in raw mode for an int[] column \u2192 garbage literal staged). Fix: re-derive mode when the map resolves + refuse staging non-array JSON into array columns with a clear error.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "parsePgArray never fails \u2014 malformed literal renders as empty [] (lies)",
+   "detail": "format.ts:40-44: catch returns [] so any literal the parser chokes on displays as an empty array tree instead of raw text; also unquoted whitespace handling is space-only and `[0:2]={\u2026}` lower-bound syntax falls through unstyled. Fix: return undefined on parse failure \u2192 fall back to plain-text view; never show fabricated structure.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "correctness"
+  },
+  {
+   "title": "[known] Semantic no-op JSON edit stages a phantom UPDATE",
+   "detail": "edits.ts:129 compares staged string to original string \u2014 opening raw mode (pretty-printed) and hitting save with zero changes stages minified JSON \u2260 DB text \u2192 dirty cell + UPDATE that only reorders whitespace; for a truncated cell `original` is the 8KB prefix so ANY stage of the full value looks dirty. Fix: normalize-compare (parse both sides) on stage for json/jsonb/arrays; use fetched fullValue as original for truncated cells.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "correctness"
+  },
+  {
+   "title": "tree search: O(n) full walk per keystroke with heavy allocation, no debounce",
+   "detail": "JsonTree.tsx:90-134 computeSearch walks every node per keystroke; pid() JSON.stringifies every path and [...path,ck] spreads allocate O(n\u00b7depth); on a 100k-node doc every character typed costs hundreds of ms. Fix: debounce ~80ms, precompute a flattened node index once per doc, intern path ids.",
+   "severity": "P1",
+   "effort": "M",
+   "kind": "perf"
+  },
+  {
+   "title": "No Set NULL on a non-null editable cell; empty string renders as blank nothing",
+   "detail": "Inspector.tsx:271-279 only NULL cells get an affordance ('set value'); the reverse (Set NULL button next to Edit) doesn't exist \u2014 you must know to clear+stage null via grid. And value==='' renders an empty insp-value box indistinguishable from whitespace [known-adjacent: NULL/empty marker pass]. Fix: Set NULL tool button when editable && value!=null; render '\u2205 empty string \u00b7 0 chars' placeholder for ''.",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "No value metadata: length/bytes/lines, no 'truncated at X of Y'",
+   "detail": "Header (Inspector.tsx:177-188) shows only name/type/row. TablePlus shows content length. Fix: subline with chars/bytes/lines (and for JSON: node count, depth; for truncated: 'showing 8 KB of 3.2 MB' via octet_length in the full-value query).",
+   "severity": "P1",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "fullValue cache holds exactly one cell \u2014 refetch on every revisit",
+   "detail": "inspector.ts:41-42: setTarget wipes fullValue, so toggling between two big cells refires the SELECT every time; there is also no in-flight cancellation so rapid arrowing over truncated cells stacks redundant queries (Inspector.tsx:98). Fix: small LRU keyed by edit key (~10 entries), skip fetch when cached, drop stale responses by key.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "perf"
+  },
+  {
+   "title": "Tree/raw mode + open-state not sticky per column",
+   "detail": "Inspector.tsx:105-110 resets mode to 'auto' on every cell change \u2014 a user stepping down 50 rows of a jsonb column who prefers raw view re-toggles every row; expanded-node state also resets. Fix: remember mode (and optionally expansion paths) per (stmtIndex,col) for the session.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "No pop-out / maximize for big values; width hard-capped at 640px",
+   "detail": "inspector.ts:40 clamps width \u2264640. Wide JSON or long text wants a full-window quick-look (TablePlus: cell popup, Space-peek is planned for grid). Fix: 'expand' tool button opening the value in a Modal (overlay primitive already exists) with the same tree/raw/search tools.",
+   "severity": "P2",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Copy menu is only formatted/raw \u2014 missing SQL literal, minified, path expr, key list",
+   "detail": "Inspector.tsx:34-38: two entries. Missing: Copy as SQL literal ('\u2026'::jsonb with quotes doubled), Copy minified (explicit), Copy top-level keys, Copy as PG path expression from tree selection, Copy for arrays as JSON vs PG literal (naming is ambiguous today). displayPath (JsonTree.tsx:29-36) also emits ambiguous paths for keys containing dots/spaces \u2014 should bracket-quote them.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "feature"
+  },
+  {
+   "title": "JSON error UX: raw JS message, no position mapping, no lint squiggle, no format/minify tools",
+   "detail": "Inspector.tsx:302 shows e.g. 'Unexpected token } in JSON at position 4123' with no way to jump there; JsonField.tsx omits linter(jsonParseLinter()) so no inline squiggles; no Prettify/Minify buttons in raw mode. Fix: wire jsonParseLinter + click-error-to-jump + format/minify toolbar.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "No keyboard model inside the inspector",
+   "detail": "No way to move focus into the tree from the grid; no \u2191/\u2193 node navigation, \u2190/\u2192 collapse/expand, Enter to edit, c to copy; search hits can be cycled but not acted on (can't jump-edit or copy the current hit); Esc in search clears but doesn't return focus [known-adjacent: cross-pane focus model]. Fix: roving tabindex over visible nodes + the standard tree-view key bindings.",
+   "severity": "P2",
+   "effort": "M",
+   "kind": "feature"
+  },
+  {
+   "title": "Read-only cells don't say why when the map is 'unavailable'",
+   "detail": "Inspector.tsx:190-194 renders the Lock chip only when editMeta exists with a reason; for joins/aggregates (map 'unavailable') there is no chip at all \u2014 ideology says read-only cells say why. Fix: chip 'read-only \u2014 result not mapped to a single table' when map is unavailable/loading.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Search polish: first-occurrence-only highlight, blur-commit trap, stale CopySplit menu",
+   "detail": "(a) Highlight (JsonTree.tsx:148-161) marks only the first occurrence in a string; (b) Leaf blur commits the edit (:271) \u2014 click-away while invalid leaves an orphaned red input, and blur-commit on rename (:198) can surprise; (c) CopySplit's open menu survives a target switch and then copies the NEW cell's value (component not keyed by k, Inspector.tsx:211). Fixes: highlight all occurrences; blur cancels on invalid; key CopySplit by cell.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "polish"
+  },
+  {
+   "title": "Full-value fetch has no size guard",
+   "detail": "Inspector.tsx:97-98 SELECTs the whole column value \u2014 a 200MB bytea/text cell arrives as one IPC string on the UI thread. Fix: fetch octet_length first; above a threshold offer 'load anyway / save to file' instead of auto-loading.",
+   "severity": "P2",
+   "effort": "S",
+   "kind": "perf"
+  }
+ ],
+ "perf_risks": [
+  "Inspector.tsx:146-148 \u2014 unmemoized JSON.parse + JSON.stringify(pretty) of the full cell value on every render; with 8MB jsonb every repaint costs 100s of ms",
+  "Inspector.tsx:49-51 \u2014 subscribes to whole statements/pending/maps: re-renders (and thus re-parses, see above) on every streamed row batch and every pending edit in any cell [known roadmap item]",
+  "Inspector.tsx:287-295 + :163 \u2014 JSON.parse of the entire raw draft per keystroke plus 8MB string equality for rawDirty per render; O(doc) typing violates the 16ms budget",
+  "JsonField.tsx:95-100 \u2014 [value] echo effect calls state.doc.toString() (full-doc alloc) + string compare on every keystroke round-trip",
+  "JsonTree.tsx:333-374 \u2014 no virtualization/child cap: depth<2 renders root + all direct children open; 50k-element array = 50k mounted components; long string leaves render fully inline",
+  "JsonTree.tsx:317-320 \u2014 Node registerRef useEffect has no dependency array: every visible node re-registers into the ref Map on every render (search keystroke, edit, hit-step)",
+  "JsonTree.tsx:90-134,400 \u2014 computeSearch walks all nodes per keystroke with JSON.stringify(path) ids and per-node array spreads; no debounce; recomputes fully after every staged edit (new json identity)",
+  "Inspector.tsx:120-127 \u2014 controlled 8MB textarea for scalar edit: full string state copy + scrollHeight layout read per keystroke; large plain values also render as one unvirtualized pre-wrap DOM node (:315-321)",
+  "Inspector.tsx:97-101 + inspector.ts:41 \u2014 full-value SELECT is unguarded (whole value in one IPC string), uncancelled (rapid cell-stepping stacks queries), and cached size-1 (refetch every revisit)",
+  "bytea rendering \u2014 8MB blob = 16MB hex text through CELL_CAP/full-fetch into a single DOM text node; no binary-aware path"
+ ]
+}

@@ -13,9 +13,6 @@ use crate::driver::{DriverError, Profile, Result};
 
 pub struct Tunnel {
     pub local_port: u16,
-    /// the profile fields this tunnel was built for — if they change (e.g. the
-    /// DB host is repointed), the cached tunnel is stale and must be rebuilt
-    pub spec: String,
     // kept alive for the tunnel's lifetime; kill_on_drop reaps ssh on drop
     _child: Child,
 }
@@ -111,7 +108,6 @@ impl Tunnel {
         match wait_ready(local_port, &mut child).await {
             Ok(()) => Ok(Tunnel {
                 local_port,
-                spec: tunnel_spec(profile),
                 _child: child,
             }),
             Err(e) => {
@@ -133,8 +129,12 @@ impl Tunnel {
 }
 
 async fn wait_ready(port: u16, child: &mut Child) -> Result<()> {
-    // ~10s budget: 50 tries × 200ms
-    for _ in 0..50 {
+    // ~10s budget; poll fast at first (a warm ControlMaster/localhost forward
+    // is up in <50ms — a fixed 200ms quantum wasted most of that), backing off
+    // toward 200ms for the slow-bastion case
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let mut delay = Duration::from_millis(25);
+    loop {
         if let Ok(Some(status)) = child.try_wait() {
             return Err(DriverError::Connect(format!(
                 "tunnel: ssh exited early ({status})"
@@ -143,9 +143,12 @@ async fn wait_ready(port: u16, child: &mut Child) -> Result<()> {
         if tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
             return Ok(());
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        if tokio::time::Instant::now() + delay >= deadline {
+            return Err(DriverError::Connect(
+                "tunnel: timed out waiting for the forwarded port".into(),
+            ));
+        }
+        tokio::time::sleep(delay).await;
+        delay = (delay * 2).min(Duration::from_millis(200));
     }
-    Err(DriverError::Connect(
-        "tunnel: timed out waiting for the forwarded port".into(),
-    ))
 }

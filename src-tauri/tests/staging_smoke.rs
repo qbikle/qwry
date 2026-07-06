@@ -27,7 +27,7 @@ async fn staging_connect_and_query() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, Box::new(|| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|| {}))
         .await
         .expect("connect");
 
@@ -88,7 +88,7 @@ async fn staging_introspect() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, Box::new(|| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|| {}))
         .await
         .expect("connect");
 
@@ -138,7 +138,7 @@ async fn staging_edit_pipeline() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, Box::new(|| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|| {}))
         .await
         .expect("connect");
 
@@ -153,7 +153,7 @@ async fn staging_edit_pipeline() {
 
     // editability: computed col read-only, base cols editable
     let sql = "SELECT id, name, val, upper(name) AS un FROM qwry_edit_test ORDER BY id";
-    let map = session.editability(sql, 0).await.expect("editability");
+    let map = session.editability(sql, 0, None).await.expect("editability");
     assert!(map.columns[0].editable, "id should be editable");
     assert!(map.columns[1].editable, "name should be editable");
     assert!(map.columns[2].editable, "val should be editable");
@@ -162,7 +162,7 @@ async fn staging_edit_pipeline() {
 
     // no PK in selection → read-only with actionable reason
     let map2 = session
-        .editability("SELECT name FROM qwry_edit_test", 0)
+        .editability("SELECT name FROM qwry_edit_test", 0, None)
         .await
         .expect("editability2");
     assert!(!map2.columns[0].editable);
@@ -171,11 +171,11 @@ async fn staging_edit_pipeline() {
     // preview generates sane SQL
     let oid = map.columns[0].table_oid;
     let edits = vec![
-        RowEdit { table_oid: oid, col: 1, value: Some("edited".into()), pk: vec![(0, Some("2".into()))] },
-        RowEdit { table_oid: oid, col: 2, value: None, pk: vec![(0, Some("1".into()))] },
+        RowEdit { table_oid: oid, col: 1, value: Some("edited".into()), use_default: false, pk: vec![(0, Some("2".into()))] },
+        RowEdit { table_oid: oid, col: 2, value: None, use_default: false, pk: vec![(0, Some("1".into()))] },
     ];
     let preview = session
-        .build_edit_statements(sql, 0, &edits)
+        .build_edit_statements(sql, 0, &edits, None)
         .await
         .expect("preview");
     assert_eq!(preview.len(), 2);
@@ -183,7 +183,7 @@ async fn staging_edit_pipeline() {
     assert!(preview[1].contains(r#"SET "val" = NULL"#), "{}", preview[1]);
 
     // apply in one tx, RETURNING refreshes
-    let outcome = session.apply_edits(sql, 0, edits).await.expect("apply");
+    let outcome = session.apply_edits(sql, 0, edits, None).await.expect("apply");
     assert!(outcome.committed);
     assert!(outcome.results.iter().all(|r| r.ok), "{:?}", outcome.results);
     assert_eq!(outcome.results[0].new_value.as_deref(), Some("edited"));
@@ -197,11 +197,254 @@ async fn staging_edit_pipeline() {
 
     // edit through a JOIN: base-table column still editable
     let join_sql = "SELECT t.id, t.name, o.name AS other FROM qwry_edit_test t JOIN qwry_edit_test o ON o.id = t.id";
-    let jmap = session.editability(join_sql, 0).await.expect("join map");
+    let jmap = session.editability(join_sql, 0, None).await.expect("join map");
     assert!(jmap.columns[1].editable, "joined base col should be editable");
 
     session
         .execute_simple("DROP TABLE qwry_edit_test")
+        .await
+        .expect("cleanup");
+}
+
+#[tokio::test]
+#[ignore]
+async fn staging_matched_rollback() {
+    use qwry_lib::driver::postgres::edit::RowEdit;
+
+    let profile = Profile {
+        id: "test".into(),
+        name: "staging".into(),
+        host: env("QWRY_TEST_HOST"),
+        port: 5432,
+        dbname: env("QWRY_TEST_DB"),
+        user: env("QWRY_TEST_USER"),
+        sslmode: "prefer".into(),
+        color: None,
+        glyph: None,
+        is_prod: false,
+        ssh_host: None,
+        ssh_port: None,
+        ssh_user: None,
+        ssh_key: None,
+    };
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|| {}))
+        .await
+        .expect("connect");
+
+    session
+        .execute_simple(
+            "DROP TABLE IF EXISTS qwry_rb_test;
+             CREATE TABLE qwry_rb_test (id int PRIMARY KEY, v text);
+             INSERT INTO qwry_rb_test VALUES (1, 'one'), (2, 'two')",
+        )
+        .await
+        .expect("setup");
+
+    let sql = "SELECT id, v FROM qwry_rb_test ORDER BY id";
+    let map = session.editability(sql, 0, None).await.expect("map");
+    let oid = map.columns[0].table_oid;
+
+    // one valid edit + one stale locator (id=99 matches 0 rows) → whole batch
+    // must roll back; previously this COMMITTED and reported committed:true
+    let edits = vec![
+        RowEdit { table_oid: oid, col: 1, value: Some("changed".into()), use_default: false, pk: vec![(0, Some("1".into()))] },
+        RowEdit { table_oid: oid, col: 1, value: Some("ghost".into()), use_default: false, pk: vec![(0, Some("99".into()))] },
+    ];
+    let outcome = session.apply_edits(sql, 0, edits, None).await.expect("apply");
+    assert!(!outcome.committed, "mismatch must not commit");
+    assert!(outcome.results.iter().all(|r| !r.ok), "{:?}", outcome.results);
+    let check = session
+        .execute_simple("SELECT v FROM qwry_rb_test WHERE id = 1")
+        .await
+        .expect("check");
+    assert_eq!(
+        check.statements[0].rows[0][0].as_deref(),
+        Some("one"),
+        "valid edit must be rolled back with the batch"
+    );
+
+    // the same valid edit alone commits fine
+    let edits = vec![RowEdit {
+        table_oid: oid,
+        col: 1,
+        value: Some("changed".into()),
+        use_default: false, pk: vec![(0, Some("1".into()))],
+    }];
+    let outcome = session.apply_edits(sql, 0, edits, None).await.expect("apply2");
+    assert!(outcome.committed);
+    assert!(outcome.results[0].ok);
+    assert_eq!(outcome.results[0].new_value.as_deref(), Some("changed"));
+
+    // delete: one valid + one stale locator → rolled back, both rows survive
+    let outcome = session
+        .delete_rows(sql, 0, oid, vec![
+            vec![(0, Some("2".into()))],
+            vec![(0, Some("99".into()))],
+        ], None)
+        .await
+        .expect("delete");
+    assert!(!outcome.committed, "mismatched delete must not commit");
+    let check = session
+        .execute_simple("SELECT count(*) FROM qwry_rb_test")
+        .await
+        .expect("check2");
+    assert_eq!(check.statements[0].rows[0][0].as_deref(), Some("2"), "no row may be deleted");
+
+    // valid single delete commits
+    let outcome = session
+        .delete_rows(sql, 0, oid, vec![vec![(0, Some("2".into()))]], None)
+        .await
+        .expect("delete2");
+    assert!(outcome.committed);
+
+    // SET DEFAULT: use_default writes the column default, not NULL
+    session
+        .execute_simple("ALTER TABLE qwry_rb_test ALTER COLUMN v SET DEFAULT 'dflt'")
+        .await
+        .expect("alter default");
+    let edits = vec![RowEdit {
+        table_oid: oid,
+        col: 1,
+        value: None,
+        use_default: true,
+        pk: vec![(0, Some("1".into()))],
+    }];
+    let outcome = session.apply_edits(sql, 0, edits, None).await.expect("default apply");
+    assert!(outcome.committed);
+    assert_eq!(
+        outcome.results[0].new_value.as_deref(),
+        Some("dflt"),
+        "SET DEFAULT must write the column default"
+    );
+
+    session
+        .execute_simple("DROP TABLE qwry_rb_test")
+        .await
+        .expect("cleanup");
+}
+
+#[tokio::test]
+#[ignore]
+async fn staging_statement_at_a_time() {
+    use qwry_lib::driver::QueryEvent;
+
+    let profile = Profile {
+        id: "test".into(),
+        name: "staging".into(),
+        host: env("QWRY_TEST_HOST"),
+        port: 5432,
+        dbname: env("QWRY_TEST_DB"),
+        user: env("QWRY_TEST_USER"),
+        sslmode: "prefer".into(),
+        color: None,
+        glyph: None,
+        is_prod: false,
+        ssh_host: None,
+        ssh_port: None,
+        ssh_user: None,
+        ssh_key: None,
+    };
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|| {}))
+        .await
+        .expect("connect");
+
+    session
+        .execute_simple(
+            "DROP TABLE IF EXISTS qwry_stmt_test;
+             CREATE TABLE qwry_stmt_test (id int PRIMARY KEY, v text)",
+        )
+        .await
+        .expect("setup");
+
+    // 1) autocommit semantics: a statement before an error REALLY committed —
+    //    the old whole-buffer implicit transaction would have rolled it back
+    let buffer = "INSERT INTO qwry_stmt_test VALUES (1, 'kept'); SELEC oops";
+    let mut events: Vec<QueryEvent> = Vec::new();
+    let mut sink = |ev: QueryEvent| {
+        events.push(ev);
+        true
+    };
+    let res = session.execute_stream(buffer, &mut sink).await;
+    assert!(res.is_err(), "syntax error must fail the run");
+    let (err_index, err_pos) = events
+        .iter()
+        .find_map(|e| match e {
+            QueryEvent::Error { index, position, .. } => Some((*index, *position)),
+            _ => None,
+        })
+        .expect("error event");
+    assert_eq!(err_index, 1, "error belongs to statement 2");
+    let stmt2_off = "INSERT INTO qwry_stmt_test VALUES (1, 'kept'); ".chars().count() as u32;
+    assert_eq!(
+        err_pos.expect("position"),
+        stmt2_off + 1,
+        "position rebased onto the whole buffer"
+    );
+    let check = session
+        .execute_simple("SELECT count(*) FROM qwry_stmt_test")
+        .await
+        .expect("check");
+    assert_eq!(
+        check.statements[0].rows[0][0].as_deref(),
+        Some("1"),
+        "INSERT before the error must be committed"
+    );
+
+    // 2) tx-block-refusing statements now work in multi-statement buffers
+    let mut sink = |_ev: QueryEvent| true;
+    session
+        .execute_stream("VACUUM qwry_stmt_test; SELECT 1", &mut sink)
+        .await
+        .expect("VACUUM in a multi-statement buffer");
+
+    // 3) explicit transactions still span statements (same session)
+    session
+        .execute_stream(
+            "BEGIN; INSERT INTO qwry_stmt_test VALUES (2, 'rolled'); ROLLBACK",
+            &mut sink,
+        )
+        .await
+        .expect("explicit tx");
+    let check = session
+        .execute_simple("SELECT count(*) FROM qwry_stmt_test")
+        .await
+        .expect("check2");
+    assert_eq!(
+        check.statements[0].rows[0][0].as_deref(),
+        Some("1"),
+        "ROLLBACK must undo the INSERT"
+    );
+
+    // 4) non-rowset statements start BEFORE they finish and report real ms
+    let mut events: Vec<QueryEvent> = Vec::new();
+    let mut sink = |ev: QueryEvent| {
+        events.push(ev);
+        true
+    };
+    session
+        .execute_stream("DO $x$ BEGIN PERFORM pg_sleep(0.2); END $x$; SELECT 1", &mut sink)
+        .await
+        .expect("do block");
+    let start0 = events
+        .iter()
+        .position(|e| matches!(e, QueryEvent::StatementStart { index: 0, .. }))
+        .expect("start event");
+    let done0 = events
+        .iter()
+        .position(|e| matches!(e, QueryEvent::StatementDone { index: 0, .. }))
+        .expect("done event");
+    assert!(start0 < done0, "statement starts before it completes");
+    let ms = events
+        .iter()
+        .find_map(|e| match e {
+            QueryEvent::StatementDone { index: 0, ms, .. } => Some(*ms),
+            _ => None,
+        })
+        .unwrap();
+    assert!(ms >= 150.0, "DO-block duration should be real, got {ms}ms");
+
+    session
+        .execute_simple("DROP TABLE qwry_stmt_test")
         .await
         .expect("cleanup");
 }
@@ -228,7 +471,7 @@ async fn staging_streaming_and_cancel() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, Box::new(|| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|| {}))
         .await
         .expect("connect");
 
@@ -265,6 +508,39 @@ async fn staging_streaming_and_cancel() {
     assert_eq!(dones[1].0, 1);
     assert!(matches!(events.last(), Some(QueryEvent::Finished { .. })));
 
+    // ROW_CAP auto-cancel: a capped SELECT as the LAST statement must complete
+    // WITHOUT error (the driver cancels its own drain and swallows the 57014).
+    // pg_sleep per row keeps the query genuinely running so the cancel lands —
+    // with instant queries the cancel legitimately races and the full drain
+    // completes normally (both paths are valid; both must return Ok+capped).
+    let mut events: Vec<QueryEvent> = Vec::new();
+    let mut sink = |ev: QueryEvent| {
+        events.push(ev);
+        true
+    };
+    session
+        .execute_stream(
+            "SELECT n, pg_sleep(0.00005) FROM generate_series(1, 200000) n",
+            &mut sink,
+        )
+        .await
+        .expect("auto-cancelled capped select must not error");
+    let done = events
+        .iter()
+        .find_map(|e| match e {
+            QueryEvent::StatementDone { row_count, capped, .. } => Some((*row_count, *capped)),
+            _ => None,
+        })
+        .expect("statement_done");
+    assert!(done.1, "must report capped");
+    assert!(done.0 >= 50_000, "row_count counts at least the cap, got {}", done.0);
+    assert!(
+        done.0 < 200_000,
+        "auto-cancel should stop the drain early, got {}",
+        done.0
+    );
+    assert!(matches!(events.last(), Some(QueryEvent::Finished { .. })));
+
     // cancellation: long pg_sleep killed from another task
     let session = Arc::new(session);
     let s2 = session.clone();
@@ -282,4 +558,311 @@ async fn staging_streaming_and_cancel() {
         msg.contains("cancel") || msg.contains("statement"),
         "unexpected: {msg}"
     );
+}
+
+/// prod safe-mode: an is_prod profile's session starts server-side read-only —
+/// writes error until the per-session unlock, and re-lock restores the guard
+#[tokio::test]
+#[ignore]
+async fn staging_prod_read_only() {
+    let profile = Profile {
+        id: "test-prod-ro".into(),
+        name: "staging-as-prod".into(),
+        host: env("QWRY_TEST_HOST"),
+        port: 5432,
+        dbname: env("QWRY_TEST_DB"),
+        user: env("QWRY_TEST_USER"),
+        sslmode: "prefer".into(),
+        color: None,
+        glyph: None,
+        is_prod: true, // the flag under test
+        ssh_host: None,
+        ssh_port: None,
+        ssh_user: None,
+        ssh_key: None,
+    };
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|| {}))
+        .await
+        .expect("connect");
+
+    // reads fine
+    session.execute_simple("SELECT 1").await.expect("read");
+
+    // any write is refused AT THE SERVER (sqlstate 25006)
+    let err = session
+        .execute_simple("CREATE TEMP TABLE qwry_ro_probe(x int)")
+        .await
+        .expect_err("write must be blocked");
+    let msg = format!("{err:?}").to_lowercase();
+    assert!(msg.contains("read-only"), "expected read-only error, got: {msg}");
+
+    // per-session unlock lifts it…
+    session
+        .execute_simple("SET default_transaction_read_only = off")
+        .await
+        .expect("unlock");
+    session
+        .execute_simple("CREATE TEMP TABLE qwry_ro_probe(x int)")
+        .await
+        .expect("write after unlock");
+
+    // …and re-lock restores the guard
+    session
+        .execute_simple("SET default_transaction_read_only = on")
+        .await
+        .expect("relock");
+    // NB: INSERT into an EXISTING temp table is allowed in a read-only txn
+    // (per PG semantics) — probe with CREATE TEMP, which is not
+    let err = session
+        .execute_simple("CREATE TEMP TABLE qwry_ro_probe2(x int)")
+        .await
+        .expect_err("write must be blocked again");
+    let msg = format!("{err:?}").to_lowercase();
+    assert!(msg.contains("read-only"), "expected read-only error after relock, got: {msg}");
+}
+
+/// DDL reconstruction — sanity: CREATE TABLE with columns, PK constraint,
+/// secondary indexes come back for a real staging table
+#[tokio::test]
+#[ignore]
+async fn staging_table_ddl() {
+    let profile = Profile {
+        id: "test-ddl".into(),
+        name: "staging".into(),
+        host: env("QWRY_TEST_HOST"),
+        port: 5432,
+        dbname: env("QWRY_TEST_DB"),
+        user: env("QWRY_TEST_USER"),
+        sslmode: "prefer".into(),
+        color: None,
+        glyph: None,
+        is_prod: false,
+        ssh_host: None,
+        ssh_port: None,
+        ssh_user: None,
+        ssh_key: None,
+    };
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|| {}))
+        .await
+        .expect("connect");
+    let ddl = session
+        .table_ddl("public", "product_videos")
+        .await
+        .expect("ddl");
+    println!("{ddl}");
+    assert!(ddl.starts_with("CREATE TABLE \"public\".\"product_videos\" ("));
+    assert!(ddl.to_lowercase().contains("primary key"), "PK missing:\n{ddl}");
+}
+
+/// Perf-batch A/B: batched verify-then-commit + the cached-mapping (hint)
+/// feed. Proves: (1) hint-fed editability == derived; (2) preview SQL with a
+/// hint is byte-identical to derived preview; (3) a multi-row edit commits
+/// through the batched path with per-row verification; (4) a deliberately
+/// STALE mapping (wrong column name) errors and rolls back EVERYTHING — no
+/// partial writes; (5) a stale PK locator under a hint → matched≠1 → full
+/// rollback; (6) delete_rows batched path (mixed stale → rollback; valid →
+/// commit).
+#[tokio::test]
+#[ignore]
+async fn staging_batched_and_hinted_paths() {
+    use qwry_lib::driver::postgres::edit::{
+        ColumnMapHint, EditMapHint, RowEdit, TableIdentityHint,
+    };
+
+    let profile = Profile {
+        id: "test-hint".into(),
+        name: "staging".into(),
+        host: env("QWRY_TEST_HOST"),
+        port: 5432,
+        dbname: env("QWRY_TEST_DB"),
+        user: env("QWRY_TEST_USER"),
+        sslmode: "prefer".into(),
+        color: None,
+        glyph: None,
+        is_prod: false,
+        ssh_host: None,
+        ssh_port: None,
+        ssh_user: None,
+        ssh_key: None,
+    };
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|| {}))
+        .await
+        .expect("connect");
+
+    session
+        .execute_simple(
+            "DROP TABLE IF EXISTS qwry_hint_test;
+             CREATE TABLE qwry_hint_test (id int PRIMARY KEY, a text, b int);
+             INSERT INTO qwry_hint_test VALUES (1, 'one', 10), (2, 'two', 20), (3, 'three', 30)",
+        )
+        .await
+        .expect("setup");
+
+    let sql = "SELECT id, a, b FROM qwry_hint_test ORDER BY id";
+    let derived = session.editability(sql, 0, None).await.expect("derived map");
+    let oid = derived.columns[0].table_oid;
+
+    // (1) hint-fed editability must equal the derived map
+    let identity = vec![TableIdentityHint {
+        table_oid: oid,
+        dotted: "public.qwry_hint_test".into(),
+        pk_attnums: vec![1],
+    }];
+    let hinted = session
+        .editability(sql, 0, Some(&identity))
+        .await
+        .expect("hinted map");
+    assert_eq!(hinted.tables, derived.tables, "hinted table names must match derived");
+    assert_eq!(hinted.pk_cols, derived.pk_cols, "hinted pk_cols must match derived");
+    for (h, d) in hinted.columns.iter().zip(derived.columns.iter()) {
+        assert_eq!(h.editable, d.editable, "editable flag diverged on col {}", d.col);
+        assert_eq!(h.type_name, d.type_name);
+        assert_eq!(h.attnum, d.attnum);
+    }
+
+    // full plan-path hint: derived map + real column names by attnum
+    let name_of = |att: i16| -> Option<String> {
+        match att {
+            1 => Some("id".into()),
+            2 => Some("a".into()),
+            3 => Some("b".into()),
+            _ => None,
+        }
+    };
+    let mk_hint = |names: &dyn Fn(i16) -> Option<String>| EditMapHint {
+        columns: derived
+            .columns
+            .iter()
+            .map(|c| ColumnMapHint {
+                col: c.col,
+                table_oid: c.table_oid,
+                attnum: c.attnum,
+                editable: c.editable,
+                type_name: c.type_name.clone(),
+                is_ctid: c.is_ctid,
+                name: names(c.attnum),
+            })
+            .collect(),
+        pk_cols: derived.pk_cols.clone(),
+        tables: derived.tables.clone(),
+    };
+    let good_hint = mk_hint(&name_of);
+
+    // (2) preview: hint path byte-identical to the derived path
+    let edits = vec![
+        RowEdit { table_oid: oid, col: 1, value: Some("uno".into()), use_default: false, pk: vec![(0, Some("1".into()))] },
+        RowEdit { table_oid: oid, col: 2, value: Some("11".into()), use_default: false, pk: vec![(0, Some("1".into()))] },
+        RowEdit { table_oid: oid, col: 1, value: Some("dos".into()), use_default: false, pk: vec![(0, Some("2".into()))] },
+    ];
+    let p_derived = session
+        .build_edit_statements(sql, 0, &edits, None)
+        .await
+        .expect("derived preview");
+    let p_hinted = session
+        .build_edit_statements(sql, 0, &edits, Some(good_hint.clone()))
+        .await
+        .expect("hinted preview");
+    assert_eq!(p_hinted, p_derived, "hinted preview must be byte-identical to derived");
+
+    // (3) multi-row commit via the batched path, per-row verification
+    let outcome = session
+        .apply_edits(sql, 0, edits.clone(), Some(good_hint.clone()))
+        .await
+        .expect("hinted apply");
+    assert!(outcome.committed, "batched hinted commit must succeed");
+    assert!(outcome.results.iter().all(|r| r.ok), "{:?}", outcome.results);
+    assert_eq!(outcome.results[0].new_value.as_deref(), Some("uno"));
+    assert_eq!(outcome.results[1].new_value.as_deref(), Some("11"));
+    assert_eq!(outcome.results[2].new_value.as_deref(), Some("dos"));
+    let check = session
+        .execute_simple("SELECT a, b FROM qwry_hint_test ORDER BY id")
+        .await
+        .expect("check");
+    assert_eq!(check.statements[0].rows[0][0].as_deref(), Some("uno"));
+    assert_eq!(check.statements[0].rows[0][1].as_deref(), Some("11"));
+    assert_eq!(check.statements[0].rows[1][0].as_deref(), Some("dos"));
+
+    // (4) STALE mapping: column 'a' renamed to a nonexistent name in the hint.
+    // The generated UPDATE hits 42703; the whole batch (including the row that
+    // would have succeeded) must roll back — zero partial writes.
+    let stale_names = |att: i16| -> Option<String> {
+        match att {
+            1 => Some("id".into()),
+            2 => Some("zzz_qwry_gone".into()), // deliberately wrong
+            3 => Some("b".into()),
+            _ => None,
+        }
+    };
+    let stale_hint = mk_hint(&stale_names);
+    let edits = vec![
+        RowEdit { table_oid: oid, col: 2, value: Some("999".into()), use_default: false, pk: vec![(0, Some("1".into()))] }, // valid column (b)
+        RowEdit { table_oid: oid, col: 1, value: Some("ghost".into()), use_default: false, pk: vec![(0, Some("2".into()))] }, // stale-named column
+    ];
+    let err = session
+        .apply_edits(sql, 0, edits, Some(stale_hint))
+        .await
+        .expect_err("stale mapping must error");
+    let msg = format!("{err:?}").to_lowercase();
+    assert!(msg.contains("zzz_qwry_gone"), "error should name the missing column: {msg}");
+    let check = session
+        .execute_simple("SELECT a, b FROM qwry_hint_test WHERE id IN (1,2) ORDER BY id")
+        .await
+        .expect("check2");
+    assert_eq!(check.statements[0].rows[0][1].as_deref(), Some("11"), "valid row's write must be rolled back");
+    assert_eq!(check.statements[0].rows[1][0].as_deref(), Some("dos"), "no partial writes");
+    // the session must be usable again (aborted tx was rolled back)
+    session.execute_simple("SELECT 1").await.expect("session usable after rollback");
+
+    // (5) stale PK locator under a good hint → matched≠1 → full rollback
+    let edits = vec![
+        RowEdit { table_oid: oid, col: 1, value: Some("kept?".into()), use_default: false, pk: vec![(0, Some("1".into()))] },
+        RowEdit { table_oid: oid, col: 1, value: Some("ghost".into()), use_default: false, pk: vec![(0, Some("99".into()))] },
+    ];
+    let outcome = session
+        .apply_edits(sql, 0, edits, Some(good_hint.clone()))
+        .await
+        .expect("apply");
+    assert!(!outcome.committed, "matched≠1 must roll the hinted batch back");
+    assert!(outcome.results.iter().all(|r| !r.ok));
+    let check = session
+        .execute_simple("SELECT a FROM qwry_hint_test WHERE id = 1")
+        .await
+        .expect("check3");
+    assert_eq!(check.statements[0].rows[0][0].as_deref(), Some("uno"), "no row may change");
+
+    // (6) delete_rows batched path: mixed valid+stale → rollback, both survive
+    let outcome = session
+        .delete_rows(sql, 0, oid, vec![
+            vec![(0, Some("3".into()))],
+            vec![(0, Some("99".into()))],
+        ], Some(good_hint.clone()))
+        .await
+        .expect("delete");
+    assert!(!outcome.committed, "mismatched hinted delete must not commit");
+    let check = session
+        .execute_simple("SELECT count(*) FROM qwry_hint_test")
+        .await
+        .expect("check4");
+    assert_eq!(check.statements[0].rows[0][0].as_deref(), Some("3"), "no row may be deleted");
+    // …and a valid batched delete of TWO rows commits with per-row results
+    let outcome = session
+        .delete_rows(sql, 0, oid, vec![
+            vec![(0, Some("2".into()))],
+            vec![(0, Some("3".into()))],
+        ], Some(good_hint))
+        .await
+        .expect("delete2");
+    assert!(outcome.committed);
+    assert_eq!(outcome.results.len(), 2);
+    assert!(outcome.results.iter().all(|r| r.ok));
+    let check = session
+        .execute_simple("SELECT count(*) FROM qwry_hint_test")
+        .await
+        .expect("check5");
+    assert_eq!(check.statements[0].rows[0][0].as_deref(), Some("1"));
+
+    session
+        .execute_simple("DROP TABLE qwry_hint_test")
+        .await
+        .expect("cleanup");
 }

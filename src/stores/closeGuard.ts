@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { useTabs } from "./tabs";
 import { useEdits } from "./edits";
+import { useBrowser } from "./browser";
 
 interface CloseGuardState {
   /** tab id awaiting a discard/commit decision; null = no prompt showing */
@@ -12,8 +13,12 @@ interface CloseGuardState {
   commit: () => Promise<void>;
 }
 
-const pendingCount = (tabId: string) =>
-  Object.keys(useEdits.getState().byTab[tabId]?.pending ?? {}).length;
+const pendingCount = (tabId: string) => {
+  const edits = Object.keys(useEdits.getState().byTab[tabId]?.pending ?? {}).length;
+  // a half-typed inline add-row is unsaved work too
+  const draft = useBrowser.getState().byTab[tabId]?.draftRow;
+  return edits + (draft && Object.keys(draft).length > 0 ? 1 : 0);
+};
 
 export const useCloseGuard = create<CloseGuardState>((set) => ({
   pending: null,

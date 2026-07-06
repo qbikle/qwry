@@ -4,6 +4,7 @@ import {
   applyTheme,
   DEFAULT_PALETTE,
   PALETTES,
+  setGlassAlpha,
   type Mode,
   type Palette,
 } from "../design/theme";
@@ -14,6 +15,37 @@ interface SettingsState {
   /** include pg functions in the typed completion flow (always available via ^Space) */
   fnInComplete: boolean;
   toggleFnInComplete: () => void;
+
+  /** editor font size in px */
+  fontSize: number;
+  setFontSize: (n: number) => void;
+  /** results grid font size in px */
+  gridFontSize: number;
+  setGridFontSize: (n: number) => void;
+  /** results grid row density */
+  gridDensity: "compact" | "normal" | "comfortable";
+  setGridDensity: (d: "compact" | "normal" | "comfortable") => void;
+  /** soft-wrap long lines in the SQL editor */
+  wrapLines: boolean;
+  toggleWrapLines: () => void;
+  /** server-side statement_timeout, seconds — applies to NEW connections */
+  statementTimeoutSecs: number;
+  setStatementTimeoutSecs: (n: number) => void;
+
+  /** default ⌘⇧F style — id into FORMAT_PRESETS */
+  formatPreset: string;
+  setFormatPreset: (id: string) => void;
+  /** keyword/type case applied by every preset */
+  formatKeywordCase: "upper" | "lower" | "preserve";
+  setFormatKeywordCase: (c: "upper" | "lower" | "preserve") => void;
+
+  /** settings modal */
+  settingsOpen: boolean;
+  setSettingsOpen: (v: boolean) => void;
+
+  /** gutter glass opacity 0.1–0.9 (lower = more see-through vibrancy) */
+  glassAlpha: number;
+  setGlass: (a: number) => void;
 
   /** dark / light / system */
   mode: Mode;
@@ -47,6 +79,30 @@ export const useSettings = create<SettingsState>()(
       fnInComplete: false,
       toggleFnInComplete: () => set((s) => ({ fnInComplete: !s.fnInComplete })),
 
+      fontSize: 13,
+      setFontSize: (n) => set({ fontSize: Math.max(10, Math.min(20, Math.round(n))) }),
+      gridFontSize: 12,
+      setGridFontSize: (n) => set({ gridFontSize: Math.max(10, Math.min(18, Math.round(n))) }),
+      gridDensity: "normal",
+      setGridDensity: (gridDensity) => set({ gridDensity }),
+      wrapLines: false,
+      toggleWrapLines: () => set((s) => ({ wrapLines: !s.wrapLines })),
+      statementTimeoutSecs: 300,
+      setStatementTimeoutSecs: (n) =>
+        // 0 = no timeout; else clamp 1s..2h
+        set({ statementTimeoutSecs: n <= 0 ? 0 : Math.max(1, Math.min(7200, Math.round(n))) }),
+
+      formatPreset: "standard",
+      setFormatPreset: (formatPreset) => set({ formatPreset }),
+      formatKeywordCase: "upper",
+      setFormatKeywordCase: (formatKeywordCase) => set({ formatKeywordCase }),
+
+      settingsOpen: false,
+      setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+
+      glassAlpha: 0.55,
+      setGlass: (a) => set({ glassAlpha: Math.max(0, Math.min(1, a)) }),
+
       mode: "dark",
       paletteId: DEFAULT_PALETTE,
       customThemes: [],
@@ -69,6 +125,14 @@ export const useSettings = create<SettingsState>()(
       name: "qwry.settings",
       partialize: (s) => ({
         fnInComplete: s.fnInComplete,
+        fontSize: s.fontSize,
+        gridFontSize: s.gridFontSize,
+        gridDensity: s.gridDensity,
+        wrapLines: s.wrapLines,
+        statementTimeoutSecs: s.statementTimeoutSecs,
+        formatPreset: s.formatPreset,
+        formatKeywordCase: s.formatKeywordCase,
+        glassAlpha: s.glassAlpha,
         mode: s.mode,
         paletteId: s.paletteId,
         customThemes: s.customThemes,
@@ -89,7 +153,8 @@ function currentPalette(): Palette {
 
 /** recompute + apply CSS vars from the current palette & mode */
 function apply() {
-  const { mode } = useSettings.getState();
+  const { mode, glassAlpha } = useSettings.getState();
+  setGlassAlpha(glassAlpha);
   // the mode toggle governs every theme — custom themes synthesise the
   // matching dark/light variant from their authored colours
   const dark = resolveDark(mode);
@@ -112,7 +177,8 @@ if (typeof window !== "undefined") {
     if (
       s.mode !== prev.mode ||
       s.paletteId !== prev.paletteId ||
-      s.customThemes !== prev.customThemes
+      s.customThemes !== prev.customThemes ||
+      s.glassAlpha !== prev.glassAlpha
     ) {
       prev = s;
       apply();

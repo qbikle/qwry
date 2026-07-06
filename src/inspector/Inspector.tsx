@@ -5,7 +5,6 @@ import {
   Copy,
   ListTree,
   Lock,
-  PanelRightClose,
   Pencil,
   TriangleAlert,
 } from "lucide-react";
@@ -43,7 +42,6 @@ function CopySplit({ raw, pretty }: { raw: string; pretty: string }) {
 
 export function Inspector() {
   const target = useInspector((s) => s.target);
-  const toggle = useInspector((s) => s.toggle);
   const fullValue = useInspector((s) => s.fullValue);
   const fullValueFor = useInspector((s) => s.fullValueFor);
   const statements = useResults((s) => s.statements);
@@ -63,9 +61,18 @@ export function Inspector() {
   const k = target ? editKey(target.stmtIndex, target.row, target.col) : null;
   const pendingEdit = k ? pending[k] : undefined;
   const truncated = target && stmt ? stmt.truncated.has(`${target.row}:${target.col}`) : false;
-  const rawCell =
-    target && stmt ? (pendingEdit ? pendingEdit.value : stmt.rows[target.row]?.[target.col]) : null;
-  const value = truncated && fullValueFor === k ? fullValue : rawCell;
+  const dbCell = target && stmt ? stmt.rows[target.row]?.[target.col] : null;
+  // a staged edit always wins over the fetched DB value — the inspector must
+  // show what ⌘S will write, not what the DB still holds
+  const value =
+    pendingEdit !== undefined
+      ? pendingEdit.value
+      : truncated && fullValueFor === k
+        ? fullValue
+        : dbCell;
+  // truncated cells may only be edited once the FULL value is here — staging
+  // the 8KB prefix and committing it would destroy everything past the cap
+  const fullLoaded = !truncated || fullValueFor === k || pendingEdit !== undefined;
 
   const editMap = target ? maps[target.stmtIndex] : undefined;
   const editMeta =
@@ -102,20 +109,35 @@ export function Inspector() {
   }, [truncated, target, stmt, editMap, k, fullValueFor]);
 
   // reset edit state when the focused cell changes
+  const wantEdit = useRef(false);
   useEffect(() => {
     setEditingText(null);
     setRawDraft(null);
     setJsonError(null);
     setMode("auto");
+    wantEdit.current = false;
   }, [k]);
 
-  // grid double-click on a structured cell lands here ready to edit
+  // grid double-click on a structured/truncated cell lands here ready to edit;
+  // for a still-loading truncated cell, remember the intent and enter edit
+  // when the full value arrives
   useEffect(() => {
     if (editSeq === 0 || value == null) return;
+    if (!fullLoaded) {
+      wantEdit.current = true;
+      return;
+    }
     if (structuredValue(value, editMeta?.type_name) !== undefined) setMode("raw");
     else setEditingText(value);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editSeq]);
+  useEffect(() => {
+    if (!fullLoaded || !wantEdit.current || value == null) return;
+    wantEdit.current = false;
+    if (structuredValue(value, editMeta?.type_name) !== undefined) setMode("raw");
+    else setEditingText(value);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fullLoaded]);
 
   // scalar editor auto-grows to its content (one line for an int, more for prose)
   // so it never balloons to the full panel height
@@ -134,9 +156,6 @@ export function Inspector() {
       <div className="inspector">
         <div className="insp-top">
           <span className="insp-col muted">Inspector</span>
-          <button className="insp-icon" title="Hide ⌘I" onClick={toggle}>
-            <PanelRightClose size={15} />
-          </button>
         </div>
         <div className="insp-empty">Select a cell to inspect</div>
       </div>
@@ -145,9 +164,18 @@ export function Inspector() {
 
   const structured = value != null ? structuredValue(value, editMeta?.type_name) : undefined;
   const isStructured = structured !== undefined;
-  const pretty = isStructured ? JSON.stringify(structured, null, 2) : (value ?? "");
+  // a bare number token of 16+ digits exceeds JS float precision — any
+  // parse→re-serialize path would silently round it (even in untouched
+  // fields), so tree editing and pretty-printing are disabled for such docs
+  const lossyNums =
+    isStructured && value != null && /(?:^|[\s:,[])-?\d{16,}(?:[\s,}\]]|$)/.test(value);
+  const pretty = isStructured && !lossyNums ? JSON.stringify(structured, null, 2) : (value ?? "");
   const isArr = isArrayType(editMeta?.type_name);
-  const structuredEditable = !!editMeta?.editable && isStructured;
+  const canEdit = !!editMeta?.editable && fullLoaded;
+  // `json` (not jsonb) preserves exact text — tree edits re-serialize the doc
+  // (minify, key reorder), so json columns edit through raw mode only
+  const structuredEditable =
+    canEdit && isStructured && !lossyNums && editMeta?.type_name !== "json";
 
   const stage = (v: string) =>
     useEdits.getState().setEdit({
@@ -164,7 +192,19 @@ export function Inspector() {
   const saveRaw = () => {
     if (rawDraft === null) return;
     try {
-      stage(serialize(JSON.parse(rawDraft)));
+      const parsed = JSON.parse(rawDraft);
+      if (isArr) {
+        if (!Array.isArray(parsed)) {
+          setJsonError("this column is a Postgres array — provide a JSON array [ … ]");
+          return;
+        }
+        stage(jsToPgArray(parsed));
+      } else {
+        // stage the raw text VERBATIM — parse is validation only. A
+        // parse→re-serialize round trip would minify `json` columns and
+        // silently round >2^53 numbers the user never touched.
+        stage(rawDraft);
+      }
       setRawDraft(null);
       setJsonError(null);
     } catch (e) {
@@ -182,9 +222,6 @@ export function Inspector() {
           {editMeta && <span className="insp-type">{editMeta.type_name}</span>}
         </div>
         <span className="insp-rownum">row {target.row + 1}</span>
-        <button className="insp-icon" title="Hide ⌘I" onClick={toggle}>
-          <PanelRightClose size={15} />
-        </button>
       </div>
 
       {editMeta && !editMeta.editable && editMeta.reason && (
@@ -199,14 +236,35 @@ export function Inspector() {
       )}
       {pendingEdit && (
         <div className="insp-chip pend">
-          <Pencil size={12} /> Pending edit — ⌘S to commit
+          <Pencil size={12} /> Pending edit{pendingEdit.useDefault ? " (SET DEFAULT)" : ""} — ⌘S to
+          commit
         </div>
       )}
-      {truncated && fullValueFor !== k && <div className="insp-chip">Loading full value…</div>}
+      {truncated && !fullLoaded && (
+        <div className="insp-chip">
+          {editMap === "unavailable" || (editMeta && editMeta.table_oid === 0)
+            ? "showing first 8KB — full value unavailable (result not mapped to a table)"
+            : "Loading full value… editing disabled until loaded"}
+        </div>
+      )}
+      {lossyNums && (
+        <div className="insp-chip warn">
+          <TriangleAlert size={12} /> numbers beyond JS precision — tree editing off, use raw mode
+        </div>
+      )}
 
       {editingText === null && value != null && (
         <div className="insp-tools">
-          {isStructured ? (
+          {truncated && !fullLoaded ? (
+            // copying now would ship the 8KB prefix as if it were the value
+            <button
+              className="insp-tool"
+              disabled
+              title="Copy disabled — only the first 8KB is loaded (full value unavailable for this result)"
+            >
+              <Copy size={14} />
+            </button>
+          ) : isStructured ? (
             <>
               <CopySplit raw={value} pretty={pretty} />
               <button
@@ -222,7 +280,7 @@ export function Inspector() {
               <button className="insp-tool" title="Copy" onClick={() => void writeText(value)}>
                 <Copy size={14} />
               </button>
-              {editMeta?.editable && (
+              {canEdit && (
                 <button className="insp-tool" title="Edit value" onClick={() => setEditingText(value)}>
                   <Pencil size={14} />
                 </button>
@@ -270,7 +328,7 @@ export function Inspector() {
           </div>
         ) : value === null || value === undefined ? (
           <div className="insp-null">
-            NULL
+            {pendingEdit?.useDefault ? "DEFAULT" : "NULL"}
             {editMeta?.editable && (
               <button className="insp-null-edit" onClick={() => setEditingText("")}>
                 set value
@@ -313,9 +371,9 @@ export function Inspector() {
           </div>
         ) : (
           <div
-            className={`insp-value${editMeta?.editable ? " editable" : ""}`}
-            title={editMeta?.editable ? "Double-click to edit" : undefined}
-            onDoubleClick={() => editMeta?.editable && setEditingText(value)}
+            className={`insp-value${canEdit ? " editable" : ""}`}
+            title={canEdit ? "Double-click to edit" : undefined}
+            onDoubleClick={() => canEdit && setEditingText(value)}
           >
             {value}
           </div>

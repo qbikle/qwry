@@ -6,7 +6,7 @@ import { qwryHighlight } from "../editor/theme";
 import "./inspector.css";
 
 const jsonTheme = EditorView.theme({
-  "&": { background: "transparent", fontSize: "12px" },
+  "&": { background: "transparent", fontSize: "var(--text-sm)" },
   ".cm-content": {
     fontFamily: "var(--font-mono)",
     padding: "8px 0",
@@ -26,12 +26,15 @@ const jsonTheme = EditorView.theme({
 export function JsonField({
   value,
   readOnly,
+  autoFocus,
   onChange,
   onSave,
   onCancel,
 }: {
   value: string;
   readOnly?: boolean;
+  /** focus on mount with the caret AFTER the value */
+  autoFocus?: boolean;
   onChange?: (v: string) => void;
   onSave?: () => void;
   onCancel?: () => void;
@@ -83,6 +86,10 @@ export function JsonField({
       }),
     });
     viewRef.current = view;
+    if (autoFocus && !readOnly) {
+      view.focus();
+      view.dispatch({ selection: { anchor: view.state.doc.length } });
+    }
     return () => {
       view.destroy();
       viewRef.current = null;

@@ -29,15 +29,41 @@ impl Drop for PgSession {
     }
 }
 
-fn pg_config(profile: &Profile, password: &str, addr: Option<(&str, u16)>) -> tokio_postgres::Config {
+fn pg_config(
+    profile: &Profile,
+    password: &str,
+    addr: Option<(&str, u16)>,
+    statement_timeout_ms: u64,
+) -> tokio_postgres::Config {
     let (host, port) = addr.unwrap_or((profile.host.as_str(), profile.port));
     let mut cfg = tokio_postgres::Config::new();
+    // standard_conforming_strings: generated edit SQL escapes literals by
+    // doubling quotes only. statement_timeout: user-tunable via Settings —
+    // a dead tunnel or runaway query must never hang a session forever.
+    // is_prod: SAFE MODE — the session starts read-only at the SERVER; a
+    // stray UPDATE on a prod-flagged connection errors before touching data
+    // (per-tab unlock runs SET default_transaction_read_only = off).
+    let mut opts = format!(
+        "-c standard_conforming_strings=on \
+         -c statement_timeout={statement_timeout_ms} \
+         -c idle_in_transaction_session_timeout=600000"
+    );
+    if profile.is_prod {
+        opts.push_str(" -c default_transaction_read_only=on");
+    }
     cfg.host(host)
         .port(port)
         .dbname(&profile.dbname)
         .user(&profile.user)
         .password(password)
         .application_name("qwry")
+        .options(&opts)
+        // dead-peer detection in ~60s instead of the kernel's 2h default —
+        // the SSH-tunnel-drop case must fail fast, not spin forever
+        .keepalives(true)
+        .keepalives_idle(std::time::Duration::from_secs(30))
+        .keepalives_interval(std::time::Duration::from_secs(10))
+        .keepalives_retries(3)
         .connect_timeout(std::time::Duration::from_secs(10));
     cfg
 }
@@ -52,25 +78,37 @@ fn connect_err(e: tokio_postgres::Error) -> DriverError {
     }
 }
 
-/// spawn the connection driver task. When the connection ends (server drop /
+/// spawn the connection driver task, draining async messages so server-sent
+/// NOTICEs (RAISE NOTICE, implicit-index notes, …) reach the UI instead of
+/// being dropped on the floor. When the connection ends (server drop /
 /// network error) `on_close` fires. An intentional disconnect aborts this task
 /// (PgSession::drop) before it reaches `on_close`, so it only signals a real
 /// death — the frontend uses it to flip the connection's status dot.
-fn spawn_session<C>(
+fn spawn_session<S, T>(
     client: Client,
-    connection: C,
+    mut connection: tokio_postgres::Connection<S, T>,
     tls: TlsChoice,
+    on_notice: Box<dyn Fn(String, String) + Send>,
     on_close: Box<dyn FnOnce() + Send>,
 ) -> PgSession
 where
-    C: std::future::Future<Output = std::result::Result<(), tokio_postgres::Error>>
-        + Send
-        + 'static,
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
     let cancel = client.cancel_token();
     let conn_handle = tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("pg connection error: {e}");
+        loop {
+            match futures_util::future::poll_fn(|cx| connection.poll_message(cx)).await {
+                Some(Ok(tokio_postgres::AsyncMessage::Notice(db))) => {
+                    on_notice(db.severity().to_string(), db.message().to_string());
+                }
+                Some(Ok(_)) => {} // LISTEN notifications etc. — not ours (yet)
+                Some(Err(e)) => {
+                    eprintln!("pg connection error: {e}");
+                    break;
+                }
+                None => break, // clean close
+            }
         }
         on_close();
     });
@@ -90,9 +128,11 @@ pub async fn connect(
     profile: &Profile,
     password: &str,
     addr: Option<(&str, u16)>,
+    statement_timeout_ms: Option<u64>,
+    on_notice: Box<dyn Fn(String, String) + Send>,
     on_close: Box<dyn FnOnce() + Send>,
 ) -> Result<PgSession> {
-    let cfg = pg_config(profile, password, addr);
+    let cfg = pg_config(profile, password, addr, statement_timeout_ms.unwrap_or(300_000));
 
     let try_tls = profile.sslmode != "disable";
     let try_plain = profile.sslmode != "require";
@@ -100,7 +140,7 @@ pub async fn connect(
     if try_tls {
         match cfg.connect(tls::connector()).await {
             Ok((client, connection)) => {
-                return Ok(spawn_session(client, connection, TlsChoice::Tls, on_close));
+                return Ok(spawn_session(client, connection, TlsChoice::Tls, on_notice, on_close));
             }
             // a server-sent error (bad password, pg_hba, missing db…) is the real
             // reason — a plain retry would only mask it with a confusing
@@ -116,10 +156,14 @@ pub async fn connect(
         .connect(tokio_postgres::NoTls)
         .await
         .map_err(connect_err)?;
-    Ok(spawn_session(client, connection, TlsChoice::Plain, on_close))
+    Ok(spawn_session(client, connection, TlsChoice::Plain, on_notice, on_close))
 }
 
 impl PgSession {
+    pub fn is_tls(&self) -> bool {
+        self.tls == TlsChoice::Tls
+    }
+
     /// Execute one or more statements via the simple protocol.
     /// All values arrive as wire text — universal across every PG type, and
     /// multi-statement strings work natively. (P2 replaces this with streaming.)
@@ -199,12 +243,21 @@ impl PgSession {
     }
 
     pub async fn cancel(&self) -> Result<()> {
+        // the cancel request opens a NEW connection — through a dead tunnel it
+        // would hang forever, so cancel itself gets a hard deadline
         let token = self.cancel.clone();
-        let res = match self.tls {
-            TlsChoice::Plain => token.cancel_query(tokio_postgres::NoTls).await,
-            TlsChoice::Tls => token.cancel_query(tls::connector()).await,
+        let fut = async {
+            match self.tls {
+                TlsChoice::Plain => token.cancel_query(tokio_postgres::NoTls).await,
+                TlsChoice::Tls => token.cancel_query(tls::connector()).await,
+            }
         };
-        res.map_err(|e| DriverError::Internal(format!("cancel failed: {e}")))
+        match tokio::time::timeout(std::time::Duration::from_secs(3), fut).await {
+            Ok(res) => res.map_err(|e| DriverError::Internal(format!("cancel failed: {e}"))),
+            Err(_) => Err(DriverError::Internal(
+                "cancel timed out — connection may be dead (disconnect to force)".into(),
+            )),
+        }
     }
 }
 
@@ -218,12 +271,16 @@ fn map_pg_err(e: tokio_postgres::Error) -> DriverError {
             message: db.message().to_string(),
             position,
             code: Some(db.code().code().to_string()),
+            detail: db.detail().map(str::to_string),
+            hint: db.hint().map(str::to_string),
         }
     } else {
         DriverError::Db {
             message: e.to_string(),
             position: None,
             code: None,
+            detail: None,
+            hint: None,
         }
     }
 }

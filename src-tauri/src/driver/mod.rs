@@ -100,6 +100,10 @@ pub enum QueryEvent {
         message: String,
         position: Option<u32>,
         code: Option<String>,
+        /// PG DETAIL field — often the actual answer ("Key (email)=(x) exists")
+        detail: Option<String>,
+        /// PG HINT field
+        hint: Option<String>,
     },
     Finished {
         total_ms: f64,
@@ -115,9 +119,13 @@ pub enum DriverError {
     #[error("{message}")]
     Db {
         message: String,
-        /// 1-based byte position into the failing statement, from PG error field
+        /// 1-based CHAR (not byte) position. PG reports it within the single
+        /// statement it was sent; execute_stream rebases it onto the whole
+        /// executed buffer via the splitter's statement char offsets.
         position: Option<u32>,
         code: Option<String>,
+        detail: Option<String>,
+        hint: Option<String>,
     },
     #[error("connection failed: {0}")]
     Connect(String),
@@ -130,17 +138,21 @@ pub enum DriverError {
 impl serde::Serialize for DriverError {
     fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let mut st = s.serialize_struct("DriverError", 3)?;
+        let mut st = s.serialize_struct("DriverError", 5)?;
         match self {
-            DriverError::Db { message, position, code } => {
+            DriverError::Db { message, position, code, detail, hint } => {
                 st.serialize_field("message", message)?;
                 st.serialize_field("position", position)?;
                 st.serialize_field("code", code)?;
+                st.serialize_field("detail", detail)?;
+                st.serialize_field("hint", hint)?;
             }
             other => {
                 st.serialize_field("message", &other.to_string())?;
                 st.serialize_field("position", &Option::<u32>::None)?;
                 st.serialize_field("code", &Option::<String>::None)?;
+                st.serialize_field("detail", &Option::<String>::None)?;
+                st.serialize_field("hint", &Option::<String>::None)?;
             }
         }
         st.end()

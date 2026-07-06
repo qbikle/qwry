@@ -19,6 +19,7 @@
 }
 
 .v2-breadcrumb {
+  margin-right: auto;
   font-size: var(--text-sm);
   color: var(--fg-muted);
   font-weight: 550;
@@ -29,8 +30,8 @@
 }
 
 .v2-tool {
-  margin-left: auto;
   display: inline-flex;
+  margin-left: calc(-1 * var(--sp-2) + 2px); /* tools sit as a tight pair */
   align-items: center;
   justify-content: center;
   width: 28px;
@@ -64,10 +65,24 @@
 /* shared card chrome */
 .card {
   border-radius: var(--radius-panel);
-  box-shadow: var(--shadow-panel);
+  /* bevel: dark outer rim seats the card INTO the glass (reads against any
+     wallpaper); the light lip lives on ::after, inset from the edge */
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.38),
+    var(--shadow-panel);
   border: 1px solid var(--card-border);
   position: relative;
   overflow: hidden;
+}
+.card::after {
+  /* the light bevel lip — floated 2px INSIDE the edge so it reads as a
+     separate facet instead of fusing with the border into one crisp line */
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border-radius: calc(var(--radius-panel) - 3px);
+  box-shadow: inset 0 0 0 1px var(--card-highlight);
+  pointer-events: none;
 }
 .card::before {
   /* faint top inner highlight — the Linear/Arc sheen */
@@ -80,8 +95,9 @@
 }
 
 .sidebar-card {
-  width: 248px;
+  width: var(--sidebar-w, 248px);
   flex-shrink: 0;
+  position: relative;
   background: var(--bg-sidebar);
   display: flex;
   flex-direction: column;
@@ -128,15 +144,19 @@
 /* sidebar card sections */
 .dbsw {
   position: relative;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  padding-right: 6px;
 }
 .sb-dbhead {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 10px var(--sp-3);
   border: none;
-  border-bottom: 1px solid var(--border);
   background: none;
   color: var(--fg);
   cursor: pointer;
@@ -242,23 +262,23 @@
 
 /* inspector reopen tab, flush against the main card's right edge */
 .inspector-reopen {
+  /* top-right, same glyph family as the open-state's close control */
   position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
+  right: 8px;
+  top: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 60px;
-  border-radius: var(--radius-inner) 0 0 var(--radius-inner);
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-inner);
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-right: none;
   color: var(--fg-muted);
   cursor: pointer;
   z-index: 6;
-  font-size: 13px;
+  font-size: var(--text-md);
   line-height: 1;
 }
 .inspector-reopen:hover {
@@ -278,4 +298,49 @@
 .inspector-resize:hover {
   background: var(--accent);
   opacity: 0.35;
+}
+
+/* sidebar width drag handle (right edge) */
+.sidebar-resize {
+  position: absolute;
+  top: 0;
+  right: -4px; /* 1px inside, 4px in the gutter — clear of the tree scrollbar */
+  width: 5px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+}
+.sidebar-resize:hover { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+
+/* connection identity: colored dot + active-tab underline */
+.conn-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--conn-color, var(--accent));
+  margin-right: 7px;
+  flex-shrink: 0;
+}
+
+.me-newtab {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-raised);
+  color: var(--fg);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.me-newtab:hover { border-color: var(--accent); }
+
+.v2-tool.on { color: var(--accent); }
+
+.v2-breadcrumb + .v2-tool,
+.prod-chip + .v2-tool {
+  margin-left: 0;
 }

@@ -1,0 +1,299 @@
+{
+ "source": "postico-beekeeper lens \u2014 Postico 2 (v2.3.3, Feb 2026: eggerapps.at docs + releases.eggerapps.at changelog + GitHub jakob/Postico issues) and Beekeeper Studio (v5.x through 2026: docs.beekeeperstudio.io, release blogs 5.0/5.2/5.4, GitHub issues #135/#752/#1857/#698, G2/SaaSHub reviews)",
+ "findings": [
+  {
+   "title": "Quick Filter Actions: right-click a value to filter by it (Postico 2.2)",
+   "detail": "Right-click any cell \u2192 'show only rows with this value' / 'hide rows with this value'. Loved because it turns exploration into zero-typing filtering \u2014 you see an interesting value and pivot instantly. Beyond: make quick-filters stackable chips above the grid (each removable), support multi-cell selection \u2192 IN-list filter, offer 'filter by prefix/contains' variants for text, and make it work on arbitrary query results by rewriting the WHERE (qwry already traces result columns to origin tables for edit-from-SQL \u2014 reuse that plumbing).",
+   "importance": "high",
+   "surface": "grid"
+  },
+  {
+   "title": "Foreign key picker when editing FK cells (Postico)",
+   "detail": "Editing a cell that's an FK opens a searchable picker of referenced-table rows instead of forcing you to memorize ids. Widely cited as what makes 'editing all kinds of tables a breeze'. Beyond: keyset-paginated type-to-search picker (<16ms per keystroke), display-column heuristic (first text/name-like column shown next to the PK), recent-picks at top, and Esc leaves the cell untouched. No competitor makes the picker fast on 1M-row referenced tables \u2014 qwry can.",
+   "importance": "high",
+   "surface": "grid"
+  },
+  {
+   "title": "Clickable foreign keys / goto referenced row (Beekeeper)",
+   "detail": "FK values are clickable and jump to the referenced row; Query Magics even has __format__goto for arbitrary columns. Loved because FK-hopping is the core browse loop. Beyond: \u2318-click an FK value \u2192 peek popover of the referenced row (inspector-style, no tab churn), full-click opens filtered browse in a new tab, plus the reverse \u2014 'show rows referencing this' using pg_constraint backlinks. Maintain a per-tab nav stack so \u2325\u2318\u2190/\u2192 walks back through hops (Postico's Finder-like history).",
+   "importance": "high",
+   "surface": "browser"
+  },
+  {
+   "title": "Row detail sidebar for long values and images (Postico)",
+   "detail": "Selecting a cell shows the full value in a sidebar \u2014 long text, images from bytea \u2014 so wide values never fight the grid. qwry's Inspector is the analog. Beyond: render images (bytea magic-number sniff + URL detection), bytea encoding switcher (Hex/Base64/Crockford Base32/ULID \u2014 Postico 2.1.2 shipped exactly this and users asked for it), and make the sidebar a first-class editor sharing the staged-edit pipeline, not a viewer.",
+   "importance": "high",
+   "surface": "inspector"
+  },
+  {
+   "title": "Row-as-JSON sidebar with FKs as nested data (Beekeeper 5.2)",
+   "detail": "View any row as clean structured JSON with foreign keys expanded as nested objects; 5.2 made it editable, made it work on query results, and auto-detects JSON stored in text/varchar. Beyond: qwry's jsonb-first inspector should add whole-row JSON mode with lazy FK expansion (click to fetch referenced row inline), copy-row-as-JSON, and edits in the JSON view staging back through the normal edit pipeline. Critically gate auto-JSON-detection on actual parse + column type \u2014 qwry's known structuredValue bug ('[draft]' text treated as JSON) is exactly the corruption Beekeeper risks.",
+   "importance": "high",
+   "surface": "inspector"
+  },
+  {
+   "title": "Staged deletes are visible and undoable before save (Postico)",
+   "detail": "Rows marked for deletion render struck-through and can be 'undeleted' before \u2318S commits (added 2.0.2 by user demand). Loved because it makes the staging model legible \u2014 you always see what will happen. Beyond: a pending-changes panel listing every staged INSERT/UPDATE/DELETE as human-readable rows AND as the exact SQL, with per-row revert. This is the 'never lies about data' invariant given a UI.",
+   "importance": "high",
+   "surface": "grid"
+  },
+  {
+   "title": "'Copy To SQL' for staged edits (Beekeeper)",
+   "detail": "Instead of applying pending changes, one button converts them to SQL in a new editor tab for review/tweaking. Power users love it \u2014 it converts GUI trust into SQL trust. Beyond: qwry already generates UPDATEs from edits; add 'Review as SQL' that opens the generated statements wrapped in BEGIN/COMMIT with the affected-row count as a comment per statement, editable and runnable. Also do it in reverse: after apply, offer 'copy what was executed'.",
+   "importance": "high",
+   "surface": "grid"
+  },
+  {
+   "title": "Color-coded pending-change states + Apply/Reset bar (Beekeeper)",
+   "detail": "Green=new, orange=edited, red=deleted, with a persistent Apply/Reset bar showing the count. Legibility of dirty state is why the staged model feels safe. Beyond: qwry has dirty-cell flash; add a persistent count pill ('3 changes' \u2192 click = changes panel), per-cell tint that survives scroll, and Esc-to-revert-cell vs \u2318Z stepping back individual stages.",
+   "importance": "med",
+   "surface": "grid"
+  },
+  {
+   "title": "Multi-column sort via Option+click + per-column NULLS FIRST/LAST (Postico 2.1)",
+   "detail": "Option-click a header adds a secondary sort; the header context menu sets NULL ordering. Small but constantly praised \u2014 real datasets need tiebreakers. Beyond: shift-click adds sort with ordinal badges (1,2,3) on headers, NULLS control in the header menu, and the whole sort/filter state compiles to a visible ORDER BY users can copy into the editor. Also serialize sort into the browse SQL so keyset pagination stays correct (qwry roadmap already flags the PK-tiebreaker need).",
+   "importance": "med",
+   "surface": "browser"
+  },
+  {
+   "title": "Filter bar with GUI conditions + raw-SQL escape hatch (both apps)",
+   "detail": "Beekeeper: per-column dropdown (=, >, <, LIKE, IN) plus a '<>' toggle that switches to raw WHERE-clause text. Postico: 'is in list' filter and 'Custom SQL' filters. Loved because the GUI covers 90% and the escape hatch covers the rest without leaving the view. Beyond: token/chip filters that always show the compiled WHERE as a live one-line SQL preview (click = pop into editor), paste a newline/comma list into a filter \u2192 auto IN-list, and per-type operators (jsonb @>, array ANY, ILIKE default for text). Apply on Enter, not per keystroke \u2014 qwry's current per-char re-query is the anti-pattern.",
+   "importance": "high",
+   "surface": "browser"
+  },
+  {
+   "title": "Open Quickly: \u2318P fuzzy jump to any table (Postico)",
+   "detail": "\u2318P fuzzy-searches tables and jumps straight to content \u2014 the single most-used navigation in Postico. Beekeeper 5.2's quick-search additionally lists open tabs (VSCode-style). Beyond: qwry's palette should rank by recency+frequency, index tables/views/columns/functions/saved-queries/open-tabs in one list with type glyphs, support schema-qualified fuzzy ('pub ord' \u2192 public.orders), and guarantee <16ms per keystroke on a 5k-table catalog \u2014 Beekeeper measurably fails at this scale (1200 tables \u2248 1min sidebar load, GitHub #135).",
+   "importance": "high",
+   "surface": "sidebar"
+  },
+  {
+   "title": "Navigation history: back/forward + up/down hierarchy (Postico)",
+   "detail": "\u2325\u2318\u2190/\u2192 walk back/forward through visited tables/views like Finder; \u2325\u2318\u2191/\u2193 move up/down the hierarchy. Makes the browser feel like a native file manager. Beyond: per-tab history stack that also records filter/sort/scroll state and FK hops (back returns you to the exact row), plus two-finger trackpad swipe. No SQL client does swipe-back; it's a very mac-native touch.",
+   "importance": "med",
+   "surface": "browser"
+  },
+  {
+   "title": "In-place query history scrubbing: ^\u2318\u2190/\u2192 replaces editor with prev/next query (Postico)",
+   "detail": "Like shell up-arrow: cycle previous executed queries directly in the editor. Beloved by psql refugees. Beyond: add \u2303R reverse-i-search over history (type fragment, see matches inline), and a history ghost \u2014 when the editor is empty, faintly show the last query with 'press \u2191 to restore'. Pairs with a persistent indexed history (below).",
+   "importance": "high",
+   "surface": "editor"
+  },
+  {
+   "title": "Indexed, searchable query history across all sessions (Beekeeper)",
+   "detail": "Every executed query is persisted to local SQLite and searchable from a history panel \u2014 'an indexed query history you can search across all past sessions'. This is never-lose-work applied to SQL itself. Beyond: FTS over history with per-connection filter, dedupe of identical reruns (keep run count + last timing), click = restore to a new tab, and show rows-affected/duration per entry. Store locally, no cloud \u2014 matches qwry's local-only stance while Beekeeper gates edit-history behind paid workspaces.",
+   "importance": "high",
+   "surface": "persistence"
+  },
+  {
+   "title": "Current-statement highlight + execute-current vs execute-all (Postico)",
+   "detail": "The statement under the cursor is highlighted light grey; \u2318\u21a9 runs just it, \u2325\u2318\u21a9 runs all, and multi-statement selections run in an implicit transaction with rollback on failure. The grey highlight is the affordance \u2014 you always know what \u2318\u21a9 will do. Beyond: same subtle highlight plus a gutter run-glyph per statement, and surface the implicit-transaction behavior explicitly ('3 statements \u00b7 runs atomically') so rollback-on-failure is a promise, not a surprise.",
+   "importance": "med",
+   "surface": "editor"
+  },
+  {
+   "title": "psql-style Tab completion with grouped, collapsible suggestions (Postico)",
+   "detail": "Tab cycles completions like bash/psql; Ctrl-Space/Esc shows the full list; suggestions are grouped (tables/columns/functions) and groups expand/collapse with arrow keys. CLI muscle-memory in a GUI is why editors feel 'for me'. Beyond: qwry's schema-aware intellisense already wins on substance; add Tab-cycle as an optional mode, group headers in the completion popup, and alias-aware column completion ordering (columns of FROM-clause tables first).",
+   "importance": "med",
+   "surface": "editor"
+  },
+  {
+   "title": "Built-in pgFormatter honoring ~/.pg_format (Postico)",
+   "detail": "Ctrl-F formats SQL locally via bundled pgFormatter, respecting the user's ~/.pg_format config \u2014 no network, instant, and consistent with their CLI setup. Beyond: format-selection-only, format-on-paste option, and a style picker (keyword case, comma-first) persisted per user; keep it <50ms local. Reading ~/.pg_format if present is a cheap 'we respect your existing tools' win.",
+   "importance": "med",
+   "surface": "editor"
+  },
+  {
+   "title": "Query parameters with prompt-on-run (:var, $1, ?) (Beekeeper)",
+   "detail": "Placeholders in queries trigger a value prompt at execution; syntax configurable per database. Loved for shareable parameterized snippets and avoiding string-editing between runs. Beyond: remember last values per query, type-infer the input widget from context (date picker for timestamp comparisons), named parameter sets ('staging ids' vs 'prod ids'), and run them as real extended-protocol parameters \u2014 which also kills injection in a way Beekeeper's string substitution doesn't.",
+   "importance": "high",
+   "surface": "editor"
+  },
+  {
+   "title": "Query Magics: alias-suffix rendering of links/images/money/progress/stars/enum/goto (Beekeeper)",
+   "detail": "SELECT price AS price__format__money__gbp renders currency; __format__image renders thumbnails; __format__goto__users makes cells navigate. Genuinely novel and loved for dashboards-from-SQL. But the alias hack pollutes the query. Beyond: qwry can render from pg types + header right-click 'Display as \u25b8' menu (link, image, money, checkmark, unixtime, progress) persisted per column \u2014 same payoff, zero query rewriting, and it works on any query without magic strings.",
+   "importance": "med",
+   "surface": "grid"
+  },
+  {
+   "title": "Edit-in-modal for JSON/long values with syntax checking (Beekeeper)",
+   "detail": "Right-click cell \u2192 'Edit in Modal' opens a pop-out editor with syntax highlighting and validation because 'editing a JSON document in a tiny table cell isn't a great experience'. Beyond: qwry's jsonb-first inspector already beats the modal; add a diff-vs-original toggle before staging, JSON5-tolerant input with canonical output, and validation against the column's CHECK constraints where determinable.",
+   "importance": "med",
+   "surface": "inspector"
+  },
+  {
+   "title": "Copy in many formats, done correctly (both)",
+   "detail": "Beekeeper: CSV/JSON/Markdown/Excel-formatted/SQL-insert from any selection. Postico: 'Copy as Markdown' (2.0 RC3), copy INSERT without E'' escape literals (2.2 \u2014 a correctness refinement users noticed), 'Copy Name with Schema', copy single column value. The density and correctness of copy is what 'mature' feels like. Beyond: one Copy \u25b8 submenu everywhere (cell/selection/row/column/table) with TSV-for-Excel, JSON array + NDJSON, IN-list, INSERT with the real table name (qwry's current your_table bug), UPDATE-shaped, and psql \\copy form. Type-aware quoting: numerics bare, NULLs as NULL not 'NULL'.",
+   "importance": "high",
+   "surface": "grid"
+  },
+  {
+   "title": "IN-clause generation from selected values (Beekeeper)",
+   "detail": "Select cells in a column \u2192 copy as SQL IN (...) clause. Tiny feature, constantly used for 'now query these ids elsewhere'. Beyond: type-aware quoting, NULL exclusion with an 'excluded 2 NULLs' toast, and a sibling action 'Filter this table by selection' that applies the IN-list as a grid filter chip directly.",
+   "importance": "med",
+   "surface": "grid"
+  },
+  {
+   "title": "Column hide/show + resize-all + width persistence (both)",
+   "detail": "Beekeeper: hide column via header right-click, resize all columns at once. Postico 2.0.5: column widths persist per table. Loved because wide tables are the norm and re-fiddling widths every open is death by a thousand cuts. Beyond: persist width/visibility/sort per table per connection, \u2325-double-click divider = fit-all-to-content (sampled, not full-scan), and a column list popover with checkboxes + type icons for bulk show/hide.",
+   "importance": "med",
+   "surface": "grid"
+  },
+  {
+   "title": "Pinned tables at the top of the sidebar with persistent state (Beekeeper)",
+   "detail": "Pin most-used tables/views; pins survive restarts. Users praise it because real work touches ~5 of 500 tables. Beyond: pin tables AND saved queries into a per-connection 'workspace' strip, drag-reorderable, with pins stored in the same syncable favorites file as connections. Auto-suggest pins from open frequency.",
+   "importance": "med",
+   "surface": "sidebar"
+  },
+  {
+   "title": "Tab session restore + reopen-closed-tab + reorder (Beekeeper)",
+   "detail": "Tabs (with content) persist between sessions; 5.2 added \u2318\u21e7T-style 'reopen recently closed tabs'; tabs reorder by drag. This is the 'my workspace is still there' feeling users cite when choosing Beekeeper. Beyond: restore tabs with cursor position, scroll offset, and last-result metadata ('ran 2h ago \u00b7 1,204 rows'); a reopen-closed stack (multiple levels); auto-title tabs from SQL (SELECT orders \u2192 'orders'); pin tabs. qwry's never-lose-work invariant makes this table stakes.",
+   "importance": "high",
+   "surface": "persistence"
+  },
+  {
+   "title": "Saved queries: one-keystroke save, folders, and the Postico cautionary tale",
+   "detail": "Beekeeper: \u2318S names-and-saves to local SQLite, organized in folders, searchable. Postico 2 went further \u2014 every query is a saved file with autosave, folders, symlinks, external-editor compatibility \u2014 and got its top complaint for it: GitHub #698 'one-off queries are clumsy', users mourn Postico 1's one-click scratch query. Lesson: scratch-first, save-optional. Beyond for qwry: \u2318T instantly gives an unnamed autosaved scratch tab (never prompts, never nags), \u2318S promotes it to a named saved query; scratch tabs are still session-restored and history-indexed so nothing is ever lost \u2014 the safety of Postico's model without its ceremony.",
+   "importance": "high",
+   "surface": "shell"
+  },
+  {
+   "title": "Automatic version history for saved queries (Beekeeper workspaces)",
+   "detail": "Cloud workspaces record every edit to a query with compare-and-rollback. Beloved concept, but paywalled and cloud-only. Beyond: local automatic snapshots on every save/run with a diff viewer and one-click restore \u2014 qwry can ship Beekeeper's paid feature free and offline, directly serving never-lose-work.",
+   "importance": "med",
+   "surface": "persistence"
+  },
+  {
+   "title": "Multiple result sets with a selector (both)",
+   "detail": "Run several statements \u2192 Postico shows a bottom-left popup to flip between results; Beekeeper a dropdown. Beyond: one result strip with a chip per statement (verb + table + row count + duration), keyboard cycling, and keep the previous run's results per tab so you can flip between 'this run' and 'last run' \u2014 nobody offers cheap before/after comparison of a query you're iterating on.",
+   "importance": "med",
+   "surface": "grid"
+  },
+  {
+   "title": "Honest result truncation with visible cap (Beekeeper)",
+   "detail": "Results truncate at 50k rows 'to preserve memory' and say so. Users respect honesty; they hate silent truncation. Beyond: qwry's 50k in-memory cap should read 'showing 50,000 of ~1.2M (estimated)' with keyset load-more, and find-in-results must display 'found 12 in loaded rows only' (already on the roadmap \u2014 this census confirms it's the right call). Never look broken; never lie.",
+   "importance": "med",
+   "surface": "grid"
+  },
+  {
+   "title": "Streaming export: Run-To-File + timestamped filename suggestions",
+   "detail": "Beekeeper's 'Run To File' streams a query straight to CSV without rendering (paid); Postico 2.2.2 auto-suggests timestamp-based filenames for result exports. Beyond: free streaming export to CSV/NDJSON/JSON with a progress bar + cancel, default filename {table}_{yyyymmdd_hhmm}.csv, and 'export what I see' (current filters/sort applied) vs 'export full table' as distinct actions. Postico's biggest missing-feature complaint is weak export \u2014 an easy surpass.",
+   "importance": "high",
+   "surface": "driver"
+  },
+  {
+   "title": "Paste connection URL to create + copy URI (both)",
+   "detail": "Beekeeper parses pasted database URLs into the form; Postico has 'New Server from URL\u2026' and a terminal URL scheme. Constantly used because credentials arrive as postgres:// strings. Beyond (qwry roadmap already has both directions): also accept psql -h ... -U ... flag strings and .env lines (DATABASE_URL=...), and offer 'Copy URI \u25b8 redacted / with password' from the connection menu.",
+   "importance": "high",
+   "surface": "connections"
+  },
+  {
+   "title": "Read-only connection mode (Postico)",
+   "detail": "A per-connection read-only flag that blocks writes \u2014 documented, and beloved for production safety. Beyond: enforce via 'SET default_transaction_read_only = on' at connect (server-enforced, not just UI), show a persistent RO badge on tab strip + grid (cells say why they're read-only, matching qwry's ideology), and allow per-connection colors (both apps offer connection colors; prod=red is the universal idiom).",
+   "importance": "high",
+   "surface": "connections"
+  },
+  {
+   "title": "Connection niceties: pgpass, preconnect scripts for IAM, host whitespace trimming (Postico)",
+   "detail": "Postico reads ~/.pgpass (2.0.5), supports pre-connect shell scripts for AWS RDS IAM / Redshift / Azure Entra token generation (2.1), and even auto-trims whitespace from pasted hostnames (2.2.3 \u2014 the definition of a small affordance). Beyond: qwry should read .pgpass and pg_service.conf, support a preconnect command whose stdout becomes the password (covers IAM + Vault), and trim/normalize every pasted field. These make it the client that 'just works' with existing Postgres tooling.",
+   "importance": "med",
+   "surface": "connections"
+  },
+  {
+   "title": "Startup queries per connection (Postico)",
+   "detail": "Run SQL automatically on connect \u2014 SET ROLE, statement_timeout, search_path. Power users use it for safety defaults. Beyond: per-connection init SQL with a visible chip when active ('ROLE analyst \u00b7 timeout 30s'), plus first-class fields for the common three (role, search_path, statement_timeout) so nobody has to remember syntax.",
+   "importance": "med",
+   "surface": "connections"
+  },
+  {
+   "title": "Favorites sync via iCloud/Dropbox + nested groups + sidebar filtering (Postico)",
+   "detail": "Connection favorites live in a file syncable via iCloud/Drive, organized in nested groups, filterable; \u21e7\u2318F filters the sidebar table list. Beyond: store connections as a plain JSON file in an app-support dir (user can symlink into any sync), secrets in macOS Keychain only, groups with colors; sidebar filter with fuzzy match bound to a single keystroke when the sidebar is focused.",
+   "importance": "med",
+   "surface": "connections"
+  },
+  {
+   "title": "Destructive-action safety: \u2318\u232b to confirm, Return disabled (Postico)",
+   "detail": "Delete confirmations deliberately disable Return as the confirm key and require \u2318\u232b \u2014 you cannot enter-spam your way into data loss. A signature mac-native correctness touch. Beyond: adopt \u2318\u232b in qwry's DangerModal, escalate to type-the-table-name for TRUNCATE/DROP on tables above a row-count threshold, and always show the exact SQL that will run inside the modal.",
+   "importance": "med",
+   "surface": "shell"
+  },
+  {
+   "title": "Silent, never-interrupting updates (Postico)",
+   "detail": "'Postico will never interrupt you with an update notification' \u2014 updates download in background, apply on relaunch, channel selectable. Users explicitly praise the absence of nag. Beyond: Tauri updater staged on quit, a subtle dot on the app menu when an update is waiting, changelog viewable on demand only. Anti-nag is on-brand for latency-is-the-feature.",
+   "importance": "low",
+   "surface": "shell"
+  },
+  {
+   "title": "View columns show source-table tooltips; partitioned tables grouped (Postico 2.3.x)",
+   "detail": "Hovering a view's column header reveals which base table it comes from; partitions nest under their parent in the sidebar. Both are 'the app understands Postgres' moments. Beyond: qwry already resolves column origins for edit-from-SQL \u2014 expose it as header tooltips on every query result (origin table.column, type, nullability), and group partitions under parents with an aggregate row-count rollup.",
+   "importance": "med",
+   "surface": "sidebar"
+  },
+  {
+   "title": "Value generators: UUIDv7 command (Postico 2.1)",
+   "detail": "An 'insert UUIDv7' command for cell editing \u2014 tiny, modern, users noticed. Beyond: 'Insert value \u25b8' in the cell editor and grid context menu: uuid v4/v7, now()/today, DEFAULT, NULL, random string \u2014 plus the same as editor snippets. Cheap density.",
+   "importance": "low",
+   "surface": "grid"
+  },
+  {
+   "title": "Keyboard shortcut discoverability + remapping (Beekeeper)",
+   "detail": "A built-in shortcuts reference in Help, and every shortcut remappable via an INI config; optional vim mode with .beekeeper.vimrc support. Postico documents a full shortcut map (\u23180/\u2325\u23180 toggle sidebars, \u2325\u2318F filter, \u2318. cancel, \u2325\u21e5 literal tab in cells...). Keyboard-first is qwry ideology \u2014 discoverability is the missing half. Beyond: a \u2318/ cheat-sheet overlay filtered by focused surface, a keymap.json for remapping, and optional CodeMirror vim mode.",
+   "importance": "med",
+   "surface": "shell"
+  },
+  {
+   "title": "Transaction awareness in the shell (Beekeeper)",
+   "detail": "Beekeeper detects an open transaction and reserves the connection for that tab; a manual-transaction mode gives explicit BEGIN/COMMIT control. Prevents the classic 'idle in transaction on a pooled connection' foot-gun. Beyond: a status-bar transaction chip (idle / in-tx / error-in-tx, with elapsed time) with one-click COMMIT/ROLLBACK, per-tab session pinning when BEGIN is detected, and a warning when closing a tab that holds an open transaction \u2014 never lose work includes uncommitted transactions.",
+   "importance": "high",
+   "surface": "driver"
+  },
+  {
+   "title": "Privacy mode for screen sharing (Beekeeper 5.2)",
+   "detail": "One toggle blurs/hides sensitive data during demos/screenshares. Users share DB screens constantly; this got outsized praise. Beyond: global toggle that masks cell values, connection hostnames, and row counts with one shortcut; per-column 'always redact' marks persisted per table. Instant on/off, no re-query.",
+   "importance": "low",
+   "surface": "shell"
+  },
+  {
+   "title": "Complaint census \u2014 Beekeeper: Electron sluggishness is the #1 gripe",
+   "detail": "GitHub #135/#752 and reviews: 1200+ tables take ~1min to load the sidebar, 7.9k rows \u2248 7s to render, window resize/scroll freezes, and users explicitly note 'Sequel Pro and TablePlus show none of this lag... Beekeeper is Electron'. 5.4 needed a '55\u00d7 UI performance tune-up'. Validation for qwry: the two invariants (never slow at any scale) are precisely the wedge; keep introspection scoped (qwry's FUNCS-on-every-connect roadmap item is the same disease) and publish honest perf numbers vs Beekeeper as marketing.",
+   "importance": "high",
+   "surface": "driver"
+  },
+  {
+   "title": "Complaint census \u2014 Beekeeper: editing requires a primary key",
+   "detail": "'Beekeeper only supports editing tables with primary keys' (SQLite rowid excepted) \u2014 a recurring user complaint. Postico is also PK-dependent. Beyond: qwry can edit PK-less Postgres tables via ctid within a guarded transaction (SELECT ... WHERE ctid = ... FOR UPDATE, verify old values match before UPDATE), with a clear 'editing via physical row id \u2014 re-verify after vacuum' notice. That single capability leapfrogs every mainstream client, and read-only cells that say why (no PK, no ctid trace) already fit qwry's ideology.",
+   "importance": "high",
+   "surface": "grid"
+  },
+  {
+   "title": "Complaint census \u2014 Postico: export/ERD/Windows gaps and the query-file regression",
+   "detail": "Recurring Postico complaints: weak export options (CSV-centric, no JSON/Excel from results), no table-relationship/ERD view, no multi-table compare, macOS-only, and the Postico 2 forced query-file model (#698). Users forgive all of it because the app is fast and native \u2014 proof that feel buys enormous goodwill. Beyond: qwry inherits the native-speed goodwill via Tauri; closing export (streaming multi-format) + a lightweight FK-graph peek (not a full ERD editor \u2014 just 'what references this table' in the inspector) removes the two most-cited reasons Postico users keep TablePlus around.",
+   "importance": "med",
+   "surface": "inspector"
+  },
+  {
+   "title": "Find bar in editor + \u2318F inside SQL preview popups (Postico)",
+   "detail": "Postico replaced its Find Panel with an inline Find Bar (2.0 RC6) and even made the SQL-preview popup \u2318F-searchable (2.0 RC1) \u2014 find works in every text surface, no exceptions. That consistency is what 'mature' means. Beyond: qwry's roadmap find-system (\u2318F scoped to focused surface, identical chrome in editor/grid/inspector/JsonTree) is exactly right; extend it to DDL views, changes panel, and history panel so \u2318F literally never no-ops anywhere in the app.",
+   "importance": "high",
+   "surface": "editor"
+  },
+  {
+   "title": "Cell-editing keyboard grammar (Postico)",
+   "detail": "\u21e5/\u21e7\u21e5 commit-and-move right/left, \u21a9 commits, Esc discards, \u2325\u21e5 inserts a literal tab, \u2325\u21a9 inserts a newline, \u21e7\u2318N new row, \u2318D duplicate row(s). The complete, documented grammar is why data entry in Postico feels like a spreadsheet. Beyond: implement the full grammar including the \u2325-escape hatches for literal tab/newline (almost no client has these), plus Enter-then-move-down as a preference, and make every one of these discoverable in the cell context menu with shortcut labels.",
+   "importance": "high",
+   "surface": "grid"
+  },
+  {
+   "title": "Add-row appears at top despite appending (Beekeeper)",
+   "detail": "The '+' add-row button places the new row at the top of the viewport 'for convenience despite being appended' \u2014 a small honest-UX compromise users appreciate on big tables. Beyond: new rows pinned in a distinct 'staged inserts' section above the grid until applied, each with green tint and inline validation (NOT NULL columns without defaults highlighted before you even try to save).",
+   "importance": "low",
+   "surface": "grid"
+  },
+  {
+   "title": "Zen mode + per-surface font zoom (Beekeeper)",
+   "detail": "A distraction-free full-window editor mode, and \u2318\u21e7./\u2318\u21e7, font-size control; Postico has \u2318+/\u2318- global. Small comfort features that show up in reviews. Beyond: \u2318+/- zoom that scales editor AND grid density coherently (row height steps: compact/normal/comfortable), persisted per user.",
+   "importance": "low",
+   "surface": "shell"
+  }
+ ]
+}

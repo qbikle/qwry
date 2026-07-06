@@ -38,7 +38,7 @@ export function StructureTab({ table }: { table: TableInfo }) {
               <td className="st-num">{c.attnum}</td>
               <td className="st-name">
                 {c.name}
-                {table.pk.includes(c.name) && <span className="st-pk">PK</span>}
+                {table.pk.includes(c.name) && <span className="badge badge-accent">PK</span>}
               </td>
               <td className="st-type">{c.type}</td>
               <td>{c.not_null ? "not null" : "null"}</td>

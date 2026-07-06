@@ -209,7 +209,7 @@
   background: var(--bg-raised);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-sm);
   overflow: hidden;
 }
 
@@ -235,10 +235,10 @@
   align-items: center;
   gap: 8px;
   padding: 8px 8px 4px;
-  font-size: 9px;
+  font-size: var(--text-2xs);
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.06em;
   color: var(--fg-faint);
   user-select: none;
 }
@@ -343,15 +343,6 @@
   color: var(--syn-type) !important;
 }
 
-.st-pk {
-  margin-left: 6px;
-  font-size: 9px;
-  font-weight: 700;
-  padding: 1px 4px;
-  border-radius: 3px;
-  background: var(--accent-soft);
-  color: var(--accent);
-}
 
 .st-default,
 .st-def {
@@ -364,3 +355,50 @@
   font-size: var(--text-sm);
 }
 
+
+/* DDL tab */
+.ddl-tab {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ddl-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.ddl-title {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  margin-right: auto;
+}
+.ddl-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  padding: 14px 16px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--fg);
+  white-space: pre;
+}
+.ddl-loading, .ddl-error {
+  padding: 24px;
+  font-size: var(--text-sm);
+  color: var(--fg-faint);
+}
+.ddl-error { color: var(--danger); }
+
+.tb-rowest {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--fg-faint);
+  margin-left: 8px;
+  align-self: center;
+}

@@ -5,6 +5,7 @@ import { popIn } from "../design/springs";
 import { useSettings, type Mode } from "../stores/settings";
 import { anchorsOf, PALETTES, swatch, type Palette } from "../design/theme";
 import { useUI } from "../stores/ui";
+import { Modal } from "./overlay/Overlay";
 import "./theme-picker.css";
 
 const MODES: [Mode, string, typeof Moon][] = [
@@ -84,7 +85,8 @@ export function ThemePicker() {
   );
 
   return (
-    <div className="tp-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}>
+    // Esc/backdrop backs out of the draft sub-form first, then closes the picker
+    <Modal backdropClassName="tp-backdrop" onClose={() => (draft ? setDraft(null) : close())}>
       <motion.div className="tp-modal" {...popIn}>
         <div className="tp-head">
           <span className="tp-title">Theme</span>
@@ -143,8 +145,8 @@ export function ThemePicker() {
               value={draft.name}
               onChange={(e) => set({ name: e.target.value })}
               onKeyDown={(e) => {
+                // Esc is owned by the Modal overlay (backs out of the draft first)
                 if (e.key === "Enter") save();
-                if (e.key === "Escape") setDraft(null);
               }}
             />
             <div className="tp-colors">
@@ -176,6 +178,6 @@ export function ThemePicker() {
           automatically. Hover to edit or duplicate.
         </div>
       </motion.div>
-    </div>
+    </Modal>
   );
 }

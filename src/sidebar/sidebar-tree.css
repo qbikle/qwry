@@ -49,7 +49,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 2.5px 4px 2.5px 18px;
+  padding: var(--row-y-dense) 4px var(--row-y-dense) 18px;
   border-radius: var(--radius-sm);
   color: var(--fg-muted);
   font-size: var(--text-sm);
@@ -71,4 +71,69 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* introspection failure state — never a silently blank sidebar */
+.tree-error {
+  color: var(--danger);
+}
+.tree-error-msg {
+  margin: 6px 0;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.tree-retry {
+  padding: 5px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--fg);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms, color 120ms;
+}
+.tree-retry:hover {
+  background: var(--bg-hover);
+}
+
+/* table expand → column list */
+.tree-twist {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-left: -4px;
+  border: none;
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+.tree-twist:hover { color: var(--fg); }
+.tree-col {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--row-y-dense) 8px var(--row-y-dense) 44px;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.tree-col:hover { background: var(--bg-panel); }
+.tree-col-pk { color: var(--syn-number, #e5a54b); flex-shrink: 0; }
+.tree-col-name {
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-col-type {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--fg-faint);
+  flex-shrink: 0;
 }

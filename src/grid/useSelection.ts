@@ -95,5 +95,10 @@ export function useSelection(rowCount: number, colCount: number) {
 
   const rect = anchor && focus ? rectOf(anchor, focus) : null;
 
-  return { rect, focus, startDrag, dragOver, endDrag, moveFocus, selectAll };
+  const reset = useCallback(() => {
+    setAnchor(null);
+    setFocus(null);
+  }, []);
+
+  return { rect, focus, startDrag, dragOver, endDrag, moveFocus, selectAll, reset };
 }

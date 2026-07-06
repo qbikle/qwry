@@ -55,6 +55,8 @@ function renameKeyIn(root: Json, parentPath: Path, oldKey: string, newKey: strin
     return (acc as Record<string, Json>)[k as string];
   }, root);
   if (parent === null || typeof parent !== "object" || Array.isArray(parent)) return root;
+  // renaming onto an existing key would silently drop that key's value
+  if (newKey !== oldKey && Object.prototype.hasOwnProperty.call(parent, newKey)) return root;
   const rebuilt: Record<string, Json> = {};
   for (const [k, v] of Object.entries(parent as Record<string, Json>)) {
     rebuilt[k === oldKey ? newKey : k] = v;
@@ -413,10 +415,16 @@ export function JsonTree({
     refs.current.get(currentHit)?.scrollIntoView({ block: "nearest" });
   }, [currentHit]);
 
-  // ⌘F focuses the search box
+  // ⌘F focuses the search box — but ONLY when the user is already in the
+  // inspector; a mounted JSON cell must not steal ⌘F from the editor/grid
+  // (the search input stays clickable as the mouse entry point).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
       if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "f") {
+        const within = (el: unknown) =>
+          el instanceof Element && !!el.closest(".inspector-fixed");
+        if (!within(e.target) && !within(document.activeElement)) return;
         e.preventDefault();
         searchRef.current?.focus();
         searchRef.current?.select();

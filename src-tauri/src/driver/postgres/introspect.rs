@@ -56,6 +56,13 @@ pub struct IndexInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnumInfo {
+    pub schema: String,
+    pub name: String,
+    pub labels: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaSnapshot {
     pub tables: Vec<TableInfo>,
     pub foreign_keys: Vec<FkInfo>,
@@ -63,6 +70,9 @@ pub struct SchemaSnapshot {
     pub schemas: Vec<String>,
     #[serde(default)]
     pub indexes: Vec<IndexInfo>,
+    /// user-defined enum types — powers type-aware cell editors
+    #[serde(default)]
+    pub enums: Vec<EnumInfo>,
 }
 
 const TABLES_SQL: &str = r#"
@@ -136,6 +146,18 @@ FROM pg_namespace
 WHERE nspname NOT IN ('pg_catalog','information_schema')
   AND nspname NOT LIKE 'pg_toast%' AND nspname NOT LIKE 'pg_temp%'"#;
 
+const ENUMS_SQL: &str = r#"
+SELECT coalesce(json_agg(t), '[]') FROM (
+  SELECT n.nspname AS schema, t.typname AS name,
+         coalesce((SELECT json_agg(e.enumlabel ORDER BY e.enumsortorder)
+          FROM pg_enum e WHERE e.enumtypid = t.oid), '[]') AS labels
+  FROM pg_type t
+  JOIN pg_namespace n ON n.oid = t.typnamespace
+  WHERE t.typtype = 'e'
+    AND n.nspname NOT IN ('pg_catalog','information_schema')
+  ORDER BY n.nspname, t.typname
+) t"#;
+
 const INDEXES_SQL: &str = r#"
 SELECT coalesce(json_agg(t), '[]') FROM (
   SELECT schemaname AS schema, tablename AS table, indexname AS name, indexdef AS def
@@ -146,11 +168,12 @@ SELECT coalesce(json_agg(t), '[]') FROM (
 
 impl PgSession {
     pub async fn introspect(&self) -> Result<SchemaSnapshot> {
-        let sql = format!("{TABLES_SQL};{FKS_SQL};{FUNCS_SQL};{SCHEMAS_SQL};{INDEXES_SQL}");
+        let sql =
+            format!("{TABLES_SQL};{FKS_SQL};{FUNCS_SQL};{SCHEMAS_SQL};{INDEXES_SQL};{ENUMS_SQL}");
         let out = self.execute_simple(&sql).await?;
-        if out.statements.len() != 5 {
+        if out.statements.len() != 6 {
             return Err(DriverError::Internal(format!(
-                "introspection returned {} result sets, expected 5",
+                "introspection returned {} result sets, expected 6",
                 out.statements.len()
             )));
         }
@@ -171,6 +194,102 @@ impl PgSession {
             functions: serde_json::from_str(&cell(2)?).map_err(|e| parse_err("functions", e))?,
             schemas: serde_json::from_str(&cell(3)?).map_err(|e| parse_err("schemas", e))?,
             indexes: serde_json::from_str(&cell(4)?).map_err(|e| parse_err("indexes", e))?,
+            enums: serde_json::from_str(&cell(5)?).map_err(|e| parse_err("enums", e))?,
         })
+    }
+}
+
+impl PgSession {
+    /// Reconstruct CREATE TABLE + constraints + secondary indexes + comment
+    /// for one table. Built from pg_catalog `pg_get_*` helpers so expression
+    /// text is the server's own deparse, not ours.
+    pub async fn table_ddl(&self, schema: &str, table: &str) -> Result<String> {
+        let qi = |n: &str| format!("\"{}\"", n.replace('"', "\"\""));
+        // regclass literal: '"sch"."tbl"' with single quotes escaped
+        let reg = format!(
+            "'{}'",
+            format!("{}.{}", qi(schema), qi(table)).replace('\'', "''")
+        );
+        let sql = format!(
+            r#"SELECT a.attname,
+       format_type(a.atttypid, a.atttypmod),
+       a.attnotnull::text,
+       pg_get_expr(d.adbin, d.adrelid),
+       a.attidentity::text,
+       a.attgenerated::text
+FROM pg_attribute a
+LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+WHERE a.attrelid = {reg}::regclass AND a.attnum > 0 AND NOT a.attisdropped
+ORDER BY a.attnum;
+SELECT conname, pg_get_constraintdef(oid, true), contype::text
+FROM pg_constraint
+WHERE conrelid = {reg}::regclass
+ORDER BY CASE contype WHEN 'p' THEN 0 WHEN 'u' THEN 1 WHEN 'c' THEN 2 WHEN 'f' THEN 3 ELSE 4 END, conname;
+SELECT pg_get_indexdef(i.indexrelid, 0, true)
+FROM pg_index i
+WHERE i.indrelid = {reg}::regclass
+  AND NOT EXISTS (SELECT 1 FROM pg_constraint x WHERE x.conindid = i.indexrelid)
+ORDER BY 1;
+SELECT obj_description({reg}::regclass, 'pg_class')"#
+        );
+        let out = self.execute_simple(&sql).await?;
+        let get = |i: usize| out.statements.get(i).map(|s| s.rows.clone()).unwrap_or_default();
+        let cols = get(0);
+        let cons = get(1);
+        let idxs = get(2);
+        let comment = get(3)
+            .first()
+            .and_then(|r| r.first().cloned().flatten());
+
+        let mut lines: Vec<String> = Vec::new();
+        for c in &cols {
+            let name = c[0].as_deref().unwrap_or_default();
+            let typ = c[1].as_deref().unwrap_or_default();
+            let notnull = c[2].as_deref() == Some("true");
+            let default = c[3].as_deref();
+            let identity = c[4].as_deref().unwrap_or("");
+            let generated = c[5].as_deref().unwrap_or("");
+            let mut line = format!("  {} {}", qi(name), typ);
+            if generated == "s" {
+                if let Some(expr) = default {
+                    line.push_str(&format!(" GENERATED ALWAYS AS ({expr}) STORED"));
+                }
+            } else if identity == "a" {
+                line.push_str(" GENERATED ALWAYS AS IDENTITY");
+            } else if identity == "d" {
+                line.push_str(" GENERATED BY DEFAULT AS IDENTITY");
+            } else if let Some(expr) = default {
+                line.push_str(&format!(" DEFAULT {expr}"));
+            }
+            if notnull {
+                line.push_str(" NOT NULL");
+            }
+            lines.push(line);
+        }
+        for c in &cons {
+            let name = c[0].as_deref().unwrap_or_default();
+            let def = c[1].as_deref().unwrap_or_default();
+            lines.push(format!("  CONSTRAINT {} {}", qi(name), def));
+        }
+        let mut ddl = format!(
+            "CREATE TABLE {}.{} (\n{}\n);",
+            qi(schema),
+            qi(table),
+            lines.join(",\n")
+        );
+        for idx in &idxs {
+            if let Some(def) = idx.first().cloned().flatten() {
+                ddl.push_str(&format!("\n\n{def};"));
+            }
+        }
+        if let Some(cm) = comment {
+            ddl.push_str(&format!(
+                "\n\nCOMMENT ON TABLE {}.{} IS '{}';",
+                qi(schema),
+                qi(table),
+                cm.replace('\'', "''")
+            ));
+        }
+        Ok(ddl)
     }
 }

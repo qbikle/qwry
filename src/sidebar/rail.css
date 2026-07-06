@@ -60,7 +60,7 @@
   flex-shrink: 0;
   width: 40px;
   height: 40px;
-  border-radius: 13px;
+  border-radius: var(--radius-lg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -115,7 +115,7 @@
   flex-shrink: 0;
   width: 40px;
   height: 40px;
-  border-radius: 13px;
+  border-radius: var(--radius-lg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -129,7 +129,7 @@
     background 150ms;
 }
 .rail-add:hover {
-  border-radius: 11px;
+  border-radius: var(--radius-lg);
   color: var(--fg);
   background: var(--bg-hover);
   border-style: solid;

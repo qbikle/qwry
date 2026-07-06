@@ -3,12 +3,38 @@
 //! Mirrors PG simple-protocol behavior: chunks with no real tokens (empty /
 //! comment-only) are dropped, so indexes align with CommandComplete sequence.
 
+/// One split statement plus where it begins in the original buffer, so a PG
+/// error position (1-based chars into the statement) can be rebased onto the
+/// whole executed text for the editor squiggle.
+pub struct StmtSpan {
+    pub sql: String,
+    /// chars (not bytes) before the statement's first non-whitespace char
+    pub char_offset: usize,
+}
+
 pub fn split_statements(sql: &str) -> Vec<String> {
+    split_statement_spans(sql).into_iter().map(|s| s.sql).collect()
+}
+
+pub fn split_statement_spans(sql: &str) -> Vec<StmtSpan> {
     let bytes = sql.as_bytes();
     let mut out = Vec::new();
     let mut start = 0usize;
     let mut i = 0usize;
     let mut has_token = false;
+
+    let push = |out: &mut Vec<StmtSpan>, start: usize, end: usize| {
+        let raw = &sql[start..end];
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        let byte_start = start + (raw.len() - raw.trim_start().len());
+        out.push(StmtSpan {
+            sql: trimmed.to_string(),
+            char_offset: sql[..byte_start].chars().count(),
+        });
+    };
 
     while i < bytes.len() {
         match bytes[i] {
@@ -35,9 +61,17 @@ pub fn split_statements(sql: &str) -> Vec<String> {
             }
             b'\'' => {
                 has_token = true;
+                // E'…' escape strings honor backslash escapes — treating \' as
+                // a terminator would split at an interior ';' and desync
+                // statement indexes (editability would target the wrong SQL)
+                let escape_string = i > 0
+                    && (bytes[i - 1] == b'E' || bytes[i - 1] == b'e')
+                    && (i < 2 || !(bytes[i - 2].is_ascii_alphanumeric() || bytes[i - 2] == b'_'));
                 i += 1;
                 while i < bytes.len() {
-                    if bytes[i] == b'\'' {
+                    if escape_string && bytes[i] == b'\\' {
+                        i += 2; // backslash escape consumes the next char
+                    } else if bytes[i] == b'\'' {
                         if bytes.get(i + 1) == Some(&b'\'') {
                             i += 2; // escaped ''
                         } else {
@@ -93,7 +127,7 @@ pub fn split_statements(sql: &str) -> Vec<String> {
             }
             b';' => {
                 if has_token {
-                    out.push(sql[start..i].trim().to_string());
+                    push(&mut out, start, i);
                 }
                 has_token = false;
                 i += 1;
@@ -108,10 +142,7 @@ pub fn split_statements(sql: &str) -> Vec<String> {
         }
     }
     if has_token {
-        let tail = sql[start..].trim();
-        if !tail.is_empty() {
-            out.push(tail.to_string());
-        }
+        push(&mut out, start, sql.len());
     }
     out
 }
@@ -186,5 +217,33 @@ mod tests {
     #[test]
     fn trailing_statement_no_semicolon() {
         assert_eq!(split_statements("SELECT 1;\nSELECT 2"), vec!["SELECT 1", "SELECT 2"]);
+    }
+
+    #[test]
+    fn escape_strings() {
+        // \' inside E'…' is an escaped quote, not a terminator
+        assert_eq!(
+            split_statements(r"SELECT E'a\'; not a split'; SELECT 2"),
+            vec![r"SELECT E'a\'; not a split'", "SELECT 2"]
+        );
+        // a plain identifier ending in e does NOT start an escape string
+        assert_eq!(
+            split_statements(r"SELECT case_e'\'; SELECT 2"),
+            // '\' is a normal string containing one backslash → ; splits
+            vec![r"SELECT case_e'\'", "SELECT 2"]
+        );
+    }
+
+    #[test]
+    fn span_offsets_are_chars_to_trimmed_start() {
+        let spans = super::split_statement_spans("SELECT 1;\n  SELECT 2");
+        assert_eq!(spans[0].char_offset, 0);
+        assert_eq!(spans[1].sql, "SELECT 2");
+        assert_eq!(spans[1].char_offset, 12); // "SELECT 1;\n  " = 12 chars
+
+        // multibyte before the second statement: offset counts CHARS not bytes
+        let spans = super::split_statement_spans("SELECT 'é😀'; SELECT 2");
+        assert_eq!(spans[1].sql, "SELECT 2");
+        assert_eq!(spans[1].char_offset, "SELECT 'é😀'; ".chars().count());
     }
 }
