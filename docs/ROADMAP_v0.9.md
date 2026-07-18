@@ -144,7 +144,14 @@
       FUNCS introspect 25.8→2.0ms + 338KB less transfer; history search constant-cost.
       Proofs: keyset 8/8 (dups+double-NULL+mixed-dir+ctid via app's real SQL gen);
       editor 6,600-edit differential + 2,664-position context equivalence.
-- [ ] Adversarial audit round; confirmed findings fixed.
+- [x] Audit round: 4 adversarial reviewers → 20 confirmed findings, ALL fixed
+      (S1: inheritance-parent ctid collision — TimescaleDB class; S2: key drift
+      after snapshot refresh, stale-key seek after committed edit, ⌘F reveal
+      mounting O(hitIndex) nodes, silent copy abandon, page-1 ORDER BY ctid
+      O(n)/page → 1M-row size gate). Editor spans re-fuzzed 32,652 tx after the
+      resume rework (mutation-tested harness); keyset proof harness now PERMANENT
+      at scripts/keyset-proof.ts (10 cases, 109 assertions). Final gates: tsc ✓
+      vite ✓ clippy 0 ✓ unit 34/34 ✓ staging 18/18 ✓.
 
 ---
 
