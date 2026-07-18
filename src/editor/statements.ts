@@ -71,7 +71,7 @@ export function spanAtCursor(src: string, pos: number): StmtSpan | null {
 
 /** skip past a string / quoted ident / comment / dollar-quote starting at i —
  * returns the index after the token, or -1 if src[i] starts none of them */
-function skipToken(src: string, i: number): number {
+export function skipToken(src: string, i: number): number {
   const c = src[i];
   const n = src.length;
   if (c === "'" || c === '"') {
