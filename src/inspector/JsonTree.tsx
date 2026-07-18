@@ -2,6 +2,7 @@
 // and in-place leaf/key editing. Free, unlike some tools.
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -17,13 +18,18 @@ import {
   X,
 } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import {
+  CHILD_CAP,
+  SEARCH_NODE_CAP,
+  capWindow,
+  computeSearch,
+  isPathPrefix,
+  pid,
+  type Json,
+  type Path,
+  type SearchResult,
+} from "./jsonSearch";
 import "./inspector.css";
-
-type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
-type Path = (string | number)[];
-
-/** stable unique id for a node (used for visibility/refs/hit cursor) */
-const pid = (p: Path) => JSON.stringify(p);
 
 /** human-readable JSON path: a.b[0].c */
 function displayPath(p: Path): string {
@@ -83,62 +89,11 @@ function coerce(original: Json, text: string): { ok: true; value: Json } | { ok:
   return { ok: true, value: text };
 }
 
-interface SearchResult {
-  visible: Set<string>;
-  forceOpen: Set<string>;
-  hits: string[];
-}
-
-function computeSearch(json: Json, query: string): SearchResult {
-  const q = query.toLowerCase();
-  const visible = new Set<string>();
-  const forceOpen = new Set<string>();
-  const hits: string[] = [];
-  if (!q) return { visible, forceOpen, hits };
-
-  // `forced` = an ancestor key matched, so this whole subtree stays visible
-  function walk(value: Json, path: Path, key: string | number | null, forced: boolean): boolean {
-    const id = pid(path);
-    const keyMatch = key !== null && String(key).toLowerCase().includes(q);
-    const isObj = value !== null && typeof value === "object";
-
-    if (keyMatch) hits.push(id);
-
-    let childMatch = false;
-    if (isObj) {
-      const entries = Array.isArray(value)
-        ? value.map((v, i) => [i, v] as const)
-        : Object.entries(value as Record<string, Json>);
-      for (const [ck, cv] of entries) {
-        if (walk(cv as Json, [...path, ck], ck, forced || keyMatch)) childMatch = true;
-      }
-    }
-
-    let valMatch = false;
-    if (!isObj) {
-      const s = value === null ? "null" : String(value);
-      valMatch = s.toLowerCase().includes(q);
-      if (valMatch && !keyMatch) hits.push(id);
-    }
-
-    const selfMatch = keyMatch || valMatch;
-    if (forced || selfMatch || childMatch) {
-      visible.add(id);
-      // open this container if a descendant matched, or to reveal a matched
-      // key's own subtree
-      if (isObj && (childMatch || keyMatch || forced)) forceOpen.add(id);
-      return true;
-    }
-    return false;
-  }
-  walk(json, [], null, false);
-  return { visible, forceOpen, hits };
-}
-
 interface TreeCtx {
   query: string;
   result: SearchResult;
   currentHit: string | null;
+  currentHitPath: Path | null;
   registerRef: (id: string, el: HTMLDivElement | null) => void;
   editable: boolean;
   onEditValue: (path: Path, value: Json) => void;
@@ -314,12 +269,15 @@ function Node({
   const ctx = useContext(Ctx)!;
   const id = pid(path);
   const [open, setOpen] = useState(depth < 2);
+  // per-container render cap — a 50k-element array must not mount 50k nodes
+  const [shown, setShown] = useState(CHILD_CAP);
   const rowRef = useRef<HTMLDivElement>(null);
+  const { registerRef } = ctx;
 
   useEffect(() => {
-    ctx.registerRef(id, rowRef.current);
-    return () => ctx.registerRef(id, null);
-  });
+    registerRef(id, rowRef.current);
+    return () => registerRef(id, null);
+  }, [id, registerRef]);
 
   // searching hides non-matching subtrees and force-opens matched ancestors
   if (ctx.query && !ctx.result.visible.has(id)) return null;
@@ -334,9 +292,71 @@ function Node({
 
   if (isContainer) {
     const isArr = Array.isArray(value);
-    const entries = isArr
-      ? (value as Json[]).map((v, i) => [String(i), v] as const)
-      : Object.entries(value as Record<string, Json>);
+    const objKeys = isArr ? null : Object.keys(value as Record<string, Json>);
+    const total = isArr ? (value as Json[]).length : (objKeys as string[]).length;
+
+    let children: React.ReactNode = null;
+    if (effectiveOpen) {
+      // candidate child keys — under search, only the visible ones (filtered
+      // HERE so hidden children never mount a component at all)
+      let keys: (string | number)[];
+      if (ctx.query) {
+        keys = [];
+        if (isArr) {
+          for (let i = 0; i < total; i++)
+            if (ctx.result.visible.has(pid([...path, i]))) keys.push(i);
+        } else {
+          for (const ok of objKeys as string[])
+            if (ctx.result.visible.has(pid([...path, ok]))) keys.push(ok);
+        }
+      } else {
+        keys = isArr ? Array.from({ length: total }, (_, i) => i) : (objKeys as string[]);
+      }
+
+      // ⌘F hit-nav must reach past the cap — stretch the window to the hit
+      let hitIdx: number | null = null;
+      const hp = ctx.currentHitPath;
+      if (hp && isPathPrefix(path, hp)) {
+        const at = keys.indexOf(hp[path.length]);
+        if (at >= 0) hitIdx = at;
+      }
+      const { renderCount, remaining } = capWindow(keys.length, shown, hitIdx);
+      const shownKeys = renderCount === keys.length ? keys : keys.slice(0, renderCount);
+
+      children = (
+        <div className="jt-children">
+          {shownKeys.map((ck) => (
+            <Node
+              key={ck}
+              k={String(ck)}
+              value={
+                isArr
+                  ? (value as Json[])[ck as number]
+                  : (value as Record<string, Json>)[ck as string]
+              }
+              path={[...path, ck]}
+              parentPath={path}
+              isArrayItem={isArr}
+              depth={depth + 1}
+            />
+          ))}
+          {remaining > 0 && (
+            // never silently hide — an explicit expander says what's left
+            <button
+              className="jt-more"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShown(renderCount + CHILD_CAP);
+              }}
+            >
+              show next {Math.min(CHILD_CAP, remaining).toLocaleString()} (
+              {remaining.toLocaleString()} remaining)
+            </button>
+          )}
+        </div>
+      );
+    }
+
     return (
       <div className="jt-node">
         <div
@@ -354,24 +374,10 @@ function Node({
               else void writeText(JSON.stringify(value, null, 2));
             }}
           >
-            {isArr ? `[${entries.length}]` : `{${entries.length}}`}
+            {isArr ? `[${total}]` : `{${total}}`}
           </span>
         </div>
-        {effectiveOpen && (
-          <div className="jt-children">
-            {entries.map(([ck, cv]) => (
-              <Node
-                key={ck}
-                k={ck}
-                value={cv}
-                path={[...path, isArr ? Number(ck) : ck]}
-                parentPath={path}
-                isArrayItem={isArr}
-                depth={depth + 1}
-              />
-            ))}
-          </div>
-        )}
+        {children}
       </div>
     );
   }
@@ -394,10 +400,26 @@ export function JsonTree({
   editable?: boolean;
   onChange?: (next: Json) => void;
 }) {
+  const [input, setInput] = useState("");
+  /** debounced copy of `input` — the walk runs on this, not per keystroke */
   const [query, setQuery] = useState("");
   const [hitIdx, setHitIdx] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
   const refs = useRef(new Map<string, HTMLDivElement>());
+
+  // search debounce (120ms); clearing applies instantly
+  useEffect(() => {
+    if (input === "") {
+      setQuery("");
+      setHitIdx(0);
+      return;
+    }
+    const t = setTimeout(() => {
+      setQuery(input);
+      setHitIdx(0);
+    }, 120);
+    return () => clearTimeout(t);
+  }, [input]);
 
   const result = useMemo(() => computeSearch(json, query), [json, query]);
   const hits = result.hits;
@@ -408,6 +430,10 @@ export function JsonTree({
   }, [hits.length]);
 
   const currentHit = query && hits.length > 0 ? hits[hitIdx] : null;
+  const currentHitPath = useMemo(
+    () => (currentHit ? (JSON.parse(currentHit) as Path) : null),
+    [currentHit],
+  );
 
   // scroll the active hit into view
   useEffect(() => {
@@ -439,14 +465,17 @@ export function JsonTree({
     setHitIdx((i) => (i + dir + hits.length) % hits.length);
   };
 
+  const registerRef = useCallback((id: string, el: HTMLDivElement | null) => {
+    if (el) refs.current.set(id, el);
+    else refs.current.delete(id);
+  }, []);
+
   const ctx: TreeCtx = {
     query,
     result,
     currentHit,
-    registerRef: (id, el) => {
-      if (el) refs.current.set(id, el);
-      else refs.current.delete(id);
-    },
+    currentHitPath,
+    registerRef,
     editable,
     onEditValue: (path, value) => onChange?.(setIn(json, path, value)),
     onRenameKey: (parentPath, oldKey, newKey) =>
@@ -460,17 +489,14 @@ export function JsonTree({
         <input
           ref={searchRef}
           placeholder="Search keys & values… ⌘F"
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setHitIdx(0);
-          }}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") step(e.shiftKey ? -1 : 1);
-            if (e.key === "Escape") setQuery("");
+            if (e.key === "Escape") setInput("");
           }}
         />
-        {query && (
+        {input && (
           <>
             <span className="jt-hitcount">
               {hits.length === 0 ? "0/0" : `${hitIdx + 1}/${hits.length}`}
@@ -481,12 +507,18 @@ export function JsonTree({
             <button className="jt-nav" title="Next (⏎)" onClick={() => step(1)}>
               <ArrowDown size={12} />
             </button>
-            <button className="jt-nav" title="Clear" onClick={() => setQuery("")}>
+            <button className="jt-nav" title="Clear" onClick={() => setInput("")}>
               <X size={12} />
             </button>
           </>
         )}
       </div>
+      {query !== "" && result.capped && (
+        <div className="jt-capnote">
+          search capped at {SEARCH_NODE_CAP.toLocaleString()} nodes — matches beyond may be
+          missing
+        </div>
+      )}
       <Ctx.Provider value={ctx}>
         <Node k={null} value={json} path={[]} parentPath={[]} isArrayItem={false} depth={0} />
       </Ctx.Provider>

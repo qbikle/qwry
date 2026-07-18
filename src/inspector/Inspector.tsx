@@ -17,7 +17,8 @@ import { useResults } from "../stores/results";
 import { useSchema } from "../stores/schema";
 import { JsonTree } from "./JsonTree";
 import { JsonField } from "./JsonField";
-import { isArrayType, jsToPgArray, structuredValue } from "./format";
+import { isArrayType, jsToPgArray } from "./format";
+import { parsedCell } from "./parseCache";
 import "./inspector.css";
 
 /** copy button: click copies formatted; the caret opens raw / formatted */
@@ -47,9 +48,6 @@ export function Inspector() {
   const fullValue = useInspector((s) => s.fullValue);
   const fullValueFor = useInspector((s) => s.fullValueFor);
   const fullValueError = useInspector((s) => s.fullValueError);
-  const statements = useResults((s) => s.statements);
-  const pending = useEdits((s) => s.pending);
-  const maps = useEdits((s) => s.maps);
 
   const [mode, setMode] = useState<"auto" | "raw">("auto");
   const [editingText, setEditingText] = useState<string | null>(null);
@@ -58,13 +56,29 @@ export function Inspector() {
   const [jsonError, setJsonError] = useState<string | null>(null);
   const editSeq = useInspector((s) => s.editSeq);
 
-  const stmt = target ? statements.find((s) => s.index === target.stmtIndex) : null;
-  const colMeta = target && stmt ? stmt.columns[target.col] : null;
-
+  // subscriptions are narrowed to THIS cell's slice (scalars / stable refs) —
+  // subscribing to whole statements/pending re-rendered (and re-parsed) the
+  // inspector on every streamed batch of an unrelated result
   const k = target ? editKey(target.stmtIndex, target.row, target.col) : null;
-  const pendingEdit = k ? pending[k] : undefined;
-  const truncated = target && stmt ? stmt.truncated.has(`${target.row}:${target.col}`) : false;
-  const dbCell = target && stmt ? stmt.rows[target.row]?.[target.col] : null;
+  const stmtExists = useResults((s) =>
+    target ? s.statements.some((st) => st.index === target.stmtIndex) : false,
+  );
+  const colMeta = useResults((s) => {
+    if (!target) return null;
+    const st = s.statements.find((x) => x.index === target.stmtIndex);
+    return st?.columns[target.col] ?? null;
+  });
+  const truncated = useResults((s) => {
+    if (!target) return false;
+    const st = s.statements.find((x) => x.index === target.stmtIndex);
+    return st ? st.truncated.has(`${target.row}:${target.col}`) : false;
+  });
+  const dbCell = useResults((s) => {
+    if (!target) return null;
+    const st = s.statements.find((x) => x.index === target.stmtIndex);
+    return st?.rows[target.row]?.[target.col] ?? null;
+  });
+  const pendingEdit = useEdits((s) => (k ? s.pending[k] : undefined));
   // a staged edit always wins over the fetched DB value — the inspector must
   // show what ⌘S will write, not what the DB still holds
   const value =
@@ -77,20 +91,22 @@ export function Inspector() {
   // the 8KB prefix and committing it would destroy everything past the cap
   const fullLoaded = !truncated || fullValueFor === k || pendingEdit !== undefined;
 
-  const editMap = target ? maps[target.stmtIndex] : undefined;
+  const editMap = useEdits((s) => (target ? s.maps[target.stmtIndex] : undefined));
   const editMeta =
     editMap && editMap !== "loading" && editMap !== "unavailable" && target
       ? editMap.columns[target.col]
       : undefined;
 
   useEffect(() => {
-    if (!truncated || !target || !stmt || fullValueFor === k) return;
+    if (!truncated || !target || fullValueFor === k) return;
     if (!editMap || editMap === "loading" || editMap === "unavailable") return;
     const meta = editMap.columns[target.col];
     if (!meta || meta.table_oid === 0) return;
     const pkCols = editMap.pk_cols[meta.table_oid];
     if (!pkCols?.length) return;
     const res = useResults.getState();
+    const stmt = res.statements.find((x) => x.index === target.stmtIndex);
+    if (!stmt) return;
     const sessionId = res.executedSessionId;
     const sql = res.executedSql;
     if (!sessionId || !sql) return;
@@ -125,7 +141,18 @@ export function Inspector() {
     return () => {
       stale = true;
     };
-  }, [truncated, target, stmt, editMap, k, fullValueFor]);
+  }, [truncated, target, editMap, k, fullValueFor]);
+
+  // raw-mode JSON validation is debounced (150ms) — a full parse of a multi-MB
+  // doc per keystroke froze typing. Validation-only: staging still re-parses.
+  const validateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearValidateTimer = () => {
+    if (validateTimer.current !== null) {
+      clearTimeout(validateTimer.current);
+      validateTimer.current = null;
+    }
+  };
+  useEffect(() => clearValidateTimer, []);
 
   // reset edit state when the focused cell changes
   const wantEdit = useRef(false);
@@ -135,6 +162,7 @@ export function Inspector() {
     setJsonError(null);
     setMode("auto");
     wantEdit.current = false;
+    clearValidateTimer();
   }, [k]);
 
   // grid double-click on a structured/truncated cell lands here ready to edit;
@@ -146,14 +174,14 @@ export function Inspector() {
       wantEdit.current = true;
       return;
     }
-    if (structuredValue(value, editMeta?.type_name) !== undefined) setMode("raw");
+    if (parsedCell(value, editMeta?.type_name).structured !== undefined) setMode("raw");
     else setEditingText(value);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editSeq]);
   useEffect(() => {
     if (!fullLoaded || !wantEdit.current || value == null) return;
     wantEdit.current = false;
-    if (structuredValue(value, editMeta?.type_name) !== undefined) setMode("raw");
+    if (parsedCell(value, editMeta?.type_name).structured !== undefined) setMode("raw");
     else setEditingText(value);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fullLoaded]);
@@ -170,7 +198,7 @@ export function Inspector() {
     if (editingText !== null) growTextarea();
   }, [editingText !== null]);
 
-  if (!target || !stmt) {
+  if (!target || !stmtExists) {
     return (
       <div className="inspector">
         <div className="insp-top">
@@ -181,14 +209,13 @@ export function Inspector() {
     );
   }
 
-  const structured = value != null ? structuredValue(value, editMeta?.type_name) : undefined;
+  // parse + pretty + lossy-number detection come from the bounded LRU
+  // (parseCache.ts) — O(1) on re-render instead of re-parsing the full cell
+  const parsed = value != null ? parsedCell(value, editMeta?.type_name) : undefined;
+  const structured = parsed?.structured;
   const isStructured = structured !== undefined;
-  // a bare number token of 16+ digits exceeds JS float precision — any
-  // parse→re-serialize path would silently round it (even in untouched
-  // fields), so tree editing and pretty-printing are disabled for such docs
-  const lossyNums =
-    isStructured && value != null && /(?:^|[\s:,[])-?\d{16,}(?:[\s,}\]]|$)/.test(value);
-  const pretty = isStructured && !lossyNums ? JSON.stringify(structured, null, 2) : (value ?? "");
+  const lossyNums = parsed?.lossyNums ?? false;
+  const pretty = parsed?.pretty ?? (value ?? "");
   const isArr = isArrayType(editMeta?.type_name);
   const canEdit = !!editMeta?.editable && fullLoaded;
   // `json` (not jsonb) preserves exact text — tree edits re-serialize the doc
@@ -196,14 +223,18 @@ export function Inspector() {
   const structuredEditable =
     canEdit && isStructured && !lossyNums && editMeta?.type_name !== "json";
 
-  const stage = (v: string) =>
+  const stage = (v: string) => {
+    const st = useResults
+      .getState()
+      .statements.find((x) => x.index === target.stmtIndex);
     useEdits.getState().setEdit({
       stmtIndex: target.stmtIndex,
       row: target.row,
       col: target.col,
       value: v,
-      original: stmt.rows[target.row]?.[target.col] ?? null,
+      original: st?.rows[target.row]?.[target.col] ?? null,
     });
+  };
   // arrays stage as a PG array literal; JSON stages as JSON text
   const serialize = (v: unknown) => (isArr ? jsToPgArray(v) : JSON.stringify(v));
 
@@ -224,9 +255,11 @@ export function Inspector() {
         // silently round >2^53 numbers the user never touched.
         stage(rawDraft);
       }
+      clearValidateTimer();
       setRawDraft(null);
       setJsonError(null);
     } catch (e) {
+      clearValidateTimer();
       setJsonError((e as Error).message);
     }
   };
@@ -365,15 +398,20 @@ export function Inspector() {
               readOnly={!structuredEditable}
               onChange={(v) => {
                 setRawDraft(v);
-                try {
-                  JSON.parse(v);
-                  setJsonError(null);
-                } catch (err) {
-                  setJsonError((err as Error).message);
-                }
+                clearValidateTimer();
+                validateTimer.current = setTimeout(() => {
+                  validateTimer.current = null;
+                  try {
+                    JSON.parse(v);
+                    setJsonError(null);
+                  } catch (err) {
+                    setJsonError((err as Error).message);
+                  }
+                }, 150);
               }}
               onSave={saveRaw}
               onCancel={() => {
+                clearValidateTimer();
                 setRawDraft(null);
                 setJsonError(null);
               }}
@@ -381,7 +419,7 @@ export function Inspector() {
             {jsonError && rawDirty && <div className="insp-jsonerror">{jsonError}</div>}
             {rawDirty && (
               <div className="insp-editactions">
-                <button onClick={() => { setRawDraft(null); setJsonError(null); }}>
+                <button onClick={() => { clearValidateTimer(); setRawDraft(null); setJsonError(null); }}>
                   Discard <span className="insp-key">esc</span>
                 </button>
                 <button className="primary" disabled={!!jsonError} onClick={saveRaw}>
