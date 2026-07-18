@@ -571,6 +571,27 @@ export const useEdits = create<EditsState>((set, get) => ({
           },
           tabId,
         );
+        // browse tabs: a patched sort/tiebreak key column invalidates the
+        // pinned keyset — the next page must re-run, not seek from the
+        // patched value (dynamic import mirrors the existing store wiring)
+        {
+          const stmtCols =
+            useResults.getState().byTab[tabId]?.statements.find((st) => st.index === en.stmtIndex)
+              ?.columns ?? [];
+          const patchedCols = [
+            ...new Set(
+              used
+                .filter((_, i) => outcome.results[i]?.ok)
+                .map((e) => stmtCols[e.col]?.name)
+                .filter((n): n is string => !!n),
+            ),
+          ];
+          if (patchedCols.length > 0) {
+            void import("./browser").then(({ useBrowser }) =>
+              useBrowser.getState().noteCommittedPatch(tabId, patchedCols),
+            );
+          }
+        }
         writeEdits(set, tabId, (t) => {
           const flash = new Set(t.flash);
           used.forEach((e, i) => {

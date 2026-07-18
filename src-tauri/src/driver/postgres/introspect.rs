@@ -33,6 +33,16 @@ pub struct TableInfo {
     pub columns: Vec<ColumnInfo>,
     #[serde(default)]
     pub pk: Vec<String>,
+    /// pg_class.relhassubclass — the table has inheritance children (or is a
+    /// partition parent); child heaps have colliding ctids, so the frontend
+    /// refuses ctid keyset pagination on parents. None on pre-v0.7.1 caches
+    /// = unknown → the gate fails safe.
+    #[serde(default)]
+    pub has_children: Option<bool>,
+    /// pg_class.reltuples planner row estimate (-1 = never analyzed) — sizes
+    /// the frontend's ctid keyset gate. None on pre-v0.7.1 caches.
+    #[serde(default)]
+    pub reltuples: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +99,8 @@ const TABLES_SQL: &str = r#"
 SELECT coalesce(json_agg(t), '[]') FROM (
   SELECT c.oid::int8 AS table_oid, n.nspname AS schema, c.relname AS name,
          c.relkind::text AS kind,
+         c.relhassubclass AS has_children,
+         c.reltuples::float8 AS reltuples,
          coalesce((
            SELECT json_agg(json_build_object(
                     'name', a.attname,

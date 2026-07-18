@@ -128,6 +128,9 @@ export interface KeysetKey {
   notNull: boolean;
 }
 
+/** row-estimate ceiling for ctid keyset on PK-less tables (see gate below) */
+export const CTID_KEYSET_MAX_ESTIMATE = 1_000_000;
+
 /** The total-order sort keys for keyset pagination: the user's sort column
  * (if any) followed by a unique tiebreaker — the PK, or ctid for PK-less
  * ordinary tables. The tiebreaker inherits the sort direction so every key
@@ -138,9 +141,12 @@ export interface KeysetKey {
  * caller must fall back to the offset approach instead of a wrong-rows
  * keyset. Non-keysettable: views/matviews/foreign tables (no PK, no usable
  * ctid), partitioned tables without a PK (ctid is not unique across
- * partitions), PK-less tables on PG < 14 (no tid btree opclass, so
- * `ORDER BY ctid` / tid comparisons fail), and any sort/PK column missing
- * from the snapshot (schema drift — refuse rather than guess). */
+ * partitions), inheritance parents without a PK (child heaps have colliding
+ * ctids — TimescaleDB hypertables are relkind='r' PK-less parents),
+ * PK-less tables on PG < 14 (no tid btree opclass, so `ORDER BY ctid` / tid
+ * comparisons fail), PK-less tables too big (or unsized) for the ctid gate
+ * below, and any sort/PK column missing from the snapshot (schema drift —
+ * refuse rather than guess). */
 export function keysetKeys(
   table: TableInfo,
   sort: BrowseSort | null,
@@ -157,7 +163,26 @@ export function keysetKeys(
       if (!ci) return null;
       tiebreak.push({ col: pc, dir, cast: ci.type, notNull: ci.not_null });
     }
-  } else if (table.kind === "r" && (serverVersionNum ?? 0) >= 140000) {
+  } else if (
+    table.kind === "r" &&
+    (serverVersionNum ?? 0) >= 140000 &&
+    // has_children (relhassubclass) must be a known false: an inheritance
+    // parent's SELECT scans child heaps whose ctids collide with the parent's
+    // — a ctid seek would splice wrong rows. undefined = old cached snapshot
+    // that never captured the flag → refuse (fail safe; the live introspect
+    // corrects it).
+    table.has_children === false &&
+    // Size gate (tradeoff): TID scans carry no pathkeys, so EVERY page of
+    // `ORDER BY ctid` is a full seq scan + top-N sort — O(table) per page.
+    // That stays interactive only on smallish heaps; above ~1M estimated rows
+    // it violates never-slow, so we take the documented offset fallback (its
+    // dup/drop risk on PK-less physical order beats multi-second pages).
+    // reltuples < 0 (never analyzed) or missing (old cache) = no estimate →
+    // refuse (fail safe).
+    typeof table.reltuples === "number" &&
+    table.reltuples >= 0 &&
+    table.reltuples <= CTID_KEYSET_MAX_ESTIMATE
+  ) {
     tiebreak = [{ col: "ctid", dir, cast: "tid", notNull: true }];
   } else {
     return null;

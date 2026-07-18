@@ -37,6 +37,18 @@ interface BrowseTab {
   limit: number;
   draftRow: Record<string, DraftCell> | null;
   draftError: string | null;
+  /** keyset keys (incl. casts) PINNED at run() time — loadMore seeks with
+   * THESE, never a live-snapshot recompute: DDL landing mid-scroll would
+   * otherwise change the keys under the loaded rows and splice wrong rows */
+  pinnedKeys: KeysetKey[] | null;
+  /** a committed edit patched a pinned key column — the loaded last row no
+   * longer holds the value the executed ORDER BY placed there, so the next
+   * loadMore must re-run instead of seeking from the patched value */
+  pageStale: boolean;
+  /** pagination latch: a page fetch failed; loadMore no-ops until
+   * refresh/sort/filter/re-run clears it (unbounded per-scroll retries
+   * against a broken seek would hammer the server invisibly) */
+  paginationBroken: string | null;
 }
 const blankBrowse = (): BrowseTab => ({
   tab: "data",
@@ -45,6 +57,9 @@ const blankBrowse = (): BrowseTab => ({
   limit: PAGE,
   draftRow: null,
   draftError: null,
+  pinnedKeys: null,
+  pageStale: false,
+  paginationBroken: null,
 });
 
 // top-level mirrors the active tab's BrowseTab (like results/edits); byTab is the
@@ -67,6 +82,11 @@ interface BrowserState extends BrowseTab {
   setSort: (s: BrowseTab["sort"]) => void;
   loadMore: () => void;
   refresh: () => void;
+  /** commit-patch hook (called from edits.ts after a commit patches rows):
+   * when any patched column is one of the PINNED keyset key columns, latch
+   * the tab stale so the next loadMore re-runs instead of appending — a seek
+   * from the patched value would silently skip/dup rows */
+  noteCommittedPatch: (tabId: string, cols: string[]) => void;
   /** insert a row; cols/values cover only the columns the user set */
   insertRow: (
     cols: string[],
@@ -180,10 +200,18 @@ function appendPage(
     const t = rs.byTab[tabId];
     const st0 = t?.statements[0];
     if (!t || !st0 || t.executedSessionId !== sessionId || st0.rows !== seededRows) return rs;
-    const rows = [...st0.rows, ...page.rows];
+    // capped means "rows were actually discarded at the ceiling" — a page
+    // that merely lands exactly on the cap is NOT capped (the table may end
+    // right there); the next loadMore probes one more page and either hits
+    // end-of-data honestly or discards for real
+    const room = ROW_HARD_CAP - st0.rows.length;
+    const kept = page.rows.length > room ? page.rows.slice(0, Math.max(room, 0)) : page.rows;
+    const rows = [...st0.rows, ...kept];
     const truncated = new Set(st0.truncated);
     const base = st0.rows.length;
-    for (const [r, c] of page.truncated) truncated.add(`${base + r}:${c}`);
+    for (const [r, c] of page.truncated) {
+      if (r < kept.length) truncated.add(`${base + r}:${c}`);
+    }
     const next = {
       ...t,
       statements: t.statements.map((st, i) =>
@@ -192,9 +220,8 @@ function appendPage(
               ...st,
               rows,
               truncated,
-              rowCount: st.rowCount + page.rows.length,
-              capped:
-                st.capped || (page.rows.length === PAGE && rows.length >= ROW_HARD_CAP),
+              rowCount: st.rowCount + kept.length,
+              capped: st.capped || page.rows.length > room,
             }
           : st,
       ),
@@ -208,17 +235,31 @@ function appendPage(
   if (appended) writeBrowse(set, tabId, (t) => ({ limit: t.limit + PAGE }));
 }
 
-/** rerun the active tab's browse query (results land in the active tab) */
-function run(s: BrowserState) {
+/** rerun the active tab's browse query (results land in the active tab).
+ * Pins the keyset keys computed HERE onto the tab — the executed ORDER BY is
+ * built from exactly these, so page seeks must reuse them verbatim — and
+ * clears the stale/broken pagination latches (a fresh result set resets both). */
+function run(set: SetFn, s: BrowserState) {
   if (!s.table) return;
+  const keys = keysFor(s.table, s.sort);
+  writeBrowse(set, s.active, { pinnedKeys: keys, pageStale: false, paginationBroken: null });
   void useResults.getState().run(
     browseSql({
       table: s.table,
       filters: s.filters,
       sort: s.sort,
       limit: s.limit,
-      keys: keysFor(s.table, s.sort),
+      keys,
     }),
+  );
+}
+
+/** structural equality of key lists — cheap drift check for loadMore */
+function sameKeys(a: KeysetKey[], b: KeysetKey[] | null): boolean {
+  if (!b || a.length !== b.length) return false;
+  return a.every(
+    (k, i) =>
+      k.col === b[i].col && k.dir === b[i].dir && k.cast === b[i].cast && k.notNull === b[i].notNull,
   );
 }
 
@@ -250,7 +291,7 @@ export const useBrowser = create<BrowserState>((set, get) => ({
       byTab: { ...s.byTab, [id]: { ...blankBrowse(), filters: initialFilters ?? [] } },
     }));
     get().syncActive(id);
-    run(get());
+    run(set, get());
   },
 
   clearTab: (tabId) =>
@@ -264,7 +305,9 @@ export const useBrowser = create<BrowserState>((set, get) => ({
   setFilters: (filters) => {
     // only hit the server when the effective SQL actually changed — toggling
     // an incomplete filter row or picking a column before typing a value
-    // used to re-run the unfiltered SELECT
+    // used to re-run the unfiltered SELECT. The limit reset lives under the
+    // same check: resetting it on a no-op change would desync limit from the
+    // loaded rows (dead scroll / wasted end-of-data queries).
     const sqlOf = (st: BrowserState) =>
       st.table
         ? browseSql({
@@ -277,14 +320,17 @@ export const useBrowser = create<BrowserState>((set, get) => ({
         : "";
     const s = get();
     const before = sqlOf(s);
-    writeBrowse(set, s.active, { filters, limit: PAGE });
+    writeBrowse(set, s.active, { filters });
     const after = get();
-    if (sqlOf(after) !== before) run(after);
+    if (sqlOf(after) !== before) {
+      writeBrowse(set, s.active, { limit: PAGE });
+      run(set, get());
+    }
   },
 
   setSort: (sort) => {
     writeBrowse(set, get().active, { sort, limit: PAGE });
-    run(get());
+    run(set, get());
   },
 
   loadMore: () => {
@@ -292,6 +338,9 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     const tabId = s.active;
     const table = s.table;
     if (!table) return;
+    // pagination latch: a page fetch already failed — retrying per scroll
+    // tick would hammer a broken seek invisibly; refresh/sort/filter clears
+    if (s.paginationBroken) return;
     const res = useResults.getState();
     const tabRes = res.byTab[tabId];
     const stmt = tabRes?.statements[0];
@@ -301,6 +350,7 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     if (stmt.rows.length < s.limit || pageInflight.has(tabId)) return;
     const filters = s.filters;
     const sort = s.sort;
+    const pinned = s.pinnedKeys;
     void import("./edits").then(({ useEdits }) => {
       // re-check past the async boundary — two rapid scroll events can both
       // pass the sync guard before either adds itself
@@ -309,23 +359,48 @@ export const useBrowser = create<BrowserState>((set, get) => ({
       // their row coordinates (and a confirm modal on mere scrolling would be
       // hostile)
       if (Object.keys(useEdits.getState().byTab[tabId]?.pending ?? {}).length > 0) return;
+      // run() always targets the ACTIVE tab — if focus moved across the
+      // async tick, growing/rerunning would hit the WRONG tab's browse (and
+      // poison this one's limit). Skip; this tab's own next scroll retries.
+      const rerunActive = () => {
+        if (get().active === tabId) run(set, get());
+      };
+
+      // a committed edit patched a pinned key column (see noteCommittedPatch)
+      // — appending would seek from the patched value; re-run instead.
+      // Read LIVE: a commit finishing during the import tick can latch it.
+      if (get().byTab[tabId]?.pageStale) {
+        rerunActive();
+        return;
+      }
 
       // ---- keyset page: WHERE row-value seek from the last loaded row -----
-      const keys = keysetKeys(
-        table,
-        sort,
-        serverVersionNum(tabRes.executedProfileId ?? useConnections.getState().activeProfileId),
-      );
+      // Seek with the keys PINNED at run() time — the executed ORDER BY was
+      // built from them. A live recompute that drifted (DDL mid-scroll: PK
+      // dropped/added, column retyped) means the pinned order no longer
+      // matches the snapshot: re-run fresh rather than splicing wrong rows.
+      if (pinned) {
+        const fresh = keysetKeys(
+          table,
+          sort,
+          serverVersionNum(tabRes.executedProfileId ?? useConnections.getState().activeProfileId),
+        );
+        if (!sameKeys(pinned, fresh)) {
+          rerunActive();
+          return;
+        }
+      }
       const sessionId = tabRes.executedSessionId;
-      const pageSql = keys && sessionId ? pageSqlFromLastRow(table, filters, keys, stmt) : null;
+      const pageSql = pinned && sessionId ? pageSqlFromLastRow(table, filters, pinned, stmt) : null;
       if (!pageSql || !sessionId) {
         // Offset fallback for anything keyset can't serve safely (see
         // keysetKeys / pageSqlFromLastRow): re-run from row 0 with a grown
         // LIMIT — the pre-keyset behavior. O(n²) and, without a unique sort,
         // able to dup/drop rows across pages; kept ONLY as the boundary for
         // non-keysettable relations, never in place of a correct seek.
+        if (get().active !== tabId) return;
         writeBrowse(set, tabId, (t) => ({ limit: t.limit + PAGE }));
-        run(get());
+        run(set, get());
         return;
       }
       pageInflight.add(tabId);
@@ -334,15 +409,36 @@ export const useBrowser = create<BrowserState>((set, get) => ({
           if (page) appendPage(set, tabId, sessionId, stmt.rows, page);
         })
         .catch((e) => {
-          // leave the loaded rows untouched; the next scroll retries (an
-          // explicit re-run/refresh surfaces session errors through run())
-          console.error("browse loadMore page failed", e);
+          const code = (e as { code?: string | null } | null)?.code ?? null;
+          // user-initiated cancels aren't a broken paginator — don't latch
+          if (code === "57014" || code === "57P01") return;
+          const message = `couldn't load more rows: ${
+            (e as { message?: string }).message ?? String(e)
+          } — refresh to retry`;
+          writeBrowse(set, tabId, { paginationBroken: message });
+          // surface on the tab's results banner (globalError renders above
+          // the loaded rows without replacing them)
+          useResults.setState((rs) => {
+            const t = rs.byTab[tabId];
+            if (!t) return rs;
+            const next = { ...t, globalError: { message, position: null, code } };
+            return rs.active === tabId
+              ? { byTab: { ...rs.byTab, [tabId]: next }, ...next }
+              : { byTab: { ...rs.byTab, [tabId]: next } };
+          });
         })
         .finally(() => pageInflight.delete(tabId));
     });
   },
 
-  refresh: () => run(get()),
+  refresh: () => run(set, get()),
+
+  noteCommittedPatch: (tabId, cols) => {
+    const t = get().byTab[tabId];
+    if (!t?.pinnedKeys || t.pageStale) return;
+    if (!t.pinnedKeys.some((k) => cols.includes(k.col))) return;
+    writeBrowse(set, tabId, { pageStale: true });
+  },
 
   insertRow: async (cols, values) => {
     const s = get();
@@ -352,7 +448,7 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     if (!sessionId) return { ok: false, error: "not connected" };
     try {
       await ipc.insertRow(sessionId, s.table.schema, s.table.name, cols, values);
-      run(get()); // reload so the new row shows
+      run(set, get()); // reload so the new row shows
       return { ok: true };
     } catch (e) {
       return { ok: false, error: (e as { message?: string }).message ?? String(e) };

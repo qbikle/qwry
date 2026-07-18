@@ -1739,3 +1739,69 @@ async fn staging_introspect_catalog_cache_roundtrip() {
     let c: BTreeSet<String> = drift_snap.functions.iter().map(key).collect();
     assert_eq!(a, c, "drift path must still produce the full function set");
 }
+
+/// introspect captures relhassubclass + reltuples: an inheritance parent
+/// reports has_children=true (its ctid keyset must be refused frontend-side —
+/// child heaps have colliding ctids), the child and plain tables report
+/// false, and reltuples carries the planner estimate after ANALYZE.
+#[tokio::test]
+#[ignore]
+async fn staging_introspect_inheritance() {
+    let session = connect_db2("test-inherit").await;
+
+    session
+        .execute_simple(
+            "CREATE SCHEMA IF NOT EXISTS qwry_test;
+             DROP TABLE IF EXISTS qwry_test.qwry_inherit_child;
+             DROP TABLE IF EXISTS qwry_test.qwry_inherit_parent CASCADE;
+             CREATE TABLE qwry_test.qwry_inherit_parent (id int, v text);
+             CREATE TABLE qwry_test.qwry_inherit_child () INHERITS (qwry_test.qwry_inherit_parent);
+             INSERT INTO qwry_test.qwry_inherit_parent VALUES (1, 'p1'), (2, 'p2');
+             INSERT INTO qwry_test.qwry_inherit_child VALUES (1, 'c1'), (2, 'c2');
+             ANALYZE qwry_test.qwry_inherit_parent;
+             ANALYZE qwry_test.qwry_inherit_child",
+        )
+        .await
+        .expect("setup");
+
+    let (snap, _) = session.introspect(None).await.expect("introspect");
+    let find = |name: &str| {
+        snap.tables
+            .iter()
+            .find(|t| t.schema == "qwry_test" && t.name == name)
+            .unwrap_or_else(|| panic!("{name} missing from snapshot"))
+    };
+
+    let parent = find("qwry_inherit_parent");
+    assert_eq!(parent.kind, "r", "inheritance parent is relkind r, not p");
+    assert_eq!(
+        parent.has_children,
+        Some(true),
+        "parent must report relhassubclass=true"
+    );
+    let est = parent.reltuples.expect("parent reltuples must be captured");
+    assert!(est >= 0.0, "ANALYZEd parent must have a real estimate, got {est}");
+
+    let child = find("qwry_inherit_child");
+    assert_eq!(
+        child.has_children,
+        Some(false),
+        "leaf child must report relhassubclass=false"
+    );
+    assert!(child.reltuples.is_some(), "child reltuples must be captured");
+
+    assert!(
+        snap.tables
+            .iter()
+            .all(|t| t.has_children.is_some() && t.reltuples.is_some()),
+        "every snapshot table must carry has_children + reltuples"
+    );
+
+    session
+        .execute_simple(
+            "DROP TABLE qwry_test.qwry_inherit_child;
+             DROP TABLE qwry_test.qwry_inherit_parent",
+        )
+        .await
+        .expect("cleanup");
+}

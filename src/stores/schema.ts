@@ -21,6 +21,14 @@ export interface TableInfo {
   kind: "r" | "v" | "m" | "p" | "f";
   columns: ColumnInfo[];
   pk: string[];
+  /** pg_class.relhassubclass — the table has inheritance children (Timescale
+   * hypertables are relkind='r' parents); child heaps have colliding ctids so
+   * ctid keyset must be refused. undefined on pre-v0.7.1 cached snapshots =
+   * UNKNOWN → refuse (fail safe; corrected by the live introspect). */
+  has_children?: boolean | null;
+  /** pg_class.reltuples planner row estimate (-1 = never analyzed); sizes the
+   * ctid keyset gate. undefined on pre-v0.7.1 cached snapshots. */
+  reltuples?: number | null;
 }
 
 export interface FkInfo {
