@@ -6,17 +6,29 @@ import { useTabs } from "./tabs";
 import { useConnections } from "./connections";
 import * as ipc from "../ipc/commands";
 import {
+  browseCountSql,
   browsePageSql,
   browseSql,
+  compiledWhere,
   keysetKeys,
+  type BrowseSort,
   type Filter,
   type KeysetKey,
+  type SortChain,
 } from "./browseSql";
 
 // SQL generation is pure and lives in browseSql.ts (testable outside Tauri);
 // re-exported here so existing importers keep one entry point.
-export { browseSql, FILTER_OPS, opNeedsValue, opsForType } from "./browseSql";
-export type { Filter, FilterOp } from "./browseSql";
+export {
+  browseSql,
+  compiledWhere,
+  parseInList,
+  typeClassOf,
+  FILTER_OPS,
+  opNeedsValue,
+  opsForType,
+} from "./browseSql";
+export type { Filter, FilterOp, SortChain, SortKey, BrowseSort, TypeClass } from "./browseSql";
 
 /** one cell of the inline draft (new) row. Untouched columns (absent, or
  * present but never typed into) take their DB DEFAULT; `isNull` inserts NULL;
@@ -33,8 +45,24 @@ const PAGE = 1000;
 interface BrowseTab {
   tab: "data" | "structure" | "ddl";
   filters: Filter[];
-  sort: { col: string; dir: "ASC" | "DESC" } | null;
+  /** builder ⇄ raw-WHERE escape hatch. In raw mode the textarea's text is the
+   * WHERE body, used as written (the user owns it; validated only by
+   * running); builder filters are kept but inert until toggled back. */
+  whereMode: "builder" | "raw";
+  rawWhere: string;
+  /** multi-column sort chain — the SOURCE OF TRUTH for ordering.
+   * setSortChain is the store contract the grid header wires to. */
+  sortChain: SortChain;
+  /** legacy single-sort mirror of sortChain[0] (uppercased) for pre-chain
+   * consumers (grid header glyph, sort button label); never write directly */
+  sort: BrowseSort | null;
   limit: number;
+  /** ⌘L jump-to-row: OFFSET of the current result's first row (0 = top).
+   * The jump page itself is offset-fetched — honest and one-shot; scrolling
+   * onward re-anchors keyset from the landed page's last row, so continuation
+   * costs the same as any other page (offset-fallback relations continue by
+   * offset growth as before). */
+  jumpOffset: number;
   draftRow: Record<string, DraftCell> | null;
   draftError: string | null;
   /** keyset keys (incl. casts) PINNED at run() time — loadMore seeks with
@@ -49,18 +77,40 @@ interface BrowseTab {
    * refresh/sort/filter/re-run clears it (unbounded per-scroll retries
    * against a broken seek would hammer the server invisibly) */
   paginationBroken: string | null;
+  /** exact-count-on-demand footer: count(*) over the browse WHERE. Cleared by
+   * any re-run (fresh result set = the number may be stale). */
+  exactCount: number | null;
+  counting: boolean;
+  countError: string | null;
 }
 const blankBrowse = (): BrowseTab => ({
   tab: "data",
   filters: [],
+  whereMode: "builder",
+  rawWhere: "",
+  sortChain: [],
   sort: null,
   limit: PAGE,
+  jumpOffset: 0,
   draftRow: null,
   draftError: null,
   pinnedKeys: null,
   pageStale: false,
   paginationBroken: null,
+  exactCount: null,
+  counting: false,
+  countError: null,
 });
+
+/** the legacy single-sort mirror of a chain's first key */
+const sortMirror = (chain: SortChain): BrowseSort | null =>
+  chain.length > 0
+    ? { col: chain[0].column, dir: chain[0].dir === "desc" ? "DESC" : "ASC" }
+    : null;
+
+/** the raw-WHERE text the queries actually use — only when raw mode is on */
+const rawWhereArg = (t: Pick<BrowseTab, "whereMode" | "rawWhere">): string | null =>
+  t.whereMode === "raw" ? t.rawWhere : null;
 
 // top-level mirrors the active tab's BrowseTab (like results/edits); byTab is the
 // source of truth so every table tab keeps its own filters/sort/scroll/draft.
@@ -79,7 +129,19 @@ interface BrowserState extends BrowseTab {
   clearTab: (tabId: string) => void;
   setTab: (t: "data" | "structure" | "ddl") => void;
   setFilters: (f: Filter[]) => void;
-  setSort: (s: BrowseTab["sort"]) => void;
+  /** THE sort contract: replace the whole chain (grid header + toolbar both
+   * drive this). Chain shape: [{ column, dir: "asc"|"desc", nulls?: "first"|"last" }] */
+  setSortChain: (chain: SortChain) => void;
+  /** back-compat shim over setSortChain for single-column callers */
+  setSort: (s: BrowseSort | null) => void;
+  setWhereMode: (mode: "builder" | "raw") => void;
+  setRawWhere: (text: string) => void;
+  /** ⌘L jump: re-fetch one page starting at row `offset` (0-based) */
+  jumpToRow: (offset: number) => void;
+  clearJump: () => void;
+  /** footer exact count: SELECT count(*) over the current browse WHERE */
+  runExactCount: () => Promise<void>;
+  cancelExactCount: () => void;
   loadMore: () => void;
   refresh: () => void;
   /** commit-patch hook (called from edits.ts after a commit patches rows):
@@ -129,8 +191,8 @@ function serverVersionNum(profileId: string | null): number | null {
 }
 
 /** keyset sort keys for the current browse, or null → offset fallback */
-function keysFor(table: TableInfo, sort: BrowserState["sort"]): KeysetKey[] | null {
-  return keysetKeys(table, sort, serverVersionNum(useConnections.getState().activeProfileId));
+function keysFor(table: TableInfo, chain: SortChain): KeysetKey[] | null {
+  return keysetKeys(table, chain, serverVersionNum(useConnections.getState().activeProfileId));
 }
 
 /** in-flight keyset page fetches, per tab */
@@ -139,6 +201,12 @@ const pageInflight = new Set<string>();
  * so "browse forever" can't grow memory past what a capped query would */
 const ROW_HARD_CAP = 50_000;
 
+/** exact-count staleness guards: an epoch bump (re-run, newer count request)
+ * orphans any in-flight count so its result can never land on a fresh browse */
+const countEpoch = new Map<string, number>();
+/** session the tab's in-flight count runs on — cancel target */
+const countSessions = new Map<string, string>();
+
 /** the next-page SQL seeded from the last loaded row's key values, or null
  * when it can't be built honestly: a key column missing from the result, or
  * its last-row cell TRUNCATED at the backend cell cap (seeking from a cut
@@ -146,6 +214,7 @@ const ROW_HARD_CAP = 50_000;
 function pageSqlFromLastRow(
   table: TableInfo,
   filters: Filter[],
+  rawWhere: string | null,
   keys: KeysetKey[],
   stmt: { columns: { name: string }[]; rows: (string | null)[][]; truncated: Set<string> },
 ): string | null {
@@ -159,7 +228,7 @@ function pageSqlFromLastRow(
     if (stmt.truncated.has(`${lastIdx}:${ci}`)) return null;
     last.push(lastRow[ci]);
   }
-  return browsePageSql({ table, filters, keys, last, limit: PAGE });
+  return browsePageSql({ table, filters, keys, last, limit: PAGE, rawWhere });
 }
 
 interface PageResult {
@@ -238,18 +307,30 @@ function appendPage(
 /** rerun the active tab's browse query (results land in the active tab).
  * Pins the keyset keys computed HERE onto the tab — the executed ORDER BY is
  * built from exactly these, so page seeks must reuse them verbatim — and
- * clears the stale/broken pagination latches (a fresh result set resets both). */
+ * clears the stale/broken pagination latches (a fresh result set resets
+ * both) plus the exact-count footer (the number no longer describes the new
+ * result; an in-flight count is orphaned via its epoch). */
 function run(set: SetFn, s: BrowserState) {
   if (!s.table) return;
-  const keys = keysFor(s.table, s.sort);
-  writeBrowse(set, s.active, { pinnedKeys: keys, pageStale: false, paginationBroken: null });
+  const keys = keysFor(s.table, s.sortChain);
+  countEpoch.set(s.active, (countEpoch.get(s.active) ?? 0) + 1);
+  writeBrowse(set, s.active, {
+    pinnedKeys: keys,
+    pageStale: false,
+    paginationBroken: null,
+    exactCount: null,
+    counting: false,
+    countError: null,
+  });
   void useResults.getState().run(
     browseSql({
       table: s.table,
       filters: s.filters,
-      sort: s.sort,
+      sort: s.sortChain,
       limit: s.limit,
       keys,
+      rawWhere: rawWhereArg(s),
+      offset: s.jumpOffset,
     }),
   );
 }
@@ -259,7 +340,11 @@ function sameKeys(a: KeysetKey[], b: KeysetKey[] | null): boolean {
   if (!b || a.length !== b.length) return false;
   return a.every(
     (k, i) =>
-      k.col === b[i].col && k.dir === b[i].dir && k.cast === b[i].cast && k.notNull === b[i].notNull,
+      k.col === b[i].col &&
+      k.dir === b[i].dir &&
+      k.cast === b[i].cast &&
+      k.notNull === b[i].notNull &&
+      k.nulls === b[i].nulls,
   );
 }
 
@@ -297,6 +382,8 @@ export const useBrowser = create<BrowserState>((set, get) => ({
   clearTab: (tabId) =>
     set((s) => {
       const { [tabId]: _gone, ...byTab } = s.byTab;
+      countEpoch.delete(tabId);
+      countSessions.delete(tabId);
       return { byTab };
     }),
 
@@ -305,17 +392,19 @@ export const useBrowser = create<BrowserState>((set, get) => ({
   setFilters: (filters) => {
     // only hit the server when the effective SQL actually changed — toggling
     // an incomplete filter row or picking a column before typing a value
-    // used to re-run the unfiltered SELECT. The limit reset lives under the
-    // same check: resetting it on a no-op change would desync limit from the
+    // used to re-run the unfiltered SELECT (and in raw-WHERE mode builder
+    // edits are inert by construction). The limit/jump reset lives under the
+    // same check: resetting on a no-op change would desync limit from the
     // loaded rows (dead scroll / wasted end-of-data queries).
     const sqlOf = (st: BrowserState) =>
       st.table
         ? browseSql({
             table: st.table,
             filters: st.filters,
-            sort: st.sort,
+            sort: st.sortChain,
             limit: PAGE,
-            keys: keysFor(st.table, st.sort),
+            keys: keysFor(st.table, st.sortChain),
+            rawWhere: rawWhereArg(st),
           })
         : "";
     const s = get();
@@ -323,14 +412,121 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     writeBrowse(set, s.active, { filters });
     const after = get();
     if (sqlOf(after) !== before) {
-      writeBrowse(set, s.active, { limit: PAGE });
+      writeBrowse(set, s.active, { limit: PAGE, jumpOffset: 0 });
       run(set, get());
     }
   },
 
-  setSort: (sort) => {
-    writeBrowse(set, get().active, { sort, limit: PAGE });
+  setSortChain: (chain) => {
+    // a new ordering makes both the loaded window and any jump offset
+    // meaningless — reset to page 1 of the new order
+    writeBrowse(set, get().active, {
+      sortChain: chain,
+      sort: sortMirror(chain),
+      limit: PAGE,
+      jumpOffset: 0,
+    });
     run(set, get());
+  },
+
+  setSort: (s) =>
+    get().setSortChain(s ? [{ column: s.col, dir: s.dir === "DESC" ? "desc" : "asc" }] : []),
+
+  setWhereMode: (mode) => {
+    const s = get();
+    if (s.whereMode === mode) return;
+    const before = compiledWhere(s.filters, rawWhereArg(s));
+    writeBrowse(set, s.active, { whereMode: mode });
+    const after = get();
+    // toggling only re-runs when the effective WHERE changed (raw text empty
+    // + no active filters toggles freely without server chatter)
+    if (compiledWhere(after.filters, rawWhereArg(after)) !== before) {
+      writeBrowse(set, s.active, { limit: PAGE, jumpOffset: 0 });
+      run(set, get());
+    }
+  },
+
+  setRawWhere: (text) => {
+    const s = get();
+    const before = compiledWhere(s.filters, rawWhereArg(s));
+    writeBrowse(set, s.active, { rawWhere: text });
+    const after = get();
+    if (compiledWhere(after.filters, rawWhereArg(after)) !== before) {
+      writeBrowse(set, s.active, { limit: PAGE, jumpOffset: 0 });
+      run(set, get());
+    }
+  },
+
+  jumpToRow: (offset) => {
+    const s = get();
+    if (!s.table) return;
+    writeBrowse(set, s.active, {
+      limit: PAGE,
+      jumpOffset: Math.max(0, Math.floor(offset) || 0),
+    });
+    run(set, get());
+  },
+
+  clearJump: () => {
+    const s = get();
+    if (s.jumpOffset === 0) return;
+    writeBrowse(set, s.active, { limit: PAGE, jumpOffset: 0 });
+    run(set, get());
+  },
+
+  runExactCount: async () => {
+    const s = get();
+    const tabId = s.active;
+    if (!s.table || s.counting) return;
+    const conn = useConnections.getState();
+    const pid = conn.activeProfileId;
+    // primary preferred (never queued behind the tab session's own page
+    // fetches); any live tab session works as fallback — same rule as the
+    // planner-estimate probe
+    const sid = pid
+      ? (conn.sessions[pid] ??
+        Object.entries(conn.tabSessions).find(([k]) => k.startsWith(`${pid}::`))?.[1])
+      : undefined;
+    if (!sid) {
+      writeBrowse(set, tabId, { countError: "not connected" });
+      return;
+    }
+    const epoch = (countEpoch.get(tabId) ?? 0) + 1;
+    countEpoch.set(tabId, epoch);
+    countSessions.set(tabId, sid);
+    const sql = browseCountSql({ table: s.table, filters: s.filters, rawWhere: rawWhereArg(s) });
+    writeBrowse(set, tabId, { counting: true, countError: null, exactCount: null });
+    try {
+      const out = await ipc.execute(sid, sql);
+      if (countEpoch.get(tabId) !== epoch) return; // superseded — never land stale
+      const n = Number(out.statements[0]?.rows[0]?.[0]);
+      writeBrowse(
+        set,
+        tabId,
+        Number.isFinite(n)
+          ? { counting: false, exactCount: n, countError: null }
+          : { counting: false, countError: "count returned nothing" },
+      );
+    } catch (e) {
+      if (countEpoch.get(tabId) !== epoch) return;
+      const code = (e as { code?: string | null } | null)?.code ?? null;
+      // a user-cancelled count just reverts to the estimate — not an error
+      writeBrowse(
+        set,
+        tabId,
+        code === "57014"
+          ? { counting: false }
+          : { counting: false, countError: (e as { message?: string }).message ?? String(e) },
+      );
+    } finally {
+      if (countEpoch.get(tabId) === epoch) countSessions.delete(tabId);
+    }
+  },
+
+  cancelExactCount: () => {
+    const sid = countSessions.get(get().active);
+    // existing escalating cancel path (CancelToken → pg_cancel_backend)
+    if (sid) void ipc.cancel(sid).catch(() => {});
   },
 
   loadMore: () => {
@@ -349,7 +545,8 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     if (res.running || !stmt || !stmt.done || stmt.error || stmt.capped) return;
     if (stmt.rows.length < s.limit || pageInflight.has(tabId)) return;
     const filters = s.filters;
-    const sort = s.sort;
+    const rawWhere = rawWhereArg(s);
+    const chain = s.sortChain;
     const pinned = s.pinnedKeys;
     void import("./edits").then(({ useEdits }) => {
       // re-check past the async boundary — two rapid scroll events can both
@@ -382,7 +579,7 @@ export const useBrowser = create<BrowserState>((set, get) => ({
       if (pinned) {
         const fresh = keysetKeys(
           table,
-          sort,
+          chain,
           serverVersionNum(tabRes.executedProfileId ?? useConnections.getState().activeProfileId),
         );
         if (!sameKeys(pinned, fresh)) {
@@ -391,13 +588,15 @@ export const useBrowser = create<BrowserState>((set, get) => ({
         }
       }
       const sessionId = tabRes.executedSessionId;
-      const pageSql = pinned && sessionId ? pageSqlFromLastRow(table, filters, pinned, stmt) : null;
+      const pageSql =
+        pinned && sessionId ? pageSqlFromLastRow(table, filters, rawWhere, pinned, stmt) : null;
       if (!pageSql || !sessionId) {
         // Offset fallback for anything keyset can't serve safely (see
-        // keysetKeys / pageSqlFromLastRow): re-run from row 0 with a grown
-        // LIMIT — the pre-keyset behavior. O(n²) and, without a unique sort,
-        // able to dup/drop rows across pages; kept ONLY as the boundary for
-        // non-keysettable relations, never in place of a correct seek.
+        // keysetKeys / pageSqlFromLastRow): re-run from the jump offset with
+        // a grown LIMIT — the pre-keyset behavior. O(n²) and, without a
+        // unique sort, able to dup/drop rows across pages; kept ONLY as the
+        // boundary for non-keysettable relations, never in place of a
+        // correct seek.
         if (get().active !== tabId) return;
         writeBrowse(set, tabId, (t) => ({ limit: t.limit + PAGE }));
         run(set, get());

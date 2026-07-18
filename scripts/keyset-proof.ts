@@ -20,17 +20,25 @@
 // page boundaries, NULL partitions (ASC + DESC, paging inside the
 // partition), sort-on-PK DESC, typed casts (timestamptz), filter folding,
 // ctid keyset on PK-less tables, inheritance-parent ctid refusal
-// (relhassubclass — colliding child ctids proven live), and the reltuples
-// size gate (mocked estimates).
+// (relhassubclass — colliding child ctids proven live), the reltuples
+// size gate (mocked estimates), NULLS FIRST/LAST overrides (ladder
+// variants), multi-column sort chains (mixed directions, tiebreaker
+// absorbed into the chain), raw-WHERE composition with the seek, BETWEEN /
+// quoted-IN filters through the paging pipeline, and ⌘L jump re-anchoring
+// (offset page → keyset continuation, gapless).
 
 import { spawnSync } from "bun";
 import {
+  browseCountSql,
   browsePageSql,
   browseSql,
+  compiledWhere,
   keysetKeys,
+  parseInList,
   CTID_KEYSET_MAX_ESTIMATE,
   type Filter,
   type KeysetKey,
+  type SortChain,
 } from "../src/stores/browseSql";
 import type { TableInfo } from "../src/stores/schema";
 
@@ -137,12 +145,13 @@ function provePaging(
   name: string,
   table: TableInfo,
   filters: Filter[],
-  sort: { col: string; dir: "ASC" | "DESC" } | null,
+  chain: SortChain,
   vnum: number,
   expectRows: number,
+  rawWhere: string | null = null,
 ): void {
   const before = failures;
-  const keys = keysetKeys(table, sort, vnum);
+  const keys = keysetKeys(table, chain, vnum);
   check(keys !== null, `${name}: keysetKeys must allow keyset here`);
   if (!keys) return caseDone(name, before);
 
@@ -156,13 +165,13 @@ function provePaging(
   check(keyIdx.every((i: number) => i >= 0), `${name}: every key column present in the result`);
 
   const collected: (string | null)[][] = [];
-  let page = query(browseSql({ table, filters, sort, limit: PAGE, keys }));
+  let page = query(browseSql({ table, filters, sort: chain, limit: PAGE, keys, rawWhere }));
   let pages = 1;
   collected.push(...page);
   while (page.length === PAGE && pages < 100) {
     const lastRow = page[page.length - 1];
     const last = keyIdx.map((i: number) => lastRow[i]);
-    const sql = browsePageSql({ table, filters, keys, last, limit: PAGE });
+    const sql = browsePageSql({ table, filters, keys, last, limit: PAGE, rawWhere });
     check(sql !== null, `${name}: seek predicate must build (page ${pages + 1})`);
     if (!sql) break;
     page = query(sql);
@@ -170,7 +179,7 @@ function provePaging(
     collected.push(...page);
   }
 
-  const reference = query(browseSql({ table, filters, sort, limit: 100000, keys }));
+  const reference = query(browseSql({ table, filters, sort: chain, limit: 100000, keys, rawWhere }));
   check(reference.length === expectRows, `${name}: reference row count ${reference.length} ≠ expected ${expectRows}`);
   check(pages >= 3, `${name}: must cross ≥2 page boundaries (got ${pages} pages)`);
   check(
@@ -234,28 +243,28 @@ try {
   const parent = introspectTable(S, "qwry_kp_parent");
   const child = introspectTable(S, "qwry_kp_child");
 
-  const flt = (col: string, op: Filter["op"], value: string): Filter => ({
-    col, op, value, enabled: true, conj: "AND",
+  const flt = (col: string, op: Filter["op"], value: string, value2?: string): Filter => ({
+    col, op, value, value2, enabled: true, conj: "AND",
   });
 
-  // -- the original 8 paging cases -----------------------------------------
+  // -- the original 8 paging cases (single-sort → 0/1-link chains) ----------
   // 1. single-col PK, no sort → row-value fast path on one key
-  provePaging("1 pk no-sort", pk, [], null, vnum, 53);
+  provePaging("1 pk no-sort", pk, [], [], vnum, 53);
   // 2. filter + keyset: seek predicate folds with the active WHERE
-  provePaging("2 pk filtered", pk, [flt("v", "contains", "beta")], null, vnum, 36);
+  provePaging("2 pk filtered", pk, [flt("v", "contains", "beta")], [], vnum, 36);
   // 3. composite PK, no sort → multi-key row-value seek
-  provePaging("3 composite pk", comp, [], null, vnum, 60);
+  provePaging("3 composite pk", comp, [], [], vnum, 60);
   // 4. duplicate sort values + NULL partition, ASC (OR-ladder; crosses from
   //    values into NULLS LAST, and pages INSIDE both dup runs and NULLs)
-  provePaging("4 dups+nulls ASC", nulls, [], { col: "s", dir: "ASC" }, vnum, 55);
+  provePaging("4 dups+nulls ASC", nulls, [], [{ column: "s", dir: "asc" }], vnum, 55);
   // 5. same DESC (starts inside the NULLS FIRST partition → IS NOT NULL branch)
-  provePaging("5 dups+nulls DESC", nulls, [], { col: "s", dir: "DESC" }, vnum, 55);
+  provePaging("5 dups+nulls DESC", nulls, [], [{ column: "s", dir: "desc" }], vnum, 55);
   // 6. sort ON the PK itself DESC (sort col == tiebreak col dedup path)
-  provePaging("6 sort-on-pk DESC", pk, [], { col: "id", dir: "DESC" }, vnum, 53);
+  provePaging("6 sort-on-pk DESC", pk, [], [{ column: "id", dir: "desc" }], vnum, 53);
   // 7. PK-less ordinary table → ctid keyset in physical order
-  provePaging("7 ctid keyset", ctid, [], null, vnum, 40);
+  provePaging("7 ctid keyset", ctid, [], [], vnum, 40);
   // 8. typed casts: timestamptz sort with duplicate values, DESC
-  provePaging("8 timestamptz DESC dups", typed, [], { col: "t", dir: "DESC" }, vnum, 48);
+  provePaging("8 timestamptz DESC dups", typed, [], [{ column: "t", dir: "desc" }], vnum, 48);
 
   // -- K1: inheritance-parent ctid refusal ----------------------------------
   {
@@ -267,18 +276,18 @@ try {
     check(Number(row[1]) < Number(row[0]), "K1: colliding ctids across child heaps (the hazard)");
     check(parent.has_children === true, "K1: introspected parent has_children=true");
     check(parent.kind === "r", "K1: inheritance parent is relkind r (hypertable shape)");
-    check(keysetKeys(parent, null, vnum) === null, "K1: ctid keyset REFUSED on the parent");
+    check(keysetKeys(parent, [], vnum) === null, "K1: ctid keyset REFUSED on the parent");
     // old cached snapshot (field missing) = UNKNOWN → refuse, fail safe
     const stale = { ...parent } as TableInfo & { has_children?: boolean | null };
     delete stale.has_children;
-    check(keysetKeys(stale, null, vnum) === null, "K1: unknown has_children (old cache) → refused");
+    check(keysetKeys(stale, [], vnum) === null, "K1: unknown has_children (old cache) → refused");
     // and the generated page-1 plan is the documented offset fallback
-    const plan = browseSql({ table: parent, filters: [], sort: null, limit: PAGE, keys: keysetKeys(parent, null, vnum) });
+    const plan = browseSql({ table: parent, filters: [], sort: [], limit: PAGE, keys: keysetKeys(parent, [], vnum) });
     check(!plan.includes("ORDER BY"), "K1: fallback plan has no ctid ORDER BY");
     // the leaf child is a normal heap → keyset allowed (proves the gate is
     // exactly relhassubclass, not a blanket PK-less refusal)
     check(child.has_children === false, "K1: child has_children=false");
-    check(keysetKeys(child, null, vnum)?.[0]?.col === "ctid", "K1: child still gets ctid keyset");
+    check(keysetKeys(child, [], vnum)?.[0]?.col === "ctid", "K1: child still gets ctid keyset");
     caseDone("9 K1 inheritance-parent refusal", before);
   }
 
@@ -295,13 +304,147 @@ try {
       else t.reltuples = reltuples;
       return t;
     };
-    check(keysetKeys(at(CTID_KEYSET_MAX_ESTIMATE), null, vnum) !== null, "K5: estimate == 1M → allowed");
-    check(keysetKeys(at(CTID_KEYSET_MAX_ESTIMATE + 1), null, vnum) === null, "K5: estimate > 1M → refused");
-    check(keysetKeys(at(-1), null, vnum) === null, "K5: reltuples=-1 (never analyzed) → refused");
-    check(keysetKeys(at(null), null, vnum) === null, "K5: reltuples null → refused");
-    check(keysetKeys(at(undefined), null, vnum) === null, "K5: reltuples missing (old cache) → refused");
-    check(keysetKeys(ctid, null, 130000) === null, "K5: PG<14 still refused regardless of size");
+    check(keysetKeys(at(CTID_KEYSET_MAX_ESTIMATE), [], vnum) !== null, "K5: estimate == 1M → allowed");
+    check(keysetKeys(at(CTID_KEYSET_MAX_ESTIMATE + 1), [], vnum) === null, "K5: estimate > 1M → refused");
+    check(keysetKeys(at(-1), [], vnum) === null, "K5: reltuples=-1 (never analyzed) → refused");
+    check(keysetKeys(at(null), [], vnum) === null, "K5: reltuples null → refused");
+    check(keysetKeys(at(undefined), [], vnum) === null, "K5: reltuples missing (old cache) → refused");
+    check(keysetKeys(ctid, [], 130000) === null, "K5: PG<14 still refused regardless of size");
     caseDone("10 K5 size gate", before);
+  }
+
+  // -- v0.8: NULLS overrides (ladder variants) -------------------------------
+  // 11. ASC NULLS FIRST: starts INSIDE the NULL partition (after-NULL under
+  //     placement FIRST ⇒ IS NOT NULL branch), then pages through the values
+  provePaging("11 override ASC NULLS FIRST", nulls, [], [{ column: "s", dir: "asc", nulls: "first" }], vnum, 55);
+  // 12. DESC NULLS LAST: values first (after-value ⇒ `< v OR IS NULL`), then
+  //     pages INSIDE the trailing NULL partition on the tiebreaker
+  provePaging("12 override DESC NULLS LAST", nulls, [], [{ column: "s", dir: "desc", nulls: "last" }], vnum, 55);
+
+  // -- v0.8: multi-column chains ---------------------------------------------
+  // 13. mixed directions across the chain; both PK cols ARE the chain, so the
+  //     tiebreaker is fully absorbed (dedup path) and the ladder runs mixed
+  provePaging("13 chain mixed dirs (a↑ b↓)", comp, [], [{ column: "a", dir: "asc" }, { column: "b", dir: "desc" }], vnum, 60);
+  // 14. chain + override + PK-in-chain: dup/NULL sort key overridden to LAST
+  //     under DESC, tiebroken by the PK also sorted DESC inside the chain
+  provePaging(
+    "14 chain override+pk-in-chain",
+    nulls,
+    [],
+    [{ column: "s", dir: "desc", nulls: "last" }, { column: "id", dir: "desc" }],
+    vnum,
+    55,
+  );
+
+  // -- v0.8: raw-WHERE escape hatch composes with the seek -------------------
+  // 15. raw WHERE only (ORs inside — must be parenthesized against the seek)
+  provePaging("15 raw WHERE", pk, [], [], vnum, 39, "v LIKE 'beta%' OR id <= 9");
+  // 16. raw WHERE + sort chain over dups+NULLs
+  provePaging("16 raw WHERE + sort", nulls, [], [{ column: "s", dir: "asc" }], vnum, 50, "id > 5");
+
+  // -- v0.8: new filter ops flow through the same safe pipeline --------------
+  // 17. BETWEEN (two operands) on a numeric column
+  provePaging("17 BETWEEN filter", typed, [flt("n", "BETWEEN", "10", "60")], [], vnum, 34);
+  // 18. IN with quoted-string parsing (a quoted value carrying a comma rides
+  //     along; every literal still goes through ql)
+  provePaging(
+    "18 IN quoted filter",
+    pk,
+    [flt("v", "IN", "beta-1, 'beta-2', \"alpha-3\", beta-4, alpha-6, beta-7, beta-8, alpha-9, beta-10, beta-11, alpha-12, beta-13, beta-14, alpha-15, beta-16, beta-17, alpha-18, beta-19, beta-20, alpha-21, beta-22, beta-23, alpha-24, beta-25")],
+    [],
+    vnum,
+    24,
+  );
+
+  // -- J1: ⌘L jump — offset page, then keyset re-anchor ----------------------
+  {
+    const before = failures;
+    const keys = keysetKeys(pk, [], vnum)!;
+    const reference = query(browseSql({ table: pk, filters: [], sort: [], limit: 100000, keys }));
+    const jumpSql = browseSql({ table: pk, filters: [], sort: [], limit: PAGE, keys, offset: 10 });
+    check(jumpSql.endsWith(`LIMIT ${PAGE} OFFSET 10`), "J1: jump page-1 SQL carries OFFSET");
+    const jump = query(jumpSql);
+    check(
+      JSON.stringify(jump) === JSON.stringify(reference.slice(10, 10 + PAGE)),
+      "J1: offset jump page equals the reference slice",
+    );
+    // continuation: seek from the LANDED page's last row (loadMore's path —
+    // the offset never appears again)
+    const colNames = pk.columns.map((c) => c.name);
+    const keyIdx = keys.map((k) => colNames.indexOf(k.col));
+    const last = keyIdx.map((i) => jump[jump.length - 1][i]);
+    const nextSql = browsePageSql({ table: pk, filters: [], keys, last, limit: PAGE });
+    check(nextSql !== null && !nextSql.includes("OFFSET"), "J1: continuation is a pure keyset seek");
+    const next = query(nextSql!);
+    check(
+      JSON.stringify(next) === JSON.stringify(reference.slice(10 + PAGE, 10 + 2 * PAGE)),
+      "J1: keyset continuation after a jump stays gapless",
+    );
+    caseDone("19 J1 jump re-anchor", before);
+  }
+
+  // -- K6: generated-SQL shapes (no server needed beyond two live probes) ----
+  {
+    const before = failures;
+    // NULLS clause emitted ONLY when it differs from the direction's default
+    const chainOver: SortChain = [{ column: "s", dir: "asc", nulls: "first" }];
+    const kOver = keysetKeys(nulls, chainOver, vnum)!;
+    const sqlOver = browseSql({ table: nulls, filters: [], sort: chainOver, limit: 5, keys: kOver });
+    check(sqlOver.includes(`"s" ASC NULLS FIRST`), "K6: override emits NULLS FIRST");
+    check(!sqlOver.includes(`"id" ASC NULLS`), "K6: default tiebreaker emits no NULLS clause");
+    const chainDef: SortChain = [{ column: "s", dir: "asc" }];
+    const kDef = keysetKeys(nulls, chainDef, vnum)!;
+    check(
+      !browseSql({ table: nulls, filters: [], sort: chainDef, limit: 5, keys: kDef }).includes("NULLS"),
+      "K6: default placement keeps the pre-override SQL shape",
+    );
+    // offset-fallback ORDER BY (keys=null) carries the same override text
+    check(
+      browseSql({ table: parent, filters: [], sort: [{ column: "v", dir: "desc", nulls: "last" }], limit: 5, keys: null })
+        .includes(`"v" DESC NULLS LAST`),
+      "K6: offset-fallback ORDER BY honors the override",
+    );
+    // IN parsing: quoted commas, doubled-quote escapes, refusals
+    check(JSON.stringify(parseInList("a, 'b, c', d")) === JSON.stringify(["a", "b, c", "d"]), "K6: quoted comma stays one value");
+    check(JSON.stringify(parseInList("'it''s', x")) === JSON.stringify(["it's", "x"]), "K6: doubled-quote escape");
+    check(parseInList("'unterminated").length === 0, "K6: unterminated quote → refuse");
+    check(parseInList("'a' junk, b").length === 0, "K6: junk after quoted token → refuse");
+    check(parseInList("  ").length === 0, "K6: blank input → no values");
+    check(
+      browseSql({ table: pk, filters: [flt("v", "IN", "a, 'b, c'")], sort: [], limit: 5 }).includes(`"v" IN ('a', 'b, c')`),
+      "K6: IN folds parsed values through ql",
+    );
+    // BETWEEN emission + half-typed rows stay inactive
+    check(
+      browseSql({ table: typed, filters: [flt("n", "BETWEEN", "10", "60")], sort: [], limit: 5 }).includes(`"n" BETWEEN '10' AND '60'`),
+      "K6: BETWEEN emits both bounds",
+    );
+    check(
+      !browseSql({ table: typed, filters: [flt("n", "BETWEEN", "10")], sort: [], limit: 5 }).includes("WHERE"),
+      "K6: BETWEEN missing second bound = inactive",
+    );
+    check(
+      !browseSql({ table: pk, filters: [flt("v", "IN", "'unterminated")], sort: [], limit: 5 }).includes("WHERE"),
+      "K6: unparseable IN = inactive (never IN ())",
+    );
+    // raw-WHERE ownership: raw mode replaces builder filters entirely
+    check(compiledWhere([flt("v", "=", "x")], "id < 5") === "id < 5", "K6: raw text wins over builder");
+    check(compiledWhere([flt("v", "=", "x")], "   ") === null, "K6: empty raw = NO where (builder must not leak through)");
+    check(compiledWhere([flt("v", "=", "x")], null) === `("v" = 'x')`, "K6: builder mode compiles the chip text");
+    // count SQL uses the SAME where body
+    check(
+      browseCountSql({ table: pk, filters: [], rawWhere: "id < 5" }) ===
+        `SELECT count(*) FROM "qwry_test"."qwry_kp_pk"\nWHERE id < 5`,
+      "K6: count(*) composes the same WHERE",
+    );
+    // page SQL ANDs the raw text with the seek, parenthesized
+    const pkeys = keysetKeys(pk, [], vnum)!;
+    const psql = browsePageSql({ table: pk, filters: [], keys: pkeys, last: ["10"], limit: 5, rawWhere: "id < 40 OR v = 'x'" });
+    check(psql !== null && psql.includes(`WHERE (id < 40 OR v = 'x') AND (`), "K6: raw WHERE ANDs with the keyset seek");
+    // live: the raw predicate + jsonb-free ops actually execute
+    const live = query(browseSql({ table: pk, filters: [flt("v", "IN", "'beta-1', beta-2")], sort: [], limit: 10, keys: pkeys }));
+    check(live.length === 2, "K6: live quoted-IN query returns exactly the named rows");
+    caseDone("20 K6 SQL shapes", before);
   }
 } finally {
   exec(`
