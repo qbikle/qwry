@@ -12,16 +12,45 @@ export const SEARCH_NODE_CAP = 50_000;
 /** stable unique id for a node (used for visibility/refs/hit cursor) */
 export const pid = (p: Path) => JSON.stringify(p);
 
-/** how many children to render: at least `shown`, stretched to cover a hit
- * the ⌘F cursor is sitting on (revealing is derived — no state churn) */
+export interface CapWindowResult {
+  /** first rendered child index (inclusive) */
+  start: number;
+  /** end of the rendered slice (exclusive) */
+  end: number;
+  /** children hidden above the window */
+  before: number;
+  /** children hidden below the window */
+  after: number;
+  /** "prefix" = normal cap from 0; "hit" = window revealed around a ⌘F hit */
+  mode: "prefix" | "hit";
+}
+
+/** block anchor for a hit-revealed window — stable within a CHILD_CAP block,
+ * so stepping between nearby hits doesn't remount the slice */
+export const hitBase = (hitIndex: number) => Math.floor(hitIndex / CHILD_CAP) * CHILD_CAP;
+
+/** which children to render. Without a hit (or with one inside the prefix)
+ * this is the plain [0, shown) cap. A hit BEYOND the prefix re-windows to a
+ * bounded CHILD_CAP slice around the hit — never the whole prefix up to it
+ * (revealing hit 40,000 must mount ~CHILD_CAP nodes, not 40,001).
+ * prevExtra/nextExtra are transient expander growth of the hit window; they
+ * only apply while the cursor stays in the same block, so "show next" during
+ * a reveal can't permanently pin a giant window. */
 export function capWindow(
   total: number,
   shown: number,
   hitIndex: number | null,
-): { renderCount: number; remaining: number } {
-  const need = hitIndex != null ? hitIndex + 1 : 0;
-  const renderCount = Math.min(total, Math.max(shown, need));
-  return { renderCount, remaining: total - renderCount };
+  prevExtra = 0,
+  nextExtra = 0,
+): CapWindowResult {
+  const prefixEnd = Math.min(total, shown);
+  if (hitIndex == null || hitIndex < prefixEnd) {
+    return { start: 0, end: prefixEnd, before: 0, after: total - prefixEnd, mode: "prefix" };
+  }
+  const base = hitBase(Math.min(hitIndex, Math.max(0, total - 1)));
+  const start = Math.max(0, base - prevExtra);
+  const end = Math.min(total, base + CHILD_CAP + nextExtra);
+  return { start, end, before: start, after: total - end, mode: "hit" };
 }
 
 export function isPathPrefix(prefix: Path, full: Path): boolean {

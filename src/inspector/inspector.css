@@ -100,6 +100,15 @@
 .insp-chip.ro {
   color: var(--fg-faint);
 }
+.insp-chip-retry {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  padding: 0;
+}
 
 /* icon toolbar */
 .insp-tools {

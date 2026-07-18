@@ -393,6 +393,15 @@
   white-space: nowrap;
 }
 
+/* chunked-copy progress shares the slot but is not an error — stay neutral */
+.status-edit-progress {
+  color: var(--fg-muted);
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .status-link {
   background: none;
   border: none;

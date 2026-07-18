@@ -125,7 +125,8 @@ interface DocText {
 /** incremental splitStatementSpans: keep the spans before the edit, re-lex a
  * bounded window around it, re-attach the (shifted) spans after it once the
  * lexer re-synchronizes on a statement boundary. Grows the window (up to the
- * whole tail) when the edit resists adoption — never wrong, only slower.
+ * whole tail) when the edit resists adoption, RESUMING from the lexer's
+ * position — never wrong, only slower.
  * Restart boundaries are only span ends of NON-final spans: those are always
  * terminated by a top-level `;` (the `;` branch of the splitter is the only
  * way a non-final span is pushed). The final span is never one — it may be
@@ -159,35 +160,34 @@ export function updateStatementSpans(
     candidates.set(old[i].from + delta, i);
   }
   const minAdopt = Math.max(toB, base);
-  let hi = Math.min(doc.length, minAdopt + 65536);
-  for (;;) {
-    const tail = lexTail(
-      doc.sliceString(base, hi),
-      base,
-      hi === doc.length,
-      candidates,
-      minAdopt,
-      old,
-      delta,
-    );
-    if (tail) return prefix.length ? prefix.concat(tail) : tail;
-    hi = Math.min(doc.length, base + (hi - base) * 4);
-  }
+  const tail = lexTail(doc, base, candidates, minAdopt, old, delta);
+  return prefix.length ? prefix.concat(tail) : tail;
 }
 
-/** lex statement spans over one window of the doc. Returns null when the
- * window is too small to decide (a token or the boundary-peek ran off the
- * end) — the caller grows it. Mirrors splitStatementSpans exactly. */
+/** lex statement spans from `base` until suffix adoption or doc end. Starts
+ * on a bounded window and grows it ×4 whenever the edge is reached without a
+ * decision — the lexer RESUMES where it stopped (the window text is only
+ * appended to), so growth re-lexes at most the one token the previous edge
+ * clipped, never the whole window. The final span is only trusted once the
+ * window covers the doc end. Mirrors splitStatementSpans exactly. */
 function lexTail(
-  text: string,
+  doc: DocText,
   base: number,
-  isFinal: boolean,
   candidates: Map<number, number>,
   minAdopt: number,
   old: StmtSpan[],
   delta: number,
-): StmtSpan[] | null {
-  const n = text.length;
+): StmtSpan[] {
+  let hi = Math.min(doc.length, minAdopt + 65536);
+  let text = doc.sliceString(base, hi);
+  let n = text.length;
+  let isFinal = hi === doc.length;
+  const grow = () => {
+    hi = Math.min(doc.length, base + (hi - base) * 4);
+    text += doc.sliceString(base + n, hi);
+    n = text.length;
+    isFinal = hi === doc.length;
+  };
   const out: StmtSpan[] = [];
   let start = 0;
   let i = 0;
@@ -198,24 +198,43 @@ function lexTail(
     while (b > a && /\s/.test(text[b - 1])) b--;
     if (b > a) out.push({ from: base + a, to: base + b });
   };
-  while (i < n) {
+  while (i < n || !isFinal) {
+    if (i >= n) {
+      grow();
+      continue;
+    }
     const j = skipToken(text, i);
     if (j !== -1) {
-      // a token that runs to the window edge may be clipped, not unterminated
-      if (j >= n && !isFinal) return null;
+      // a token that runs to the window edge may be clipped, not
+      // unterminated — grow and re-lex it from its start
+      if (j >= n && !isFinal) {
+        grow();
+        continue;
+      }
       i = j;
       continue;
     }
-    if (text[i] === ";") {
+    const c = text[i];
+    // a token STARTER clipped by the edge lexes as plain chars (`-` of `--`,
+    // `/` of `/*`, a `$tag` prefix) — the restart-from-base loop discarded
+    // such misreads implicitly; a resuming lexer must not consume them until
+    // the window proves them plain
+    if (!isFinal && (c === "-" || c === "/" || c === "$") && clippedStarter(text, i, n)) {
+      grow();
+      continue;
+    }
+    if (c === ";") {
       push(i + 1);
       i++;
       start = i;
       // boundary: peek at the next statement start for suffix adoption
       let k = i;
-      while (k < n && /\s/.test(text[k])) k++;
-      if (k >= n) {
-        if (!isFinal) return null;
-      } else {
+      for (;;) {
+        while (k < n && /\s/.test(text[k])) k++;
+        if (k < n || isFinal) break;
+        grow();
+      }
+      if (k < n) {
         const idx = candidates.get(base + k);
         if (idx !== undefined && base + k >= minAdopt) {
           for (let x = idx; x < old.length; x++) {
@@ -228,9 +247,22 @@ function lexTail(
     }
     i++;
   }
-  if (!isFinal) return null;
   push(n);
   return out;
+}
+
+/** true when text[i..n) could be the clipped PREFIX of a token starter that
+ * skipToken would recognize given more text: `-` (of `--`), `/` (of a block
+ * comment) at the last position, or `$` + tag chars running to the edge with
+ * the closing `$` beyond it. `$` + digit is never a tag ($1 is a parameter). */
+function clippedStarter(text: string, i: number, n: number): boolean {
+  const c = text[i];
+  if (c === "-" || c === "/") return i + 1 >= n;
+  if (i + 1 < n && !/[A-Za-z_]/.test(text[i + 1])) return false;
+  for (let k = i + 2; k < n; k++) {
+    if (!/[A-Za-z0-9_]/.test(text[k])) return false;
+  }
+  return true;
 }
 
 /** first bare keyword of a statement, skipping leading comments (lowercased;

@@ -58,6 +58,25 @@ function flashReadOnlyReason(msg: string) {
   }, 2500);
 }
 
+// chunked-copy slice scheduling: rAF stalls while the window is occluded
+// (WKWebView suspends rAF) — race it against a timeout, first wins, cancel
+// the loser, so a background build still finishes
+function nextCopyTick(fn: () => void) {
+  let done = false;
+  const raf = requestAnimationFrame(() => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    fn();
+  });
+  const timer = setTimeout(() => {
+    if (done) return;
+    done = true;
+    cancelAnimationFrame(raf);
+    fn();
+  }, 32);
+}
+
 /** One data cell — memoized on primitive props so an arrow key / drag step /
  * stream flush repaints only the handful of cells whose state changed, not
  * the whole visible window (the grid's single biggest perf lever). Mouse
@@ -791,11 +810,19 @@ export function Grid({
   // monotonically bumped per copy — a newer copy (or unmount) abandons any
   // in-flight chunked build so it can't overwrite a later copy's clipboard
   const copyRun = useRef(0);
+  /** runId of the chunked build in flight (null = none) — abandon detection
+   * can't lean on the progress message, which a real error may displace */
+  const copyBuildRun = useRef<number | null>(null);
   useEffect(
     () => () => {
       copyRun.current++;
-      const cur = useEdits.getState().lastError;
-      if (cur?.startsWith("building copy…")) useEdits.setState({ lastError: null });
+      if (copyBuildRun.current != null) {
+        // remount/unmount mid-build (statement chip, tab switch): the OLD
+        // clipboard content survives — never abandon without saying so
+        // (flash is a store write, it outlives this component)
+        copyBuildRun.current = null;
+        flashReadOnlyReason("copy cancelled — result changed before it finished");
+      }
     },
     [],
   );
@@ -805,11 +832,31 @@ export function Grid({
       const rect: SelRect | null = sel.rect;
       if (!rect) return;
       copyRun.current++;
-      {
-        // a superseded chunked build leaves its progress message behind
+      if (copyBuildRun.current != null) {
+        // a superseded chunked build leaves its progress message behind —
+        // the new copy takes the slot over, no cancel flash (the user asked)
+        copyBuildRun.current = null;
         const cur = useEdits.getState().lastError;
         if (cur?.startsWith("building copy…")) useEdits.setState({ lastError: null });
       }
+      // truncated cells copy as their 8KB prefix — count the ones inside the
+      // selection (walk the truncated set, not the rect: the set stays small)
+      // and flash so the prefix never ships silently as the full value
+      let truncCount = 0;
+      for (const key of statement.truncated) {
+        const sep = key.indexOf(":");
+        const vr0 = rowViewOf ? rowViewOf[Number(key.slice(0, sep))] : Number(key.slice(0, sep));
+        if (vr0 === undefined || vr0 < rect.r0 || vr0 > rect.r1) continue;
+        const vc0 = colViewOf ? colViewOf[Number(key.slice(sep + 1))] : Number(key.slice(sep + 1));
+        if (vc0 === undefined || vc0 < rect.c0 || vc0 > rect.c1) continue;
+        truncCount++;
+      }
+      const truncFlash = () => {
+        if (truncCount > 0)
+          flashReadOnlyReason(
+            `${truncCount} truncated cell${truncCount === 1 ? "" : "s"} copied as 8KB prefix — open in inspector for full values`,
+          );
+      };
       // the selection rect is view-space — resolve through the sort/reorder
       // maps so what's copied is exactly what's on screen
       const dataCs: number[] = [];
@@ -835,6 +882,7 @@ export function Grid({
       // byte-identical to one full formatCells call.
       if (format === "tsv" && totalRows * dataCs.length >= COPY_ASYNC_CELLS) {
         const runId = copyRun.current;
+        copyBuildRun.current = runId;
         const parts: string[] = [];
         let r = rect.r0;
         const step = () => {
@@ -849,18 +897,24 @@ export function Grid({
           if (slice.length > 0)
             parts.push(formatCells(selCols, slice, format, { table, ctidCols }));
           if (r <= rect.r1) {
-            useEdits.setState({
-              lastError: `building copy… ${Math.round(((r - rect.r0) / totalRows) * 100)}%`,
-            });
-            requestAnimationFrame(step);
+            // a progress tick may only overwrite an empty slot or its own
+            // previous tick — never a real error that landed mid-build
+            const cur = useEdits.getState().lastError;
+            if (cur === null || cur.startsWith("building copy…"))
+              useEdits.setState({
+                lastError: `building copy… ${Math.round(((r - rect.r0) / totalRows) * 100)}%`,
+              });
+            nextCopyTick(step);
             return;
           }
           writeText(parts.join("\n"))
             .catch(console.error)
             .finally(() => {
+              if (copyBuildRun.current === runId) copyBuildRun.current = null;
               if (copyRun.current !== runId) return;
               const cur = useEdits.getState().lastError;
               if (cur?.startsWith("building copy…")) useEdits.setState({ lastError: null });
+              truncFlash();
             });
         };
         step();
@@ -877,12 +931,14 @@ export function Grid({
       // multi-cell spreadsheet paste and reads as garbage in an input field
       if (format === "tsv" && selRows.length === 1 && selRows[0].length === 1) {
         writeText(selRows[0][0] ?? "").catch(console.error);
+        truncFlash();
         return;
       }
       // tauri plugin, not navigator.clipboard — dev origin is insecure-context
       writeText(formatCells(selCols, selRows, format, { table, ctidCols })).catch(console.error);
+      truncFlash();
     },
-    [sel.rect, cols, rows, editMap, rowAt, colAt],
+    [sel.rect, cols, rows, editMap, rowAt, colAt, statement.truncated, rowViewOf, colViewOf],
   );
 
   /** export loaded rows (or the selection when it spans >1 cell) to a file
@@ -1286,6 +1342,15 @@ export function Grid({
         rowVirt.scrollToIndex(next.r);
         colVirt.scrollToIndex(next.c);
       };
+      if (e.key === "Escape" && copyBuildRun.current != null) {
+        // cancel an in-flight chunked ⌘C — the clipboard still holds the OLD
+        // content, same honesty flash as the remount-abandon path
+        e.preventDefault();
+        copyRun.current++;
+        copyBuildRun.current = null;
+        flashReadOnlyReason("copy cancelled — result changed before it finished");
+        return;
+      }
       if (e.key === "Escape" && showDraft) {
         // grid-focused Esc: an EMPTY draft band closes; one with typed values
         // refocuses instead — a stray Esc must never eat half-typed data

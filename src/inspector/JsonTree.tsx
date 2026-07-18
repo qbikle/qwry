@@ -23,6 +23,7 @@ import {
   SEARCH_NODE_CAP,
   capWindow,
   computeSearch,
+  hitBase,
   isPathPrefix,
   pid,
   type Json,
@@ -271,17 +272,25 @@ function Node({
   const [open, setOpen] = useState(depth < 2);
   // per-container render cap — a 50k-element array must not mount 50k nodes
   const [shown, setShown] = useState(CHILD_CAP);
+  // transient growth of a ⌘F hit-revealed window (expander clicks); applies
+  // only while the cursor stays in the same block — never pins a giant window
+  const [hitExtra, setHitExtra] = useState<{ base: number; prev: number; next: number } | null>(
+    null,
+  );
+  const isContainer = value !== null && typeof value === "object";
   const rowRef = useRef<HTMLDivElement>(null);
   const { registerRef } = ctx;
 
   useEffect(() => {
     registerRef(id, rowRef.current);
     return () => registerRef(id, null);
-  }, [id, registerRef]);
+    // isContainer is a dep: a container↔leaf morph (edit changed the node
+    // kind) swaps the DOM element under the same id — re-register, or ⌘F
+    // scroll targets a detached element
+  }, [id, registerRef, isContainer]);
 
   // searching hides non-matching subtrees and force-opens matched ancestors
   if (ctx.query && !ctx.result.visible.has(id)) return null;
-  const isContainer = value !== null && typeof value === "object";
   const effectiveOpen = ctx.query ? ctx.result.forceOpen.has(id) || open : open;
   const isHit = ctx.currentHit === id;
 
@@ -313,18 +322,39 @@ function Node({
         keys = isArr ? Array.from({ length: total }, (_, i) => i) : (objKeys as string[]);
       }
 
-      // ⌘F hit-nav must reach past the cap — stretch the window to the hit
+      // ⌘F hit-nav must reach past the cap — re-window to a bounded slice
+      // around the hit (never mount the whole prefix up to it)
       let hitIdx: number | null = null;
       const hp = ctx.currentHitPath;
       if (hp && isPathPrefix(path, hp)) {
         const at = keys.indexOf(hp[path.length]);
         if (at >= 0) hitIdx = at;
       }
-      const { renderCount, remaining } = capWindow(keys.length, shown, hitIdx);
-      const shownKeys = renderCount === keys.length ? keys : keys.slice(0, renderCount);
+      const block = hitIdx != null ? hitBase(hitIdx) : null;
+      const extra = hitExtra && block != null && hitExtra.base === block ? hitExtra : null;
+      const win = capWindow(keys.length, shown, hitIdx, extra?.prev ?? 0, extra?.next ?? 0);
+      const shownKeys =
+        win.start === 0 && win.end === keys.length ? keys : keys.slice(win.start, win.end);
 
       children = (
         <div className="jt-children">
+          {win.before > 0 && (
+            <button
+              className="jt-more"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (block != null)
+                  setHitExtra({
+                    base: block,
+                    prev: (extra?.prev ?? 0) + CHILD_CAP,
+                    next: extra?.next ?? 0,
+                  });
+              }}
+            >
+              show previous {Math.min(CHILD_CAP, win.before).toLocaleString()} (
+              {win.before.toLocaleString()} above)
+            </button>
+          )}
           {shownKeys.map((ck) => (
             <Node
               key={ck}
@@ -340,17 +370,23 @@ function Node({
               depth={depth + 1}
             />
           ))}
-          {remaining > 0 && (
+          {win.after > 0 && (
             // never silently hide — an explicit expander says what's left
             <button
               className="jt-more"
               onClick={(e) => {
                 e.stopPropagation();
-                setShown(renderCount + CHILD_CAP);
+                if (win.mode === "hit" && block != null)
+                  setHitExtra({
+                    base: block,
+                    prev: extra?.prev ?? 0,
+                    next: (extra?.next ?? 0) + CHILD_CAP,
+                  });
+                else setShown(win.end + CHILD_CAP);
               }}
             >
-              show next {Math.min(CHILD_CAP, remaining).toLocaleString()} (
-              {remaining.toLocaleString()} remaining)
+              show next {Math.min(CHILD_CAP, win.after).toLocaleString()} (
+              {win.after.toLocaleString()} remaining)
             </button>
           )}
         </div>
@@ -499,7 +535,9 @@ export function JsonTree({
         {input && (
           <>
             <span className="jt-hitcount">
-              {hits.length === 0 ? "0/0" : `${hitIdx + 1}/${hits.length}`}
+              {/* debounce pending — the walk hasn't run for THIS input yet;
+                  showing the previous query's count would be a lie */}
+              {input !== query ? "…" : hits.length === 0 ? "0/0" : `${hitIdx + 1}/${hits.length}`}
             </span>
             <button className="jt-nav" title="Previous (⇧⏎)" onClick={() => step(-1)}>
               <ArrowUp size={12} />

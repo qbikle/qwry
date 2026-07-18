@@ -97,6 +97,12 @@ export function Inspector() {
       ? editMap.columns[target.col]
       : undefined;
 
+  // full-value fetch retry: bumping the seq re-fires the fetch effect. One
+  // automatic retry ~1.5s after the FIRST failure (transient tunnel blips),
+  // then the chip's Retry button — never an automatic loop.
+  const [retrySeq, setRetrySeq] = useState(0);
+  const autoRetried = useRef(false);
+
   useEffect(() => {
     if (!truncated || !target || fullValueFor === k) return;
     if (!editMap || editMap === "loading" || editMap === "unavailable") return;
@@ -127,21 +133,27 @@ export function Inspector() {
       : undefined;
     const hint = buildEditMapHint(editMap, snap);
     let stale = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
     ipc
       .fetchCell(sessionId, sql, target.stmtIndex, target.col, locator, hint)
       .then((v) => {
         if (!stale && k) useInspector.getState().setFullValue(k, v);
       })
       .catch((e) => {
-        if (!stale)
-          useInspector
-            .getState()
-            .setFullValueError((e as { message?: string }).message ?? String(e));
+        if (stale) return;
+        useInspector
+          .getState()
+          .setFullValueError((e as { message?: string }).message ?? String(e));
+        if (!autoRetried.current) {
+          autoRetried.current = true;
+          retryTimer = setTimeout(() => setRetrySeq((s) => s + 1), 1500);
+        }
       });
     return () => {
       stale = true;
+      if (retryTimer !== null) clearTimeout(retryTimer);
     };
-  }, [truncated, target, editMap, k, fullValueFor]);
+  }, [truncated, target, editMap, k, fullValueFor, retrySeq]);
 
   // raw-mode JSON validation is debounced (150ms) — a full parse of a multi-MB
   // doc per keystroke froze typing. Validation-only: staging still re-parses.
@@ -162,6 +174,9 @@ export function Inspector() {
     setJsonError(null);
     setMode("auto");
     wantEdit.current = false;
+    // retrySeq is a monotonic effect trigger — resetting it would double-fire
+    // the fetch on cell change; only the one-auto-retry latch resets per cell
+    autoRetried.current = false;
     clearValidateTimer();
   }, [k]);
 
@@ -294,11 +309,18 @@ export function Inspector() {
       )}
       {truncated && !fullLoaded && (
         <div className={`insp-chip${fullValueError ? " ro" : ""}`}>
-          {fullValueError
-            ? `full value fetch failed: ${fullValueError}`
-            : editMap === "unavailable" || (editMeta && editMeta.table_oid === 0)
-              ? "showing first 8KB — full value unavailable (result not mapped to a table)"
-              : "Loading full value… editing disabled until loaded"}
+          {fullValueError ? (
+            <>
+              full value fetch failed: {fullValueError}
+              <button className="insp-chip-retry" onClick={() => setRetrySeq((s) => s + 1)}>
+                Retry
+              </button>
+            </>
+          ) : editMap === "unavailable" || (editMeta && editMeta.table_oid === 0) ? (
+            "showing first 8KB — full value unavailable (result not mapped to a table)"
+          ) : (
+            "Loading full value… editing disabled until loaded"
+          )}
         </div>
       )}
       {lossyNums && (

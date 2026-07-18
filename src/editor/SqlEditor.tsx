@@ -128,8 +128,10 @@ const stmtScopeDeco = Decoration.line({ class: "cm-stmt-scope" });
 const stmtScopePlugin = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet = Decoration.none;
-    // spans are kept incrementally — a keystroke re-lexes only a window
-    // around the edit, never the whole doc (the <16ms budget is law)
+    // spans are kept incrementally — a keystroke typically re-lexes only a
+    // small window around the edit. Not a hard <16ms guarantee: the final
+    // span must be re-lexed to the doc end before it is trusted, so one
+    // giant statement still costs O(text after the edit) per keystroke
     spans: StmtSpan[];
     lastFrom = -1;
     lastTo = -1;
