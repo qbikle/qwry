@@ -103,9 +103,14 @@
       silently no-op (GAPS 1c, Grid.tsx:590).
 
 ### Gate
-- [ ] All quality gates green; staging suite extended to cover: SAVEPOINT inside user
-      tx, ctid guarded edit/delete, tx-state events, oob cancel.
-- [ ] Adversarial audit round over the full wave diff; confirmed findings fixed.
+- [x] All quality gates green (tsc ✓ vite ✓ clippy 0 ✓ unit 32/32 ✓ staging 16/16 ✓);
+      staging suite 9→16: savepoint-in-user-tx (+aborted-tx refusal +user-savepoint
+      survival), ctid guards, generated/identity, dotted names, oob cancel+terminate,
+      tx-state events (+filler forms +failed-COMMIT), stale-hint rename guard.
+- [x] Audit round: 5 adversarial reviewers → 31 confirmed findings, ALL fixed
+      (2 pre-existing S1 corruption: plan_edits sig collision, stale-snapshot
+      wrong-column write; 6 S2 incl. tx filler-token mis-fold + submenu z + connect
+      epochs + tabs skip/replace-all data loss). Deferrals ledgered in GAPS.
 
 ---
 
