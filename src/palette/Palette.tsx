@@ -28,15 +28,8 @@ import { useSettings, type Mode } from "../stores/settings";
 import { useUI } from "../stores/ui";
 import { useTabs, visibleTabs } from "../stores/tabs";
 import { Modal } from "../app/overlay/Overlay";
+import type { HistoryRow } from "../ipc/types";
 import "./palette.css";
-
-interface HistoryRow {
-  id: number;
-  sql: string;
-  ms: number;
-  rows: number;
-  ran_at: string;
-}
 
 export function Palette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [query, setQuery] = useState("");
@@ -379,6 +372,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                   <Clock size={13} />
                   <span className="pal-sql">{h.sql.replace(/\s+/g, " ").slice(0, 90)}</span>
                   <span className="pal-detail">
+                    {h.status !== "ok" && `${h.status} · `}
                     {h.rows} rows · {h.ms.toFixed(0)}ms
                   </span>
                 </Command.Item>

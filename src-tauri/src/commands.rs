@@ -469,8 +469,9 @@ pub async fn history_add(
     sql: String,
     ms: f64,
     rows: i64,
+    status: crate::appdb::HistoryStatus,
 ) -> Result<()> {
-    state.appdb.history_add(&profile_id, &sql, ms, rows)
+    state.appdb.history_add(&profile_id, &sql, ms, rows, status)
 }
 
 #[tauri::command]

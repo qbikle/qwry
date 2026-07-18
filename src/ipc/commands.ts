@@ -6,6 +6,7 @@ import type {
   EditOutcome,
   ExecOutcome,
   HistoryRow,
+  HistoryStatus,
   Profile,
   QueryEvent,
   RowEdit,
@@ -40,6 +41,15 @@ export const connectionUri = (profileId: string, includePassword: boolean) =>
 /** most recent queries across all connections (home dashboard) */
 export const historyRecent = (limit?: number) =>
   invoke<HistoryRow[]>("history_recent", { limit: limit ?? null });
+
+/** record one run — failed/cancelled runs enter history too, flagged */
+export const historyAdd = (
+  profileId: string,
+  sql: string,
+  ms: number,
+  rows: number,
+  status: HistoryStatus,
+) => invoke<void>("history_add", { profileId, sql, ms, rows, status });
 
 /** search history — profileId null searches across every connection */
 export const historySearch = (query: string, profileId?: string | null, limit?: number) =>

@@ -298,6 +298,8 @@ export const useResults = create<ResultsState>((set, get) => ({
     // history timing/rows come from the events themselves — reading the store
     // after the invoke resolves races the rAF row flush and logged ms=0
     let historyRows = 0;
+    let historyDone = false;
+    const runStart = performance.now();
 
     const onEvent = (ev: QueryEvent) => {
       switch (ev.type) {
@@ -372,14 +374,10 @@ export const useResults = create<ResultsState>((set, get) => ({
           break;
         case "finished":
           writeTab(set, tabId, { totalMs: ev.total_ms });
-          void import("@tauri-apps/api/core").then(({ invoke }) =>
-            invoke("history_add", {
-              profileId: activeProfileId,
-              sql,
-              ms: ev.total_ms,
-              rows: historyRows,
-            }),
-          );
+          historyDone = true;
+          void ipc
+            .historyAdd(activeProfileId, sql, ev.total_ms, historyRows, "ok")
+            .catch((err) => console.error("history_add failed", err));
           break;
       }
     };
@@ -413,6 +411,20 @@ export const useResults = create<ResultsState>((set, get) => ({
       }
     } catch (e) {
       const err = e as DriverError;
+      // failed/cancelled runs enter history too — flagged, never silently
+      // absent; a failed write logs but must not break the run path
+      if (!historyDone) {
+        historyDone = true;
+        void ipc
+          .historyAdd(
+            activeProfileId,
+            sql,
+            performance.now() - runStart,
+            historyRows,
+            err?.code === "57014" ? "cancelled" : "error",
+          )
+          .catch((e2) => console.error("history_add failed", e2));
+      }
       writeTab(set, tabId, (t) => ({
         globalError: t.statements.some((st) => st.error) ? null : err,
       }));
