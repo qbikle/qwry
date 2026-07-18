@@ -116,30 +116,34 @@
 
 ## v0.7.1-tempo — perf register burn
 
-- [ ] Editor O(doc) per keystroke ×3: updateListener toString() + subscribe compares
+- [x] Editor O(doc) per keystroke ×3: updateListener toString() + subscribe compares
       + whole-statement re-tokenize (GAPS §2.3, SqlEditor.tsx:133,152, context.ts:74).
-- [ ] Keyset pagination for browse: infinite scroll re-runs from row 0 with unbounded
+- [x] Keyset pagination for browse: infinite scroll re-runs from row 0 with unbounded
       LIMIT growth (O(n²)) and dups/drops rows without a unique sort (GAPS §2.6 +
       1c, browser.ts:196-204). PK (or ctid) tiebreaker, true keyset WHERE.
-- [ ] Inspector: memoize JSON parse/pretty of the full cell; stop re-parsing per
+- [x] Inspector: memoize JSON parse/pretty of the full cell; stop re-parsing per
       streamed batch; raw-mode parse per keystroke (GAPS §2.7, Inspector.tsx:49,146,287).
-- [ ] JsonTree: child cap + virtualization for 50k-element arrays; registerRef dep
+- [x] JsonTree: child cap + virtualization for 50k-element arrays; registerRef dep
       array; search debounce (GAPS §2.8, JsonTree.tsx:317,333,90).
-- [ ] SchemaTree: virtualize; kill per-row SVG×2 + tooltip string churn on filter
+- [x] SchemaTree: virtualize; kill per-row SVG×2 + tooltip string churn on filter
       keystroke (GAPS §2.9, SchemaTree.tsx:93).
-- [ ] FUNCS introspection: stop pulling ~3k pg_catalog fns per connect/⌘R; cache;
+- [x] FUNCS introspection: stop pulling ~3k pg_catalog fns per connect/⌘R; cache;
       fix DDL-sniff regex false positives (GAPS §2.13, schema.ts:80).
-- [ ] ⌘A+⌘C on 50k rows: chunked/async TSV build, no >100MB sync string
+- [x] ⌘A+⌘C on 50k rows: chunked/async TSV build, no >100MB sync string
       (GAPS §2.14, Grid.tsx:245).
-- [ ] noAutocorrect MutationObserver: stop selector work per virtualized row mount
+- [x] noAutocorrect MutationObserver: stop selector work per virtualized row mount
       during scroll (GAPS §2.15, noAutocorrect.ts:29).
-- [ ] history LIKE full-scan per palette keystroke (GAPS §2.16, appdb.rs:192).
-- [ ] Smaller sweep (GAPS §2.17): setSelectionValue O(N²), column-resize measure per
+- [x] history LIKE full-scan per palette keystroke (GAPS §2.16, appdb.rs:192).
+- [x] Smaller sweep (GAPS §2.17): setSelectionValue O(N²), column-resize measure per
       mousemove, springs replay + reduced-motion.
 
 ### Gate
-- [ ] Quality gates green; measured before/after numbers for keyset pagination and
-      editor keystroke cost recorded in the wave note.
+- [x] Quality gates green (tsc ✓ vite ✓ clippy 0 ✓ unit 34/34 ✓ staging 17/17 ✓).
+      Measured: keyset page-5000 on 8.1M rows >300s (OFFSET timeout) → ~2ms, page-30
+      13.1→0.57ms; editor worst-case keystroke 2.95MB ~24→4.2ms (stmtScope 20.2→0.42);
+      FUNCS introspect 25.8→2.0ms + 338KB less transfer; history search constant-cost.
+      Proofs: keyset 8/8 (dups+double-NULL+mixed-dir+ctid via app's real SQL gen);
+      editor 6,600-edit differential + 2,664-position context equivalence.
 - [ ] Adversarial audit round; confirmed findings fixed.
 
 ---
