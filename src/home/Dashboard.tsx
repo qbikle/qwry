@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { Clock, Pencil, Plus } from "lucide-react";
+import { Clock, Pencil, Plus, TriangleAlert } from "lucide-react";
 import { panelIn } from "../design/springs";
-import { useConnections } from "../stores/connections";
+import { confirmTxRollback, useConnections } from "../stores/connections";
 import { useTabs } from "../stores/tabs";
 import { Avatar } from "../sidebar/avatar";
 import { blankProfile } from "../sidebar/ConnectionRail";
@@ -29,6 +29,8 @@ export function Dashboard() {
   const setActive = useConnections((s) => s.setActive);
   const setHome = useConnections((s) => s.setHome);
   const editConnection = useConnections((s) => s.editConnection);
+  const profilesError = useConnections((s) => s.profilesError);
+  const loadProfiles = useConnections((s) => s.loadProfiles);
   const [recent, setRecent] = useState<HistoryRow[]>([]);
   const [menu, setMenu] = useState<{ x: number; y: number; profile: Profile } | null>(null);
 
@@ -36,18 +38,31 @@ export function Dashboard() {
     void ipc.historyRecent(8).then(setRecent).catch(() => setRecent([]));
   }, []);
 
-  // already connected (green) → open the work view instantly; else connect
+  // already connected (green) → open the work view instantly; else connect —
+  // a reconnect drops the profile's tab sessions, so open transactions gate it
   const openConn = (id: string) => {
     if ((connState[id] ?? "disconnected") === "connected") {
       setActive(id);
       setHome(null);
     } else {
-      void connect(id);
+      void (async () => {
+        if (await confirmTxRollback(id, "Connect")) void connect(id);
+      })();
     }
   };
 
   const openRecent = async (row: HistoryRow) => {
-    await connect(row.profile_id);
+    const c = useConnections.getState();
+    // already connected → just switch; the old unconditional reconnect killed
+    // every tab session (and any open transaction) on the profile for nothing
+    if (c.connState[row.profile_id] !== "connected") {
+      if (!(await confirmTxRollback(row.profile_id, "Connect"))) return;
+      await connect(row.profile_id);
+      if (useConnections.getState().connState[row.profile_id] !== "connected") return;
+    } else {
+      setActive(row.profile_id);
+      setHome(null);
+    }
     useTabs.getState().newTab(row.sql, "recent");
   };
 
@@ -56,6 +71,16 @@ export function Dashboard() {
       <div className="dash-head">
         <span className="dash-title">Connections</span>
       </div>
+
+      {profilesError && (
+        <div className="dash-error">
+          <TriangleAlert size={14} />
+          <span>Couldn’t load saved connections: {profilesError}</span>
+          <button className="dash-error-retry" onClick={() => void loadProfiles()}>
+            Retry
+          </button>
+        </div>
+      )}
 
       <div className="dash-grid">
         {profiles.map((p, i) => {

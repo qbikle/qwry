@@ -52,15 +52,102 @@ export function confirmDangerLive(
   return { done, update };
 }
 
-import { splitStatementSpans } from "../editor/statements";
+import { parseCtes, skipToken, splitStatementSpans } from "../editor/statements";
 
-/** UPDATE or DELETE statements with no WHERE clause — real statement
- * boundaries (a `;` inside a string/comment no longer splits) */
-export function dangerousStatements(sql: string): string[] {
-  return splitStatementSpans(sql)
-    .map((sp) => sql.slice(sp.from, sp.to).trim())
-    .filter((s) => /^(update|delete)\b/i.test(s) && !/\bwhere\b/i.test(s));
+const isWordChar = (ch: string) => /[A-Za-z0-9_$]/.test(ch);
+
+/** index of the first code character at/after i (comments count as whitespace) */
+function skipWsComments(stmt: string, i: number): number {
+  const n = stmt.length;
+  for (;;) {
+    while (i < n && /\s/.test(stmt[i])) i++;
+    if (
+      i < n &&
+      ((stmt[i] === "-" && stmt[i + 1] === "-") || (stmt[i] === "/" && stmt[i + 1] === "*"))
+    ) {
+      i = skipToken(stmt, i);
+      continue;
+    }
+    return i;
+  }
 }
 
-export const isMutating = (sql: string) =>
-  /^\s*(insert|update|delete|truncate|drop|alter)\b/i.test(sql.trim());
+/** a WHERE keyword at paren depth 0 from `i` on — a WHERE inside a subselect
+ * (or a string/comment/dollar-quote) doesn't make the outer DML safe */
+function hasTopLevelWhere(stmt: string, i: number): boolean {
+  const n = stmt.length;
+  let depth = 0;
+  while (i < n) {
+    const j = skipToken(stmt, i);
+    if (j !== -1) {
+      i = j;
+      continue;
+    }
+    const ch = stmt[i];
+    if (ch === "(") {
+      depth++;
+      i++;
+      continue;
+    }
+    if (ch === ")") {
+      depth = Math.max(0, depth - 1);
+      i++;
+      continue;
+    }
+    if (isWordChar(ch)) {
+      let k = i + 1;
+      while (k < n && isWordChar(stmt[k])) k++;
+      if (depth === 0 && k - i === 5 && /^where$/i.test(stmt.slice(i, k))) return true;
+      i = k;
+      continue;
+    }
+    i++;
+  }
+  return false;
+}
+
+/** head keyword of a statement, skipping leading comments AND a WITH clause
+ * (WITH … AS (…) DELETE FROM x heads at DELETE). Lowercased; "" when none. */
+function headAfterWith(stmt: string): { word: string; end: number } {
+  let i = skipWsComments(stmt, 0);
+  if (/^with\b/i.test(stmt.slice(i))) {
+    const parse = parseCtes(stmt);
+    if (!parse) return { word: "", end: i };
+    i = skipWsComments(stmt, parse.ctes[parse.ctes.length - 1].defTo);
+  }
+  const m = /^[A-Za-z_][A-Za-z0-9_$]*/.exec(stmt.slice(i));
+  return m ? { word: m[0].toLowerCase(), end: i + m[0].length } : { word: "", end: i };
+}
+
+/** the statement (or one of its data-modifying CTE bodies) is an UPDATE or
+ * DELETE with no top-level WHERE */
+function dmlWithoutWhere(stmt: string): boolean {
+  const parse = parseCtes(stmt);
+  if (parse) {
+    for (const cte of parse.ctes) {
+      if (dmlWithoutWhere(stmt.slice(cte.bodyFrom, cte.bodyTo))) return true;
+    }
+  }
+  const { word, end } = headAfterWith(stmt);
+  if (word !== "update" && word !== "delete") return false;
+  return !hasTopLevelWhere(stmt, end);
+}
+
+/** UPDATE or DELETE statements with no WHERE clause — real statement
+ * boundaries (a `;` inside a string/dollar-quote no longer splits), leading
+ * comments and CTE chains skipped, and only a TOP-LEVEL WHERE counts */
+export function dangerousStatements(sql: string): string[] {
+  return splitStatementSpans(sql)
+    .map((sp) => sql.slice(sp.from, sp.to))
+    .filter(dmlWithoutWhere)
+    .map((s) => s.trim());
+}
+
+const MUTATING = new Set(["insert", "update", "delete", "truncate", "drop", "alter"]);
+
+export const isMutating = (sql: string): boolean => {
+  if (MUTATING.has(headAfterWith(sql).word)) return true;
+  // a data-modifying CTE executes its writes even when the outer head is SELECT
+  const parse = parseCtes(sql);
+  return !!parse && parse.ctes.some((c) => isMutating(sql.slice(c.bodyFrom, c.bodyTo)));
+};

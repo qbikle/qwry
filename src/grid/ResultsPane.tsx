@@ -18,6 +18,7 @@ import "./grid.css";
 export function ResultsPane({ browser = false }: { browser?: boolean }) {
   const statements = useResults((s) => s.statements);
   const active = useResults((s) => s.activeStatement);
+  const activeTab = useResults((s) => s.active);
   const setActive = useResults((s) => s.setActiveStatement);
   const running = useResults((s) => s.running);
   const connecting = useResults((s) => s.connecting);
@@ -85,7 +86,11 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
             {stmt.error.hint && <div className="ge-hint">HINT: {stmt.error.hint}</div>}
           </div>
         ) : stmt.columns.length > 0 ? (
-          <Grid statement={stmt} insertable={browser} />
+          // keyed per tab+statement: switching tabs or statement chips swaps
+          // the DATA under a mounted grid — selection/editor state carrying
+          // over targeted phantom rows in the other result (wrong-row copy /
+          // Set-NULL / delete class)
+          <Grid key={`${activeTab}:${stmt.index}`} statement={stmt} insertable={browser} />
         ) : (
           <div className="grid-msg">
             {stmt.done ? `OK · ${stmt.affected ?? 0} rows affected` : "Running…"}

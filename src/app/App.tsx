@@ -290,6 +290,10 @@ export function App() {
     let unlistenMenu: (() => void) | undefined;
     void import("@tauri-apps/api/event").then(({ listen }) =>
       listen<string>("menu", (e) => {
+        // an open overlay owns the interaction — the menu path used to act
+        // BEHIND modals (Close Tab under an open CloseGuard etc.), mirroring
+        // the keyboard guard below. Help and Quit stay reachable, like ⌘?.
+        if (overlayOpen() && e.payload !== "shortcuts" && e.payload !== "quit") return;
         switch (e.payload) {
           case "new-tab":
             useTabs.getState().newTab();

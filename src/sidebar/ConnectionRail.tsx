@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Reorder } from "motion/react";
 import { House, Plus } from "lucide-react";
-import { useConnections } from "../stores/connections";
+import { confirmTxRollback, useConnections } from "../stores/connections";
 import * as ipc from "../ipc/commands";
 import type { Profile } from "../ipc/types";
 import { Avatar, avatarColor } from "./avatar";
@@ -95,7 +95,9 @@ export function ConnectionRail() {
                   setActive(p.id);
                   setHome(null);
                 } else {
-                  void connect(p.id);
+                  void (async () => {
+                    if (await confirmTxRollback(p.id, "Connect")) void connect(p.id);
+                  })();
                 }
               }}
               onContextMenu={(e: React.MouseEvent) => {
