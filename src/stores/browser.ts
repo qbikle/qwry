@@ -64,11 +64,13 @@ export interface Filter {
   conj: "AND" | "OR";
 }
 
-/** one cell of the inline draft (new) row; untouched columns are absent from the
- * draft map so their DB default applies on insert */
+/** one cell of the inline draft (new) row. Untouched columns (absent, or
+ * present but never typed into) take their DB DEFAULT; `isNull` inserts NULL;
+ * `touched` with empty text inserts a real '' — all three are expressible */
 export interface DraftCell {
   text: string;
   isNull: boolean;
+  touched?: boolean;
 }
 
 const PAGE = 1000;
@@ -333,15 +335,16 @@ async function commitDraftInner(
     const draft = s.draftRow!;
     const cols: string[] = [];
     const values: (string | null)[] = [];
-    // iterate real table columns: NULL → explicit null, value → text,
-    // untouched → omit so the column default applies
+    // iterate real table columns: NULL → explicit null, touched → text (a
+    // touched-but-empty field is a real ''), untouched → omit so the column
+    // DEFAULT applies
     for (const c of s.table!.columns) {
       const cell = draft[c.name];
       if (!cell) continue;
       if (cell.isNull) {
         cols.push(c.name);
         values.push(null);
-      } else if (cell.text !== "") {
+      } else if (cell.touched || cell.text !== "") {
         cols.push(c.name);
         values.push(cell.text);
       }
