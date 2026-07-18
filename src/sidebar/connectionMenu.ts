@@ -4,7 +4,7 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import * as ipc from "../ipc/commands";
 import type { MenuNode } from "../app/overlay/ContextMenu";
 import type { Profile } from "../ipc/types";
-import { useConnections } from "../stores/connections";
+import { confirmTxRollback, openTxCount, useConnections } from "../stores/connections";
 
 export function connectionMenu(p: Profile, connected: boolean): MenuNode[] {
   const c = useConnections.getState();
@@ -19,12 +19,20 @@ export function connectionMenu(p: Profile, connected: boolean): MenuNode[] {
         c.setHome(null);
       },
     });
-    items.push({ kind: "item", label: "Disconnect", onSelect: () => void c.invalidateProfile(p.id) });
+    items.push({
+      kind: "item",
+      label: "Disconnect",
+      onSelect: () =>
+        void (async () => {
+          if (await confirmTxRollback(p.id, "Disconnect")) await c.invalidateProfile(p.id);
+        })(),
+    });
     items.push({
       kind: "item",
       label: "Reconnect",
       onSelect: () =>
         void (async () => {
+          if (!(await confirmTxRollback(p.id, "Reconnect"))) return;
           await c.invalidateProfile(p.id);
           await c.connect(p.id);
         })(),
@@ -78,9 +86,14 @@ export function connectionMenu(p: Profile, connected: boolean): MenuNode[] {
     onSelect: () =>
       void (async () => {
         const { confirmDanger } = await import("../stores/danger");
+        const txN = openTxCount(p.id);
         const ok = await confirmDanger(
           `Delete connection “${p.name || p.host}”?`,
-          "Removes the saved connection. This cannot be undone.",
+          `Removes the saved connection. This cannot be undone.${
+            txN > 0
+              ? `\nOpen transaction${txN === 1 ? "" : "s"} on ${txN} tab${txN === 1 ? "" : "s"} will be rolled back.`
+              : ""
+          }`,
           "Delete",
         );
         if (ok) await c.deleteProfile(p.id);

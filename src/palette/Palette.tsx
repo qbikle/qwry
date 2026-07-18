@@ -21,7 +21,7 @@ import {
   Wand2,
   X,
 } from "lucide-react";
-import { useConnections } from "../stores/connections";
+import { confirmTxRollback, useConnections } from "../stores/connections";
 import { useResults } from "../stores/results";
 import { useSchema } from "../stores/schema";
 import { useSettings, type Mode } from "../stores/settings";
@@ -357,8 +357,18 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 // cmdk activate whichever is first in the DOM, not the arrowed one
                 value={`connect ${p.name} ${p.id}`}
                 onSelect={() => {
-                  void useConnections.getState().connect(p.id);
                   close();
+                  void (async () => {
+                    const c = useConnections.getState();
+                    // connected → switch to it; reconnecting would tear down
+                    // every tab session on the profile
+                    if (c.connState[p.id] === "connected") {
+                      c.setActive(p.id);
+                      c.setHome(null);
+                      return;
+                    }
+                    if (await confirmTxRollback(p.id, "Connect")) void c.connect(p.id);
+                  })();
                 }}
               >
                 <Database size={13} />
