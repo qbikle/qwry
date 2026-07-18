@@ -93,9 +93,18 @@ async fn staging_introspect() {
         .expect("connect");
 
     let start = std::time::Instant::now();
-    let snap = session.introspect().await.expect("introspect");
+    let (snap, fresh_catalog) = session.introspect(None).await.expect("introspect");
     let ms = start.elapsed().as_millis();
 
+    assert!(
+        fresh_catalog.is_some(),
+        "no cache supplied — introspect must return catalog funcs to persist"
+    );
+    assert!(
+        snap.server_version_num.unwrap_or(0) >= 90_600,
+        "server_version_num missing/nonsense: {:?}",
+        snap.server_version_num
+    );
     assert!(snap.schemas.contains(&"public".to_string()));
     assert!(!snap.tables.is_empty(), "no tables found");
     let with_pk = snap
@@ -1663,4 +1672,70 @@ async fn staging_stale_hint_rename_guard() {
         .execute_simple("DROP TABLE qwry_test.qwry_scratch_rename")
         .await
         .expect("cleanup");
+}
+
+// ---------------------------------------------------------------------------
+// v0.7.1-tempo additions
+// ---------------------------------------------------------------------------
+
+/// pg_catalog function cache round trip: a cached introspect must return the
+/// exact same function set as a full one, skip re-fetching the catalog
+/// partition, and carry the server version for the cache key.
+#[tokio::test]
+#[ignore]
+async fn staging_introspect_catalog_cache_roundtrip() {
+    use std::collections::BTreeSet;
+
+    let profile = test_profile("test-funcs-cache", env("QWRY_TEST_DB"));
+    let session = postgres::connect(
+        &profile,
+        &env("QWRY_TEST_PASSWORD"),
+        None,
+        None,
+        Box::new(|_, _| {}),
+        Box::new(|_| {}),
+    )
+    .await
+    .expect("connect");
+
+    assert!(!session.server_version().is_empty(), "server_version not captured");
+    assert!(session.server_version_num() >= 90_600, "server_version_num not captured");
+
+    let (full, fresh) = session.introspect(None).await.expect("full introspect");
+    let catalog = fresh.expect("cache miss must return catalog funcs");
+    assert!(
+        catalog.iter().any(|f| f.name == "jsonb_build_object"),
+        "catalog partition missing builtins"
+    );
+    assert!(
+        catalog.iter().all(|f| f.schema == "pg_catalog"),
+        "catalog partition leaked non-catalog schemas"
+    );
+
+    let (cached_snap, none) = session
+        .introspect(Some(catalog.clone()))
+        .await
+        .expect("cached introspect");
+    assert!(none.is_none(), "cache hit must not re-fetch the catalog partition");
+
+    let key = |f: &qwry_lib::driver::postgres::introspect::FuncInfo| {
+        format!("{}.{}({}) -> {}", f.schema, f.name, f.args, f.returns)
+    };
+    let a: BTreeSet<String> = full.functions.iter().map(key).collect();
+    let b: BTreeSet<String> = cached_snap.functions.iter().map(key).collect();
+    assert_eq!(a, b, "cached-merge function set must equal the full fetch");
+    assert_eq!(full.server_version_num, cached_snap.server_version_num);
+
+    // drift detection: a stale cache (count mismatch — e.g. an extension
+    // installed into pg_catalog) must trigger a refetch, not a wrong merge
+    let mut stale = catalog.clone();
+    stale.pop();
+    let (drift_snap, refetched) = session
+        .introspect(Some(stale))
+        .await
+        .expect("drift introspect");
+    let refetched = refetched.expect("count mismatch must refetch the catalog partition");
+    assert_eq!(refetched.len(), catalog.len());
+    let c: BTreeSet<String> = drift_snap.functions.iter().map(key).collect();
+    assert_eq!(a, c, "drift path must still produce the full function set");
 }

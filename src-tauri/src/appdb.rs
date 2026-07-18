@@ -13,13 +13,22 @@ use serde::{Deserialize, Serialize};
 use crate::driver::{DriverError, Profile, Result};
 
 /// bump when appending a migration in `migrate`
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 /// per-row stored SQL cap (bytes, cut at a char boundary) — a pasted multi-MB
 /// INSERT must not bloat the appdb forever
 const HISTORY_SQL_CAP: usize = 20_000;
 const HISTORY_TRUNC_MARKER: &str = " …[truncated]";
 /// total history rows kept; the oldest beyond this are pruned on insert
 const HISTORY_ROW_CAP: i64 = 20_000;
+/// history_search scans only the newest N rows (per profile filter). A
+/// substring LIKE can never use the btree index, so the palette's
+/// per-keystroke search bounds its scan here instead of walking all 20k rows
+/// (× up to 20KB of SQL each). Tradeoff, documented: matches older than the
+/// newest 5k searched rows are not returned — acceptable for a
+/// recency-ranked palette; FTS would lift the bound if that ever hurts.
+const HISTORY_SEARCH_WINDOW: i64 = 5_000;
+/// distinct server builds whose pg_catalog function lists we keep cached
+const PG_CATALOG_CACHE_CAP: i64 = 8;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TabRow {
@@ -202,6 +211,7 @@ fn migrate(conn: &mut Connection) -> Result<()> {
         match next {
             1 => baseline_v1(&tx)?,
             2 => history_status_v2(&tx)?,
+            3 => pg_catalog_cache_v3(&tx)?,
             n => return Err(DriverError::Internal(format!("appdb: no migration to v{n}"))),
         }
         tx.pragma_update(None, "user_version", next).map_err(internal)?;
@@ -258,6 +268,18 @@ fn baseline_v1(conn: &Connection) -> Result<()> {
 
 fn history_status_v2(conn: &Connection) -> Result<()> {
     add_column_if_missing(conn, "history", "status", "TEXT NOT NULL DEFAULT 'ok'")
+}
+
+/// pg_catalog functions per server build (see `pg_catalog_funcs_get`)
+fn pg_catalog_cache_v3(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS pg_catalog_cache (
+             server_version TEXT PRIMARY KEY,
+             funcs          TEXT NOT NULL,
+             saved_at       TEXT NOT NULL DEFAULT (datetime('now'))
+         );",
+    )
+    .map_err(internal)
 }
 
 fn has_column(conn: &Connection, table: &str, col: &str) -> Result<bool> {
@@ -348,6 +370,46 @@ impl AppDb {
     }
 }
 
+/// pg_catalog function-list cache, keyed by the full server_version string:
+/// pg_catalog contents only change with the server build, so introspection
+/// stops re-pulling ~3k rows on every connect/⌘R/DDL refresh. User-schema
+/// functions are NOT cached — they stay live on every introspect.
+impl AppDb {
+    pub fn pg_catalog_funcs_get(&self, server_version: &str) -> Result<Option<String>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT funcs FROM pg_catalog_cache WHERE server_version = ?1")
+            .map_err(internal)?;
+        let mut rows = stmt.query([server_version]).map_err(internal)?;
+        match rows.next().map_err(internal)? {
+            Some(row) => Ok(Some(row.get(0).map_err(internal)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn pg_catalog_funcs_put(&self, server_version: &str, funcs: &str) -> Result<()> {
+        let conn = self.0.lock().unwrap();
+        conn.execute(
+            "INSERT INTO pg_catalog_cache (server_version, funcs, saved_at)
+             VALUES (?1, ?2, datetime('now'))
+             ON CONFLICT(server_version) DO UPDATE SET
+               funcs = excluded.funcs, saved_at = excluded.saved_at",
+            rusqlite::params![server_version, funcs],
+        )
+        .map_err(internal)?;
+        // a lifetime of distinct servers must not grow the appdb unbounded
+        conn.execute(
+            "DELETE FROM pg_catalog_cache WHERE server_version NOT IN (
+                 SELECT server_version FROM pg_catalog_cache
+                 ORDER BY saved_at DESC, rowid DESC LIMIT ?1
+             )",
+            [PG_CATALOG_CACHE_CAP],
+        )
+        .map_err(internal)?;
+        Ok(())
+    }
+}
+
 impl AppDb {
     /// Row decode errors PROPAGATE here (unlike the other lists): tabs feed a
     /// replace-all `tabs_save`, so a silently skipped row would come back as
@@ -425,11 +487,19 @@ impl AppDb {
         limit: i64,
     ) -> Result<(Vec<HistoryRow>, usize)> {
         let conn = self.0.lock().unwrap();
-        // profile_id NULL = search across every connection (history panel)
+        // profile_id NULL = search across every connection (history panel).
+        // The inner window bounds the LIKE scan to the newest
+        // HISTORY_SEARCH_WINDOW rows (id DESC ≡ insertion order, walked via
+        // the rowid PK — the profile filter is applied inside so a busy
+        // sibling profile can't starve the window). See the const's doc for
+        // the recall tradeoff. Newest-first semantics unchanged.
         let mut stmt = conn
             .prepare(
-                "SELECT id, profile_id, sql, ms, rows, ran_at, status FROM history
-                 WHERE (?1 IS NULL OR profile_id = ?1) AND sql LIKE ?2 ESCAPE '\\'
+                "SELECT id, profile_id, sql, ms, rows, ran_at, status FROM (
+                     SELECT id, profile_id, sql, ms, rows, ran_at, status FROM history
+                     WHERE (?1 IS NULL OR profile_id = ?1)
+                     ORDER BY id DESC LIMIT ?4
+                 ) WHERE sql LIKE ?2 ESCAPE '\\'
                  ORDER BY ran_at DESC, id DESC LIMIT ?3",
             )
             .map_err(internal)?;
@@ -441,7 +511,10 @@ impl AppDb {
             .replace('_', "\\_");
         let pattern = format!("%{escaped}%");
         let rows = stmt
-            .query_map(rusqlite::params![profile_id, pattern, limit], map_history_row)
+            .query_map(
+                rusqlite::params![profile_id, pattern, limit, HISTORY_SEARCH_WINDOW],
+                map_history_row,
+            )
             .map_err(internal)?;
         Ok(collect_ok(rows, "history"))
     }
@@ -832,6 +905,73 @@ mod tests {
             .unwrap();
         assert_eq!(count, HISTORY_ROW_CAP);
         assert_eq!(min_id, 102);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn history_search_scans_only_newest_window() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+        {
+            let mut conn = db.0.lock().unwrap();
+            let tx = conn.transaction().unwrap();
+            {
+                let mut stmt = tx
+                    .prepare(
+                        "INSERT INTO history (profile_id, sql, ms, rows, status)
+                         VALUES (?1, ?2, 0, 0, 'ok')",
+                    )
+                    .unwrap();
+                // oldest row holds the needle, then a window's worth of filler
+                stmt.execute(rusqlite::params!["p", "SELECT needle_old"]).unwrap();
+                for i in 0..HISTORY_SEARCH_WINDOW {
+                    stmt.execute(rusqlite::params!["p", format!("filler {i}")]).unwrap();
+                }
+                stmt.execute(rusqlite::params!["p", "SELECT needle_new"]).unwrap();
+                // a sibling profile's rows must not shrink p's window
+                for i in 0..HISTORY_SEARCH_WINDOW {
+                    stmt.execute(rusqlite::params!["other", format!("noise {i}")]).unwrap();
+                }
+            }
+            tx.commit().unwrap();
+        }
+        // bounded: the old needle fell outside the newest-5k window
+        let (hits, _) = db.history_search(Some("p"), "needle", 50).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].sql, "SELECT needle_new");
+        // profile filter applies INSIDE the window — "other" noise can't
+        // starve p's rows; and the needle is found under a per-profile search
+        let (hits, _) = db.history_search(Some("other"), "noise", 3).unwrap();
+        assert_eq!(hits.len(), 3);
+        // newest first
+        assert!(hits[0].id > hits[1].id && hits[1].id > hits[2].id);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pg_catalog_cache_roundtrip_and_prune() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+        assert_eq!(db.pg_catalog_funcs_get("16.4").unwrap(), None);
+        db.pg_catalog_funcs_put("16.4", "[{\"a\":1}]").unwrap();
+        assert_eq!(
+            db.pg_catalog_funcs_get("16.4").unwrap().as_deref(),
+            Some("[{\"a\":1}]")
+        );
+        // upsert replaces
+        db.pg_catalog_funcs_put("16.4", "[2]").unwrap();
+        assert_eq!(db.pg_catalog_funcs_get("16.4").unwrap().as_deref(), Some("[2]"));
+        // prune keeps the newest PG_CATALOG_CACHE_CAP versions
+        for i in 0..(PG_CATALOG_CACHE_CAP + 3) {
+            db.pg_catalog_funcs_put(&format!("v{i}"), "[]").unwrap();
+        }
+        let n: i64 = db
+            .0
+            .lock()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM pg_catalog_cache", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, PG_CATALOG_CACHE_CAP);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

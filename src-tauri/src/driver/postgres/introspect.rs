@@ -79,6 +79,10 @@ pub struct SchemaSnapshot {
     /// user-defined enum types — powers type-aware cell editors
     #[serde(default)]
     pub enums: Vec<EnumInfo>,
+    /// current_setting('server_version_num') — the frontend gates ctid keyset
+    /// pagination on it (tid btree ops are PG 14+). None on pre-v0.7.1 caches.
+    #[serde(default)]
+    pub server_version_num: Option<i64>,
 }
 
 const TABLES_SQL: &str = r#"
@@ -136,17 +140,41 @@ SELECT coalesce(json_agg(t), '[]') FROM (
     AND sn.nspname NOT IN ('pg_catalog','information_schema')
 ) t"#;
 
-const FUNCS_SQL: &str = r#"
+// Functions are fetched in two partitions: user-schema functions stay live on
+// every introspect, while the ~3k pg_catalog functions — which only change
+// with the server build — are fetched once per server_version and cached in
+// the appdb (see commands::introspect). Their union is exactly the old
+// single-query set.
+const USER_FUNCS_SQL: &str = r#"
 SELECT coalesce(json_agg(t), '[]') FROM (
   SELECT n.nspname AS schema, p.proname AS name,
          pg_get_function_identity_arguments(p.oid) AS args,
          pg_get_function_result(p.oid) AS returns
   FROM pg_proc p
   JOIN pg_namespace n ON n.oid = p.pronamespace
-  WHERE (n.nspname = 'pg_catalog' OR n.nspname NOT IN ('information_schema'))
+  WHERE n.nspname NOT IN ('pg_catalog','information_schema')
     AND n.nspname NOT LIKE 'pg_toast%'
     AND p.prokind IN ('f','a','w')
 ) t"#;
+
+const CATALOG_FUNCS_SQL: &str = r#"
+SELECT coalesce(json_agg(t), '[]') FROM (
+  SELECT n.nspname AS schema, p.proname AS name,
+         pg_get_function_identity_arguments(p.oid) AS args,
+         pg_get_function_result(p.oid) AS returns
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'pg_catalog'
+    AND p.prokind IN ('f','a','w')
+) t"#;
+
+/// rides every cached introspect: the count is ~free (no per-row
+/// `pg_get_*` deparse), and a mismatch against the cached list detects
+/// same-version catalog drift (e.g. an extension installed INTO pg_catalog)
+const CATALOG_COUNT_SQL: &str = r#"
+SELECT count(*) FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'pg_catalog' AND p.prokind IN ('f','a','w')"#;
 
 const SCHEMAS_SQL: &str = r#"
 SELECT coalesce(json_agg(nspname ORDER BY nspname), '[]')
@@ -175,13 +203,27 @@ SELECT coalesce(json_agg(t), '[]') FROM (
 ) t"#;
 
 impl PgSession {
-    pub async fn introspect(&self) -> Result<SchemaSnapshot> {
-        let sql =
-            format!("{TABLES_SQL};{FKS_SQL};{FUNCS_SQL};{SCHEMAS_SQL};{INDEXES_SQL};{ENUMS_SQL}");
+    /// Introspect the session's database. `cached_catalog_funcs` = the
+    /// caller's appdb-cached pg_catalog functions for THIS server version;
+    /// when present the catalog partition is not re-fetched — a cheap count
+    /// probe rides the same batch and self-verifies the cache (a mismatch,
+    /// e.g. an extension installed into pg_catalog under the same version,
+    /// triggers one refetch round trip). The second return value carries
+    /// freshly fetched catalog functions (miss or drift) for the caller to
+    /// persist. Still 1 round trip on both hot paths.
+    pub async fn introspect(
+        &self,
+        cached_catalog_funcs: Option<Vec<FuncInfo>>,
+    ) -> Result<(SchemaSnapshot, Option<Vec<FuncInfo>>)> {
+        let need_catalog = cached_catalog_funcs.is_none();
+        let sql = format!(
+            "{TABLES_SQL};{FKS_SQL};{USER_FUNCS_SQL};{SCHEMAS_SQL};{INDEXES_SQL};{ENUMS_SQL};{}",
+            if need_catalog { CATALOG_FUNCS_SQL } else { CATALOG_COUNT_SQL }
+        );
         let out = self.execute_simple(&sql).await?;
-        if out.statements.len() != 6 {
+        if out.statements.len() != 7 {
             return Err(DriverError::Internal(format!(
-                "introspection returned {} result sets, expected 6",
+                "introspection returned {} result sets, expected 7",
                 out.statements.len()
             )));
         }
@@ -196,14 +238,50 @@ impl PgSession {
         let parse_err =
             |what: &str, e: serde_json::Error| DriverError::Internal(format!("{what}: {e}"));
 
-        Ok(SchemaSnapshot {
+        let mut functions: Vec<FuncInfo> =
+            serde_json::from_str(&cell(2)?).map_err(|e| parse_err("functions", e))?;
+        let (catalog, fresh_catalog): (Vec<FuncInfo>, Option<Vec<FuncInfo>>) =
+            match cached_catalog_funcs {
+                None => {
+                    let cat: Vec<FuncInfo> = serde_json::from_str(&cell(6)?)
+                        .map_err(|e| parse_err("catalog functions", e))?;
+                    (cat.clone(), Some(cat))
+                }
+                Some(cached) => {
+                    // unparsable count → usize::MAX → forced refetch (fail safe)
+                    let live: usize = cell(6)?.trim().parse().unwrap_or(usize::MAX);
+                    if live == cached.len() {
+                        (cached, None)
+                    } else {
+                        let out2 = self.execute_simple(CATALOG_FUNCS_SQL).await?;
+                        let raw = out2
+                            .statements
+                            .first()
+                            .and_then(|s| s.rows.first())
+                            .and_then(|r| r.first())
+                            .and_then(|v| v.clone())
+                            .ok_or_else(|| {
+                                DriverError::Internal("empty catalog refetch cell".into())
+                            })?;
+                        let cat: Vec<FuncInfo> = serde_json::from_str(&raw)
+                            .map_err(|e| parse_err("catalog functions", e))?;
+                        (cat.clone(), Some(cat))
+                    }
+                }
+            };
+        functions.extend(catalog);
+
+        let vnum = self.server_version_num();
+        let snap = SchemaSnapshot {
             tables: serde_json::from_str(&cell(0)?).map_err(|e| parse_err("tables", e))?,
             foreign_keys: serde_json::from_str(&cell(1)?).map_err(|e| parse_err("fks", e))?,
-            functions: serde_json::from_str(&cell(2)?).map_err(|e| parse_err("functions", e))?,
+            functions,
             schemas: serde_json::from_str(&cell(3)?).map_err(|e| parse_err("schemas", e))?,
             indexes: serde_json::from_str(&cell(4)?).map_err(|e| parse_err("indexes", e))?,
             enums: serde_json::from_str(&cell(5)?).map_err(|e| parse_err("enums", e))?,
-        })
+            server_version_num: (vnum > 0).then_some(vnum),
+        };
+        Ok((snap, fresh_catalog))
     }
 }
 

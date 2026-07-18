@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicI64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -27,6 +27,12 @@ pub struct PgSession {
     /// backend_start (pg_stat_activity, wire text), captured with the pid —
     /// escalation matches BOTH so a recycled pid is never signaled
     backend_start: Mutex<String>,
+    /// server_version_num captured at connect (0 = unknown) — the frontend
+    /// gates ctid keyset pagination on it (tid btree ops are PG 14+)
+    server_version_num: AtomicI64,
+    /// full server_version string — keys the appdb pg_catalog function cache
+    /// (pg_catalog contents only change with the server build)
+    server_version: Mutex<String>,
     /// TxState as u8 — authoritative transaction status (see driver::TxState)
     tx: AtomicU8,
     /// count of statements currently executing on this session (a counter, not
@@ -146,6 +152,8 @@ where
         cfg,
         backend_pid: AtomicI32::new(0),
         backend_start: Mutex::new(String::new()),
+        server_version_num: AtomicI64::new(0),
+        server_version: Mutex::new(String::new()),
         tx: AtomicU8::new(0),
         busy: AtomicUsize::new(0),
         on_tx: Mutex::new(None),
@@ -205,8 +213,10 @@ pub async fn connect(
     // so a recycled pid can never be cancelled/terminated by mistake.
     let out = session
         .execute_simple(
-            "SELECT pg_backend_pid(), backend_start FROM pg_stat_activity \
-             WHERE pid = pg_backend_pid()",
+            "SELECT pg_backend_pid(), backend_start, \
+                    current_setting('server_version_num'), \
+                    current_setting('server_version') \
+             FROM pg_stat_activity WHERE pid = pg_backend_pid()",
         )
         .await?;
     let row = out.statements.first().and_then(|s| s.rows.first());
@@ -220,6 +230,18 @@ pub async fn connect(
     session.backend_pid.store(pid, Ordering::Relaxed);
     if let Ok(mut s) = session.backend_start.lock() {
         *s = start;
+    }
+    // best-effort — 0/"" means unknown and only disables version-gated paths
+    let vnum: i64 = row
+        .and_then(|r| r.get(2).cloned().flatten())
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    session.server_version_num.store(vnum, Ordering::Relaxed);
+    if let (Some(v), Ok(mut s)) = (
+        row.and_then(|r| r.get(3).cloned().flatten()),
+        session.server_version.lock(),
+    ) {
+        *s = v;
     }
     Ok(session)
 }
@@ -310,6 +332,19 @@ impl PgSession {
 
     pub fn backend_pid(&self) -> i32 {
         self.backend_pid.load(Ordering::Relaxed)
+    }
+
+    /// server_version_num captured at connect; 0 = unknown
+    pub fn server_version_num(&self) -> i64 {
+        self.server_version_num.load(Ordering::Relaxed)
+    }
+
+    /// full server_version string captured at connect; "" = unknown
+    pub fn server_version(&self) -> String {
+        self.server_version
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_default()
     }
 
     pub fn tx_state(&self) -> TxState {

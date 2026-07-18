@@ -60,6 +60,9 @@ export interface SchemaSnapshot {
   indexes: IndexInfo[];
   /** user-defined enum types — powers type-aware cell editors */
   enums: EnumInfo[];
+  /** current_setting('server_version_num') captured at introspect — gates
+   * ctid keyset pagination (tid btree ops are PG 14+). Absent on old caches. */
+  server_version_num?: number | null;
 }
 
 interface SchemaState {

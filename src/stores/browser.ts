@@ -1,68 +1,22 @@
 import { create } from "zustand";
 import type { TableInfo } from "./schema";
+import { useSchema } from "./schema";
 import { useResults } from "./results";
 import { useTabs } from "./tabs";
+import { useConnections } from "./connections";
 import * as ipc from "../ipc/commands";
+import {
+  browsePageSql,
+  browseSql,
+  keysetKeys,
+  type Filter,
+  type KeysetKey,
+} from "./browseSql";
 
-export type FilterOp =
-  | "="
-  | "!="
-  | ">"
-  | "<"
-  | ">="
-  | "<="
-  | "contains"
-  | "starts with"
-  | "ends with"
-  | "LIKE"
-  | "ILIKE"
-  | "NOT LIKE"
-  | "NOT ILIKE"
-  | "~"
-  | "!~"
-  | "IN"
-  | "NOT IN"
-  | "IS"
-  | "IS NOT"
-  | "IS NULL"
-  | "IS NOT NULL"
-  | "IS TRUE"
-  | "IS FALSE"
-  | "raw SQL";
-
-export const FILTER_OPS: FilterOp[] = [
-  "=", "!=", ">", "<", ">=", "<=",
-  "contains", "starts with", "ends with",
-  "LIKE", "ILIKE", "NOT LIKE", "NOT ILIKE", "~", "!~",
-  "IN", "NOT IN", "IS NULL", "IS NOT NULL", "IS TRUE", "IS FALSE",
-  "raw SQL",
-];
-
-/** operators that make sense for a column's type — everything else is noise
- * (or a guaranteed server error, e.g. ILIKE on an integer) */
-export function opsForType(type: string): FilterOp[] {
-  const t = type.toLowerCase();
-  if (t === "boolean" || t === "bool") return ["IS", "IS NOT", "raw SQL"];
-  if (/int|numeric|decimal|real|double|float|money|serial|oid/.test(t))
-    return ["=", "!=", ">", "<", ">=", "<=", "IN", "NOT IN", "IS NULL", "IS NOT NULL", "raw SQL"];
-  if (/timestamp|date|time|interval/.test(t))
-    return ["=", "!=", ">", "<", ">=", "<=", "IS NULL", "IS NOT NULL", "raw SQL"];
-  if (/json|uuid|bytea/.test(t))
-    return ["=", "!=", "IS NULL", "IS NOT NULL", "raw SQL"];
-  return FILTER_OPS;
-}
-
-const NO_VALUE_OPS = new Set<FilterOp>(["IS NULL", "IS NOT NULL", "IS TRUE", "IS FALSE"]);
-export const opNeedsValue = (op: FilterOp) => !NO_VALUE_OPS.has(op);
-
-export interface Filter {
-  col: string;
-  op: FilterOp;
-  value: string;
-  enabled: boolean;
-  /** how this row chains onto the previous one (ignored on the first) */
-  conj: "AND" | "OR";
-}
+// SQL generation is pure and lives in browseSql.ts (testable outside Tauri);
+// re-exported here so existing importers keep one entry point.
+export { browseSql, FILTER_OPS, opNeedsValue, opsForType } from "./browseSql";
+export type { Filter, FilterOp } from "./browseSql";
 
 /** one cell of the inline draft (new) row. Untouched columns (absent, or
  * present but never typed into) take their DB DEFAULT; `isNull` inserts NULL;
@@ -126,67 +80,9 @@ interface BrowserState extends BrowseTab {
   commitDraft: () => Promise<void>;
 }
 
-const ql = (v: string) => `'${v.replace(/'/g, "''")}'`;
-const qi = (v: string) => `"${v.replace(/"/g, '""')}"`;
 /** in-flight commit guards, per tab — a second ⌘↵ during the insert round
  * trip must not fire a second identical INSERT */
 const draftCommitting = new Set<string>();
-
-export function browseSql(s: {
-  table: TableInfo;
-  filters: Filter[];
-  sort: BrowserState["sort"];
-  limit: number;
-}): string {
-  const t = `${qi(s.table.schema)}.${qi(s.table.name)}`;
-  const active = s.filters.filter(
-    (f) => f.enabled && f.col && (!opNeedsValue(f.op) || f.value !== ""),
-  );
-  const like = (v: string) => v.replace(/([%_\\])/g, "\\$1");
-  const conds = active.map((f) => {
-    switch (f.op) {
-      case "IS NULL":
-      case "IS NOT NULL":
-      case "IS TRUE":
-      case "IS FALSE":
-        return `${qi(f.col)} ${f.op}`;
-      case "IS":
-      case "IS NOT": {
-        // bool three-state — value comes from a fixed select, whitelisted
-        const kw = ["TRUE", "FALSE", "NULL"].includes(f.value) ? f.value : "TRUE";
-        return `${qi(f.col)} ${f.op} ${kw}`;
-      }
-      case "IN":
-      case "NOT IN": {
-        const vals = f.value.split(",").map((v) => ql(v.trim())).join(", ");
-        return `${qi(f.col)} ${f.op} (${vals})`;
-      }
-      case "contains":
-        return `${qi(f.col)} ILIKE ${ql(`%${like(f.value)}%`)}`;
-      case "starts with":
-        return `${qi(f.col)} ILIKE ${ql(`${like(f.value)}%`)}`;
-      case "ends with":
-        return `${qi(f.col)} ILIKE ${ql(`%${like(f.value)}`)}`;
-      case "raw SQL":
-        // explicit escape hatch — the value is a predicate, used verbatim
-        return `(${f.value})`;
-      default:
-        return `${qi(f.col)} ${f.op} ${ql(f.value)}`;
-    }
-  });
-  // fold left-associatively so the SQL means what the linear UI reads:
-  // A OR B AND C compiles to ((A OR B) AND C), never A OR (B AND C)
-  const where =
-    conds.length > 0
-      ? `\nWHERE ${conds
-          .map((c) => `(${c})`)
-          .reduce((acc, c, i) => (i === 0 ? c : `(${acc} ${active[i].conj} ${c})`))}`
-      : "";
-  const order = s.sort ? `\nORDER BY ${qi(s.sort.col)} ${s.sort.dir}` : "";
-  // ordinary tables without a PK get ctid so they stay editable/deletable
-  const cols = s.table.pk.length === 0 && s.table.kind === "r" ? "ctid, *" : "*";
-  return `SELECT ${cols} FROM ${t}${where}${order}\nLIMIT ${s.limit}`;
-}
 
 type SetFn = (fn: (s: BrowserState) => Partial<BrowserState>) => void;
 
@@ -205,11 +101,124 @@ function writeBrowse(
   });
 }
 
+/** server_version_num from the profile's schema snapshot; null = unknown
+ * (pre-introspect cache hydrate) — only gates the ctid keyset path */
+function serverVersionNum(profileId: string | null): number | null {
+  if (!profileId) return null;
+  return useSchema.getState().snapshots[profileId]?.server_version_num ?? null;
+}
+
+/** keyset sort keys for the current browse, or null → offset fallback */
+function keysFor(table: TableInfo, sort: BrowserState["sort"]): KeysetKey[] | null {
+  return keysetKeys(table, sort, serverVersionNum(useConnections.getState().activeProfileId));
+}
+
+/** in-flight keyset page fetches, per tab */
+const pageInflight = new Set<string>();
+/** frontend row ceiling for keyset scrolling — mirrors the driver's ROW_CAP
+ * so "browse forever" can't grow memory past what a capped query would */
+const ROW_HARD_CAP = 50_000;
+
+/** the next-page SQL seeded from the last loaded row's key values, or null
+ * when it can't be built honestly: a key column missing from the result, or
+ * its last-row cell TRUNCATED at the backend cell cap (seeking from a cut
+ * value would silently fetch wrong rows) */
+function pageSqlFromLastRow(
+  table: TableInfo,
+  filters: Filter[],
+  keys: KeysetKey[],
+  stmt: { columns: { name: string }[]; rows: (string | null)[][]; truncated: Set<string> },
+): string | null {
+  const lastIdx = stmt.rows.length - 1;
+  const lastRow = stmt.rows[lastIdx];
+  if (!lastRow) return null;
+  const last: (string | null)[] = [];
+  for (const k of keys) {
+    const ci = stmt.columns.findIndex((c) => c.name === k.col);
+    if (ci === -1 || ci >= lastRow.length) return null;
+    if (stmt.truncated.has(`${lastIdx}:${ci}`)) return null;
+    last.push(lastRow[ci]);
+  }
+  return browsePageSql({ table, filters, keys, last, limit: PAGE });
+}
+
+interface PageResult {
+  rows: (string | null)[][];
+  /** (row-in-page, col) truncation markers, page-relative */
+  truncated: [number, number][];
+}
+
+/** run one page query on the tab's session, collecting rows off the stream
+ * (bypasses useResults.run — a page must APPEND, never replace, and scroll
+ * pages don't belong in history) */
+async function fetchPage(sessionId: string, sql: string): Promise<PageResult> {
+  const rows: (string | null)[][] = [];
+  const truncated: [number, number][] = [];
+  await ipc.executeStream(sessionId, sql, (ev) => {
+    if (ev.type === "rows") {
+      const base = rows.length;
+      for (const [r, c] of ev.truncated) truncated.push([base + r, c]);
+      rows.push(...ev.rows);
+    }
+  });
+  return { rows, truncated };
+}
+
+/** append a fetched page onto the tab's first statement. Drops the page when
+ * the result set changed underneath (re-run, commit patch, session swap) —
+ * the seek was built against the old rows, so appending would lie; the fresh
+ * result's own scrolling refetches. */
+function appendPage(
+  set: SetFn,
+  tabId: string,
+  sessionId: string,
+  seededRows: (string | null)[][],
+  page: PageResult,
+) {
+  let appended = false;
+  useResults.setState((rs) => {
+    const t = rs.byTab[tabId];
+    const st0 = t?.statements[0];
+    if (!t || !st0 || t.executedSessionId !== sessionId || st0.rows !== seededRows) return rs;
+    const rows = [...st0.rows, ...page.rows];
+    const truncated = new Set(st0.truncated);
+    const base = st0.rows.length;
+    for (const [r, c] of page.truncated) truncated.add(`${base + r}:${c}`);
+    const next = {
+      ...t,
+      statements: t.statements.map((st, i) =>
+        i === 0
+          ? {
+              ...st,
+              rows,
+              truncated,
+              rowCount: st.rowCount + page.rows.length,
+              capped:
+                st.capped || (page.rows.length === PAGE && rows.length >= ROW_HARD_CAP),
+            }
+          : st,
+      ),
+    };
+    appended = true;
+    return rs.active === tabId
+      ? { byTab: { ...rs.byTab, [tabId]: next }, ...next }
+      : { byTab: { ...rs.byTab, [tabId]: next } };
+  });
+  // keep the fill-check invariant: rows.length < limit ⇢ end of data reached
+  if (appended) writeBrowse(set, tabId, (t) => ({ limit: t.limit + PAGE }));
+}
+
 /** rerun the active tab's browse query (results land in the active tab) */
 function run(s: BrowserState) {
   if (!s.table) return;
   void useResults.getState().run(
-    browseSql({ table: s.table, filters: s.filters, sort: s.sort, limit: s.limit }),
+    browseSql({
+      table: s.table,
+      filters: s.filters,
+      sort: s.sort,
+      limit: s.limit,
+      keys: keysFor(s.table, s.sort),
+    }),
   );
 }
 
@@ -256,16 +265,21 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     // only hit the server when the effective SQL actually changed — toggling
     // an incomplete filter row or picking a column before typing a value
     // used to re-run the unfiltered SELECT
+    const sqlOf = (st: BrowserState) =>
+      st.table
+        ? browseSql({
+            table: st.table,
+            filters: st.filters,
+            sort: st.sort,
+            limit: PAGE,
+            keys: keysFor(st.table, st.sort),
+          })
+        : "";
     const s = get();
-    const before = s.table
-      ? browseSql({ table: s.table, filters: s.filters, sort: s.sort, limit: PAGE })
-      : "";
+    const before = sqlOf(s);
     writeBrowse(set, s.active, { filters, limit: PAGE });
     const after = get();
-    const afterSql = after.table
-      ? browseSql({ table: after.table, filters: after.filters, sort: after.sort, limit: PAGE })
-      : "";
-    if (afterSql !== before) run(after);
+    if (sqlOf(after) !== before) run(after);
   },
 
   setSort: (sort) => {
@@ -275,16 +289,56 @@ export const useBrowser = create<BrowserState>((set, get) => ({
 
   loadMore: () => {
     const s = get();
+    const tabId = s.active;
+    const table = s.table;
+    if (!table) return;
     const res = useResults.getState();
-    const stmt = res.statements[0];
-    // only grow when the current page actually filled up
-    if (res.running || !stmt || stmt.rows.length < s.limit) return;
+    const tabRes = res.byTab[tabId];
+    const stmt = tabRes?.statements[0];
+    // only grow when the current page actually filled up (a short page means
+    // end of data); capped = the honest frontend row ceiling was reached
+    if (res.running || !stmt || !stmt.done || stmt.error || stmt.capped) return;
+    if (stmt.rows.length < s.limit || pageInflight.has(tabId)) return;
+    const filters = s.filters;
+    const sort = s.sort;
     void import("./edits").then(({ useEdits }) => {
-      // parked while edits are staged — the loadMore re-run would wipe them
-      // (and a confirm modal on mere scrolling would be hostile)
-      if (Object.keys(useEdits.getState().byTab[s.active]?.pending ?? {}).length > 0) return;
-      writeBrowse(set, s.active, { limit: get().limit + PAGE });
-      run(get());
+      // re-check past the async boundary — two rapid scroll events can both
+      // pass the sync guard before either adds itself
+      if (pageInflight.has(tabId)) return;
+      // parked while edits are staged — appending/re-running would invalidate
+      // their row coordinates (and a confirm modal on mere scrolling would be
+      // hostile)
+      if (Object.keys(useEdits.getState().byTab[tabId]?.pending ?? {}).length > 0) return;
+
+      // ---- keyset page: WHERE row-value seek from the last loaded row -----
+      const keys = keysetKeys(
+        table,
+        sort,
+        serverVersionNum(tabRes.executedProfileId ?? useConnections.getState().activeProfileId),
+      );
+      const sessionId = tabRes.executedSessionId;
+      const pageSql = keys && sessionId ? pageSqlFromLastRow(table, filters, keys, stmt) : null;
+      if (!pageSql || !sessionId) {
+        // Offset fallback for anything keyset can't serve safely (see
+        // keysetKeys / pageSqlFromLastRow): re-run from row 0 with a grown
+        // LIMIT — the pre-keyset behavior. O(n²) and, without a unique sort,
+        // able to dup/drop rows across pages; kept ONLY as the boundary for
+        // non-keysettable relations, never in place of a correct seek.
+        writeBrowse(set, tabId, (t) => ({ limit: t.limit + PAGE }));
+        run(get());
+        return;
+      }
+      pageInflight.add(tabId);
+      void fetchPage(sessionId, pageSql)
+        .then((page) => {
+          if (page) appendPage(set, tabId, sessionId, stmt.rows, page);
+        })
+        .catch((e) => {
+          // leave the loaded rows untouched; the next scroll retries (an
+          // explicit re-run/refresh surfaces session errors through run())
+          console.error("browse loadMore page failed", e);
+        })
+        .finally(() => pageInflight.delete(tabId));
     });
   },
 
