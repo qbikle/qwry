@@ -15,14 +15,20 @@
 //! a stale hint can only produce (a) a SQL error → the whole batch rolls back,
 //! or (b) a locator matching ≠ 1 row → the whole batch rolls back; the
 //! frontend refreshes its map on schema-shaped errors and on observed DDL.
+//!
+//! Transaction safety: when the session already sits inside the USER's open
+//! transaction, the batch is wrapped in SAVEPOINT/RELEASE instead of
+//! BEGIN/COMMIT — the user's transaction is never committed or rolled back by
+//! an edit. The verified-batch contract is identical in both modes.
 
 use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
+use tokio_postgres::types::Type;
 
 use super::splitter::split_statements;
 use super::{map_pg_err, PgSession};
-use crate::driver::{DriverError, ExecOutcome, Result, StatementResult};
+use crate::driver::{DriverError, ExecOutcome, Result, StatementResult, TxState};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ColumnEditMeta {
@@ -34,10 +40,21 @@ pub struct ColumnEditMeta {
     /// human reason when not editable
     pub reason: Option<String>,
     pub type_name: String,
+    /// SQL-safe cast target (quoted/schema-qualified when needed) — what the
+    /// generated `::cast` uses; `type_name` stays the bare display name
+    pub cast: String,
     /// this result column is the table's `ctid` (used as a row locator)
     pub is_ctid: bool,
     /// soft warning shown on an editable cell (e.g. "editing via ctid")
     pub warn: Option<String>,
+}
+
+/// schema + relation name carried SEPARATELY end-to-end — a name containing a
+/// literal dot must never be reassembled by splitting a dotted string
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TableRef {
+    pub schema: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -46,8 +63,10 @@ pub struct EditabilityMap {
     pub columns: Vec<ColumnEditMeta>,
     /// per source table_oid: which result columns hold its full PK
     pub pk_cols: HashMap<u32, Vec<u32>>,
-    /// table_oid → "schema.name"
+    /// table_oid → "schema.name" (display only — SQL generation uses table_refs)
     pub tables: HashMap<u32, String>,
+    /// table_oid → separate schema/name identity
+    pub table_refs: HashMap<u32, TableRef>,
 }
 
 /// Frontend-supplied identity of one table (from the schema snapshot) — lets
@@ -57,10 +76,23 @@ pub struct EditabilityMap {
 #[derive(Debug, Clone, Deserialize)]
 pub struct TableIdentityHint {
     pub table_oid: u32,
-    /// "schema.name" exactly as the derived path renders it
-    pub dotted: String,
+    pub schema: String,
+    pub name: String,
     /// PK attnums in index order; empty = no primary key
     pub pk_attnums: Vec<i16>,
+    /// pg_class.relkind (r/v/m/p/f)
+    #[serde(default = "default_relkind")]
+    pub relkind: String,
+    /// attnums with attgenerated ≠ '' (GENERATED ALWAYS AS … columns)
+    #[serde(default)]
+    pub generated_attnums: Vec<i16>,
+    /// attnums with attidentity = 'a' (GENERATED ALWAYS AS IDENTITY)
+    #[serde(default)]
+    pub identity_always_attnums: Vec<i16>,
+}
+
+fn default_relkind() -> String {
+    "r".into()
 }
 
 /// One column of a frontend-supplied edit mapping (mirror of ColumnEditMeta
@@ -72,6 +104,9 @@ pub struct ColumnMapHint {
     pub attnum: i16,
     pub editable: bool,
     pub type_name: String,
+    /// SQL-safe cast target from the map; absent → conservatively re-derived
+    #[serde(default)]
+    pub cast: Option<String>,
     #[serde(default)]
     pub is_ctid: bool,
     /// real column name; None only allowed for ctid columns
@@ -86,7 +121,7 @@ pub struct ColumnMapHint {
 pub struct EditMapHint {
     pub columns: Vec<ColumnMapHint>,
     pub pk_cols: HashMap<u32, Vec<u32>>,
-    pub tables: HashMap<u32, String>,
+    pub table_refs: HashMap<u32, TableRef>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -101,6 +136,11 @@ pub struct RowEdit {
     pub use_default: bool,
     /// (result-column index, text value) pairs identifying the row by PK
     pub pk: Vec<(u32, Option<String>)>,
+    /// extra old-value predicates ANDed into the WHERE — the ctid guard: rows
+    /// move under UPDATE/VACUUM FULL, so a ctid locator alone could write a
+    /// different row; old values pin the identity (mismatch → 0 rows → rollback)
+    #[serde(default)]
+    pub guard: Vec<(u32, Option<String>)>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -129,7 +169,7 @@ struct PlannedUpdate {
 /// pg_class + one bulk pg_attribute trip).
 struct ResolvedMap {
     columns: Vec<ColumnEditMeta>,
-    tables: HashMap<u32, String>,
+    tables: HashMap<u32, TableRef>,
     /// (table_oid, attnum) → real column name
     names: HashMap<(u32, i16), String>,
 }
@@ -158,11 +198,63 @@ fn ql(v: &str) -> String {
     format!("'{}'", v.replace('\'', "''"))
 }
 
-/// "schema.name" → "schema"."name"
-fn table_path(dotted: &str) -> String {
-    match dotted.split_once('.') {
-        Some((s, n)) => format!("{}.{}", qi(s), qi(n)),
-        None => qi(dotted),
+fn table_path(t: &TableRef) -> String {
+    format!("{}.{}", qi(&t.schema), qi(&t.name))
+}
+
+/// a bare lowercase identifier is safe unquoted in a cast; `"char"` is the
+/// one pg_catalog name that MUST stay quoted (unquoted `char` means bpchar)
+fn safe_type_ident(name: &str) -> bool {
+    name != "char"
+        && !name.is_empty()
+        && name.as_bytes()[0].is_ascii_lowercase()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+
+/// cast target for a prepared column's type: pg_catalog types by bare name,
+/// everything else quoted + schema-qualified
+fn cast_of_type(ty: &Type) -> String {
+    let name = ty.name();
+    if ty.schema() == "pg_catalog" {
+        if safe_type_ident(name) {
+            name.to_string()
+        } else {
+            qi(name)
+        }
+    } else {
+        format!("{}.{}", qi(ty.schema()), qi(name))
+    }
+}
+
+/// conservative cast for a hint that predates the `cast` field
+fn cast_fallback(type_name: &str) -> String {
+    if safe_type_ident(type_name) {
+        type_name.to_string()
+    } else {
+        qi(type_name)
+    }
+}
+
+/// types with no (or no stable) `=` operator — compared via ::text instead
+fn stable_equality(type_name: &str) -> bool {
+    let base = type_name.strip_prefix('_').unwrap_or(type_name);
+    !matches!(
+        base,
+        "json" | "xml" | "point" | "line" | "lseg" | "box" | "path" | "polygon" | "circle"
+    )
+}
+
+/// NULL-safe equality predicate on one column: `IS NULL` for a NULL old value,
+/// indexable `=` otherwise; ::text comparison for types without equality
+fn eq_pred(name: &str, m: &ColumnEditMeta, v: &Option<String>) -> String {
+    match v {
+        None => format!("{} IS NULL", qi(name)),
+        Some(s) if stable_equality(&m.type_name) => {
+            format!("{} = {}::{}", qi(name), ql(s), m.cast)
+        }
+        Some(s) => format!("{}::text = {}", qi(name), ql(s)),
     }
 }
 
@@ -171,7 +263,26 @@ fn table_path(dotted: &str) -> String {
 fn hint_complete(h: &EditMapHint) -> bool {
     h.columns.iter().all(|c| {
         c.is_ctid || c.table_oid == 0 || c.attnum <= 0 || c.name.is_some()
-    }) && h.pk_cols.keys().all(|oid| h.tables.contains_key(oid))
+    }) && h.pk_cols.keys().all(|oid| h.table_refs.contains_key(oid))
+}
+
+/// per-table catalog facts the editability derivation runs on
+struct TableFacts {
+    r: TableRef,
+    relkind: String,
+    pks: Vec<i16>,
+    generated: HashSet<i16>,
+    identity_always: HashSet<i16>,
+}
+
+const EDIT_SAVEPOINT: &str = "qwry_edit_sp";
+
+/// how the verified batch is transaction-wrapped
+enum BatchTx {
+    /// session was idle — our own BEGIN…COMMIT
+    Own,
+    /// inside the user's open transaction — SAVEPOINT/RELEASE, NEVER commit
+    Savepoint,
 }
 
 impl PgSession {
@@ -190,7 +301,11 @@ impl PgSession {
             .get(statement_index as usize)
             .ok_or_else(|| DriverError::Internal("statement index out of range".into()))?;
 
-        let prepared = self.client.prepare(stmt_sql).await.map_err(map_pg_err)?;
+        let prepared = self.client.prepare(stmt_sql).await.map_err(|e| {
+            // a failed prepare inside an explicit tx aborts it
+            self.note_error_outcome();
+            map_pg_err(e)
+        })?;
 
         let oids: Vec<u32> = {
             let mut v: Vec<u32> = prepared
@@ -203,8 +318,7 @@ impl PgSession {
             v
         };
 
-        let mut table_names: HashMap<u32, String> = HashMap::new();
-        let mut table_pks: HashMap<u32, Vec<i16>> = HashMap::new();
+        let mut facts: HashMap<u32, TableFacts> = HashMap::new();
         // fast path: the snapshot hint covers every referenced OID → no catalog trip
         let hinted = tables_hint.and_then(|hints| {
             let by_oid: HashMap<u32, &TableIdentityHint> =
@@ -218,8 +332,16 @@ impl PgSession {
         if let Some(by_oid) = hinted {
             for &oid in &oids {
                 if let Some(h) = by_oid.get(&oid) {
-                    table_names.insert(oid, h.dotted.clone());
-                    table_pks.insert(oid, h.pk_attnums.clone());
+                    facts.insert(
+                        oid,
+                        TableFacts {
+                            r: TableRef { schema: h.schema.clone(), name: h.name.clone() },
+                            relkind: h.relkind.clone(),
+                            pks: h.pk_attnums.clone(),
+                            generated: h.generated_attnums.iter().copied().collect(),
+                            identity_always: h.identity_always_attnums.iter().copied().collect(),
+                        },
+                    );
                 }
             }
         } else if !oids.is_empty() {
@@ -229,10 +351,18 @@ impl PgSession {
                 .collect::<Vec<_>>()
                 .join(",");
             let q = format!(
-                "SELECT c.oid::int8, n.nspname || '.' || c.relname,
+                "SELECT c.oid::int8, n.nspname, c.relname, c.relkind::text,
                         coalesce((SELECT array_to_string(i.indkey::int2[], ',')
                                   FROM pg_index i
-                                  WHERE i.indrelid = c.oid AND i.indisprimary), '')
+                                  WHERE i.indrelid = c.oid AND i.indisprimary), ''),
+                        coalesce((SELECT array_to_string(array_agg(a.attnum), ',')
+                                  FROM pg_attribute a
+                                  WHERE a.attrelid = c.oid AND a.attnum > 0
+                                    AND NOT a.attisdropped AND a.attgenerated <> ''), ''),
+                        coalesce((SELECT array_to_string(array_agg(a.attnum), ',')
+                                  FROM pg_attribute a
+                                  WHERE a.attrelid = c.oid AND a.attnum > 0
+                                    AND NOT a.attisdropped AND a.attidentity = 'a'), '')
                  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                  WHERE c.oid IN ({oid_list})"
             );
@@ -242,6 +372,13 @@ impl PgSession {
                 .first()
                 .map(|s| s.rows.as_slice())
                 .unwrap_or(&[]);
+            let attnums = |cell: Option<&Option<String>>| -> Vec<i16> {
+                cell.and_then(|v| v.as_deref())
+                    .unwrap_or("")
+                    .split(',')
+                    .filter_map(|s| s.trim().parse().ok())
+                    .collect()
+            };
             for row in rows {
                 let oid: u32 = row
                     .first()
@@ -249,18 +386,19 @@ impl PgSession {
                     .unwrap_or("0")
                     .parse()
                     .unwrap_or(0);
-                table_names.insert(
+                facts.insert(
                     oid,
-                    row.get(1).and_then(|v| v.clone()).unwrap_or_default(),
+                    TableFacts {
+                        r: TableRef {
+                            schema: row.get(1).and_then(|v| v.clone()).unwrap_or_default(),
+                            name: row.get(2).and_then(|v| v.clone()).unwrap_or_default(),
+                        },
+                        relkind: row.get(3).and_then(|v| v.clone()).unwrap_or_else(|| "r".into()),
+                        pks: attnums(row.get(4)),
+                        generated: attnums(row.get(5)).into_iter().collect(),
+                        identity_always: attnums(row.get(6)).into_iter().collect(),
+                    },
                 );
-                let pks: Vec<i16> = row
-                    .get(2)
-                    .and_then(|v| v.as_deref())
-                    .unwrap_or("")
-                    .split(',')
-                    .filter_map(|s| s.trim().parse().ok())
-                    .collect();
-                table_pks.insert(oid, pks);
             }
         }
 
@@ -274,15 +412,16 @@ impl PgSession {
 
         // per table: full PK present in the result set?
         let mut pk_cols: HashMap<u32, Vec<u32>> = HashMap::new();
-        for (&oid, pks) in &table_pks {
-            if pks.is_empty() {
+        for (&oid, f) in &facts {
+            if f.pks.is_empty() {
                 continue;
             }
-            let cols: Vec<u32> = pks
+            let cols: Vec<u32> = f
+                .pks
                 .iter()
                 .filter_map(|att| have.get(&(oid, *att)).copied())
                 .collect();
-            if cols.len() == pks.len() {
+            if cols.len() == f.pks.len() {
                 pk_cols.insert(oid, cols);
             }
         }
@@ -298,10 +437,13 @@ impl PgSession {
                 }
             }
         }
-        // for tables without a usable PK in the result, fall back to ctid
+        // for plain tables without a usable PK in the result, fall back to
+        // ctid. Only relkind 'r': a matview/view rejects writes anyway, and a
+        // partitioned parent's ctid is not unique across partitions.
         let mut ctid_tables: HashSet<u32> = HashSet::new();
         for (&oid, &ctid_col) in &ctid_col_of {
-            if !table_names.contains_key(&oid) || pk_cols.contains_key(&oid) {
+            let plain = facts.get(&oid).map(|f| f.relkind == "r").unwrap_or(false);
+            if !plain || pk_cols.contains_key(&oid) {
                 continue;
             }
             pk_cols.insert(oid, vec![ctid_col]);
@@ -326,31 +468,36 @@ impl PgSession {
                             None,
                         ),
                         (_, None) => (false, Some("not a plain table column".into()), None),
-                        (Some(oid), Some(_)) => {
-                            if pk_cols.contains_key(&oid) {
-                                let warn = if ctid_tables.contains(&oid) {
-                                    Some("no primary key in result — editing via ctid".into())
+                        (Some(oid), Some(att)) => {
+                            let f = facts.get(&oid);
+                            if let Some(f) = f {
+                                if f.generated.contains(&att) {
+                                    (
+                                        false,
+                                        Some("generated column — computed by the database".into()),
+                                        None,
+                                    )
+                                } else if f.identity_always.contains(&att) {
+                                    (
+                                        false,
+                                        Some(
+                                            "identity column (GENERATED ALWAYS) — value comes from its sequence"
+                                                .into(),
+                                        ),
+                                        None,
+                                    )
+                                } else if pk_cols.contains_key(&oid) {
+                                    let warn = if ctid_tables.contains(&oid) {
+                                        Some("no primary key in result — editing via ctid".into())
+                                    } else {
+                                        None
+                                    };
+                                    (true, None, warn)
                                 } else {
-                                    None
-                                };
-                                (true, None, warn)
-                            } else if table_pks.get(&oid).is_none_or(|p| p.is_empty()) {
-                                (
-                                    false,
-                                    Some(
-                                        "no primary key — SELECT ctid, * FROM … makes rows editable".into(),
-                                    ),
-                                    None,
-                                )
+                                    (false, Some(readonly_reason(f)), None)
+                                }
                             } else {
-                                (
-                                    false,
-                                    Some(
-                                        "primary key not in result — SELECT it, or ctid (SELECT ctid, * FROM …)"
-                                            .into(),
-                                    ),
-                                    None,
-                                )
+                                (false, Some("not editable — unknown source table".into()), None)
                             }
                         }
                     }
@@ -362,17 +509,26 @@ impl PgSession {
                     editable,
                     reason,
                     type_name: c.type_().name().to_string(),
+                    cast: cast_of_type(c.type_()),
                     is_ctid,
                     warn,
                 }
             })
             .collect();
 
+        let mut tables = HashMap::new();
+        let mut table_refs = HashMap::new();
+        for (oid, f) in facts {
+            tables.insert(oid, format!("{}.{}", f.r.schema, f.r.name));
+            table_refs.insert(oid, f.r);
+        }
+
         Ok(EditabilityMap {
             statement_index,
             columns,
             pk_cols,
-            tables: table_names,
+            tables,
+            table_refs,
         })
     }
 
@@ -398,6 +554,9 @@ impl PgSession {
                                 names.insert((c.table_oid, c.attnum), n.clone());
                             }
                         }
+                        let cast = c
+                            .cast
+                            .unwrap_or_else(|| cast_fallback(&c.type_name));
                         ColumnEditMeta {
                             col: c.col,
                             table_oid: c.table_oid,
@@ -405,6 +564,7 @@ impl PgSession {
                             editable: c.editable,
                             reason: None,
                             type_name: c.type_name,
+                            cast,
                             is_ctid: c.is_ctid,
                             warn: None,
                         }
@@ -412,7 +572,7 @@ impl PgSession {
                     .collect();
                 return Ok(ResolvedMap {
                     columns,
-                    tables: h.tables,
+                    tables: h.table_refs,
                     names,
                 });
             }
@@ -422,9 +582,9 @@ impl PgSession {
         let map = self.editability(sql, statement_index, None).await?;
         // one bulk name fetch for every table the map references
         let mut names: HashMap<(u32, i16), String> = HashMap::new();
-        if !map.tables.is_empty() {
+        if !map.table_refs.is_empty() {
             let oid_list = map
-                .tables
+                .table_refs
                 .keys()
                 .map(|o| o.to_string())
                 .collect::<Vec<_>>()
@@ -450,7 +610,7 @@ impl PgSession {
         }
         Ok(ResolvedMap {
             columns: map.columns,
-            tables: map.tables,
+            tables: map.table_refs,
             names,
         })
     }
@@ -480,6 +640,7 @@ impl PgSession {
     /// ROLLBACK) as the second round trip — 2 RTTs regardless of N. Any
     /// mismatch or error rolls the whole batch back: a stale ctid / duplicated
     /// PK / stale column mapping can never partially write and report success.
+    /// Inside the user's open transaction the wrapper is SAVEPOINT/RELEASE.
     /// Values are text with a cast to the column's type — psql semantics.
     pub async fn apply_edits(
         &self,
@@ -494,7 +655,9 @@ impl PgSession {
             return Ok(EditOutcome { results: vec![], committed: false });
         }
 
-        let out = self.run_verified_batch(planned.iter().map(|p| p.sql.as_str())).await?;
+        let (out, mode) = self
+            .run_verified_batch(planned.iter().map(|p| p.sql.as_str()))
+            .await?;
 
         let mut results: Vec<EditResult> = (0..edits.len())
             .map(|_| EditResult {
@@ -528,7 +691,7 @@ impl PgSession {
         }
 
         if mismatch {
-            let _ = self.execute_simple("ROLLBACK").await;
+            self.undo_batch(&mode).await;
             // nothing was applied — flip the would-have-succeeded rows too
             for r in results.iter_mut() {
                 if r.ok {
@@ -541,18 +704,19 @@ impl PgSession {
             }
             return Ok(EditOutcome { results, committed: false });
         }
-        match self.execute_simple("COMMIT").await {
-            Ok(_) => Ok(EditOutcome { results, committed: true }),
+        match self.finish_batch(&mode).await {
+            Ok(()) => Ok(EditOutcome { results, committed: true }),
             Err(e) => {
-                let _ = self.execute_simple("ROLLBACK").await;
+                self.undo_batch(&mode).await;
                 Err(e)
             }
         }
     }
 
-    /// Delete rows of a single table by locator (PK or ctid). Same batched
-    /// verify-then-commit contract as `apply_edits`: one BEGIN+DELETEs message,
-    /// every DELETE must match exactly one row or the whole batch rolls back.
+    /// Delete rows of a single table by locator (PK or ctid, plus any extra
+    /// old-value guard pairs). Same batched verify-then-commit contract as
+    /// `apply_edits`: one wrapped batch, every DELETE must match exactly one
+    /// row or the whole batch rolls back.
     pub async fn delete_rows(
         &self,
         sql: &str,
@@ -577,11 +741,7 @@ impl PgSession {
                 let n = map
                     .name_of(m)
                     .ok_or_else(|| DriverError::Internal("locator name lookup failed".into()))?;
-                let rhs = match v {
-                    None => "IS NULL".to_string(),
-                    Some(s) => format!("= {}::{}", ql(s), m.type_name),
-                };
-                where_parts.push(format!("{} {}", qi(&n), rhs));
+                where_parts.push(eq_pred(&n, m, v));
             }
             if where_parts.is_empty() {
                 return Err(DriverError::Internal(
@@ -598,7 +758,9 @@ impl PgSession {
             return Ok(EditOutcome { results: vec![], committed: false });
         }
 
-        let out = self.run_verified_batch(deletes.iter().map(|d| d.as_str())).await?;
+        let (out, mode) = self
+            .run_verified_batch(deletes.iter().map(|d| d.as_str()))
+            .await?;
 
         let mut results = Vec::with_capacity(rows.len());
         let mut mismatch = false;
@@ -619,7 +781,7 @@ impl PgSession {
         }
 
         if mismatch {
-            let _ = self.execute_simple("ROLLBACK").await;
+            self.undo_batch(&mode).await;
             for r in results.iter_mut() {
                 if r.ok {
                     *r = EditResult {
@@ -631,25 +793,94 @@ impl PgSession {
             }
             return Ok(EditOutcome { results, committed: false });
         }
-        match self.execute_simple("COMMIT").await {
-            Ok(_) => Ok(EditOutcome { results, committed: true }),
+        match self.finish_batch(&mode).await {
+            Ok(()) => Ok(EditOutcome { results, committed: true }),
             Err(e) => {
-                let _ = self.execute_simple("ROLLBACK").await;
+                self.undo_batch(&mode).await;
                 Err(e)
             }
         }
     }
 
-    /// Send `BEGIN; stmt₁; …; stmtₙ` as ONE simple-query message and return
-    /// the per-statement results for stmt₁…stmtₙ (BEGIN's result stripped),
-    /// leaving the transaction OPEN for the caller to COMMIT or ROLLBACK.
-    /// Any error (SQL or protocol) rolls back before returning Err — the
-    /// batch can never half-apply.
+    /// Fetch one full (untruncated) cell as text by table identity + row
+    /// locator. Server-side SQL generation with real column names (aliases in
+    /// the result don't leak into the WHERE) and proper ident quoting.
+    pub async fn fetch_cell(
+        &self,
+        sql: &str,
+        statement_index: u32,
+        col: u32,
+        locator: Vec<(u32, Option<String>)>,
+        map_hint: Option<EditMapHint>,
+    ) -> Result<Option<String>> {
+        let map = self.resolve_map(sql, statement_index, map_hint).await?;
+        let m = map
+            .col_meta(col)
+            .ok_or_else(|| DriverError::Internal("cell column not in map".into()))?;
+        let table = map
+            .tables
+            .get(&m.table_oid)
+            .ok_or_else(|| DriverError::Internal("unknown table for cell fetch".into()))?;
+        let name = map
+            .name_of(m)
+            .ok_or_else(|| DriverError::Internal("cell column name lookup failed".into()))?;
+        if locator.is_empty() {
+            return Err(DriverError::Internal(
+                "refusing to fetch a cell with an empty row locator".into(),
+            ));
+        }
+        let mut where_parts = Vec::with_capacity(locator.len());
+        for (c, v) in &locator {
+            let lm = map
+                .col_meta(*c)
+                .ok_or_else(|| DriverError::Internal("bad locator column".into()))?;
+            let ln = map
+                .name_of(lm)
+                .ok_or_else(|| DriverError::Internal("locator name lookup failed".into()))?;
+            where_parts.push(eq_pred(&ln, lm, v));
+        }
+        let q = format!(
+            "SELECT {}::text FROM {} WHERE {} LIMIT 2",
+            qi(&name),
+            table_path(table),
+            where_parts.join(" AND "),
+        );
+        let out = self.execute_simple(&q).await?;
+        let rows = out
+            .statements
+            .first()
+            .map(|s| s.rows.as_slice())
+            .unwrap_or(&[]);
+        if rows.len() != 1 {
+            return Err(DriverError::Internal(format!(
+                "cell fetch matched {} rows (expected 1)",
+                rows.len()
+            )));
+        }
+        Ok(rows[0].first().cloned().flatten())
+    }
+
+    /// Send `<wrapper>; stmt₁; …; stmtₙ` as ONE simple-query message and return
+    /// the per-statement results for stmt₁…stmtₙ (the wrapper's result
+    /// stripped), leaving the batch OPEN for the caller to finish or undo.
+    /// Idle session → wrapper is BEGIN (finish=COMMIT, undo=ROLLBACK); inside
+    /// the user's transaction → SAVEPOINT (finish=RELEASE, undo=ROLLBACK TO +
+    /// RELEASE) so the outer transaction is NEVER committed or rolled back.
+    /// Any error (SQL or protocol) undoes the batch before returning Err —
+    /// it can never half-apply.
     async fn run_verified_batch<'a>(
         &self,
         stmts: impl Iterator<Item = &'a str>,
-    ) -> Result<Vec<StatementResult>> {
-        let mut batch = String::from("BEGIN");
+    ) -> Result<(Vec<StatementResult>, BatchTx)> {
+        let mode = if self.tx_state() == TxState::Idle {
+            BatchTx::Own
+        } else {
+            BatchTx::Savepoint
+        };
+        let mut batch = match mode {
+            BatchTx::Own => String::from("BEGIN"),
+            BatchTx::Savepoint => format!("SAVEPOINT {EDIT_SAVEPOINT}"),
+        };
         let mut n = 0usize;
         for s in stmts {
             batch.push_str(";\n");
@@ -659,15 +890,15 @@ impl PgSession {
         let out: ExecOutcome = match self.execute_simple(&batch).await {
             Ok(o) => o,
             Err(e) => {
-                let _ = self.execute_simple("ROLLBACK").await;
+                self.undo_batch(&mode).await;
                 return Err(e);
             }
         };
-        // BEGIN + n statements, in order — anything else means our accounting
-        // of the message stream is wrong, and verification would misattribute
-        // counts to rows. Refuse and roll back.
+        // wrapper + n statements, in order — anything else means our
+        // accounting of the message stream is wrong, and verification would
+        // misattribute counts to rows. Refuse and undo.
         if out.statements.len() != n + 1 {
-            let _ = self.execute_simple("ROLLBACK").await;
+            self.undo_batch(&mode).await;
             return Err(DriverError::Internal(format!(
                 "commit batch returned {} result sets, expected {}",
                 out.statements.len(),
@@ -675,8 +906,29 @@ impl PgSession {
             )));
         }
         let mut stmts = out.statements;
-        stmts.remove(0); // BEGIN
-        Ok(stmts)
+        stmts.remove(0);
+        Ok((stmts, mode))
+    }
+
+    /// best-effort: revert everything the batch did (and only the batch)
+    async fn undo_batch(&self, mode: &BatchTx) {
+        let sql = match mode {
+            BatchTx::Own => "ROLLBACK".to_string(),
+            BatchTx::Savepoint => format!(
+                "ROLLBACK TO SAVEPOINT {EDIT_SAVEPOINT}; RELEASE SAVEPOINT {EDIT_SAVEPOINT}"
+            ),
+        };
+        let _ = self.execute_simple(&sql).await;
+    }
+
+    /// make the batch durable (Own: COMMIT) or fold it into the user's open
+    /// transaction (Savepoint: RELEASE — their COMMIT decides durability)
+    async fn finish_batch(&self, mode: &BatchTx) -> Result<()> {
+        let sql = match mode {
+            BatchTx::Own => "COMMIT".to_string(),
+            BatchTx::Savepoint => format!("RELEASE SAVEPOINT {EDIT_SAVEPOINT}"),
+        };
+        self.execute_simple(&sql).await.map(|_| ())
     }
 
     /// Insert one row. Columns the user left untouched are omitted so table
@@ -713,6 +965,30 @@ impl PgSession {
     }
 }
 
+/// honest per-relkind reason when a table has no usable row locator in the result
+fn readonly_reason(f: &TableFacts) -> String {
+    match f.relkind.as_str() {
+        "v" => "view — not editable directly; edit its base table".into(),
+        "m" => "materialized view — read-only (REFRESH MATERIALIZED VIEW updates it)".into(),
+        "f" => "foreign table — editing isn't supported".into(),
+        "p" => {
+            if f.pks.is_empty() {
+                "partitioned table with no primary key — add one to edit (ctid is not unique across partitions)".into()
+            } else {
+                "primary key not in result — SELECT it to edit".into()
+            }
+        }
+        "r" => {
+            if f.pks.is_empty() {
+                "no primary key — SELECT ctid, * FROM … makes rows editable".into()
+            } else {
+                "primary key not in result — SELECT it, or ctid (SELECT ctid, * FROM …)".into()
+            }
+        }
+        _ => "not editable".into(),
+    }
+}
+
 /// Group edits by (table, row) and build ONE `UPDATE … SET a=, b=, …
 /// WHERE pk RETURNING a::text, b::text` per row. Pure function of the
 /// resolved map — no I/O. Returns each planned statement plus the original
@@ -723,6 +999,7 @@ fn plan_edits(map: &ResolvedMap, edits: &[RowEdit]) -> Result<Vec<PlannedUpdate>
     struct Group {
         table_oid: u32,
         pk: Vec<(u32, Option<String>)>,
+        guard: Vec<(u32, Option<String>)>,
         /// (original edit index, edited result column, new value, use_default)
         sets: Vec<(usize, u32, Option<String>, bool)>,
     }
@@ -745,6 +1022,7 @@ fn plan_edits(map: &ResolvedMap, edits: &[RowEdit]) -> Result<Vec<PlannedUpdate>
             Group {
                 table_oid: e.table_oid,
                 pk: e.pk.clone(),
+                guard: e.guard.clone(),
                 sets: Vec::new(),
             }
         });
@@ -774,7 +1052,7 @@ fn plan_edits(map: &ResolvedMap, edits: &[RowEdit]) -> Result<Vec<PlannedUpdate>
             } else {
                 match v {
                     None => "NULL".to_string(),
-                    Some(s) => format!("{}::{}", ql(s), m.type_name),
+                    Some(s) => format!("{}::{}", ql(s), m.cast),
                 }
             };
             set_parts.push(format!("{} = {}", qi(&n), value_sql));
@@ -783,20 +1061,20 @@ fn plan_edits(map: &ResolvedMap, edits: &[RowEdit]) -> Result<Vec<PlannedUpdate>
         }
 
         let mut where_parts = Vec::new();
-        for (c, v) in &g.pk {
+        let mut seen_where: HashSet<u32> = HashSet::new();
+        for (c, v) in g.pk.iter().chain(g.guard.iter()) {
+            if !seen_where.insert(*c) {
+                continue;
+            }
             let m = map
                 .col_meta(*c)
-                .ok_or_else(|| DriverError::Internal("bad pk column".into()))?;
+                .ok_or_else(|| DriverError::Internal("bad locator column".into()))?;
             let n = map
                 .name_of(m)
-                .ok_or_else(|| DriverError::Internal("pk column name lookup failed".into()))?;
-            let rhs = match v {
-                None => "IS NULL".to_string(),
-                Some(s) => format!("= {}::{}", ql(s), m.type_name),
-            };
-            where_parts.push(format!("{} {}", qi(&n), rhs));
+                .ok_or_else(|| DriverError::Internal("locator name lookup failed".into()))?;
+            where_parts.push(eq_pred(&n, m, v));
         }
-        if where_parts.is_empty() {
+        if g.pk.is_empty() || where_parts.is_empty() {
             return Err(DriverError::Internal(
                 "refusing to update with an empty row locator".into(),
             ));
@@ -814,4 +1092,136 @@ fn plan_edits(map: &ResolvedMap, edits: &[RowEdit]) -> Result<Vec<PlannedUpdate>
         });
     }
     Ok(planned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn meta(col: u32, oid: u32, attnum: i16, type_name: &str, cast: &str, is_ctid: bool) -> ColumnEditMeta {
+        ColumnEditMeta {
+            col,
+            table_oid: oid,
+            attnum,
+            editable: !is_ctid,
+            reason: None,
+            type_name: type_name.into(),
+            cast: cast.into(),
+            is_ctid,
+            warn: None,
+        }
+    }
+
+    fn test_map() -> ResolvedMap {
+        let mut tables = HashMap::new();
+        tables.insert(
+            7u32,
+            TableRef { schema: "sch.dot".into(), name: "ta.ble".into() },
+        );
+        let mut names = HashMap::new();
+        names.insert((7u32, 1i16), "id".to_string());
+        names.insert((7u32, 2i16), "Name".to_string());
+        names.insert((7u32, 3i16), "doc".to_string());
+        ResolvedMap {
+            columns: vec![
+                meta(0, 7, 1, "int4", "int4", false),
+                meta(1, 7, 2, "mystatus", "\"public\".\"MyStatus\"", false),
+                meta(2, 7, 3, "json", "json", false),
+                meta(3, 7, 0, "tid", "tid", true),
+            ],
+            tables,
+            names,
+        }
+    }
+
+    #[test]
+    fn dotted_names_quote_separately() {
+        let map = test_map();
+        let edits = vec![RowEdit {
+            table_oid: 7,
+            col: 0,
+            value: Some("5".into()),
+            use_default: false,
+            pk: vec![(0, Some("1".into()))],
+            guard: vec![],
+        }];
+        let planned = plan_edits(&map, &edits).unwrap();
+        assert!(
+            planned[0].sql.starts_with(r#"UPDATE "sch.dot"."ta.ble" SET"#),
+            "{}",
+            planned[0].sql
+        );
+    }
+
+    #[test]
+    fn cast_is_taken_from_map_not_type_name() {
+        let map = test_map();
+        let edits = vec![RowEdit {
+            table_oid: 7,
+            col: 1,
+            value: Some("active".into()),
+            use_default: false,
+            pk: vec![(0, Some("1".into()))],
+            guard: vec![],
+        }];
+        let planned = plan_edits(&map, &edits).unwrap();
+        assert!(
+            planned[0].sql.contains(r#""Name" = 'active'::"public"."MyStatus""#),
+            "{}",
+            planned[0].sql
+        );
+    }
+
+    #[test]
+    fn guards_pin_old_values() {
+        let map = test_map();
+        let edits = vec![RowEdit {
+            table_oid: 7,
+            col: 0,
+            value: Some("5".into()),
+            use_default: false,
+            pk: vec![(3, Some("(0,1)".into()))],
+            guard: vec![
+                (0, Some("4".into())),
+                (1, None),
+                (2, Some("{\"k\":1}".into())),
+            ],
+        }];
+        let planned = plan_edits(&map, &edits).unwrap();
+        let sql = &planned[0].sql;
+        assert!(sql.contains(r#""ctid" = '(0,1)'::tid"#), "{sql}");
+        assert!(sql.contains(r#""id" = '4'::int4"#), "{sql}");
+        assert!(sql.contains(r#""Name" IS NULL"#), "{sql}");
+        // json has no equality operator — compared via ::text
+        assert!(sql.contains(r#""doc"::text = '{"k":1}'"#), "{sql}");
+    }
+
+    #[test]
+    fn guard_dedupes_against_pk() {
+        let map = test_map();
+        let edits = vec![RowEdit {
+            table_oid: 7,
+            col: 1,
+            value: Some("x".into()),
+            use_default: false,
+            pk: vec![(0, Some("1".into()))],
+            guard: vec![(0, Some("1".into())), (1, Some("old".into()))],
+        }];
+        let planned = plan_edits(&map, &edits).unwrap();
+        let sql = &planned[0].sql;
+        assert_eq!(sql.matches(r#""id" ="#).count(), 1, "{sql}");
+    }
+
+    #[test]
+    fn cast_helpers() {
+        assert_eq!(cast_fallback("int4"), "int4");
+        assert_eq!(cast_fallback("MyType"), "\"MyType\"");
+        assert_eq!(cast_fallback("char"), "\"char\"");
+        assert!(!stable_equality("json"));
+        assert!(!stable_equality("_json"));
+        assert!(!stable_equality("point"));
+        assert!(stable_equality("jsonb"));
+        assert!(stable_equality("int4"));
+        assert!(stable_equality("_int4"));
+    }
 }

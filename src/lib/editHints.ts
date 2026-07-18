@@ -14,7 +14,9 @@ const identityCache = new WeakMap<SchemaSnapshot, TableIdentityHint[]>();
 
 /** oid → identity for every snapshot table — memoized per snapshot object.
  * Tables whose pk names can't all resolve to attnums are omitted (a partial
- * pk hint would lie); the backend falls back to catalog on any oid miss. */
+ * pk hint would lie); so are tables from a pre-generated-column cached
+ * snapshot (`generated` missing — the hint couldn't mark those read-only).
+ * The backend falls back to catalog on any oid miss. */
 export function tableIdentityHints(snap: SchemaSnapshot): TableIdentityHint[] {
   const cached = identityCache.get(snap);
   if (cached) return cached;
@@ -31,7 +33,26 @@ export function tableIdentityHints(snap: SchemaSnapshot): TableIdentityHint[] {
       pk_attnums.push(col.attnum);
     }
     if (!ok) continue;
-    hints.push({ table_oid: t.table_oid, dotted: `${t.schema}.${t.name}`, pk_attnums });
+    const generated_attnums: number[] = [];
+    const identity_always_attnums: number[] = [];
+    for (const col of t.columns) {
+      if (col.generated === undefined || col.identity === undefined) {
+        ok = false;
+        break;
+      }
+      if (col.generated !== "") generated_attnums.push(col.attnum);
+      if (col.identity === "a") identity_always_attnums.push(col.attnum);
+    }
+    if (!ok) continue;
+    hints.push({
+      table_oid: t.table_oid,
+      schema: t.schema,
+      name: t.name,
+      pk_attnums,
+      relkind: t.kind,
+      generated_attnums,
+      identity_always_attnums,
+    });
   }
   identityCache.set(snap, hints);
   return hints;
@@ -51,10 +72,11 @@ export function buildEditMapHint(
     let name: string | null = null;
     if (!c.is_ctid && c.table_oid > 0 && c.attnum > 0) {
       const t = byOid.get(c.table_oid);
+      const ref = map.table_refs[c.table_oid];
       // identity check: the snapshot table must BE the table the map saw
-      // (same oid + same schema.name) — a snapshot from a different database
+      // (same oid + same schema/name) — a snapshot from a different database
       // (oid collision) or a renamed table must never donate column names
-      if (!t || `${t.schema}.${t.name}` !== map.tables[c.table_oid]) return null;
+      if (!t || !ref || t.schema !== ref.schema || t.name !== ref.name) return null;
       name = t.columns.find((col) => col.attnum === c.attnum)?.name ?? null;
       // a mapped column we can't name → the whole hint is unusable (the
       // backend would need a catalog trip anyway; let it own the derivation)
@@ -66,9 +88,10 @@ export function buildEditMapHint(
       attnum: c.attnum,
       editable: c.editable,
       type_name: c.type_name,
+      cast: c.cast,
       is_ctid: c.is_ctid,
       name,
     });
   }
-  return { columns, pk_cols: map.pk_cols, tables: map.tables };
+  return { columns, pk_cols: map.pk_cols, table_refs: map.table_refs };
 }

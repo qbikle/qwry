@@ -16,6 +16,55 @@ pub fn split_statements(sql: &str) -> Vec<String> {
     split_statement_spans(sql).into_iter().map(|s| s.sql).collect()
 }
 
+/// First two word-tokens of a statement, lowercased, skipping leading comments
+/// and whitespace — the input to transaction-state folding (BEGIN / COMMIT /
+/// ROLLBACK TO / COMMIT AND CHAIN are all decided by these two tokens).
+pub fn statement_head(sql: &str) -> (String, String) {
+    let bytes = sql.as_bytes();
+    let mut i = 0usize;
+    let mut words: Vec<String> = Vec::new();
+    while i < bytes.len() && words.len() < 2 {
+        match bytes[i] {
+            b'-' if bytes.get(i + 1) == Some(&b'-') => {
+                i += 2;
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                i += 2;
+                let mut depth = 1;
+                while i < bytes.len() && depth > 0 {
+                    if bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'*') {
+                        depth += 1;
+                        i += 2;
+                    } else if bytes[i] == b'*' && bytes.get(i + 1) == Some(&b'/') {
+                        depth -= 1;
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            c if c.is_ascii_alphabetic() || c == b'_' => {
+                let start = i;
+                while i < bytes.len()
+                    && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
+                {
+                    i += 1;
+                }
+                words.push(sql[start..i].to_ascii_lowercase());
+            }
+            c if c.is_ascii_whitespace() => i += 1,
+            // anything else (quote, digit, punctuation) ends head lexing —
+            // tx-control statements are made of plain keywords only
+            _ => break,
+        }
+    }
+    let mut it = words.into_iter();
+    (it.next().unwrap_or_default(), it.next().unwrap_or_default())
+}
+
 pub fn split_statement_spans(sql: &str) -> Vec<StmtSpan> {
     let bytes = sql.as_bytes();
     let mut out = Vec::new();
@@ -232,6 +281,30 @@ mod tests {
             // '\' is a normal string containing one backslash → ; splits
             vec![r"SELECT case_e'\'", "SELECT 2"]
         );
+    }
+
+    #[test]
+    fn statement_heads() {
+        use super::statement_head;
+        assert_eq!(statement_head("BEGIN"), ("begin".into(), "".into()));
+        assert_eq!(
+            statement_head("start transaction isolation level serializable"),
+            ("start".into(), "transaction".into())
+        );
+        assert_eq!(
+            statement_head("-- open it\n/* really */ BEGIN WORK"),
+            ("begin".into(), "work".into())
+        );
+        assert_eq!(
+            statement_head("ROLLBACK TO SAVEPOINT sp1"),
+            ("rollback".into(), "to".into())
+        );
+        assert_eq!(
+            statement_head("COMMIT AND CHAIN"),
+            ("commit".into(), "and".into())
+        );
+        assert_eq!(statement_head("SELECT 1"), ("select".into(), "".into()));
+        assert_eq!(statement_head("  \n /* x */ "), ("".into(), "".into()));
     }
 
     #[test]

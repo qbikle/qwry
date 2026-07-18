@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import * as ipc from "../ipc/commands";
 import type { ColumnMeta, DriverError, QueryEvent } from "../ipc/types";
-import { skey, useConnections } from "./connections";
+import { useConnections } from "./connections";
 import { useTabs } from "./tabs";
 
 export interface StatementState {
@@ -384,17 +384,8 @@ export const useResults = create<ResultsState>((set, get) => ({
 
     try {
       await ipc.executeStream(sessionId, sql, onEvent);
-
-      // update the tab's open-transaction flag from what actually ran
-      const txKey = skey(activeProfileId, tabId);
-      let inTx = useConnections.getState().txTabs[txKey] ?? false;
-      for (const st of get().byTab[tabId]?.statements ?? []) {
-        const head = st.sql.trim().toLowerCase();
-        if (/^(begin|start\s+transaction)\b/.test(head)) inTx = true;
-        else if (/^(commit|rollback|end)\b/.test(head)) inTx = false;
-        if (st.error) break;
-      }
-      useConnections.getState().setTxTab(txKey, inTx);
+      // (open-transaction tracking is driver-truth now — the "tx-state"
+      // event listener below feeds txTabs; no SQL sniffing here)
 
       // schema-affecting statement heads (real statement boundaries from the
       // executed run — not a whole-buffer regex) → refresh the snapshot AND
@@ -444,19 +435,26 @@ export const useResults = create<ResultsState>((set, get) => ({
     const sessionId = get().executedSessionId;
     if (!sessionId) return;
     try {
+      // escalating cancel: CancelToken, then pg_cancel_backend over a fresh
+      // control connection if the query didn't die — driver-side
       await ipc.cancel(sessionId);
     } catch (e) {
-      // cancel needs a NEW connection to the server — through a dead tunnel it
-      // times out. Escape hatch: kill the tab's session outright (drops the
-      // socket, unsticks the UI; the server reaps the query via keepalives)
+      // both cancel tiers failed. Last tier: pg_terminate_backend (kills the
+      // server process) + force-disconnect — explicit confirm, never automatic
       const { confirmDanger } = await import("./danger");
       const msg = (e as { message?: string }).message ?? String(e);
       const ok = await confirmDanger(
-        "Cancel didn't reach the server",
-        `${msg}\n\nForce-disconnect this tab's session? The query stops client-side immediately; a fresh session is created on the next run.`,
-        "Force disconnect",
+        "Cancel didn't stop the query",
+        `${msg}\n\nTerminate the server-side query (pg_terminate_backend) and force-disconnect this tab's session? A fresh session is created on the next run.`,
+        "Terminate & disconnect",
       );
       if (!ok) return;
+      try {
+        await ipc.terminateBackend(sessionId);
+      } catch {
+        // server unreachable — the disconnect below still unsticks the UI;
+        // the server reaps the query via keepalives
+      }
       void ipc.disconnect(sessionId);
       // forget the dead session so the next run builds a fresh one
       const { useConnections } = await import("./connections");
@@ -491,6 +489,21 @@ useTabs.subscribe((s, p) => {
     prevTabIds = ids;
   }
 });
+
+// driver-tracked transaction state → the tx chip / amber tab dot. The driver
+// lexes statement heads + error outcomes (tokio-postgres hides ReadyForQuery),
+// so txTabs is server-truth instead of a frontend SQL sniff. failed-tx still
+// counts as open — the transaction exists until COMMIT/ROLLBACK.
+void import("@tauri-apps/api/event").then(({ listen }) =>
+  listen<{ session_id: string; state: "idle" | "in_tx" | "failed_tx" }>("tx-state", (e) => {
+    const conns = useConnections.getState();
+    const entry = Object.entries(conns.tabSessions).find(
+      ([, sid]) => sid === e.payload.session_id,
+    );
+    if (!entry) return; // primary/spare sessions have no chip
+    conns.setTxTab(entry[0], e.payload.state !== "idle");
+  }),
+);
 
 // server NOTICEs → the tab whose session raised them (session ids are unique
 // per tab session, so routing is exact; notices from unknown sessions —

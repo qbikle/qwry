@@ -15,6 +15,12 @@ pub struct ColumnInfo {
     pub type_oid: u32,
     pub not_null: bool,
     pub default: Option<String>,
+    /// pg_attribute.attgenerated ('' = none, 's' = stored)
+    #[serde(default)]
+    pub generated: String,
+    /// pg_attribute.attidentity ('' = none, 'a' = always, 'd' = by default)
+    #[serde(default)]
+    pub identity: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,7 +92,9 @@ SELECT coalesce(json_agg(t), '[]') FROM (
                     'type', format_type(a.atttypid, a.atttypmod),
                     'type_oid', a.atttypid::int8,
                     'not_null', a.attnotnull,
-                    'default', pg_get_expr(d.adbin, d.adrelid))
+                    'default', pg_get_expr(d.adbin, d.adrelid),
+                    'generated', a.attgenerated,
+                    'identity', a.attidentity)
                   ORDER BY a.attnum)
            FROM pg_attribute a
            LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
