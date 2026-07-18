@@ -33,11 +33,17 @@ export function ServerInfo({ profileId }: { profileId: string }) {
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<(string | null)[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** actual session encryption — null while loading/unknown */
+  const [tls, setTls] = useState<boolean | null>(null);
+  const sslmode = useConnections(
+    (s) => s.profiles.find((p) => p.id === profileId)?.sslmode ?? "prefer",
+  );
 
   useEffect(() => {
     if (!open) return;
     setRows(null);
     setError(null);
+    setTls(null);
     // primary session preferred; any live tab session on this profile works —
     // the primary can be dead while tabs reconnected independently
     const conn = useConnections.getState();
@@ -53,10 +59,24 @@ export function ServerInfo({ profileId }: { profileId: string }) {
       .execute(sid, INFO_SQL)
       .then((out) => !stale && setRows(out.statements[0]?.rows[0] ?? []))
       .catch((e) => !stale && setError((e as { message?: string }).message ?? String(e)));
+    // sslmode=prefer can silently downgrade to plaintext — show the OUTCOME
+    ipc
+      .sessionInfo(sid)
+      .then((info) => !stale && setTls(info.tls))
+      .catch(() => !stale && setTls(null));
     return () => {
       stale = true;
     };
   }, [open, profileId]);
+
+  const tlsText =
+    tls === null
+      ? "—"
+      : tls
+        ? "TLS"
+        : sslmode === "prefer"
+          ? "TLS off (downgraded — server skipped encryption)"
+          : "TLS off";
 
   return (
     <>
@@ -81,6 +101,12 @@ export function ServerInfo({ profileId }: { profileId: string }) {
                     </span>
                   </div>
                 ))}
+                <div className="srvinfo-row">
+                  <span className="srvinfo-label">Encryption</span>
+                  <span className="srvinfo-value" title={tlsText}>
+                    {tlsText}
+                  </span>
+                </div>
               </div>
             )}
           </motion.div>

@@ -27,7 +27,7 @@ async fn staging_connect_and_query() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -88,7 +88,7 @@ async fn staging_introspect() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -138,7 +138,7 @@ async fn staging_edit_pipeline() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -171,8 +171,8 @@ async fn staging_edit_pipeline() {
     // preview generates sane SQL
     let oid = map.columns[0].table_oid;
     let edits = vec![
-        RowEdit { table_oid: oid, col: 1, value: Some("edited".into()), use_default: false, pk: vec![(0, Some("2".into()))] },
-        RowEdit { table_oid: oid, col: 2, value: None, use_default: false, pk: vec![(0, Some("1".into()))] },
+        RowEdit { table_oid: oid, col: 1, value: Some("edited".into()), use_default: false, pk: vec![(0, Some("2".into()))], guard: vec![] },
+        RowEdit { table_oid: oid, col: 2, value: None, use_default: false, pk: vec![(0, Some("1".into()))], guard: vec![] },
     ];
     let preview = session
         .build_edit_statements(sql, 0, &edits, None)
@@ -227,7 +227,7 @@ async fn staging_matched_rollback() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -247,8 +247,8 @@ async fn staging_matched_rollback() {
     // one valid edit + one stale locator (id=99 matches 0 rows) → whole batch
     // must roll back; previously this COMMITTED and reported committed:true
     let edits = vec![
-        RowEdit { table_oid: oid, col: 1, value: Some("changed".into()), use_default: false, pk: vec![(0, Some("1".into()))] },
-        RowEdit { table_oid: oid, col: 1, value: Some("ghost".into()), use_default: false, pk: vec![(0, Some("99".into()))] },
+        RowEdit { table_oid: oid, col: 1, value: Some("changed".into()), use_default: false, pk: vec![(0, Some("1".into()))], guard: vec![] },
+        RowEdit { table_oid: oid, col: 1, value: Some("ghost".into()), use_default: false, pk: vec![(0, Some("99".into()))], guard: vec![] },
     ];
     let outcome = session.apply_edits(sql, 0, edits, None).await.expect("apply");
     assert!(!outcome.committed, "mismatch must not commit");
@@ -268,7 +268,7 @@ async fn staging_matched_rollback() {
         table_oid: oid,
         col: 1,
         value: Some("changed".into()),
-        use_default: false, pk: vec![(0, Some("1".into()))],
+        use_default: false, pk: vec![(0, Some("1".into()))], guard: vec![],
     }];
     let outcome = session.apply_edits(sql, 0, edits, None).await.expect("apply2");
     assert!(outcome.committed);
@@ -307,7 +307,7 @@ async fn staging_matched_rollback() {
         col: 1,
         value: None,
         use_default: true,
-        pk: vec![(0, Some("1".into()))],
+        pk: vec![(0, Some("1".into()))], guard: vec![],
     }];
     let outcome = session.apply_edits(sql, 0, edits, None).await.expect("default apply");
     assert!(outcome.committed);
@@ -344,7 +344,7 @@ async fn staging_statement_at_a_time() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -471,7 +471,7 @@ async fn staging_streaming_and_cancel() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -581,7 +581,7 @@ async fn staging_prod_read_only() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -642,7 +642,7 @@ async fn staging_table_ddl() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
     let ddl = session
@@ -685,7 +685,7 @@ async fn staging_batched_and_hinted_paths() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -705,8 +705,12 @@ async fn staging_batched_and_hinted_paths() {
     // (1) hint-fed editability must equal the derived map
     let identity = vec![TableIdentityHint {
         table_oid: oid,
-        dotted: "public.qwry_hint_test".into(),
+        schema: "public".into(),
+        name: "qwry_hint_test".into(),
         pk_attnums: vec![1],
+        relkind: "r".into(),
+        generated_attnums: vec![],
+        identity_always_attnums: vec![],
     }];
     let hinted = session
         .editability(sql, 0, Some(&identity))
@@ -739,20 +743,21 @@ async fn staging_batched_and_hinted_paths() {
                 attnum: c.attnum,
                 editable: c.editable,
                 type_name: c.type_name.clone(),
+                cast: Some(c.cast.clone()),
                 is_ctid: c.is_ctid,
                 name: names(c.attnum),
             })
             .collect(),
         pk_cols: derived.pk_cols.clone(),
-        tables: derived.tables.clone(),
+        table_refs: derived.table_refs.clone(),
     };
     let good_hint = mk_hint(&name_of);
 
     // (2) preview: hint path byte-identical to the derived path
     let edits = vec![
-        RowEdit { table_oid: oid, col: 1, value: Some("uno".into()), use_default: false, pk: vec![(0, Some("1".into()))] },
-        RowEdit { table_oid: oid, col: 2, value: Some("11".into()), use_default: false, pk: vec![(0, Some("1".into()))] },
-        RowEdit { table_oid: oid, col: 1, value: Some("dos".into()), use_default: false, pk: vec![(0, Some("2".into()))] },
+        RowEdit { table_oid: oid, col: 1, value: Some("uno".into()), use_default: false, pk: vec![(0, Some("1".into()))], guard: vec![] },
+        RowEdit { table_oid: oid, col: 2, value: Some("11".into()), use_default: false, pk: vec![(0, Some("1".into()))], guard: vec![] },
+        RowEdit { table_oid: oid, col: 1, value: Some("dos".into()), use_default: false, pk: vec![(0, Some("2".into()))], guard: vec![] },
     ];
     let p_derived = session
         .build_edit_statements(sql, 0, &edits, None)
@@ -795,8 +800,8 @@ async fn staging_batched_and_hinted_paths() {
     };
     let stale_hint = mk_hint(&stale_names);
     let edits = vec![
-        RowEdit { table_oid: oid, col: 2, value: Some("999".into()), use_default: false, pk: vec![(0, Some("1".into()))] }, // valid column (b)
-        RowEdit { table_oid: oid, col: 1, value: Some("ghost".into()), use_default: false, pk: vec![(0, Some("2".into()))] }, // stale-named column
+        RowEdit { table_oid: oid, col: 2, value: Some("999".into()), use_default: false, pk: vec![(0, Some("1".into()))], guard: vec![] }, // valid column (b)
+        RowEdit { table_oid: oid, col: 1, value: Some("ghost".into()), use_default: false, pk: vec![(0, Some("2".into()))], guard: vec![] }, // stale-named column
     ];
     let err = session
         .apply_edits(sql, 0, edits, Some(stale_hint))
@@ -815,8 +820,8 @@ async fn staging_batched_and_hinted_paths() {
 
     // (5) stale PK locator under a good hint → matched≠1 → full rollback
     let edits = vec![
-        RowEdit { table_oid: oid, col: 1, value: Some("kept?".into()), use_default: false, pk: vec![(0, Some("1".into()))] },
-        RowEdit { table_oid: oid, col: 1, value: Some("ghost".into()), use_default: false, pk: vec![(0, Some("99".into()))] },
+        RowEdit { table_oid: oid, col: 1, value: Some("kept?".into()), use_default: false, pk: vec![(0, Some("1".into()))], guard: vec![] },
+        RowEdit { table_oid: oid, col: 1, value: Some("ghost".into()), use_default: false, pk: vec![(0, Some("99".into()))], guard: vec![] },
     ];
     let outcome = session
         .apply_edits(sql, 0, edits, Some(good_hint.clone()))
@@ -865,4 +870,508 @@ async fn staging_batched_and_hinted_paths() {
         .execute_simple("DROP TABLE qwry_hint_test")
         .await
         .expect("cleanup");
+}
+
+// ---------------------------------------------------------------------------
+// v0.7.0-bedrock additions. Fixture-creating tests run against a SECOND
+// staging db (QWRY_TEST_DB2, default "squad") inside a dedicated qwry_test
+// schema — never public. Fixtures are dropped at each test's end.
+// ---------------------------------------------------------------------------
+
+fn db2() -> String {
+    std::env::var("QWRY_TEST_DB2").unwrap_or_else(|_| "squad".into())
+}
+
+fn test_profile(id: &str, dbname: String) -> Profile {
+    Profile {
+        id: id.into(),
+        name: "staging".into(),
+        host: env("QWRY_TEST_HOST"),
+        port: 5432,
+        dbname,
+        user: env("QWRY_TEST_USER"),
+        sslmode: "prefer".into(),
+        color: None,
+        glyph: None,
+        is_prod: false,
+        ssh_host: None,
+        ssh_port: None,
+        ssh_user: None,
+        ssh_key: None,
+    }
+}
+
+async fn connect_db2(id: &str) -> qwry_lib::driver::postgres::PgSession {
+    postgres::connect(
+        &test_profile(id, db2()),
+        &env("QWRY_TEST_PASSWORD"),
+        None,
+        None,
+        Box::new(|_, _| {}),
+        Box::new(|_| {}),
+    )
+    .await
+    .expect("connect db2")
+}
+
+/// SAVEPOINT-wrapped edits inside the user's open transaction: apply works,
+/// the outer tx stays open and uncommitted, a verify failure only undoes the
+/// batch, and the user's ROLLBACK erases everything — the driver never
+/// COMMITs the user's transaction.
+#[tokio::test]
+#[ignore]
+async fn staging_savepoint_inside_user_tx() {
+    use qwry_lib::driver::postgres::edit::RowEdit;
+    use qwry_lib::driver::TxState;
+
+    let session = connect_db2("test-sp").await;
+    let watcher = connect_db2("test-sp-watch").await;
+
+    session
+        .execute_simple(
+            "CREATE SCHEMA IF NOT EXISTS qwry_test;
+             DROP TABLE IF EXISTS qwry_test.qwry_scratch_sp;
+             CREATE TABLE qwry_test.qwry_scratch_sp (id int PRIMARY KEY, v text);
+             INSERT INTO qwry_test.qwry_scratch_sp VALUES (1, 'one'), (2, 'two')",
+        )
+        .await
+        .expect("setup");
+
+    let sql = "SELECT id, v FROM qwry_test.qwry_scratch_sp ORDER BY id";
+    let map = session.editability(sql, 0, None).await.expect("map");
+    let oid = map.columns[0].table_oid;
+
+    // open the USER's transaction and do some work in it
+    session.execute_simple("BEGIN").await.expect("begin");
+    assert_eq!(session.tx_state(), TxState::InTx);
+    session
+        .execute_simple("INSERT INTO qwry_test.qwry_scratch_sp VALUES (3, 'three')")
+        .await
+        .expect("user work in tx");
+
+    // an edit commit inside the tx: SAVEPOINT-wrapped, applies, never COMMITs
+    let edits = vec![RowEdit {
+        table_oid: oid,
+        col: 1,
+        value: Some("uno".into()),
+        use_default: false,
+        pk: vec![(0, Some("1".into()))],
+        guard: vec![],
+    }];
+    let outcome = session.apply_edits(sql, 0, edits, None).await.expect("apply");
+    assert!(outcome.committed, "edit must apply inside the open tx");
+    assert_eq!(outcome.results[0].new_value.as_deref(), Some("uno"));
+    assert_eq!(session.tx_state(), TxState::InTx, "outer tx must stay open");
+
+    // same session sees the edit AND the user's own insert
+    let mine = session
+        .execute_simple("SELECT v FROM qwry_test.qwry_scratch_sp WHERE id = 1; SELECT count(*) FROM qwry_test.qwry_scratch_sp")
+        .await
+        .expect("in-tx read");
+    assert_eq!(mine.statements[0].rows[0][0].as_deref(), Some("uno"));
+    assert_eq!(mine.statements[1].rows[0][0].as_deref(), Some("3"));
+
+    // a second connection must NOT see any of it — nothing was committed
+    let theirs = watcher
+        .execute_simple("SELECT v FROM qwry_test.qwry_scratch_sp WHERE id = 1; SELECT count(*) FROM qwry_test.qwry_scratch_sp")
+        .await
+        .expect("outside read");
+    assert_eq!(
+        theirs.statements[0].rows[0][0].as_deref(),
+        Some("one"),
+        "edit must not be committed while the user tx is open"
+    );
+    assert_eq!(theirs.statements[1].rows[0][0].as_deref(), Some("2"));
+
+    // verify failure inside the tx: batch rolls back to the savepoint, the
+    // outer tx (and the earlier applied edit) survive un-failed
+    let edits = vec![
+        RowEdit { table_oid: oid, col: 1, value: Some("dos".into()), use_default: false, pk: vec![(0, Some("2".into()))], guard: vec![] },
+        RowEdit { table_oid: oid, col: 1, value: Some("ghost".into()), use_default: false, pk: vec![(0, Some("99".into()))], guard: vec![] },
+    ];
+    let outcome = session.apply_edits(sql, 0, edits, None).await.expect("apply2");
+    assert!(!outcome.committed, "matched≠1 must undo the savepoint batch");
+    assert_eq!(session.tx_state(), TxState::InTx, "outer tx must survive the failed batch");
+    let mine = session
+        .execute_simple("SELECT v FROM qwry_test.qwry_scratch_sp WHERE id IN (1,2) ORDER BY id")
+        .await
+        .expect("in-tx read 2");
+    assert_eq!(mine.statements[0].rows[0][0].as_deref(), Some("uno"), "earlier in-tx edit survives");
+    assert_eq!(mine.statements[0].rows[1][0].as_deref(), Some("two"), "failed batch fully undone");
+
+    // the user rolls back — EVERYTHING vanishes (proves no COMMIT was sent)
+    session.execute_simple("ROLLBACK").await.expect("rollback");
+    assert_eq!(session.tx_state(), TxState::Idle);
+    let after = session
+        .execute_simple("SELECT v FROM qwry_test.qwry_scratch_sp WHERE id = 1; SELECT count(*) FROM qwry_test.qwry_scratch_sp")
+        .await
+        .expect("post-rollback read");
+    assert_eq!(after.statements[0].rows[0][0].as_deref(), Some("one"), "nothing may persist after user ROLLBACK");
+    assert_eq!(after.statements[1].rows[0][0].as_deref(), Some("2"));
+
+    session
+        .execute_simple("DROP TABLE qwry_test.qwry_scratch_sp")
+        .await
+        .expect("cleanup");
+}
+
+/// ctid-located edits/deletes carry old-value guards: a stale guard (row
+/// changed under us) or a moved row rolls the batch back; a fresh one applies.
+#[tokio::test]
+#[ignore]
+async fn staging_ctid_guard() {
+    use qwry_lib::driver::postgres::edit::RowEdit;
+
+    let session = connect_db2("test-ctid").await;
+    let mover = connect_db2("test-ctid-mover").await;
+
+    session
+        .execute_simple(
+            "CREATE SCHEMA IF NOT EXISTS qwry_test;
+             DROP TABLE IF EXISTS qwry_test.qwry_scratch_ctid;
+             CREATE TABLE qwry_test.qwry_scratch_ctid (a int, b text);
+             INSERT INTO qwry_test.qwry_scratch_ctid VALUES (1, 'one'), (2, 'two')",
+        )
+        .await
+        .expect("setup");
+
+    let sql = "SELECT ctid, a, b FROM qwry_test.qwry_scratch_ctid ORDER BY a";
+    let map = session.editability(sql, 0, None).await.expect("map");
+    assert!(map.columns[1].editable, "no-PK table with ctid in result must be editable");
+    assert!(map.columns[1].warn.as_deref().unwrap_or("").contains("ctid"));
+    let oid = map.columns[1].table_oid;
+
+    let rows = session.execute_simple(sql).await.expect("read").statements.remove(0).rows;
+    let ctid1 = rows[0][0].clone();
+
+    // guard mismatch: pretend the row's old values were different → 0 matched
+    let edits = vec![RowEdit {
+        table_oid: oid,
+        col: 2,
+        value: Some("changed".into()),
+        use_default: false,
+        pk: vec![(0, ctid1.clone())],
+        guard: vec![(1, Some("1".into())), (2, Some("STALE-OLD-VALUE".into()))],
+    }];
+    let outcome = session.apply_edits(sql, 0, edits, None).await.expect("apply stale guard");
+    assert!(!outcome.committed, "stale guard must roll back");
+    let check = session
+        .execute_simple("SELECT b FROM qwry_test.qwry_scratch_ctid WHERE a = 1")
+        .await
+        .expect("check");
+    assert_eq!(check.statements[0].rows[0][0].as_deref(), Some("one"), "no write on stale guard");
+
+    // correct guard applies
+    let edits = vec![RowEdit {
+        table_oid: oid,
+        col: 2,
+        value: Some("uno".into()),
+        use_default: false,
+        pk: vec![(0, ctid1.clone())],
+        guard: vec![(1, Some("1".into())), (2, Some("one".into()))],
+    }];
+    let outcome = session.apply_edits(sql, 0, edits, None).await.expect("apply good guard");
+    assert!(outcome.committed, "{:?}", outcome.results);
+
+    // row MOVED (another session's UPDATE gives it a new ctid): the old ctid
+    // locator matches nothing → rollback, never a write to a different row
+    mover
+        .execute_simple("UPDATE qwry_test.qwry_scratch_ctid SET b = 'moved' WHERE a = 1")
+        .await
+        .expect("move row");
+    let edits = vec![RowEdit {
+        table_oid: oid,
+        col: 2,
+        value: Some("after-move".into()),
+        use_default: false,
+        pk: vec![(0, ctid1)],
+        guard: vec![(1, Some("1".into())), (2, Some("uno".into()))],
+    }];
+    let outcome = session.apply_edits(sql, 0, edits, None).await.expect("apply after move");
+    assert!(!outcome.committed, "moved row must not be written through a stale ctid");
+
+    // delete path honors guard pairs too: wrong old value → rollback
+    let rows = session.execute_simple(sql).await.expect("read2").statements.remove(0).rows;
+    let ctid2 = rows.iter().find(|r| r[1].as_deref() == Some("2")).expect("row a=2")[0].clone();
+    let outcome = session
+        .delete_rows(sql, 0, oid, vec![vec![(0, ctid2.clone()), (2, Some("WRONG".into()))]], None)
+        .await
+        .expect("guarded delete stale");
+    assert!(!outcome.committed, "stale delete guard must roll back");
+    let outcome = session
+        .delete_rows(sql, 0, oid, vec![vec![(0, ctid2), (2, Some("two".into()))]], None)
+        .await
+        .expect("guarded delete ok");
+    assert!(outcome.committed);
+    let check = session
+        .execute_simple("SELECT count(*) FROM qwry_test.qwry_scratch_ctid")
+        .await
+        .expect("check2");
+    assert_eq!(check.statements[0].rows[0][0].as_deref(), Some("1"));
+
+    session
+        .execute_simple("DROP TABLE qwry_test.qwry_scratch_ctid")
+        .await
+        .expect("cleanup");
+}
+
+/// GENERATED ALWAYS (stored) and identity-ALWAYS columns are read-only with
+/// precise reasons — on both the derived and the snapshot-hinted paths — and
+/// matviews get an honest reason instead of a dead-end ctid suggestion.
+#[tokio::test]
+#[ignore]
+async fn staging_generated_identity_readonly() {
+    use qwry_lib::driver::postgres::edit::TableIdentityHint;
+
+    let session = connect_db2("test-gen").await;
+    session
+        .execute_simple(
+            "CREATE SCHEMA IF NOT EXISTS qwry_test;
+             DROP TABLE IF EXISTS qwry_test.qwry_scratch_gen;
+             CREATE TABLE qwry_test.qwry_scratch_gen (
+               id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+               a int,
+               dbl int GENERATED ALWAYS AS (a * 2) STORED);
+             INSERT INTO qwry_test.qwry_scratch_gen (a) VALUES (10), (20)",
+        )
+        .await
+        .expect("setup");
+
+    let sql = "SELECT id, a, dbl FROM qwry_test.qwry_scratch_gen ORDER BY id";
+    let map = session.editability(sql, 0, None).await.expect("derived map");
+    assert!(!map.columns[0].editable, "identity ALWAYS must be read-only");
+    assert!(
+        map.columns[0].reason.as_deref().unwrap().contains("identity"),
+        "{:?}",
+        map.columns[0].reason
+    );
+    assert!(map.columns[1].editable, "plain column stays editable");
+    assert!(!map.columns[2].editable, "generated column must be read-only");
+    assert!(
+        map.columns[2].reason.as_deref().unwrap().contains("generated"),
+        "{:?}",
+        map.columns[2].reason
+    );
+
+    // snapshot-hinted path (zero catalog trips) must agree
+    let oid = map.columns[0].table_oid;
+    let identity = vec![TableIdentityHint {
+        table_oid: oid,
+        schema: "qwry_test".into(),
+        name: "qwry_scratch_gen".into(),
+        pk_attnums: vec![1],
+        relkind: "r".into(),
+        generated_attnums: vec![3],
+        identity_always_attnums: vec![1],
+    }];
+    let hinted = session.editability(sql, 0, Some(&identity)).await.expect("hinted map");
+    for (h, d) in hinted.columns.iter().zip(map.columns.iter()) {
+        assert_eq!(h.editable, d.editable, "hinted/derived editable diverged on col {}", d.col);
+    }
+    assert!(hinted.columns[0].reason.as_deref().unwrap().contains("identity"));
+    assert!(hinted.columns[2].reason.as_deref().unwrap().contains("generated"));
+
+    // matview: honest reason, no ctid dead end, no ctid fake-editability
+    session
+        .execute_simple(
+            "DROP MATERIALIZED VIEW IF EXISTS qwry_test.qwry_scratch_mv;
+             CREATE MATERIALIZED VIEW qwry_test.qwry_scratch_mv AS
+               SELECT a FROM qwry_test.qwry_scratch_gen",
+        )
+        .await
+        .expect("matview setup");
+    let mv_map = session
+        .editability("SELECT ctid, a FROM qwry_test.qwry_scratch_mv", 0, None)
+        .await
+        .expect("mv map");
+    assert!(!mv_map.columns[1].editable, "matview column must be read-only even with ctid selected");
+    let reason = mv_map.columns[1].reason.clone().unwrap_or_default();
+    assert!(reason.contains("materialized view"), "reason should name the matview: {reason}");
+    assert!(!reason.to_lowercase().contains("ctid"), "no dead-end ctid suggestion: {reason}");
+
+    session
+        .execute_simple(
+            "DROP MATERIALIZED VIEW qwry_test.qwry_scratch_mv;
+             DROP TABLE qwry_test.qwry_scratch_gen",
+        )
+        .await
+        .expect("cleanup");
+}
+
+/// schema/table names containing literal dots: identity is carried as
+/// separate fields, generated SQL quotes each part, edits hit the right row
+#[tokio::test]
+#[ignore]
+async fn staging_dotted_names() {
+    use qwry_lib::driver::postgres::edit::RowEdit;
+
+    let session = connect_db2("test-dot").await;
+    session
+        .execute_simple(
+            r#"DROP SCHEMA IF EXISTS "qwry.dotted" CASCADE;
+               CREATE SCHEMA "qwry.dotted";
+               CREATE TABLE "qwry.dotted"."ta.ble" (id int PRIMARY KEY, v text);
+               INSERT INTO "qwry.dotted"."ta.ble" VALUES (1, 'one'), (2, 'two')"#,
+        )
+        .await
+        .expect("setup");
+
+    let sql = r#"SELECT id, v FROM "qwry.dotted"."ta.ble" ORDER BY id"#;
+    let map = session.editability(sql, 0, None).await.expect("map");
+    let oid = map.columns[0].table_oid;
+    let r = map.table_refs.get(&oid).expect("table ref");
+    assert_eq!(r.schema, "qwry.dotted");
+    assert_eq!(r.name, "ta.ble");
+    assert!(map.columns[1].editable);
+
+    let preview = session
+        .build_edit_statements(
+            sql,
+            0,
+            &[RowEdit {
+                table_oid: oid,
+                col: 1,
+                value: Some("uno".into()),
+                use_default: false,
+                pk: vec![(0, Some("1".into()))],
+                guard: vec![],
+            }],
+            None,
+        )
+        .await
+        .expect("preview");
+    assert!(
+        preview[0].starts_with(r#"UPDATE "qwry.dotted"."ta.ble" SET"#),
+        "{}",
+        preview[0]
+    );
+
+    let outcome = session
+        .apply_edits(
+            sql,
+            0,
+            vec![RowEdit {
+                table_oid: oid,
+                col: 1,
+                value: Some("uno".into()),
+                use_default: false,
+                pk: vec![(0, Some("1".into()))],
+                guard: vec![],
+            }],
+            None,
+        )
+        .await
+        .expect("apply");
+    assert!(outcome.committed, "{:?}", outcome.results);
+    let check = session
+        .execute_simple(r#"SELECT v FROM "qwry.dotted"."ta.ble" ORDER BY id"#)
+        .await
+        .expect("check");
+    assert_eq!(check.statements[0].rows[0][0].as_deref(), Some("uno"));
+    assert_eq!(check.statements[0].rows[1][0].as_deref(), Some("two"));
+
+    session
+        .execute_simple(r#"DROP SCHEMA "qwry.dotted" CASCADE"#)
+        .await
+        .expect("cleanup");
+}
+
+/// out-of-band cancel: pg_cancel_backend over a FRESH connection kills a
+/// running query without touching the busy session; terminate_backend is the
+/// final tier and kills the whole backend
+#[tokio::test]
+#[ignore]
+async fn staging_oob_cancel() {
+    use qwry_lib::driver::QueryEvent;
+    use std::sync::Arc;
+
+    let session = Arc::new(connect_db2("test-oob").await);
+    assert!(session.backend_pid() > 0, "backend pid must be captured at connect");
+
+    // tier 2 alone (skipping the CancelToken): fresh-connection cancel lands
+    let s2 = session.clone();
+    let canceller = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        s2.cancel_out_of_band().await.expect("oob cancel");
+    });
+    let start = std::time::Instant::now();
+    let mut sink = |_ev: QueryEvent| true;
+    let res = session.execute_stream("SELECT pg_sleep(30)", &mut sink).await;
+    canceller.await.unwrap();
+    assert!(start.elapsed().as_secs() < 6, "oob cancel should kill quickly");
+    let msg = format!("{}", res.expect_err("expected cancel error"));
+    assert!(msg.contains("cancel") || msg.contains("statement"), "unexpected: {msg}");
+    // the session survives a statement cancel
+    session.execute_simple("SELECT 1").await.expect("session alive after oob cancel");
+
+    // tier 3: terminate kills the backend outright
+    let victim = Arc::new(connect_db2("test-oob-victim").await);
+    let v2 = victim.clone();
+    let terminator = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        v2.terminate_backend().await.expect("terminate");
+    });
+    let mut sink = |_ev: QueryEvent| true;
+    let res = victim.execute_stream("SELECT pg_sleep(30)", &mut sink).await;
+    terminator.await.unwrap();
+    assert!(res.is_err(), "terminated query must error");
+    assert!(
+        victim.execute_simple("SELECT 1").await.is_err(),
+        "terminated backend's session must be dead"
+    );
+}
+
+/// driver-tracked tx state: heads + error outcomes, live against the server
+#[tokio::test]
+#[ignore]
+async fn staging_tx_state_tracking() {
+    use qwry_lib::driver::TxState;
+    use std::sync::{Arc, Mutex};
+
+    let session = connect_db2("test-tx").await;
+    let seen: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+    {
+        let seen = seen.clone();
+        session.set_tx_listener(Box::new(move |st| {
+            seen.lock().unwrap().push(st.as_str());
+        }));
+    }
+
+    assert_eq!(session.tx_state(), TxState::Idle);
+    // error OUTSIDE a tx: stays idle
+    let _ = session.execute_simple("SELEC oops").await;
+    assert_eq!(session.tx_state(), TxState::Idle);
+
+    session.execute_simple("BEGIN").await.expect("begin");
+    assert_eq!(session.tx_state(), TxState::InTx);
+    session.execute_simple("SAVEPOINT s1").await.expect("savepoint");
+    assert_eq!(session.tx_state(), TxState::InTx);
+    // error INSIDE the tx: failed
+    let _ = session.execute_simple("SELEC oops").await;
+    assert_eq!(session.tx_state(), TxState::FailedTx);
+    // ROLLBACK TO recovers without ending the tx
+    session.execute_simple("ROLLBACK TO SAVEPOINT s1").await.expect("rb to sp");
+    assert_eq!(session.tx_state(), TxState::InTx);
+    session.execute_simple("COMMIT").await.expect("commit");
+    assert_eq!(session.tx_state(), TxState::Idle);
+
+    // statement-at-a-time path folds too
+    let mut sink = |_ev: qwry_lib::driver::QueryEvent| true;
+    session
+        .execute_stream("BEGIN; SELECT 1", &mut sink)
+        .await
+        .expect("stream begin");
+    assert_eq!(session.tx_state(), TxState::InTx);
+    session
+        .execute_stream("ROLLBACK", &mut sink)
+        .await
+        .expect("stream rollback");
+    assert_eq!(session.tx_state(), TxState::Idle);
+
+    let events = seen.lock().unwrap().clone();
+    assert_eq!(
+        events,
+        vec!["in_tx", "failed_tx", "in_tx", "idle", "in_tx", "idle"],
+        "listener must fire on every state CHANGE"
+    );
 }

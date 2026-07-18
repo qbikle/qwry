@@ -14,6 +14,8 @@ interface InspectorState {
   /** full value fetched on demand for truncated cells */
   fullValue: string | null;
   fullValueFor: string | null;
+  /** why the full-value fetch failed (shown instead of a silent forever-spin) */
+  fullValueError: string | null;
 
   /** bumped when a cell asks the inspector to start editing (e.g. JSON dbl-click) */
   editSeq: number;
@@ -22,6 +24,7 @@ interface InspectorState {
   setWidth: (w: number) => void;
   setTarget: (t: InspectTarget | null) => void;
   setFullValue: (key: string, v: string | null) => void;
+  setFullValueError: (msg: string) => void;
   /** open the inspector on a cell and request edit mode */
   requestEdit: (t: InspectTarget) => void;
 }
@@ -34,18 +37,23 @@ export const useInspector = create<InspectorState>()(
       target: null,
       fullValue: null,
       fullValueFor: null,
+      fullValueError: null,
       editSeq: 0,
 
       toggle: () => set((s) => ({ open: !s.open })),
       setWidth: (w) => set({ width: Math.max(220, Math.min(640, w)) }),
-      setTarget: (t) => set({ target: t, fullValue: null, fullValueFor: null }),
-      setFullValue: (key, v) => set({ fullValue: v, fullValueFor: key }),
+      setTarget: (t) =>
+        set({ target: t, fullValue: null, fullValueFor: null, fullValueError: null }),
+      setFullValue: (key, v) =>
+        set({ fullValue: v, fullValueFor: key, fullValueError: null }),
+      setFullValueError: (msg) => set({ fullValueError: msg }),
       requestEdit: (t) =>
         set((s) => ({
           open: true,
           target: t,
           fullValue: null,
           fullValueFor: null,
+          fullValueError: null,
           editSeq: s.editSeq + 1,
         })),
     }),

@@ -60,6 +60,12 @@ export interface DriverError {
   hint?: string | null;
 }
 
+/** schema + relation name carried SEPARATELY — never split a dotted string */
+export interface TableRef {
+  schema: string;
+  name: string;
+}
+
 export interface ColumnEditMeta {
   col: number;
   table_oid: number;
@@ -67,6 +73,8 @@ export interface ColumnEditMeta {
   editable: boolean;
   reason: string | null;
   type_name: string;
+  /** SQL-safe cast target (quoted/qualified when needed) for generated `::cast` */
+  cast: string;
   /** this result column is the table's ctid (a row locator, not user-editable) */
   is_ctid: boolean;
   /** soft warning shown on an editable cell (e.g. "editing via ctid") */
@@ -77,7 +85,9 @@ export interface EditabilityMap {
   statement_index: number;
   columns: ColumnEditMeta[];
   pk_cols: Record<number, number[]>;
+  /** table_oid → "schema.name" (display only — SQL identity is table_refs) */
   tables: Record<number, string>;
+  table_refs: Record<number, TableRef>;
 }
 
 export interface RowEdit {
@@ -87,16 +97,24 @@ export interface RowEdit {
   /** SET col = DEFAULT (value ignored) */
   use_default?: boolean;
   pk: [number, string | null][];
+  /** old-value predicates ANDed into the WHERE — the ctid row-movement guard */
+  guard?: [number, string | null][];
 }
 
 /** oid → identity from the schema snapshot (mirror of Rust TableIdentityHint).
  * Lets `editability` skip its pg_class round trip — 1 RTT (the prepare). */
 export interface TableIdentityHint {
   table_oid: number;
-  /** "schema.name" exactly as the derived path renders it */
-  dotted: string;
+  schema: string;
+  name: string;
   /** PK attnums in index order; empty = no primary key */
   pk_attnums: number[];
+  /** pg_class.relkind (r/v/m/p/f) */
+  relkind: string;
+  /** attnums with attgenerated ≠ '' (GENERATED ALWAYS AS … columns) */
+  generated_attnums: number[];
+  /** attnums with attidentity = 'a' (GENERATED ALWAYS AS IDENTITY) */
+  identity_always_attnums: number[];
 }
 
 /** one column of a frontend-supplied edit mapping (Rust ColumnMapHint) */
@@ -106,6 +124,8 @@ export interface EditColumnHint {
   attnum: number;
   editable: boolean;
   type_name: string;
+  /** SQL-safe cast target from the map */
+  cast: string;
   is_ctid: boolean;
   /** real column name; null only allowed for ctid columns */
   name: string | null;
@@ -117,7 +137,7 @@ export interface EditColumnHint {
 export interface EditMapHint {
   columns: EditColumnHint[];
   pk_cols: Record<number, number[]>;
-  tables: Record<number, string>;
+  table_refs: Record<number, TableRef>;
 }
 
 export interface EditResult {

@@ -21,7 +21,7 @@ use tokio_postgres::SimpleQueryMessage;
 use super::splitter::split_statement_spans;
 use super::{map_pg_err, PgSession};
 use crate::driver::{
-    ColumnMeta, DriverError, QueryEvent, Result, CELL_CAP, ROW_BATCH, ROW_CAP,
+    ColumnMeta, DriverError, QueryEvent, Result, TxState, CELL_CAP, ROW_BATCH, ROW_CAP,
 };
 
 /// per-result-set row buffer
@@ -41,6 +41,7 @@ impl PgSession {
     ) -> Result<()> {
         let spans = split_statement_spans(sql);
         let total_start = Instant::now();
+        let _busy = super::BusyGuard::new(&self.busy);
 
         let mut alive = true;
         let mut emit = |ev: QueryEvent, alive: &mut bool| {
@@ -63,7 +64,6 @@ impl PgSession {
             let cancellable = {
                 let head = span
                     .sql
-                    .trim_start()
                     .split_whitespace()
                     .next()
                     .unwrap_or("")
@@ -93,6 +93,7 @@ impl PgSession {
                 Ok(s) => s,
                 Err(e) => {
                     let mapped = rebase(e);
+                    self.note_error_outcome();
                     if let DriverError::Db { message, position, code, detail, hint } = &mapped {
                         emit(
                             QueryEvent::Error {
@@ -154,6 +155,7 @@ impl PgSession {
                         }
                         // stop at the failing statement; earlier statements
                         // have already truly committed (autocommit)
+                        self.note_error_outcome();
                         if let DriverError::Db { message, position, code, detail, hint } = &mapped {
                             emit(
                                 QueryEvent::Error {
@@ -205,13 +207,15 @@ impl PgSession {
                             // last statement (or a dead receiver) draining the
                             // rest of a 10M-row result over the wire for
                             // minutes is pure waste: cancel our own query and
-                            // treat the 57014 as completion
+                            // treat the 57014 as completion. Never inside an
+                            // open transaction — our cancel would abort it.
                             if state.row_count == ROW_CAP + 1
                                 && cancellable
                                 && (last_statement || !alive)
+                                && self.tx_state() == TxState::Idle
                             {
                                 auto_cancelled = true;
-                                let _ = self.cancel().await;
+                                let _ = self.token_cancel().await;
                             }
                             continue; // drain without buffering
                         }
@@ -276,6 +280,7 @@ impl PgSession {
                     _ => {}
                 }
             }
+            self.fold_tx_head(&span.sql);
         }
 
         emit(

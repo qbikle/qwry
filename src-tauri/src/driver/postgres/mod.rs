@@ -1,8 +1,10 @@
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering};
+use std::sync::Mutex;
 use std::time::Instant;
 
 use tokio_postgres::{Client, SimpleQueryMessage};
 
-use super::{ColumnMeta, DriverError, ExecOutcome, Profile, Result, StatementResult};
+use super::{ColumnMeta, DriverError, ExecOutcome, Profile, Result, StatementResult, TxState};
 
 pub mod edit;
 mod execute;
@@ -15,7 +17,22 @@ pub struct PgSession {
     cancel: tokio_postgres::CancelToken,
     tls: TlsChoice,
     conn_handle: tokio::task::JoinHandle<()>,
+    /// connect config kept so cancel escalation can open a FRESH connection
+    /// with the same creds/address — cancel must never depend on the busy
+    /// session's health
+    cfg: tokio_postgres::Config,
+    /// server backend pid, captured at connect (pg_backend_pid()); target of
+    /// pg_cancel_backend / pg_terminate_backend escalation
+    backend_pid: AtomicI32,
+    /// TxState as u8 — authoritative transaction status (see driver::TxState)
+    tx: AtomicU8,
+    /// a statement is currently executing on this session
+    busy: AtomicBool,
+    /// fired on every tx-state CHANGE (frontend chip feed)
+    on_tx: Mutex<Option<TxListener>>,
 }
+
+type TxListener = Box<dyn Fn(TxState) + Send + Sync>;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum TlsChoice {
@@ -81,15 +98,17 @@ fn connect_err(e: tokio_postgres::Error) -> DriverError {
 /// spawn the connection driver task, draining async messages so server-sent
 /// NOTICEs (RAISE NOTICE, implicit-index notes, …) reach the UI instead of
 /// being dropped on the floor. When the connection ends (server drop /
-/// network error) `on_close` fires. An intentional disconnect aborts this task
-/// (PgSession::drop) before it reaches `on_close`, so it only signals a real
-/// death — the frontend uses it to flip the connection's status dot.
+/// network error) `on_close` fires with the error text when there is one.
+/// An intentional disconnect aborts this task (PgSession::drop) before it
+/// reaches `on_close`, so it only signals a real death — the frontend uses it
+/// to flip the connection's status dot.
 fn spawn_session<S, T>(
     client: Client,
     mut connection: tokio_postgres::Connection<S, T>,
     tls: TlsChoice,
+    cfg: tokio_postgres::Config,
     on_notice: Box<dyn Fn(String, String) + Send>,
-    on_close: Box<dyn FnOnce() + Send>,
+    on_close: Box<dyn FnOnce(Option<String>) + Send>,
 ) -> PgSession
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -97,7 +116,7 @@ where
 {
     let cancel = client.cancel_token();
     let conn_handle = tokio::spawn(async move {
-        loop {
+        let reason = loop {
             match futures_util::future::poll_fn(|cx| connection.poll_message(cx)).await {
                 Some(Ok(tokio_postgres::AsyncMessage::Notice(db))) => {
                     on_notice(db.severity().to_string(), db.message().to_string());
@@ -105,18 +124,26 @@ where
                 Some(Ok(_)) => {} // LISTEN notifications etc. — not ours (yet)
                 Some(Err(e)) => {
                     eprintln!("pg connection error: {e}");
-                    break;
+                    break Some(match e.as_db_error() {
+                        Some(db) => db.message().to_string(),
+                        None => e.to_string(),
+                    });
                 }
-                None => break, // clean close
+                None => break Some("connection closed by server".into()),
             }
-        }
-        on_close();
+        };
+        on_close(reason);
     });
     PgSession {
         client,
         cancel,
         tls,
         conn_handle,
+        cfg,
+        backend_pid: AtomicI32::new(0),
+        tx: AtomicU8::new(0),
+        busy: AtomicBool::new(false),
+        on_tx: Mutex::new(None),
     }
 }
 
@@ -130,33 +157,98 @@ pub async fn connect(
     addr: Option<(&str, u16)>,
     statement_timeout_ms: Option<u64>,
     on_notice: Box<dyn Fn(String, String) + Send>,
-    on_close: Box<dyn FnOnce() + Send>,
+    on_close: Box<dyn FnOnce(Option<String>) + Send>,
 ) -> Result<PgSession> {
     let cfg = pg_config(profile, password, addr, statement_timeout_ms.unwrap_or(300_000));
 
     let try_tls = profile.sslmode != "disable";
     let try_plain = profile.sslmode != "require";
 
-    if try_tls {
-        match cfg.connect(tls::connector()).await {
-            Ok((client, connection)) => {
-                return Ok(spawn_session(client, connection, TlsChoice::Tls, on_notice, on_close));
+    let session = 'sess: {
+        if try_tls {
+            match cfg.connect(tls::connector()).await {
+                Ok((client, connection)) => {
+                    break 'sess spawn_session(
+                        client,
+                        connection,
+                        TlsChoice::Tls,
+                        cfg.clone(),
+                        on_notice,
+                        on_close,
+                    );
+                }
+                // a server-sent error (bad password, pg_hba, missing db…) is the real
+                // reason — a plain retry would only mask it with a confusing
+                // "no encryption"/SSL error, so surface the true cause now
+                Err(e) if !try_plain || e.as_db_error().is_some() => {
+                    return Err(connect_err(e));
+                }
+                Err(_) => {} // TLS negotiation/transport failure — fall through to plain
             }
-            // a server-sent error (bad password, pg_hba, missing db…) is the real
-            // reason — a plain retry would only mask it with a confusing
-            // "no encryption"/SSL error, so surface the true cause now
-            Err(e) if !try_plain || e.as_db_error().is_some() => {
-                return Err(connect_err(e));
-            }
-            Err(_) => {} // TLS negotiation/transport failure — fall through to plain
         }
-    }
 
-    let (client, connection) = cfg
-        .connect(tokio_postgres::NoTls)
-        .await
-        .map_err(connect_err)?;
-    Ok(spawn_session(client, connection, TlsChoice::Plain, on_notice, on_close))
+        let (client, connection) = cfg
+            .connect(tokio_postgres::NoTls)
+            .await
+            .map_err(connect_err)?;
+        spawn_session(client, connection, TlsChoice::Plain, cfg.clone(), on_notice, on_close)
+    };
+
+    // capture the backend pid now — cancel escalation targets it from a fresh
+    // connection, so it must be known before any query can get stuck
+    let out = session.execute_simple("SELECT pg_backend_pid()").await?;
+    let pid: i32 = out
+        .statements
+        .first()
+        .and_then(|s| s.rows.first())
+        .and_then(|r| r.first().cloned().flatten())
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(|| DriverError::Connect("could not read backend pid".into()))?;
+    session.backend_pid.store(pid, Ordering::Relaxed);
+    Ok(session)
+}
+
+/// RAII busy marker — cancel escalation polls it to see whether the query died
+struct BusyGuard<'a>(&'a AtomicBool);
+impl<'a> BusyGuard<'a> {
+    fn new(flag: &'a AtomicBool) -> Self {
+        flag.store(true, Ordering::Relaxed);
+        BusyGuard(flag)
+    }
+}
+impl Drop for BusyGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Relaxed);
+    }
+}
+
+/// fold one completed statement's head into the transaction state
+fn fold_tx(state: TxState, sql: &str) -> TxState {
+    let (first, second) = splitter::statement_head(sql);
+    match first.as_str() {
+        "begin" | "start" => TxState::InTx,
+        // COMMIT/END in a failed tx acts as rollback; AND CHAIN opens the next
+        "commit" | "end" => {
+            if second == "and" {
+                TxState::InTx
+            } else {
+                TxState::Idle
+            }
+        }
+        "rollback" | "abort" => {
+            if second == "to" {
+                // ROLLBACK TO SAVEPOINT keeps the tx open and un-fails it
+                TxState::InTx
+            } else if second == "and" {
+                TxState::InTx
+            } else {
+                TxState::Idle
+            }
+        }
+        // two-phase commit dissociates the tx from the session
+        "prepare" if second == "transaction" => TxState::Idle,
+        _ => state,
+    }
 }
 
 impl PgSession {
@@ -164,16 +256,84 @@ impl PgSession {
         self.tls == TlsChoice::Tls
     }
 
+    pub fn backend_pid(&self) -> i32 {
+        self.backend_pid.load(Ordering::Relaxed)
+    }
+
+    pub fn tx_state(&self) -> TxState {
+        match self.tx.load(Ordering::Relaxed) {
+            1 => TxState::InTx,
+            2 => TxState::FailedTx,
+            _ => TxState::Idle,
+        }
+    }
+
+    pub fn set_tx_listener(&self, f: TxListener) {
+        if let Ok(mut slot) = self.on_tx.lock() {
+            *slot = Some(f);
+        }
+    }
+
+    pub(crate) fn set_tx_state(&self, next: TxState) {
+        let raw = match next {
+            TxState::Idle => 0u8,
+            TxState::InTx => 1,
+            TxState::FailedTx => 2,
+        };
+        let prev = self.tx.swap(raw, Ordering::Relaxed);
+        if prev != raw {
+            if let Ok(slot) = self.on_tx.lock() {
+                if let Some(f) = slot.as_ref() {
+                    f(next);
+                }
+            }
+        }
+    }
+
+    /// a statement errored on this session: inside an explicit tx PG aborts
+    /// the tx; outside, the implicit tx dies with the statement (still idle)
+    pub(crate) fn note_error_outcome(&self) {
+        if self.tx_state() != TxState::Idle {
+            self.set_tx_state(TxState::FailedTx);
+        }
+    }
+
+    /// fold a successfully executed statement's head into the tracked state
+    pub(crate) fn fold_tx_head(&self, sql: &str) {
+        self.set_tx_state(fold_tx(self.tx_state(), sql));
+    }
+
+    fn busy(&self) -> bool {
+        self.busy.load(Ordering::Relaxed)
+    }
+
     /// Execute one or more statements via the simple protocol.
     /// All values arrive as wire text — universal across every PG type, and
     /// multi-statement strings work natively. (P2 replaces this with streaming.)
     pub async fn execute_simple(&self, sql: &str) -> Result<ExecOutcome> {
         let start = Instant::now();
-        let msgs = self
-            .client
-            .simple_query(sql)
-            .await
-            .map_err(map_pg_err)?;
+        let msgs = {
+            let _busy = BusyGuard::new(&self.busy);
+            self.client.simple_query(sql).await
+        };
+        let msgs = match msgs {
+            Ok(m) => m,
+            Err(e) => {
+                // a failed multi-statement message rolls back as one implicit
+                // tx; the state only stays open when the user's tx was already
+                // open, or the batch itself may have opened one before failing
+                let heads_open_tx = splitter::split_statements(sql).iter().any(|s| {
+                    matches!(splitter::statement_head(s).0.as_str(), "begin" | "start")
+                });
+                if self.tx_state() != TxState::Idle || heads_open_tx {
+                    self.set_tx_state(TxState::FailedTx);
+                }
+                return Err(map_pg_err(e));
+            }
+        };
+        for stmt in splitter::split_statements(sql) {
+            self.fold_tx_head(&stmt);
+        }
         let total_ms = start.elapsed().as_secs_f64() * 1000.0;
 
         let mut statements: Vec<StatementResult> = Vec::new();
@@ -242,9 +402,9 @@ impl PgSession {
         Ok(ExecOutcome { statements })
     }
 
-    pub async fn cancel(&self) -> Result<()> {
-        // the cancel request opens a NEW connection — through a dead tunnel it
-        // would hang forever, so cancel itself gets a hard deadline
+    /// protocol-level cancel via the CancelToken (opens a new connection —
+    /// through a dead tunnel it would hang forever, hence the hard deadline)
+    pub(crate) async fn token_cancel(&self) -> Result<()> {
         let token = self.cancel.clone();
         let fut = async {
             match self.tls {
@@ -252,11 +412,90 @@ impl PgSession {
                 TlsChoice::Tls => token.cancel_query(tls::connector()).await,
             }
         };
-        match tokio::time::timeout(std::time::Duration::from_secs(3), fut).await {
+        match tokio::time::timeout(std::time::Duration::from_millis(1500), fut).await {
             Ok(res) => res.map_err(|e| DriverError::Internal(format!("cancel failed: {e}"))),
-            Err(_) => Err(DriverError::Internal(
-                "cancel timed out — connection may be dead (disconnect to force)".into(),
-            )),
+            Err(_) => Err(DriverError::Internal("cancel timed out".into())),
+        }
+    }
+
+    /// Escalating cancel: fire the protocol CancelToken, then poll whether the
+    /// query actually died; if it hasn't within ~1.2s, open a FRESH connection
+    /// with the same creds and pg_cancel_backend(pid). Cancel never shares the
+    /// busy session's fate.
+    pub async fn cancel(&self) -> Result<()> {
+        let token_res = self.token_cancel().await;
+
+        for _ in 0..12 {
+            if !self.busy() {
+                return Ok(());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        match self.cancel_out_of_band().await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let token_note = match token_res {
+                    Ok(()) => String::new(),
+                    Err(te) => format!(" (protocol cancel: {te})"),
+                };
+                Err(DriverError::Internal(format!("{e}{token_note}")))
+            }
+        }
+    }
+
+    /// pg_cancel_backend(pid) over a fresh short-lived connection
+    pub async fn cancel_out_of_band(&self) -> Result<()> {
+        let pid = self.backend_pid();
+        if pid == 0 {
+            return Err(DriverError::Internal("backend pid unknown — cannot escalate cancel".into()));
+        }
+        self.run_on_fresh_connection(&format!("SELECT pg_cancel_backend({pid})"))
+            .await
+            .map_err(|e| DriverError::Internal(format!("out-of-band cancel failed: {e}")))
+    }
+
+    /// pg_terminate_backend(pid) over a fresh connection — kills the server
+    /// process outright. Never called automatically; the UI offers it as the
+    /// last tier behind an explicit confirm.
+    pub async fn terminate_backend(&self) -> Result<()> {
+        let pid = self.backend_pid();
+        if pid == 0 {
+            return Err(DriverError::Internal("backend pid unknown — cannot terminate".into()));
+        }
+        self.run_on_fresh_connection(&format!("SELECT pg_terminate_backend({pid})"))
+            .await
+            .map_err(|e| DriverError::Internal(format!("terminate failed: {e}")))
+    }
+
+    async fn run_on_fresh_connection(&self, sql: &str) -> Result<()> {
+        let cfg = self.cfg.clone();
+        let deadline = std::time::Duration::from_secs(5);
+        let run = async {
+            match self.tls {
+                TlsChoice::Tls => {
+                    let (client, conn) = cfg.connect(tls::connector()).await.map_err(connect_err)?;
+                    let h = tokio::spawn(async move {
+                        let _ = conn.await;
+                    });
+                    let res = client.simple_query(sql).await.map_err(map_pg_err);
+                    h.abort();
+                    res.map(|_| ())
+                }
+                TlsChoice::Plain => {
+                    let (client, conn) =
+                        cfg.connect(tokio_postgres::NoTls).await.map_err(connect_err)?;
+                    let h = tokio::spawn(async move {
+                        let _ = conn.await;
+                    });
+                    let res = client.simple_query(sql).await.map_err(map_pg_err);
+                    h.abort();
+                    res.map(|_| ())
+                }
+            }
+        };
+        match tokio::time::timeout(deadline, run).await {
+            Ok(res) => res,
+            Err(_) => Err(DriverError::Internal("timed out opening the control connection".into())),
         }
     }
 }
@@ -282,5 +521,33 @@ fn map_pg_err(e: tokio_postgres::Error) -> DriverError {
             detail: None,
             hint: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tx_tests {
+    use super::fold_tx;
+    use crate::driver::TxState::*;
+
+    #[test]
+    fn fold_transitions() {
+        assert_eq!(fold_tx(Idle, "BEGIN"), InTx);
+        assert_eq!(fold_tx(Idle, "start transaction"), InTx);
+        assert_eq!(fold_tx(InTx, "SELECT 1"), InTx);
+        assert_eq!(fold_tx(InTx, "COMMIT"), Idle);
+        assert_eq!(fold_tx(InTx, "END"), Idle);
+        assert_eq!(fold_tx(FailedTx, "ROLLBACK"), Idle);
+        assert_eq!(fold_tx(FailedTx, "commit"), Idle); // acts as rollback
+        assert_eq!(fold_tx(FailedTx, "ROLLBACK TO SAVEPOINT s"), InTx);
+        assert_eq!(fold_tx(InTx, "ROLLBACK TO s"), InTx);
+        assert_eq!(fold_tx(InTx, "COMMIT AND CHAIN"), InTx);
+        assert_eq!(fold_tx(InTx, "ROLLBACK AND CHAIN"), InTx);
+        assert_eq!(fold_tx(InTx, "ABORT"), Idle);
+        assert_eq!(fold_tx(Idle, "SELECT 1"), Idle);
+        assert_eq!(fold_tx(InTx, "SAVEPOINT s"), InTx);
+        assert_eq!(fold_tx(InTx, "RELEASE SAVEPOINT s"), InTx);
+        assert_eq!(fold_tx(Idle, "-- c\n begin work"), InTx);
+        assert_eq!(fold_tx(InTx, "PREPARE TRANSACTION 'gx'"), Idle);
+        assert_eq!(fold_tx(InTx, "PREPARE p AS SELECT 1"), InTx);
     }
 }

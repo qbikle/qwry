@@ -144,12 +144,27 @@ function buildRowEdits(
     if (!colMeta?.editable) continue;
     const pkColIdxs = map.pk_cols[colMeta.table_oid] ?? [];
     const pk: [number, string | null][] = pkColIdxs.map((pc) => [pc, stmt.rows[e.row]?.[pc] ?? null]);
+    // ctid guard: rows move under UPDATE/VACUUM FULL, so a ctid locator alone
+    // could hit a different row — pin identity with the row's old values
+    // (every same-table column in the result; truncated cells excluded, their
+    // displayed prefix isn't the stored value)
+    const guard: [number, string | null][] = [];
+    if (pkColIdxs.length > 0 && map.columns[pkColIdxs[0]]?.is_ctid) {
+      const seen = new Set<number>();
+      for (const c of map.columns) {
+        if (c.table_oid !== colMeta.table_oid || c.is_ctid || c.attnum <= 0) continue;
+        if (stmt.truncated.has(`${e.row}:${c.col}`) || seen.has(c.attnum)) continue;
+        seen.add(c.attnum);
+        guard.push([c.col, stmt.rows[e.row]?.[c.col] ?? null]);
+      }
+    }
     rowEdits.push({
       table_oid: colMeta.table_oid,
       col: e.col,
       value: e.value,
       use_default: e.useDefault ?? false,
       pk,
+      guard,
     });
     used.push(e);
   }

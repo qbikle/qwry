@@ -17,10 +17,17 @@ pub fn set_password(profile_id: &str, password: &str) -> Result<()> {
         .map_err(|e| DriverError::Internal(format!("keychain save: {e}")))
 }
 
-pub fn get_password(profile_id: &str) -> Result<String> {
-    entry(profile_id)?
-        .get_password()
-        .map_err(|e| DriverError::Internal(format!("keychain read: {e}")))
+/// Ok(None) = no password stored for this profile (fine — connect with "");
+/// Err = the Keychain itself failed, which must NOT silently become an empty
+/// password ("password authentication failed" would blame the wrong thing).
+pub fn get_password(profile_id: &str) -> Result<Option<String>> {
+    match entry(profile_id)?.get_password() {
+        Ok(pw) => Ok(Some(pw)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(DriverError::Internal(format!(
+            "keychain unavailable (stored password could not be read): {e}"
+        ))),
+    }
 }
 
 pub fn delete_password(profile_id: &str) -> Result<()> {
