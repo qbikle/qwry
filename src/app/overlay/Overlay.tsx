@@ -17,23 +17,27 @@ import "./overlay.css";
 
 /** Register this overlay as a layer while mounted: Escape closes it (when it is
  *  the topmost overlay), and an optional `onKey` receives any other key — but
- *  only while topmost, so stacked overlays never both act on one keystroke. */
+ *  only while topmost, so stacked overlays never both act on one keystroke.
+ *  Returns the layer's z-index (from stack position, so a modal opened over the
+ *  palette always paints above it); null until registered. */
 export function useOverlayLayer(
   onClose: () => void,
   onKey?: (e: KeyboardEvent) => void,
-) {
+): number | null {
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
   const keyRef = useRef(onKey);
   keyRef.current = onKey;
-  useEffect(
-    () =>
-      pushOverlay({
-        onClose: () => closeRef.current(),
-        onKey: (e) => keyRef.current?.(e),
-      }),
-    [],
-  );
+  const [z, setZ] = useState<number | null>(null);
+  useEffect(() => {
+    const { z, pop } = pushOverlay({
+      onClose: () => closeRef.current(),
+      onKey: (e) => keyRef.current?.(e),
+    });
+    setZ(z);
+    return pop;
+  }, []);
+  return z;
 }
 
 /** Centered modal: dimmed backdrop, outside-click + Esc to close, portaled to
@@ -53,10 +57,11 @@ export function Modal({
   dismissable?: boolean;
   children: ReactNode;
 }) {
-  useOverlayLayer(onClose, onKey);
+  const z = useOverlayLayer(onClose, onKey);
   return createPortal(
     <div
       className={backdropClassName ?? "ov-backdrop"}
+      style={z != null ? { zIndex: z } : undefined}
       onMouseDown={(e) => {
         if (dismissable && e.target === e.currentTarget) onClose();
       }}
@@ -99,7 +104,9 @@ export function useClampedPosition(
 
 /** Popup anchored at a viewport point (e.g. a right-click), clamped to the
  *  viewport with edge-flip. The positioned wrapper owns left/top — content must
- *  not set its own position. `onKey` (topmost-only) drives keyboard nav. */
+ *  not set its own position. `onKey` (topmost-only) drives keyboard nav.
+ *  Function children receive the layer's z — a separately-portaled panel (e.g.
+ *  a submenu) must paint above this layer's full-screen click catcher. */
 export function AnchoredOverlay({
   point,
   onClose,
@@ -113,15 +120,16 @@ export function AnchoredOverlay({
   onKey?: (e: KeyboardEvent) => void;
   layerClassName?: string;
   margin?: number;
-  children: ReactNode;
+  children: ReactNode | ((z: number | null) => ReactNode);
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
-  useOverlayLayer(onClose, onKey);
+  const z = useOverlayLayer(onClose, onKey);
   const pos = useClampedPosition(wrapRef, point, margin);
 
   return createPortal(
     <div
       className={layerClassName ?? "ov-anchor-layer"}
+      style={z != null ? { zIndex: z } : undefined}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -136,7 +144,7 @@ export function AnchoredOverlay({
           visibility: pos ? "visible" : "hidden",
         }}
       >
-        {children}
+        {typeof children === "function" ? children(z) : children}
       </div>
     </div>,
     document.body,

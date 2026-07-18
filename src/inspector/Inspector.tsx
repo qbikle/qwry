@@ -10,9 +10,11 @@ import {
 } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import * as ipc from "../ipc/commands";
-import { editKey, useEdits } from "../stores/edits";
+import { buildEditMapHint } from "../lib/editHints";
+import { ctidGuardPairs, editKey, useEdits } from "../stores/edits";
 import { useInspector } from "../stores/inspector";
 import { useResults } from "../stores/results";
+import { useSchema } from "../stores/schema";
 import { JsonTree } from "./JsonTree";
 import { JsonField } from "./JsonField";
 import { isArrayType, jsToPgArray, structuredValue } from "./format";
@@ -44,6 +46,7 @@ export function Inspector() {
   const target = useInspector((s) => s.target);
   const fullValue = useInspector((s) => s.fullValue);
   const fullValueFor = useInspector((s) => s.fullValueFor);
+  const fullValueError = useInspector((s) => s.fullValueError);
   const statements = useResults((s) => s.statements);
   const pending = useEdits((s) => s.pending);
   const maps = useEdits((s) => s.maps);
@@ -86,26 +89,42 @@ export function Inspector() {
     const meta = editMap.columns[target.col];
     if (!meta || meta.table_oid === 0) return;
     const pkCols = editMap.pk_cols[meta.table_oid];
-    const table = editMap.tables[meta.table_oid];
-    if (!pkCols || !table) return;
-    const sessionId = useResults.getState().executedSessionId;
-    if (!sessionId) return;
-    const colName = stmt.columns[target.col].name;
-    const wheres = pkCols
-      .map((pc) => {
-        const pkName = stmt.columns[pc].name;
-        const pv = stmt.rows[target.row]?.[pc];
-        return pv === null || pv === undefined
-          ? `"${pkName}" IS NULL`
-          : `"${pkName}" = '${pv.replace(/'/g, "''")}'`;
+    if (!pkCols?.length) return;
+    const res = useResults.getState();
+    const sessionId = res.executedSessionId;
+    const sql = res.executedSql;
+    if (!sessionId || !sql) return;
+    // server-side SQL generation (fetch_cell): real column names via the map
+    // (result aliases don't leak into the WHERE), proper ident quoting,
+    // dot-safe table identity; zero catalog trips with a warm mapping
+    const locator: [number, string | null][] = pkCols.map((pc) => [
+      pc,
+      stmt.rows[target.row]?.[pc] ?? null,
+    ]);
+    // ctid rows move under UPDATE/VACUUM FULL — AND in the same old-value
+    // guard as edits so a moved row shows matched ≠ 1, never a wrong value
+    if (editMap.columns[pkCols[0]]?.is_ctid) {
+      locator.push(...ctidGuardPairs(editMap, meta.table_oid, stmt, target.row));
+    }
+    const snap = res.executedProfileId
+      ? useSchema.getState().snapshots[res.executedProfileId]
+      : undefined;
+    const hint = buildEditMapHint(editMap, snap);
+    let stale = false;
+    ipc
+      .fetchCell(sessionId, sql, target.stmtIndex, target.col, locator, hint)
+      .then((v) => {
+        if (!stale && k) useInspector.getState().setFullValue(k, v);
       })
-      .join(" AND ");
-    const [schema, name] = table.split(".");
-    const q = `SELECT "${colName}"::text FROM "${schema}"."${name}" WHERE ${wheres} LIMIT 1`;
-    void ipc.execute(sessionId, q).then((out) => {
-      const v = out.statements[0]?.rows[0]?.[0] ?? null;
-      if (k) useInspector.getState().setFullValue(k, v);
-    });
+      .catch((e) => {
+        if (!stale)
+          useInspector
+            .getState()
+            .setFullValueError((e as { message?: string }).message ?? String(e));
+      });
+    return () => {
+      stale = true;
+    };
   }, [truncated, target, stmt, editMap, k, fullValueFor]);
 
   // reset edit state when the focused cell changes
@@ -241,10 +260,12 @@ export function Inspector() {
         </div>
       )}
       {truncated && !fullLoaded && (
-        <div className="insp-chip">
-          {editMap === "unavailable" || (editMeta && editMeta.table_oid === 0)
-            ? "showing first 8KB — full value unavailable (result not mapped to a table)"
-            : "Loading full value… editing disabled until loaded"}
+        <div className={`insp-chip${fullValueError ? " ro" : ""}`}>
+          {fullValueError
+            ? `full value fetch failed: ${fullValueError}`
+            : editMap === "unavailable" || (editMeta && editMeta.table_oid === 0)
+              ? "showing first 8KB — full value unavailable (result not mapped to a table)"
+              : "Loading full value… editing disabled until loaded"}
         </div>
       )}
       {lossyNums && (

@@ -9,7 +9,7 @@ import { useInspector } from "../stores/inspector";
 import { useTabs } from "../stores/tabs";
 import { blankProfile, ConnectionRail } from "../sidebar/ConnectionRail";
 import { editorFormat, editorRunText } from "../editor/SqlEditor";
-import { skey } from "../stores/connections";
+import { openTxCount, skey } from "../stores/connections";
 import { overlayOpen } from "./overlay/escStack";
 import { useSettings } from "../stores/settings";
 import { SettingsModal } from "./SettingsModal";
@@ -230,14 +230,25 @@ export function App() {
     loadProfiles();
     void useTabs.getState().load();
 
+    // StrictMode double-mounts this effect — a listener that resolves after
+    // the first mount's cleanup ran must unregister itself, not leak
+    let disposed = false;
+
     // a connection's socket died → flip its dot (auto-reconnects on next run)
     let unlistenClosed: (() => void) | undefined;
     void import("@tauri-apps/api/event").then(({ listen }) =>
-      listen<{ session_id: string; profile_id: string }>("session-closed", (e) => {
-        // session_id lets the store tell a dead SPARE apart from a real drop
-        useConnections.getState().markDisconnected(e.payload.profile_id, e.payload.session_id);
-      }).then((un) => {
-        unlistenClosed = un;
+      listen<{ session_id: string; profile_id: string; reason: string | null }>(
+        "session-closed",
+        (e) => {
+          // session_id lets the store tell a dead SPARE apart from a real
+          // drop; the reason (when driver-known) drives the store's toast
+          useConnections
+            .getState()
+            .markDisconnected(e.payload.profile_id, e.payload.session_id, e.payload.reason);
+        },
+      ).then((un) => {
+        if (disposed) un();
+        else unlistenClosed = un;
       }),
     );
 
@@ -258,13 +269,29 @@ export function App() {
       const draft = Object.values(useBrowser.getState().byTab).some(
         (t) => t.draftRow && Object.keys(t.draftRow).length > 0,
       );
-      if (dirty > 0 || draft) {
+      // open transactions roll back on quit — that loss needs the same
+      // confirm as staged edits, never a silent rollback
+      const txn = useConnections
+        .getState()
+        .profiles.reduce((n, p) => n + openTxCount(p.id), 0);
+      if (dirty > 0 || draft || txn > 0) {
         const { confirmDanger } = await import("../stores/danger");
         const ok = await confirmDanger(
           dirty > 0
             ? `Quit with ${dirty} uncommitted edit${dirty === 1 ? "" : "s"}?`
-            : "Quit with an unfinished new row?",
-          "Staged changes are not written to the database and will be lost.",
+            : draft
+              ? "Quit with an unfinished new row?"
+              : `Quit with ${txn} open transaction${txn === 1 ? "" : "s"}?`,
+          [
+            dirty > 0 || draft
+              ? "Staged changes are not written to the database and will be lost."
+              : null,
+            txn > 0
+              ? `Open transaction${txn === 1 ? "" : "s"} on ${txn} tab${txn === 1 ? "" : "s"} will be rolled back.`
+              : null,
+          ]
+            .filter(Boolean)
+            .join("\n"),
           "Quit",
         );
         if (!ok) return; // keep the app open
@@ -282,7 +309,8 @@ export function App() {
           await requestQuit();
         })
         .then((un) => {
-          unlistenClose = un;
+          if (disposed) un();
+          else unlistenClose = un;
         });
     });
 
@@ -290,6 +318,10 @@ export function App() {
     let unlistenMenu: (() => void) | undefined;
     void import("@tauri-apps/api/event").then(({ listen }) =>
       listen<string>("menu", (e) => {
+        // an open overlay owns the interaction — the menu path used to act
+        // BEHIND modals (Close Tab under an open CloseGuard etc.), mirroring
+        // the keyboard guard below. Help and Quit stay reachable, like ⌘?.
+        if (overlayOpen() && e.payload !== "shortcuts" && e.payload !== "quit") return;
         switch (e.payload) {
           case "new-tab":
             useTabs.getState().newTab();
@@ -359,7 +391,8 @@ export function App() {
             break;
         }
       }).then((un) => {
-        unlistenMenu = un;
+        if (disposed) un();
+        else unlistenMenu = un;
       }),
     );
 
@@ -497,6 +530,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => {
+      disposed = true;
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("qwry:open-history", onOpenHistory);
       unlistenClosed?.();

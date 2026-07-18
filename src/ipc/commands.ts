@@ -6,6 +6,7 @@ import type {
   EditOutcome,
   ExecOutcome,
   HistoryRow,
+  HistoryStatus,
   Profile,
   QueryEvent,
   RowEdit,
@@ -40,6 +41,15 @@ export const connectionUri = (profileId: string, includePassword: boolean) =>
 /** most recent queries across all connections (home dashboard) */
 export const historyRecent = (limit?: number) =>
   invoke<HistoryRow[]>("history_recent", { limit: limit ?? null });
+
+/** record one run — failed/cancelled runs enter history too, flagged */
+export const historyAdd = (
+  profileId: string,
+  sql: string,
+  ms: number,
+  rows: number,
+  status: HistoryStatus,
+) => invoke<void>("history_add", { profileId, sql, ms, rows, status });
 
 /** search history — profileId null searches across every connection */
 export const historySearch = (query: string, profileId?: string | null, limit?: number) =>
@@ -143,6 +153,40 @@ export const deleteRows = (
     rows,
     mapHint: mapHint ?? null,
   });
+
+/** one full (untruncated) cell by table identity + row locator — SQL is
+ * generated server-side with real column names and proper quoting */
+export const fetchCell = (
+  sessionId: string,
+  sql: string,
+  statementIndex: number,
+  col: number,
+  locator: RowLocator,
+  mapHint?: EditMapHint | null,
+) =>
+  invoke<string | null>("fetch_cell", {
+    sessionId,
+    sql,
+    statementIndex,
+    col,
+    locator,
+    mapHint: mapHint ?? null,
+  });
+
+export interface SessionInfo {
+  tls: boolean;
+  backend_pid: number;
+}
+
+/** live session facts: whether TLS is actually on (sslmode=prefer can
+ * silently downgrade) and the server backend pid */
+export const sessionInfo = (sessionId: string) =>
+  invoke<SessionInfo>("session_info", { sessionId });
+
+/** pg_terminate_backend via a fresh control connection — the last cancel
+ * tier; only ever offered behind an explicit confirm */
+export const terminateBackend = (sessionId: string) =>
+  invoke<void>("terminate_backend", { sessionId });
 
 /** last persisted schema snapshot for a profile (raw JSON, parse in TS);
  * null when absent or the stored sig no longer matches the profile */

@@ -160,6 +160,45 @@ export function isAnchors(p: Palette): boolean {
   return !!(p.bg && p.fg && p.primary);
 }
 
+const HEX6 = /^#[0-9a-fA-F]{6}$/;
+const isHex = (v: unknown): v is string => typeof v === "string" && HEX6.test(v);
+
+/** validate a persisted palette. Corrupt seeds (NaN hue, malformed hex) return
+ * null so rehydrate falls back to the default palette — a single bad stored
+ * theme used to expand to NaN CSS vars and brick the whole UI at startup. */
+export function sanitizePalette(raw: unknown): Palette | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const p = raw as Record<string, unknown>;
+  if (typeof p.id !== "string" || p.id === "" || typeof p.name !== "string") return null;
+  const out: Palette = { id: p.id, name: p.name };
+  if (p.custom === true) out.custom = true;
+  if (p.bg !== undefined || p.fg !== undefined || p.primary !== undefined) {
+    // anchors kind — the colour math only handles #rrggbb
+    if (!isHex(p.bg) || !isHex(p.fg) || !isHex(p.primary)) return null;
+    out.bg = p.bg;
+    out.fg = p.fg;
+    out.primary = p.primary;
+    if (p.secondary !== undefined) {
+      if (!isHex(p.secondary)) return null;
+      out.secondary = p.secondary;
+    }
+    return out;
+  }
+  if (p.accent !== undefined) {
+    if (!isHex(p.accent)) return null;
+    out.accent = p.accent;
+  }
+  if (p.hue !== undefined) {
+    if (typeof p.hue !== "number" || !Number.isFinite(p.hue)) return null;
+    out.hue = clamp(p.hue, 0, 360);
+  }
+  if (p.tint !== undefined) {
+    if (typeof p.tint !== "number" || !Number.isFinite(p.tint)) return null;
+    out.tint = clamp(p.tint, 0, 1);
+  }
+  return out;
+}
+
 /** the anchor colours for a palette at a given mode (used when forking) */
 export function anchorsOf(p: Palette, dark: boolean): {
   bg: string;

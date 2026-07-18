@@ -170,6 +170,15 @@ fn build_menu(app: &tauri::App) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // must be registered FIRST (plugins run in registration order): a
+        // second launch focuses this instance and exits instead of racing it
+        // for the shared appdb
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.unminimize();
+                let _ = win.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
@@ -177,8 +186,41 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
-            let appdb = appdb::AppDb::open(&dir)
-                .map_err(|e| format!("app db init failed: {e}"))?;
+            let appdb = match appdb::AppDb::open(&dir) {
+                Ok(db) => db,
+                Err(e) => {
+                    // A refused appdb (e.g. written by a NEWER qwry, or an
+                    // open/migrate failure) used to bubble into the builder's
+                    // bare .expect — the app bounced and died with no
+                    // explanation. Tell the user why, then exit cleanly.
+                    // blocking_show must run OFF the main thread (it would
+                    // deadlock the not-yet-started event loop), so the dialog
+                    // is deferred to a thread and setup completes hidden.
+                    if let Some(win) = app.get_webview_window("main") {
+                        let _ = win.hide();
+                    }
+                    // throwaway state keeps IPC well-defined while the dialog
+                    // is up (the webview still loads and invokes commands)
+                    let stub_dir =
+                        std::env::temp_dir().join(format!("qwry-refused-{}", uuid::Uuid::new_v4()));
+                    if let Ok(stub) = appdb::AppDb::open(&stub_dir) {
+                        app.manage(state::AppState::new(stub));
+                    }
+                    let handle = app.handle().clone();
+                    let message = e.to_string();
+                    std::thread::spawn(move || {
+                        use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+                        handle
+                            .dialog()
+                            .message(&message)
+                            .title("qwry can't start")
+                            .kind(MessageDialogKind::Error)
+                            .blocking_show();
+                        handle.exit(1);
+                    });
+                    return Ok(());
+                }
+            };
             app.manage(state::AppState::new(appdb));
 
             let menu = build_menu(app)?;
@@ -228,6 +270,9 @@ pub fn run() {
             commands::edits_preview,
             commands::edits_apply,
             commands::delete_rows,
+            commands::fetch_cell,
+            commands::session_info,
+            commands::terminate_backend,
             commands::insert_row,
             commands::tabs_list,
             commands::tabs_save,

@@ -86,12 +86,15 @@ function sessionAndSql(): { sessionId: string; sql: string } | null {
   return { sessionId, sql: res.executedSql };
 }
 
+/** the user declined writing through a rebuilt session */
+const DECLINED = Symbol("declined");
+
 /** resolve a LIVE session for commit/preview. The result's executedSessionId
  * may be dead (network drop, dev rebuild) — re-resolve a session ON THE
  * PROFILE THE RESULT CAME FROM. Never the active rail selection: clicking
  * another connected profile (staging→prod!) must not redirect a ⌘S commit
  * to a different database. */
-async function liveSessionId(tabId: string): Promise<string | null> {
+async function liveSessionId(tabId: string): Promise<string | typeof DECLINED | null> {
   const conn = useConnections.getState();
   const res = useResults.getState();
   const tab = res.byTab[tabId];
@@ -103,6 +106,15 @@ async function liveSessionId(tabId: string): Promise<string | null> {
       // executedSessionId, so trigger NOTICEs raised during a commit on the
       // new session would otherwise match no tab and vanish
       if (tab && tab.executedSessionId !== sid) {
+        // the executed session died and this one was built fresh — any open
+        // transaction died with it; writing against current state needs consent
+        const { confirmDanger } = await import("./danger");
+        const ok = await confirmDanger(
+          "Connection was rebuilt",
+          "The connection this result ran on was rebuilt (any open transaction is gone).\nCommit against the current database state?",
+          "Commit",
+        );
+        if (!ok) return DECLINED;
         useResults.setState((st) => {
           const cur = st.byTab[tabId];
           if (!cur) return st;
@@ -119,6 +131,31 @@ async function liveSessionId(tabId: string): Promise<string | null> {
   return tab?.executedSessionId ?? null;
 }
 
+/** ctid row-movement guard: rows move under UPDATE/VACUUM FULL, so a ctid
+ * locator alone could hit a different row — pin identity with the row's old
+ * values (every same-table column in the result; truncated cells excluded,
+ * their displayed prefix isn't the stored value). The backend ANDs these into
+ * the locator, so a moved row becomes matched ≠ 1 instead of a wrong row. */
+export function ctidGuardPairs(
+  map: EditabilityMap,
+  tableOid: number,
+  stmt: { rows: (string | null)[][]; truncated: Set<string> },
+  row: number,
+): [number, string | null][] {
+  const guard: [number, string | null][] = [];
+  const seen = new Set<number>();
+  for (const c of map.columns) {
+    if (c.table_oid !== tableOid || c.is_ctid || c.attnum <= 0) continue;
+    if (stmt.truncated.has(`${row}:${c.col}`) || seen.has(c.attnum)) continue;
+    seen.add(c.attnum);
+    guard.push([c.col, stmt.rows[row]?.[c.col] ?? null]);
+  }
+  return guard;
+}
+
+export const TRUNCATED_LOCATOR_MSG =
+  "locator value is truncated — cannot safely identify this row";
+
 /** group pending edits into RowEdit payloads for one statement (active tab).
  * `used[i]` is the PendingEdit behind `rowEdits[i]` — results from the backend
  * come back in this order, so mapping against `used` (not the unfiltered
@@ -128,7 +165,7 @@ function buildRowEdits(
   map: EditabilityMap,
   stmtIndex: number,
   tabId: string,
-): { rowEdits: RowEdit[]; used: PendingEdit[] } {
+): { rowEdits: RowEdit[]; used: PendingEdit[]; truncatedLocators: number } {
   // read the EDIT'S OWN tab — the top-level mirror follows whichever tab is
   // active, and the user can switch tabs while a commit is in flight; PK
   // values pulled from another tab's rows would write through the WRONG row
@@ -136,24 +173,36 @@ function buildRowEdits(
   const stmt = (res.byTab[tabId]?.statements ?? res.statements).find(
     (s) => s.index === stmtIndex,
   );
-  if (!stmt) return { rowEdits: [], used: [] };
+  if (!stmt) return { rowEdits: [], used: [], truncatedLocators: 0 };
   const rowEdits: RowEdit[] = [];
   const used: PendingEdit[] = [];
+  let truncatedLocators = 0;
   for (const e of pending) {
     const colMeta = map.columns[e.col];
     if (!colMeta?.editable) continue;
     const pkColIdxs = map.pk_cols[colMeta.table_oid] ?? [];
+    // a truncated locator cell holds only the display prefix (>8KB text PK) —
+    // a WHERE built from it matches 0 rows with a misleading message; refuse
+    if (pkColIdxs.some((pc) => stmt.truncated.has(`${e.row}:${pc}`))) {
+      truncatedLocators++;
+      continue;
+    }
     const pk: [number, string | null][] = pkColIdxs.map((pc) => [pc, stmt.rows[e.row]?.[pc] ?? null]);
+    const guard: [number, string | null][] =
+      pkColIdxs.length > 0 && map.columns[pkColIdxs[0]]?.is_ctid
+        ? ctidGuardPairs(map, colMeta.table_oid, stmt, e.row)
+        : [];
     rowEdits.push({
       table_oid: colMeta.table_oid,
       col: e.col,
       value: e.value,
       use_default: e.useDefault ?? false,
       pk,
+      guard,
     });
     used.push(e);
   }
-  return { rowEdits, used };
+  return { rowEdits, used, truncatedLocators };
 }
 
 type SetFn = (fn: (s: EditsState) => Partial<EditsState>) => void;
@@ -212,7 +261,12 @@ interface PreviewEntry {
 /** the exact inputs the open preview was generated from — commit reuses them
  * so the executed SQL is byte-for-byte what the modal showed (same backend
  * generator + same inputs). Invalidated whenever pending edits change. */
-let previewPayload: { sql: string; pendingSig: string; entries: PreviewEntry[] } | null = null;
+let previewPayload: {
+  sql: string;
+  pendingSig: string;
+  entries: PreviewEntry[];
+  truncatedLocators: number;
+} | null = null;
 
 const pendingSig = (pending: Record<string, PendingEdit>) =>
   JSON.stringify(Object.entries(pending).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
@@ -221,7 +275,7 @@ const pendingSig = (pending: Record<string, PendingEdit>) =>
 function buildEntries(
   tab: TabEdits,
   tabId: string,
-): { entries: PreviewEntry[]; skipped: number } {
+): { entries: PreviewEntry[]; skipped: number; truncatedLocators: number } {
   const byStmt = new Map<number, PendingEdit[]>();
   for (const e of Object.values(tab.pending)) {
     const arr = byStmt.get(e.stmtIndex) ?? [];
@@ -231,18 +285,25 @@ function buildEntries(
   const snap = snapshotFor(tabId);
   const entries: PreviewEntry[] = [];
   let skipped = 0;
+  let truncatedLocators = 0;
   for (const [stmtIndex, stmtEdits] of byStmt) {
     const map = tab.maps[stmtIndex];
     if (!map || map === "loading" || map === "unavailable") {
       skipped += stmtEdits.length;
       continue;
     }
-    const { rowEdits, used } = buildRowEdits(stmtEdits, map, stmtIndex, tabId);
-    skipped += stmtEdits.length - used.length;
-    if (rowEdits.length === 0) continue;
-    entries.push({ stmtIndex, rowEdits, used, hint: buildEditMapHint(map, snap) });
+    const built = buildRowEdits(stmtEdits, map, stmtIndex, tabId);
+    truncatedLocators += built.truncatedLocators;
+    skipped += stmtEdits.length - built.used.length - built.truncatedLocators;
+    if (built.rowEdits.length === 0) continue;
+    entries.push({
+      stmtIndex,
+      rowEdits: built.rowEdits,
+      used: built.used,
+      hint: buildEditMapHint(map, snap),
+    });
   }
-  return { entries, skipped };
+  return { entries, skipped, truncatedLocators };
 }
 
 export const useEdits = create<EditsState>((set, get) => ({
@@ -374,6 +435,10 @@ export const useEdits = create<EditsState>((set, get) => ({
     // generated with ZERO server round trips.
     set({ preview: { statements: [], error: null, loading: true } });
     const sessionId = await liveSessionId(tabId);
+    if (sessionId === DECLINED) {
+      set({ preview: null });
+      return;
+    }
     if (!sessionId) {
       set({ preview: { statements: [], error: "no live connection" } });
       return;
@@ -389,7 +454,7 @@ export const useEdits = create<EditsState>((set, get) => ({
       return all;
     };
 
-    let { entries } = buildEntries(get().byTab[tabId] ?? blankEdits(), tabId);
+    let { entries, truncatedLocators } = buildEntries(get().byTab[tabId] ?? blankEdits(), tabId);
     try {
       let statements: string[];
       try {
@@ -399,7 +464,7 @@ export const useEdits = create<EditsState>((set, get) => ({
         // (server truth), rebuild, retry silently. Preview is a read — safe.
         if (!isSchemaErr(e)) throw e;
         for (const en of entries) await refetchMap(set, tabId, en.stmtIndex);
-        entries = buildEntries(get().byTab[tabId] ?? blankEdits(), tabId).entries;
+        ({ entries, truncatedLocators } = buildEntries(get().byTab[tabId] ?? blankEdits(), tabId));
         statements = await gen(entries);
       }
       if (!get().preview?.loading) return; // closed mid-fetch — don't reopen
@@ -407,8 +472,18 @@ export const useEdits = create<EditsState>((set, get) => ({
         sql,
         pendingSig: pendingSig((get().byTab[tabId] ?? blankEdits()).pending),
         entries,
+        truncatedLocators,
       };
-      set({ preview: { statements, error: null } });
+      set({
+        preview: {
+          statements,
+          error: statements.length === 0 && truncatedLocators > 0 ? TRUNCATED_LOCATOR_MSG : null,
+          notice:
+            statements.length > 0 && truncatedLocators > 0
+              ? `${truncatedLocators} edit${truncatedLocators === 1 ? "" : "s"} excluded: ${TRUNCATED_LOCATOR_MSG}`
+              : null,
+        },
+      });
     } catch (e) {
       if (!get().preview?.loading) return;
       set({ preview: { statements: [], error: errMsg(e) } });
@@ -425,6 +500,10 @@ export const useEdits = create<EditsState>((set, get) => ({
     if (!sql || edits.length === 0 || get().committing) return;
     set({ committing: true, lastError: null });
     const sessionId = await liveSessionId(tabId);
+    if (sessionId === DECLINED) {
+      set({ committing: false });
+      return;
+    }
     if (!sessionId) {
       set({ committing: false, lastError: "no live connection" });
       return;
@@ -444,12 +523,16 @@ export const useEdits = create<EditsState>((set, get) => ({
     const sig = pendingSig(tab.pending);
     const stashed =
       previewPayload && previewPayload.sql === sql && previewPayload.pendingSig === sig
-        ? previewPayload.entries
+        ? previewPayload
         : null;
-    const { entries, skipped } = stashed
+    const { entries, skipped, truncatedLocators } = stashed
       ? {
-          entries: stashed,
-          skipped: edits.length - stashed.reduce((n, en) => n + en.used.length, 0),
+          entries: stashed.entries,
+          skipped:
+            edits.length -
+            stashed.entries.reduce((n, en) => n + en.used.length, 0) -
+            stashed.truncatedLocators,
+          truncatedLocators: stashed.truncatedLocators,
         }
       : buildEntries(tab, tabId);
 
@@ -508,6 +591,11 @@ export const useEdits = create<EditsState>((set, get) => ({
     if (skipped > 0) {
       errs.push(`${skipped} edit${skipped === 1 ? "" : "s"} skipped (no editability info) — still staged`);
     }
+    if (truncatedLocators > 0) {
+      errs.push(
+        `${truncatedLocators} edit${truncatedLocators === 1 ? "" : "s"} skipped — ${TRUNCATED_LOCATOR_MSG}`,
+      );
+    }
     // clear ONLY what actually committed — even when a later statement failed;
     // rolled-back and skipped edits stay staged so work is never silently lost
     writeEdits(set, tabId, (t) => {
@@ -532,6 +620,7 @@ export const useEdits = create<EditsState>((set, get) => ({
           sql,
           pendingSig: pendingSig((get().byTab[tabId] ?? blankEdits()).pending),
           entries: rebuilt.entries,
+          truncatedLocators: rebuilt.truncatedLocators,
         };
         set({
           committing: false,

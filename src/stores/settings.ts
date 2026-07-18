@@ -4,6 +4,7 @@ import {
   applyTheme,
   DEFAULT_PALETTE,
   PALETTES,
+  sanitizePalette,
   setGlassAlpha,
   type Mode,
   type Palette,
@@ -69,6 +70,47 @@ function systemDark(): boolean {
   );
 }
 
+/* rehydrate validation — a corrupt qwry.settings blob (NaN sizes, garbage
+ * enums, mangled custom themes) must degrade field-by-field to defaults, never
+ * propagate invalid CSS vars app-wide */
+const finite = (v: unknown, lo: number, hi: number, fallback: number): number =>
+  typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : fallback;
+const pick = <T,>(v: unknown, allowed: readonly T[], fallback: T): T =>
+  allowed.includes(v as T) ? (v as T) : fallback;
+
+function sanitizeSettings(persisted: unknown, current: SettingsState): SettingsState {
+  const p = (typeof persisted === "object" && persisted !== null ? persisted : {}) as Record<
+    string,
+    unknown
+  >;
+  return {
+    ...current,
+    fnInComplete: typeof p.fnInComplete === "boolean" ? p.fnInComplete : current.fnInComplete,
+    fontSize: finite(p.fontSize, 10, 20, current.fontSize),
+    gridFontSize: finite(p.gridFontSize, 10, 18, current.gridFontSize),
+    gridDensity: pick(
+      p.gridDensity,
+      ["compact", "normal", "comfortable"] as const,
+      current.gridDensity,
+    ),
+    wrapLines: typeof p.wrapLines === "boolean" ? p.wrapLines : current.wrapLines,
+    statementTimeoutSecs: finite(p.statementTimeoutSecs, 0, 7200, current.statementTimeoutSecs),
+    formatPreset: typeof p.formatPreset === "string" ? p.formatPreset : current.formatPreset,
+    formatKeywordCase: pick(
+      p.formatKeywordCase,
+      ["upper", "lower", "preserve"] as const,
+      current.formatKeywordCase,
+    ),
+    glassAlpha: finite(p.glassAlpha, 0, 1, current.glassAlpha),
+    mode: pick(p.mode, ["system", "dark", "light"] as const, current.mode),
+    paletteId:
+      typeof p.paletteId === "string" && p.paletteId !== "" ? p.paletteId : DEFAULT_PALETTE,
+    customThemes: Array.isArray(p.customThemes)
+      ? p.customThemes.map(sanitizePalette).filter((t): t is Palette => t !== null)
+      : current.customThemes,
+  };
+}
+
 function resolveDark(mode: Mode): boolean {
   return mode === "system" ? systemDark() : mode === "dark";
 }
@@ -123,6 +165,7 @@ export const useSettings = create<SettingsState>()(
     }),
     {
       name: "qwry.settings",
+      merge: sanitizeSettings,
       partialize: (s) => ({
         fnInComplete: s.fnInComplete,
         fontSize: s.fontSize,

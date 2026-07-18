@@ -21,22 +21,15 @@ import {
   Wand2,
   X,
 } from "lucide-react";
-import { useConnections } from "../stores/connections";
+import { confirmTxRollback, useConnections } from "../stores/connections";
 import { useResults } from "../stores/results";
 import { useSchema } from "../stores/schema";
 import { useSettings, type Mode } from "../stores/settings";
 import { useUI } from "../stores/ui";
 import { useTabs, visibleTabs } from "../stores/tabs";
 import { Modal } from "../app/overlay/Overlay";
+import type { HistoryRow } from "../ipc/types";
 import "./palette.css";
-
-interface HistoryRow {
-  id: number;
-  sql: string;
-  ms: number;
-  rows: number;
-  ran_at: string;
-}
 
 export function Palette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [query, setQuery] = useState("");
@@ -214,8 +207,20 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                   const { activeProfileId: pid, profiles } = useConnections.getState();
                   if (!pid) return;
                   const { useEdits } = await import("../stores/edits");
-                  const pending = Object.values(useEdits.getState().byTab).reduce(
-                    (n, t) => n + Object.keys(t.pending).length,
+                  // count only THIS profile's tabs — staged edits on another
+                  // connection survive its disconnect and must not inflate
+                  // the warning
+                  const tabList = useTabs.getState().tabs;
+                  const pending = Object.entries(useEdits.getState().byTab).reduce(
+                    (n, [tabId, t]) => {
+                      const cnt = Object.keys(t.pending).length;
+                      if (cnt === 0) return n;
+                      const owner =
+                        tabList.find((x) => x.id === tabId)?.profile_id ??
+                        useResults.getState().byTab[tabId]?.executedProfileId ??
+                        null;
+                      return owner === pid ? n + cnt : n;
+                    },
                     0,
                   );
                   const name = profiles.find((p) => p.id === pid)?.name ?? "connection";
@@ -357,8 +362,18 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 // cmdk activate whichever is first in the DOM, not the arrowed one
                 value={`connect ${p.name} ${p.id}`}
                 onSelect={() => {
-                  void useConnections.getState().connect(p.id);
                   close();
+                  void (async () => {
+                    const c = useConnections.getState();
+                    // connected → switch to it; reconnecting would tear down
+                    // every tab session on the profile
+                    if (c.connState[p.id] === "connected") {
+                      c.setActive(p.id);
+                      c.setHome(null);
+                      return;
+                    }
+                    if (await confirmTxRollback(p.id, "Connect")) void c.connect(p.id);
+                  })();
                 }}
               >
                 <Database size={13} />
@@ -379,6 +394,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                   <Clock size={13} />
                   <span className="pal-sql">{h.sql.replace(/\s+/g, " ").slice(0, 90)}</span>
                   <span className="pal-detail">
+                    {h.status !== "ok" && `${h.status} · `}
                     {h.rows} rows · {h.ms.toFixed(0)}ms
                   </span>
                 </Command.Item>

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, ShieldCheck, Trash2, Zap } from "lucide-react";
 import * as ipc from "../ipc/commands";
-import { useConnections } from "../stores/connections";
+import { confirmTxRollback, useConnections } from "../stores/connections";
 import type { Profile } from "../ipc/types";
 import { Avatar, AVATAR_ICONS, AVATAR_PALETTE } from "../sidebar/avatar";
 import { looksLikeDsn, parseDsn } from "./dsn";
@@ -80,8 +80,12 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
     setErr(null);
     try {
       await saveProfile(p, password || undefined);
+      // leave the editor BEFORE connecting: a connect failure used to strand
+      // a blank New Connection form (saveProfile clears `editing`, homeMode
+      // stayed "edit"). On the dashboard the saved card stays visible, shows
+      // the connecting/failed dot, and the failure lands in the ConnToast.
+      setHome("dashboard");
       if (thenConnect) await connect(p.id);
-      else setHome("dashboard");
     } catch (ex) {
       setErr((ex as { message?: string }).message ?? String(ex));
       setSaving(false);
@@ -309,8 +313,11 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
             className={`ce-del${armed ? " armed" : ""}`}
             onClick={() => {
               if (armed) {
-                void deleteProfile(p.id);
-                setHome("dashboard");
+                void (async () => {
+                  if (!(await confirmTxRollback(p.id, "Delete"))) return;
+                  void deleteProfile(p.id);
+                  setHome("dashboard");
+                })();
               } else {
                 setArmed(true);
                 setTimeout(() => setArmed(false), 2000);

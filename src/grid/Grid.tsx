@@ -5,7 +5,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { invoke } from "@tauri-apps/api/core";
 import { useResults, type StatementState } from "../stores/results";
-import { editKey, useEdits } from "../stores/edits";
+import { ctidGuardPairs, editKey, useEdits } from "../stores/edits";
 import * as ipc from "../ipc/commands";
 import type { EditabilityMap } from "../ipc/types";
 import { formatCells, type CopyFormat } from "./clipboard";
@@ -40,6 +40,17 @@ const CHAR_W = 7.3; // SF Mono 12px approximation
 const NUMERIC_TYPES = new Set([
   "int2", "int4", "int8", "float4", "float8", "numeric", "oid", "money",
 ]);
+
+// flash a read-only reason through the status bar's existing message slot —
+// double-click/Enter/type-to-edit on an uneditable cell must never no-op mute
+let reasonTimer: ReturnType<typeof setTimeout> | undefined;
+function flashReadOnlyReason(msg: string) {
+  useEdits.setState({ lastError: msg });
+  clearTimeout(reasonTimer);
+  reasonTimer = setTimeout(() => {
+    if (useEdits.getState().lastError === msg) useEdits.setState({ lastError: null });
+  }, 2500);
+}
 
 /** One data cell — memoized on primitive props so an arrow key / drag step /
  * stream flush repaints only the handful of cells whose state changed, not
@@ -676,7 +687,16 @@ export function Grid({
       const r = rowAt(viewR);
       const c = colAt(viewC);
       const meta = colEditMeta(c);
-      if (!meta?.editable) return;
+      if (!meta?.editable) {
+        flashReadOnlyReason(
+          editMap === "loading"
+            ? "editability still loading — try again in a moment"
+            : editMap === "unavailable" || !editMap
+              ? "read-only: no editability metadata for this result"
+              : `read-only: ${meta?.reason ?? "column is not editable"}`,
+        );
+        return;
+      }
       // a truncated cell's grid value is only the 8KB prefix — editing it
       // inline would commit the prefix over the full value. Route to the
       // inspector, which fetches (and gates editing on) the full value.
@@ -773,8 +793,9 @@ export function Grid({
       const selCols = dataCs.map((dc) => cols[dc]);
       const selRows: (string | null)[][] = [];
       for (let r = rect.r0; r <= rect.r1; r++) {
-        const dataR = rowAt(r);
-        selRows.push(dataCs.map((dc) => rows[dataR][dc]));
+        const row = rows[rowAt(r)];
+        if (!row) continue; // selection outlived a shrunk result — never crash ⌘C
+        selRows.push(dataCs.map((dc) => row[dc]));
       }
       // copy-as-INSERT gets the REAL table name (single-source results) and
       // drops locator ctid columns — an INSERT with ctid is invalid SQL
@@ -1040,6 +1061,7 @@ export function Grid({
         if (!colEditMeta(dataC)?.editable) continue;
         for (let r = rect.r0; r <= rect.r1; r++) {
           const dataR = rowAt(r);
+          if (!rows[dataR]) continue;
           batch.push({
             stmtIndex: statement.index,
             row: dataR,
@@ -1108,6 +1130,7 @@ export function Grid({
       const src = pending[topK] ? pending[topK].value : rows[topR][dataC];
       for (let r = rect.r0 + 1; r <= rect.r1; r++) {
         const dataR = rowAt(r);
+        if (!rows[dataR]) continue;
         batch.push({
           stmtIndex: statement.index,
           row: dataR,
@@ -1144,6 +1167,7 @@ export function Grid({
           const dataC = colAt(viewC);
           if (!colEditMeta(dataC)?.editable) continue;
           const dataR = rowAt(viewR);
+          if (!rows[dataR]) continue;
           batch.push({
             stmtIndex: statement.index,
             row: dataR,
@@ -1159,6 +1183,7 @@ export function Grid({
         if (!colEditMeta(dataC)?.editable) continue;
         for (let r = rect.r0; r <= rect.r1; r++) {
           const dataR = rowAt(r);
+          if (!rows[dataR]) continue;
           batch.push({
             stmtIndex: statement.index,
             row: dataR,
@@ -1202,7 +1227,7 @@ export function Grid({
         // refocuses instead — a stray Esc must never eat half-typed data
         // (discarding stays a deliberate act: Esc inside the band)
         const hasContent = Object.values(useBrowser.getState().draftRow ?? {}).some(
-          (c) => c.isNull || c.text !== "",
+          (c) => c.isNull || c.touched || c.text !== "",
         );
         e.preventDefault();
         if (hasContent) {
@@ -1339,21 +1364,36 @@ export function Grid({
     const pkCols = map.pk_cols[deletableTableOid];
     if (!pkCols?.length) return;
 
+    // ctid locators get the same row-movement guard as edits: pin identity
+    // with the row's old values (untruncated same-table columns, deduped)
+    const isCtid = map.columns[pkCols[0]]?.is_ctid;
     const locators: [number, string | null][][] = [];
     for (let r = rect.r0; r <= rect.r1; r++) {
       const dataR = rowAt(r);
-      locators.push(pkCols.map((pc) => [pc, rows[dataR][pc]] as [number, string | null]));
+      const row = rows[dataR];
+      if (!row) continue; // never build a locator from a phantom row
+      // a truncated locator cell is only the display prefix — a WHERE built
+      // from it matches 0 rows and fails with a misleading message
+      if (pkCols.some((pc) => statement.truncated.has(`${dataR}:${pc}`))) {
+        flashReadOnlyReason("locator value is truncated — cannot safely identify this row");
+        return;
+      }
+      const loc = pkCols.map((pc) => [pc, row[pc]] as [number, string | null]);
+      if (isCtid) loc.push(...ctidGuardPairs(map, deletableTableOid, statement, dataR));
+      locators.push(loc);
     }
+    if (locators.length === 0) return;
     const tableName = map.tables[deletableTableOid] ?? "table";
     const n = locators.length;
     const preview = locators
       .slice(0, 8)
-      .map(
-        (loc) =>
-          `WHERE ${loc
-            .map(([c, v]) => `${cols[c]?.name ?? `col${c}`} = ${v ?? "NULL"}`)
-            .join(" AND ")}`,
-      )
+      .map((loc) => {
+        const parts = loc
+          .slice(0, 4)
+          .map(([c, v]) => `${cols[c]?.name ?? `col${c}`} = ${v ?? "NULL"}`);
+        if (loc.length > 4) parts.push(`… +${loc.length - 4} identity checks`);
+        return `WHERE ${parts.join(" AND ")}`;
+      })
       .join("\n");
 
     const { confirmDanger } = await import("../stores/danger");
@@ -1391,7 +1431,7 @@ export function Grid({
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel.rect, deletableTableOid, editMap, rows, statement.index]);
+  }, [sel.rect, deletableTableOid, editMap, rows, statement.index, statement.truncated, rowAt]);
 
   // planner row estimates for the "Referenced by" submenu — fired when the
   // context menu opens (labels read them by src key). EXPLAIN uses per-value
@@ -1523,13 +1563,27 @@ export function Grid({
     const table = useBrowser.getState().table;
     if (!f || !table) return;
     const dataR = rowAt(f.r);
-    const prefill: Record<string, { text: string; isNull: boolean }> = {};
+    const prefill: Record<string, { text: string; isNull: boolean; touched?: boolean }> = {};
+    // a truncated cell holds only the display prefix — silently inserting it
+    // would corrupt the copy; leave those columns untouched (= DEFAULT) and say so
+    const skippedCols: string[] = [];
     cols.forEach((c, i) => {
       if (c.name === "ctid" || table.pk.includes(c.name)) return;
+      if (statement.truncated.has(`${dataR}:${i}`)) {
+        skippedCols.push(c.name);
+        return;
+      }
       const v = rows[dataR][i];
-      prefill[c.name] = v === null ? { text: "", isNull: true } : { text: v, isNull: false };
+      // prefilled values are deliberate — a duplicated '' must insert '', not DEFAULT
+      prefill[c.name] =
+        v === null ? { text: "", isNull: true } : { text: v, isNull: false, touched: true };
     });
     useBrowser.getState().beginDraft(prefill);
+    if (skippedCols.length > 0) {
+      flashReadOnlyReason(
+        `truncated column${skippedCols.length === 1 ? "" : "s"} not copied (left as DEFAULT): ${skippedCols.join(", ")}`,
+      );
+    }
   };
 
   const resizing = useRef<{ col: number; startX: number; startW: number } | null>(null);
@@ -1714,7 +1768,16 @@ export function Grid({
       onContextMenu={(e) => {
         e.preventDefault();
         setHeaderMenu(null); // one menu at a time
-        if (sel.rect) setMenu({ x: e.clientX, y: e.clientY });
+        // right-click OUTSIDE the selection retargets it to the hit cell —
+        // the menu must act on the cell under the pointer, never on a
+        // leftover selection somewhere else (and a bare right-click on a
+        // cell now selects it instead of showing nothing)
+        const p = cellAt(e);
+        if (p && !inRect(p.r, p.c, sel.rect)) {
+          sel.startDrag(p, false, "cell");
+          sel.endDrag();
+        }
+        if (p || sel.rect) setMenu({ x: e.clientX, y: e.clientY });
       }}
     >
       <div
@@ -1894,13 +1957,19 @@ export function Grid({
                         <input
                           className="vgrid-draft-input"
                           value={cell.isNull ? "" : cell.text}
-                          placeholder={cell.isNull ? "NULL" : "DEFAULT"}
+                          // untouched = DEFAULT; a touched-but-empty field is a
+                          // real '' and must not read as DEFAULT anymore
+                          placeholder={cell.isNull ? "NULL" : cell.touched ? "" : "DEFAULT"}
                           disabled={cell.isNull}
                           // eslint-disable-next-line jsx-a11y/no-autofocus
                           autoFocus={colAt(vc.index) === firstDraftCol}
                           spellCheck={false}
                           onChange={(e) =>
-                            setDraftCell(name, { text: e.target.value, isNull: false })
+                            setDraftCell(name, {
+                              text: e.target.value,
+                              isNull: false,
+                              touched: true,
+                            })
                           }
                           onPaste={(e) => {
                             const text = e.clipboardData.getData("text/plain");
@@ -1908,15 +1977,24 @@ export function Grid({
                             if (!text.includes("\t") && !text.includes("\n")) return;
                             e.preventDefault();
                             // tabs → a copied grid/spreadsheet ROW: spread
-                            // across the draft cells from this column on
+                            // across the draft cells from this column on.
+                            // Empty fields stay untouched (= DEFAULT) — the
+                            // spreadsheet convention; a deliberate '' is still
+                            // reachable by typing in the cell
                             if (text.includes("\t")) {
                               const values = text.replace(/\n+$/, "").split(/\r?\n/)[0].split("\t");
                               let vi = 0;
                               for (let view = vc.index; view < viewColLen && vi < values.length; view++) {
                                 const cn = cols[colAt(view)].name;
                                 if (cn === "ctid") continue;
-                                setDraftCell(cn, { text: values[vi], isNull: false });
+                                const v = values[vi];
                                 vi++;
+                                if (v === "") continue;
+                                setDraftCell(cn, {
+                                  text: v,
+                                  isNull: false,
+                                  touched: true,
+                                });
                               }
                               return;
                             }
@@ -1934,7 +2012,7 @@ export function Grid({
                                 /* not JSON — verbatim */
                               }
                             }
-                            setDraftCell(name, { text: value, isNull: false });
+                            setDraftCell(name, { text: value, isNull: false, touched: true });
                           }}
                         />
                         <button

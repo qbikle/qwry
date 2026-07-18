@@ -8,6 +8,10 @@ export interface ColumnInfo {
   type_oid: number;
   not_null: boolean;
   default: string | null;
+  /** attgenerated ('' none, 's' stored); undefined on pre-v0.7 cached snapshots */
+  generated?: string;
+  /** attidentity ('' none, 'a' always, 'd' by default); undefined on old caches */
+  identity?: string;
 }
 
 export interface TableInfo {

@@ -15,8 +15,19 @@ export type OverlayEntry = {
 const stack: OverlayEntry[] = [];
 let installed = false;
 
+/** stacking base for overlay layers; each push gets BASE_Z + its 1-based depth,
+ *  so a later overlay always paints above the one it opened over */
+const BASE_Z = 50;
+/** ceiling for dynamic overlay z — fixed chrome (prod strip, z 60) must stay
+ *  on top; ties between clamped layers fall back to DOM order */
+export const MAX_OVERLAY_Z = 59;
+let zSeq = 0;
+
 function onKeyDown(e: KeyboardEvent) {
   if (stack.length === 0) return;
+  // IME composition owns the keyboard — Esc/Enter there cancel/commit the
+  // composition, never the overlay
+  if (e.isComposing) return;
   const top = stack[stack.length - 1];
   if (e.key === "Escape") {
     e.preventDefault();
@@ -33,14 +44,20 @@ function ensureListener() {
   window.addEventListener("keydown", onKeyDown, true); // capture
 }
 
-/** Push an overlay; returns an unregister fn. The topmost entry is the one that
- *  receives Escape (→ onClose) and any other key (→ onKey). */
-export function pushOverlay(entry: OverlayEntry): () => void {
+/** Push an overlay; returns its z-index (derived from stack position) and an
+ *  unregister fn. The topmost entry is the one that receives Escape (→ onClose)
+ *  and any other key (→ onKey). */
+export function pushOverlay(entry: OverlayEntry): { z: number; pop: () => void } {
   ensureListener();
   stack.push(entry);
-  return () => {
-    const i = stack.lastIndexOf(entry);
-    if (i >= 0) stack.splice(i, 1);
+  const z = Math.min(BASE_Z + ++zSeq, MAX_OVERLAY_Z);
+  return {
+    z,
+    pop: () => {
+      const i = stack.lastIndexOf(entry);
+      if (i >= 0) stack.splice(i, 1);
+      if (stack.length === 0) zSeq = 0;
+    },
   };
 }
 

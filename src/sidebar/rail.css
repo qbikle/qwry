@@ -107,6 +107,9 @@
 .rail-dot.connecting {
   background: var(--warn);
 }
+.rail-dot.error {
+  background: var(--danger);
+}
 .rail-dot.disconnected {
   display: none;
 }

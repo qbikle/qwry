@@ -6,6 +6,31 @@ export interface StmtSpan {
   to: number;
 }
 
+const isWordChar = (ch: string | undefined) => !!ch && /[A-Za-z0-9_$]/.test(ch);
+
+/** scan past a quoted token starting at the opening quote: doubled quotes
+ * ('' / "") stay inside; backslash escapes count only when `backslash` (E'…') */
+function skipQuoted(src: string, i: number, quote: string, backslash: boolean): number {
+  const n = src.length;
+  let j = i + 1;
+  while (j < n) {
+    const ch = src[j];
+    if (backslash && ch === "\\") {
+      j += 2;
+      continue;
+    }
+    if (ch === quote) {
+      if (src[j + 1] === quote) {
+        j += 2;
+        continue;
+      }
+      return j + 1;
+    }
+    j++;
+  }
+  return n; // unterminated — consume the rest
+}
+
 export function splitStatementSpans(src: string): StmtSpan[] {
   const spans: StmtSpan[] = [];
   const n = src.length;
@@ -20,32 +45,12 @@ export function splitStatementSpans(src: string): StmtSpan[] {
     if (b > a) spans.push({ from: a, to: b });
   };
   while (i < n) {
-    const c = src[i];
-    if (c === "'" || c === '"') {
-      let j = i + 1;
-      while (j < n && src[j] !== c) j++;
-      i = j + 1;
+    const j = skipToken(src, i);
+    if (j !== -1) {
+      i = j;
       continue;
     }
-    if (c === "-" && src[i + 1] === "-") {
-      const end = src.indexOf("\n", i);
-      i = end === -1 ? n : end + 1;
-      continue;
-    }
-    if (c === "/" && src[i + 1] === "*") {
-      const end = src.indexOf("*/", i + 2);
-      i = end === -1 ? n : end + 2;
-      continue;
-    }
-    if (c === "$") {
-      const m = /^\$[A-Za-z_]*\$/.exec(src.slice(i));
-      if (m) {
-        const end = src.indexOf(m[0], i + m[0].length);
-        i = end === -1 ? n : end + m[0].length;
-        continue;
-      }
-    }
-    if (c === ";") {
+    if (src[i] === ";") {
       push(i + 1); // keep the terminator inside the statement
       i++;
       start = i;
@@ -71,14 +76,17 @@ export function spanAtCursor(src: string, pos: number): StmtSpan | null {
 
 /** skip past a string / quoted ident / comment / dollar-quote starting at i —
  * returns the index after the token, or -1 if src[i] starts none of them */
-function skipToken(src: string, i: number): number {
+export function skipToken(src: string, i: number): number {
   const c = src[i];
   const n = src.length;
-  if (c === "'" || c === '"') {
-    let j = i + 1;
-    while (j < n && src[j] !== c) j++;
-    return j + 1;
+  if (c === "'") {
+    // E'…' takes backslash escapes — but only when the E is its own token
+    // (WHERE_E'x' is an identifier followed by a plain string)
+    const prev = src[i - 1];
+    const isE = (prev === "e" || prev === "E") && !isWordChar(src[i - 2]);
+    return skipQuoted(src, i, "'", isE);
   }
+  if (c === '"') return skipQuoted(src, i, '"', false);
   if (c === "-" && src[i + 1] === "-") {
     const end = src.indexOf("\n", i);
     return end === -1 ? n : end + 1;
@@ -88,13 +96,34 @@ function skipToken(src: string, i: number): number {
     return end === -1 ? n : end + 2;
   }
   if (c === "$") {
-    const m = /^\$[A-Za-z_]*\$/.exec(src.slice(i));
+    // tags are identifier-shaped: $$, $q$, $q1$ — but never $1 (a parameter)
+    const m = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(src.slice(i));
     if (m) {
       const end = src.indexOf(m[0], i + m[0].length);
       return end === -1 ? n : end + m[0].length;
     }
   }
   return -1;
+}
+
+/** first bare keyword of a statement, skipping leading comments (lowercased;
+ * "" when none) — head checks on raw regexes miss comment-prefixed statements */
+export function headToken(stmt: string): string {
+  const n = stmt.length;
+  let i = 0;
+  for (;;) {
+    while (i < n && /\s/.test(stmt[i])) i++;
+    if (
+      i < n &&
+      ((stmt[i] === "-" && stmt[i + 1] === "-") || (stmt[i] === "/" && stmt[i + 1] === "*"))
+    ) {
+      i = skipToken(stmt, i);
+      continue;
+    }
+    break;
+  }
+  const m = /^[A-Za-z_][A-Za-z0-9_$]*/.exec(stmt.slice(i));
+  return m ? m[0].toLowerCase() : "";
 }
 
 export interface CteDef {

@@ -13,11 +13,35 @@ use crate::state::AppState;
 struct SessionClosed {
     session_id: String,
     profile_id: String,
+    /// what the driver knows about why (connection error text)
+    reason: Option<String>,
+}
+
+/// session transaction status changed (driver-tracked) — feeds the tx chip
+#[derive(Clone, serde::Serialize)]
+struct TxStateChanged {
+    session_id: String,
+    state: &'static str,
+}
+
+/// an appdb list dropped corrupt rows — surfaced as a frontend toast
+#[derive(Clone, serde::Serialize)]
+struct AppDbWarning {
+    table: &'static str,
+    skipped: usize,
+}
+
+fn warn_skipped(app: &AppHandle, table: &'static str, skipped: usize) {
+    if skipped > 0 {
+        let _ = app.emit("appdb-warning", AppDbWarning { table, skipped });
+    }
 }
 
 #[tauri::command]
-pub async fn profiles_list(state: State<'_, AppState>) -> Result<Vec<Profile>> {
-    state.appdb.list_profiles()
+pub async fn profiles_list(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<Profile>> {
+    let (profiles, skipped) = state.appdb.list_profiles()?;
+    warn_skipped(&app, "profiles", skipped);
+    Ok(profiles)
 }
 
 #[tauri::command]
@@ -68,6 +92,7 @@ pub async fn clone_connection(
     let src = state
         .appdb
         .list_profiles()?
+        .0
         .into_iter()
         .find(|p| p.id == src_profile_id)
         .ok_or(driver::DriverError::Internal("no such profile".into()))?;
@@ -77,8 +102,10 @@ pub async fn clone_connection(
     p.dbname = dbname.clone();
     p.name = format!("{base} · {dbname}");
     state.appdb.save_profile(&p)?;
-    if let Ok(pw) = secrets::get_password(&src_profile_id) {
-        let _ = secrets::set_password(&p.id, &pw);
+    // a keychain failure must surface, not silently leave the clone
+    // password-less (same contract as every other keychain site)
+    if let Some(pw) = secrets::get_password(&src_profile_id)? {
+        secrets::set_password(&p.id, &pw)?;
     }
     Ok(p)
 }
@@ -108,12 +135,13 @@ pub async fn connection_uri(
     let p = state
         .appdb
         .list_profiles()?
+        .0
         .into_iter()
         .find(|p| p.id == profile_id)
         .ok_or(driver::DriverError::Internal("no such profile".into()))?;
     let mut userinfo = uri_encode(&p.user);
     if include_password {
-        let pw = secrets::get_password(&profile_id).unwrap_or_default();
+        let pw = secrets::get_password(&profile_id)?.unwrap_or_default();
         if !pw.is_empty() {
             userinfo.push(':');
             userinfo.push_str(&uri_encode(&pw));
@@ -143,21 +171,23 @@ pub async fn connect(
     let profile = state
         .appdb
         .list_profiles()?
+        .0
         .into_iter()
         .find(|p| p.id == profile_id)
         .ok_or(driver::DriverError::Internal("no such profile".into()))?;
-    let password = secrets::get_password(&profile_id).unwrap_or_default();
+    let password = secrets::get_password(&profile_id)?.unwrap_or_default();
 
     // session id up front so the death callback can name itself
     let session_id = uuid::Uuid::new_v4().to_string();
-    let on_close: Box<dyn FnOnce() + Send> = {
+    let on_close: Box<dyn FnOnce(Option<String>) + Send> = {
         let app = app.clone();
-        let payload = SessionClosed {
-            session_id: session_id.clone(),
-            profile_id: profile_id.clone(),
-        };
-        Box::new(move || {
-            let _ = app.emit("session-closed", payload);
+        let session_id = session_id.clone();
+        let profile_id = profile_id.clone();
+        Box::new(move |reason| {
+            let _ = app.emit(
+                "session-closed",
+                SessionClosed { session_id, profile_id, reason },
+            );
         })
     };
     // server NOTICEs (RAISE NOTICE etc.) → frontend status strip
@@ -199,6 +229,17 @@ pub async fn connect(
         )
         .await?
     };
+    // driver-tracked transaction state → frontend tx chip
+    {
+        let app = app.clone();
+        let sid = session_id.clone();
+        session.set_tx_listener(Box::new(move |st| {
+            let _ = app.emit(
+                "tx-state",
+                TxStateChanged { session_id: sid.clone(), state: st.as_str() },
+            );
+        }));
+    }
     state
         .sessions
         .lock()
@@ -232,7 +273,7 @@ pub async fn test_connection(
 ) -> Result<TestResult> {
     let password = match password {
         Some(p) => p,
-        None => secrets::get_password(&profile.id).unwrap_or_default(),
+        None => secrets::get_password(&profile.id)?.unwrap_or_default(),
     };
     let start = std::time::Instant::now();
     let session = if crate::tunnel::tunnel_host(&profile).is_some() {
@@ -243,7 +284,7 @@ pub async fn test_connection(
             Some(("127.0.0.1", tunnel.local_port)),
             None,
             Box::new(|_, _| {}),
-            Box::new(|| {}),
+            Box::new(|_| {}),
         )
         .await?
     } else {
@@ -253,7 +294,7 @@ pub async fn test_connection(
             None,
             None,
             Box::new(|_, _| {}),
-            Box::new(|| {}),
+            Box::new(|_| {}),
         )
         .await?
     };
@@ -433,6 +474,55 @@ pub async fn delete_rows(
         .await
 }
 
+/// one full (untruncated) cell by table identity + row locator — replaces the
+/// frontend's hand-rolled fetch SQL (aliased/unquoted idents, dotted names)
+#[tauri::command]
+pub async fn fetch_cell(
+    state: State<'_, AppState>,
+    session_id: String,
+    sql: String,
+    statement_index: u32,
+    col: u32,
+    locator: Vec<(u32, Option<String>)>,
+    map_hint: Option<crate::driver::postgres::edit::EditMapHint>,
+) -> Result<Option<String>> {
+    let session = state
+        .session(&session_id)
+        .ok_or(driver::DriverError::NoSession)?;
+    session
+        .fetch_cell(&sql, statement_index, col, locator, map_hint)
+        .await
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct SessionInfo {
+    pub tls: bool,
+    pub backend_pid: i32,
+}
+
+/// live facts about a session the frontend can't know otherwise — whether TLS
+/// is actually on (sslmode=prefer can silently downgrade) and the backend pid
+#[tauri::command]
+pub async fn session_info(state: State<'_, AppState>, session_id: String) -> Result<SessionInfo> {
+    let session = state
+        .session(&session_id)
+        .ok_or(driver::DriverError::NoSession)?;
+    Ok(SessionInfo {
+        tls: session.is_tls(),
+        backend_pid: session.backend_pid(),
+    })
+}
+
+/// pg_terminate_backend over a fresh control connection — the last cancel
+/// tier. Only ever run on explicit user action.
+#[tauri::command]
+pub async fn terminate_backend(state: State<'_, AppState>, session_id: String) -> Result<()> {
+    let session = state
+        .session(&session_id)
+        .ok_or(driver::DriverError::NoSession)?;
+    session.terminate_backend().await
+}
+
 #[tauri::command]
 pub async fn insert_row(
     state: State<'_, AppState>,
@@ -469,33 +559,46 @@ pub async fn history_add(
     sql: String,
     ms: f64,
     rows: i64,
+    status: crate::appdb::HistoryStatus,
 ) -> Result<()> {
-    state.appdb.history_add(&profile_id, &sql, ms, rows)
+    state.appdb.history_add(&profile_id, &sql, ms, rows, status)
 }
 
 #[tauri::command]
 pub async fn history_search(
+    app: AppHandle,
     state: State<'_, AppState>,
     profile_id: Option<String>,
     query: String,
     limit: Option<i64>,
 ) -> Result<Vec<crate::appdb::HistoryRow>> {
-    state
-        .appdb
-        .history_search(profile_id.as_deref(), &query, limit.unwrap_or(100))
+    let (rows, skipped) =
+        state
+            .appdb
+            .history_search(profile_id.as_deref(), &query, limit.unwrap_or(100))?;
+    warn_skipped(&app, "history", skipped);
+    Ok(rows)
 }
 
 #[tauri::command]
 pub async fn history_recent(
+    app: AppHandle,
     state: State<'_, AppState>,
     limit: Option<i64>,
 ) -> Result<Vec<crate::appdb::HistoryRow>> {
-    state.appdb.history_recent(limit.unwrap_or(8))
+    let (rows, skipped) = state.appdb.history_recent(limit.unwrap_or(8))?;
+    warn_skipped(&app, "history", skipped);
+    Ok(rows)
 }
 
 #[tauri::command]
-pub async fn saved_list(state: State<'_, AppState>) -> Result<Vec<crate::appdb::SavedQuery>> {
-    state.appdb.saved_list()
+pub async fn saved_list(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::appdb::SavedQuery>> {
+    let (rows, skipped) = state.appdb.saved_list()?;
+    warn_skipped(&app, "saved_queries", skipped);
+    Ok(rows)
 }
 
 #[tauri::command]

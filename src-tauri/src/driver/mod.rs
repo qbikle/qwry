@@ -114,6 +114,27 @@ pub const ROW_BATCH: usize = 500;
 pub const ROW_CAP: u64 = 50_000;
 pub const CELL_CAP: usize = 8 * 1024;
 
+/// Session transaction status, tracked authoritatively in the driver by
+/// lexing statement heads (tokio-postgres discards the ReadyForQuery status
+/// byte, so this is reconstructed). Known limit: SQL procedures that COMMIT/
+/// ROLLBACK internally (CALL p()) change server state without a lexable head.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TxState {
+    Idle,
+    InTx,
+    FailedTx,
+}
+
+impl TxState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TxState::Idle => "idle",
+            TxState::InTx => "in_tx",
+            TxState::FailedTx => "failed_tx",
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum DriverError {
     #[error("{message}")]

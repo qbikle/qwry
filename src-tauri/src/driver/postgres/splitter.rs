@@ -16,6 +16,62 @@ pub fn split_statements(sql: &str) -> Vec<String> {
     split_statement_spans(sql).into_iter().map(|s| s.sql).collect()
 }
 
+/// First two word-tokens of a statement, lowercased — the common case of
+/// transaction-state folding (BEGIN / ROLLBACK TO / PREPARE TRANSACTION).
+pub fn statement_head(sql: &str) -> (String, String) {
+    let mut it = statement_tokens(sql, 2).into_iter();
+    (it.next().unwrap_or_default(), it.next().unwrap_or_default())
+}
+
+/// Up to `max` leading word-tokens of a statement, lowercased, skipping
+/// comments and whitespace. Lexing stops at anything that isn't a plain word
+/// (quote, digit, punctuation) — tx-control statements are made of plain
+/// keywords only, and PG's optional `WORK`/`TRANSACTION` filler means the
+/// decisive token can sit third or fourth (`ROLLBACK WORK TO SAVEPOINT sp`,
+/// `COMMIT TRANSACTION AND NO CHAIN`).
+pub fn statement_tokens(sql: &str, max: usize) -> Vec<String> {
+    let bytes = sql.as_bytes();
+    let mut i = 0usize;
+    let mut words: Vec<String> = Vec::new();
+    while i < bytes.len() && words.len() < max {
+        match bytes[i] {
+            b'-' if bytes.get(i + 1) == Some(&b'-') => {
+                i += 2;
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                i += 2;
+                let mut depth = 1;
+                while i < bytes.len() && depth > 0 {
+                    if bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'*') {
+                        depth += 1;
+                        i += 2;
+                    } else if bytes[i] == b'*' && bytes.get(i + 1) == Some(&b'/') {
+                        depth -= 1;
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            c if c.is_ascii_alphabetic() || c == b'_' => {
+                let start = i;
+                while i < bytes.len()
+                    && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
+                {
+                    i += 1;
+                }
+                words.push(sql[start..i].to_ascii_lowercase());
+            }
+            c if c.is_ascii_whitespace() => i += 1,
+            _ => break,
+        }
+    }
+    words
+}
+
 pub fn split_statement_spans(sql: &str) -> Vec<StmtSpan> {
     let bytes = sql.as_bytes();
     let mut out = Vec::new();
@@ -232,6 +288,50 @@ mod tests {
             // '\' is a normal string containing one backslash → ; splits
             vec![r"SELECT case_e'\'", "SELECT 2"]
         );
+    }
+
+    #[test]
+    fn statement_heads() {
+        use super::statement_head;
+        assert_eq!(statement_head("BEGIN"), ("begin".into(), "".into()));
+        assert_eq!(
+            statement_head("start transaction isolation level serializable"),
+            ("start".into(), "transaction".into())
+        );
+        assert_eq!(
+            statement_head("-- open it\n/* really */ BEGIN WORK"),
+            ("begin".into(), "work".into())
+        );
+        assert_eq!(
+            statement_head("ROLLBACK TO SAVEPOINT sp1"),
+            ("rollback".into(), "to".into())
+        );
+        assert_eq!(
+            statement_head("COMMIT AND CHAIN"),
+            ("commit".into(), "and".into())
+        );
+        assert_eq!(statement_head("SELECT 1"), ("select".into(), "".into()));
+        assert_eq!(statement_head("  \n /* x */ "), ("".into(), "".into()));
+    }
+
+    #[test]
+    fn statement_token_lexing() {
+        use super::statement_tokens;
+        assert_eq!(
+            statement_tokens("ROLLBACK WORK TO SAVEPOINT sp", 4),
+            vec!["rollback", "work", "to", "savepoint"]
+        );
+        assert_eq!(
+            statement_tokens("COMMIT TRANSACTION AND NO CHAIN", 4),
+            vec!["commit", "transaction", "and", "no"]
+        );
+        assert_eq!(
+            statement_tokens("/* c */ END -- x\n AND CHAIN", 4),
+            vec!["end", "and", "chain"]
+        );
+        // lexing stops at the first non-word token
+        assert_eq!(statement_tokens("PREPARE TRANSACTION 'gx'", 4), vec!["prepare", "transaction"]);
+        assert_eq!(statement_tokens("SELECT 1 + 2", 4), vec!["select"]);
     }
 
     #[test]

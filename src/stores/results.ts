@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import * as ipc from "../ipc/commands";
 import type { ColumnMeta, DriverError, QueryEvent } from "../ipc/types";
-import { skey, useConnections } from "./connections";
+import { headToken } from "../editor/statements";
+import { useConnections } from "./connections";
 import { useTabs } from "./tabs";
 
 export interface StatementState {
@@ -111,6 +112,14 @@ function writeTab(
  * confirm prompts, so a second ⌘↵ during a modal would overwrite the danger
  * resolver and orphan the first invocation */
 const runInflight = new Set<string>();
+
+/** sessions the user force-terminated (last cancel tier) — their run's
+ * connection-closed rejection is a cancel, not an error */
+const terminatedSessions = new Set<string>();
+
+/** statement heads that change the schema (real statement boundaries; heads
+ * read past leading comments) */
+const DDL_HEADS = new Set(["create", "alter", "drop", "comment", "grant", "revoke", "truncate"]);
 
 // Row batches arrive faster than React should render. Buffer per tab+statement
 // and flush on a rAF tick.
@@ -298,6 +307,8 @@ export const useResults = create<ResultsState>((set, get) => ({
     // history timing/rows come from the events themselves — reading the store
     // after the invoke resolves races the rAF row flush and logged ms=0
     let historyRows = 0;
+    let historyDone = false;
+    const runStart = performance.now();
 
     const onEvent = (ev: QueryEvent) => {
       switch (ev.type) {
@@ -372,38 +383,25 @@ export const useResults = create<ResultsState>((set, get) => ({
           break;
         case "finished":
           writeTab(set, tabId, { totalMs: ev.total_ms });
-          void import("@tauri-apps/api/core").then(({ invoke }) =>
-            invoke("history_add", {
-              profileId: activeProfileId,
-              sql,
-              ms: ev.total_ms,
-              rows: historyRows,
-            }),
-          );
+          historyDone = true;
+          void ipc
+            .historyAdd(activeProfileId, sql, ev.total_ms, historyRows, "ok")
+            .catch((err) => console.error("history_add failed", err));
           break;
       }
     };
 
     try {
       await ipc.executeStream(sessionId, sql, onEvent);
-
-      // update the tab's open-transaction flag from what actually ran
-      const txKey = skey(activeProfileId, tabId);
-      let inTx = useConnections.getState().txTabs[txKey] ?? false;
-      for (const st of get().byTab[tabId]?.statements ?? []) {
-        const head = st.sql.trim().toLowerCase();
-        if (/^(begin|start\s+transaction)\b/.test(head)) inTx = true;
-        else if (/^(commit|rollback|end)\b/.test(head)) inTx = false;
-        if (st.error) break;
-      }
-      useConnections.getState().setTxTab(txKey, inTx);
+      // (open-transaction tracking is driver-truth now — the "tx-state"
+      // event listener below feeds txTabs; no SQL sniffing here)
 
       // schema-affecting statement heads (real statement boundaries from the
       // executed run — not a whole-buffer regex) → refresh the snapshot AND
       // every tab's cached editability maps (they carry table/column/pk
       // identity that DDL can invalidate)
       const ranDdl = (get().byTab[tabId]?.statements ?? []).some(
-        (st) => !st.error && /^\s*(create|alter|drop|comment|grant|revoke|truncate)\b/i.test(st.sql),
+        (st) => !st.error && DDL_HEADS.has(headToken(st.sql)),
       );
       if (ranDdl) {
         const { useSchema } = await import("./schema");
@@ -413,16 +411,37 @@ export const useResults = create<ResultsState>((set, get) => ({
       }
     } catch (e) {
       const err = e as DriverError;
+      // 57014 = user cancel, 57P01 = pg_terminate_backend; a force-disconnect
+      // (last cancel tier) rejects with a connection-closed shape instead —
+      // the terminatedSessions flag marks it as the cancel it was
+      const cancelled =
+        err?.code === "57014" || err?.code === "57P01" || terminatedSessions.has(sessionId);
+      // failed/cancelled runs enter history too — flagged, never silently
+      // absent; a failed write logs but must not break the run path
+      if (!historyDone) {
+        historyDone = true;
+        void ipc
+          .historyAdd(
+            activeProfileId,
+            sql,
+            performance.now() - runStart,
+            historyRows,
+            cancelled ? "cancelled" : "error",
+          )
+          .catch((e2) => console.error("history_add failed", e2));
+      }
       writeTab(set, tabId, (t) => ({
         globalError: t.statements.some((st) => st.error) ? null : err,
       }));
       const msg = (err?.message ?? "").toLowerCase();
       if (/connection|closed|communicat|broken pipe|reset|terminat|no such session/.test(msg)) {
-        useConnections.setState((s) => ({
-          connState: { ...s.connState, [activeProfileId]: "disconnected" },
-        }));
+        // reap the EXECUTED session only — sibling tabs on the profile keep
+        // their live sessions (flipping the whole profile contradicted the
+        // per-session reaping in markDisconnected)
+        useConnections.getState().markDisconnected(activeProfileId, sessionId);
       }
     } finally {
+      terminatedSessions.delete(sessionId);
       writeTab(set, tabId, { running: false });
       runInflight.delete(tabId);
     }
@@ -432,29 +451,45 @@ export const useResults = create<ResultsState>((set, get) => ({
     const sessionId = get().executedSessionId;
     if (!sessionId) return;
     try {
+      // escalating cancel: CancelToken, then pg_cancel_backend over a fresh
+      // control connection if the query didn't die — driver-side
       await ipc.cancel(sessionId);
     } catch (e) {
-      // cancel needs a NEW connection to the server — through a dead tunnel it
-      // times out. Escape hatch: kill the tab's session outright (drops the
-      // socket, unsticks the UI; the server reaps the query via keepalives)
-      const { confirmDanger } = await import("./danger");
-      const msg = (e as { message?: string }).message ?? String(e);
-      const ok = await confirmDanger(
-        "Cancel didn't reach the server",
-        `${msg}\n\nForce-disconnect this tab's session? The query stops client-side immediately; a fresh session is created on the next run.`,
-        "Force disconnect",
-      );
-      if (!ok) return;
-      void ipc.disconnect(sessionId);
-      // forget the dead session so the next run builds a fresh one
-      const { useConnections } = await import("./connections");
       const conns = useConnections.getState();
       const entry = Object.entries(conns.tabSessions).find(([, sid]) => sid === sessionId);
-      if (entry) {
-        const [key] = entry;
-        const tabId = key.split("::").slice(1).join("::");
-        conns.closeTabSessions(tabId);
+      // the terminated session's OWN profile — teardown must never touch the
+      // tab's sibling sessions on other profiles
+      const profileId = entry?.[0].split("::")[0] ?? get().executedProfileId;
+      const msg = (e as { message?: string }).message ?? String(e);
+      // the session is already gone — nothing to terminate; just forget it so
+      // the next run builds a fresh one
+      if (msg.includes("no such session")) {
+        if (profileId) conns.markDisconnected(profileId, sessionId);
+        return;
       }
+      // both cancel tiers failed. Last tier: pg_terminate_backend (kills the
+      // server process) + force-disconnect — explicit confirm, never automatic
+      const { confirmDanger } = await import("./danger");
+      const inTx = entry ? !!conns.txTabs[entry[0]] : false;
+      const ok = await confirmDanger(
+        "Cancel didn't stop the query",
+        `${msg}\n\nTerminate the server-side query (pg_terminate_backend) and force-disconnect this tab's session? A fresh session is created on the next run.${
+          inTx ? "\n\nThis tab has an open transaction — it will be rolled back." : ""
+        }`,
+        "Terminate & disconnect",
+      );
+      if (!ok) return;
+      terminatedSessions.add(sessionId); // history logs the fallout as a cancel
+      try {
+        await ipc.terminateBackend(sessionId);
+      } catch {
+        // server unreachable — the teardown below still unsticks the UI;
+        // the server reaps the query via keepalives
+      }
+      // scoped teardown: disconnects + forgets ONLY the executed session (the
+      // old closeTabSessions killed every profile's session for the tab)
+      if (profileId) conns.markDisconnected(profileId, sessionId);
+      else void ipc.disconnect(sessionId);
     }
   },
 }));
@@ -479,6 +514,21 @@ useTabs.subscribe((s, p) => {
     prevTabIds = ids;
   }
 });
+
+// driver-tracked transaction state → the tx chip / amber tab dot. The driver
+// lexes statement heads + error outcomes (tokio-postgres hides ReadyForQuery),
+// so txTabs is server-truth instead of a frontend SQL sniff. failed-tx still
+// counts as open — the transaction exists until COMMIT/ROLLBACK.
+void import("@tauri-apps/api/event").then(({ listen }) =>
+  listen<{ session_id: string; state: "idle" | "in_tx" | "failed_tx" }>("tx-state", (e) => {
+    const conns = useConnections.getState();
+    const entry = Object.entries(conns.tabSessions).find(
+      ([, sid]) => sid === e.payload.session_id,
+    );
+    if (!entry) return; // primary/spare sessions have no chip
+    conns.setTxTab(entry[0], e.payload.state !== "idle");
+  }),
+);
 
 // server NOTICEs → the tab whose session raised them (session ids are unique
 // per tab session, so routing is exact; notices from unknown sessions —
