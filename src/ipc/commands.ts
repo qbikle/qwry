@@ -11,6 +11,7 @@ import type {
   QueryEvent,
   RowEdit,
   TableIdentityHint,
+  TableStats,
 } from "./types";
 
 /** (result-column index, text value) pairs locating one row by PK or ctid */
@@ -89,6 +90,11 @@ export const cancel = (sessionId: string) => invoke<void>("cancel", { sessionId 
 /** server-deparsed CREATE TABLE + constraints + indexes for one table */
 export const tableDdl = (sessionId: string, schema: string, table: string) =>
   invoke<string>("table_ddl", { sessionId, schema, table });
+
+/** Structure-tab depth: constraints, indexes (+scan counts), triggers,
+ * sizes, pg_stat activity, comments — one round trip, read-only */
+export const tableStats = (sessionId: string, schema: string, table: string) =>
+  invoke<TableStats>("table_stats", { sessionId, schema, table });
 
 /** `tablesHint` (from the schema snapshot) lets the backend skip its pg_class
  * round trip — editability then costs only the prepare(). Null → full derive. */

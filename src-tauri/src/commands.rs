@@ -332,6 +332,22 @@ pub async fn table_ddl(
     session.table_ddl(&schema, &table).await
 }
 
+/// Structure-tab depth for one relation: constraints, indexes (with scan
+/// counts), triggers, sizes, pg_stat activity, comments — one round trip,
+/// read-only, runs on whichever session the tab holds.
+#[tauri::command]
+pub async fn table_stats(
+    state: State<'_, AppState>,
+    session_id: String,
+    schema: String,
+    table: String,
+) -> Result<crate::driver::postgres::stats::TableStats> {
+    let session = state
+        .session(&session_id)
+        .ok_or(driver::DriverError::NoSession)?;
+    session.table_stats(&schema, &table).await
+}
+
 #[tauri::command]
 pub async fn disconnect(state: State<'_, AppState>, session_id: String) -> Result<()> {
     // a running query keeps its own Arc alive past removal — cancel it

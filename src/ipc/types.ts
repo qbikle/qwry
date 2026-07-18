@@ -154,6 +154,71 @@ export interface EditOutcome {
   committed: boolean;
 }
 
+// ---- table_stats (Structure tab depth; mirrors postgres/stats.rs) ----------
+
+export interface ConstraintInfo {
+  name: string;
+  /** pg_constraint.contype: p/u/f/c/x/t */
+  kind: string;
+  definition: string;
+}
+
+export interface IndexStatInfo {
+  name: string;
+  definition: string;
+  is_unique: boolean;
+  is_primary: boolean;
+  /** a constraint owns this index — never-used badge must skip it */
+  backs_constraint: boolean;
+  size_bytes: number;
+  size_pretty: string;
+  /** pg_stat_all_indexes.idx_scan; null = no stats row */
+  scans: number | null;
+}
+
+export interface TriggerInfo {
+  name: string;
+  definition: string;
+  enabled: boolean;
+}
+
+export interface TableSizes {
+  table_bytes: number;
+  indexes_bytes: number;
+  total_bytes: number;
+  table_pretty: string;
+  indexes_pretty: string;
+  total_pretty: string;
+}
+
+/** pg_stat_all_tables row (NOT user_tables — matviews vanish there) */
+export interface RelActivity {
+  n_live_tup: number | null;
+  n_dead_tup: number | null;
+  seq_scan: number | null;
+  idx_scan: number | null;
+  last_vacuum: string | null;
+  last_autovacuum: string | null;
+  last_analyze: string | null;
+  last_autoanalyze: string | null;
+}
+
+export interface ColumnComment {
+  column: string;
+  comment: string;
+}
+
+export interface TableStats {
+  constraints: ConstraintInfo[];
+  indexes: IndexStatInfo[];
+  triggers: TriggerInfo[];
+  sizes: TableSizes;
+  /** null = the stats collector has no row for the relation */
+  activity: RelActivity | null;
+  comment: string | null;
+  column_comments: ColumnComment[];
+}
+
 export type QueryEvent =
   | { type: "statement_start"; index: number; sql: string }
   | { type: "columns"; index: number; columns: ColumnMeta[] }

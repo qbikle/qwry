@@ -12,6 +12,8 @@ export interface ColumnInfo {
   generated?: string;
   /** attidentity ('' none, 'a' always, 'd' by default); undefined on old caches */
   identity?: string;
+  /** COMMENT ON COLUMN (pg_description); undefined on pre-v0.8 caches */
+  comment?: string | null;
 }
 
 export interface TableInfo {
@@ -29,6 +31,11 @@ export interface TableInfo {
   /** pg_class.reltuples planner row estimate (-1 = never analyzed); sizes the
    * ctid keyset gate. undefined on pre-v0.7.1 cached snapshots. */
   reltuples?: number | null;
+  /** COMMENT ON TABLE (pg_description); undefined on pre-v0.8 caches */
+  comment?: string | null;
+  /** pg_inherits parent oid — the sidebar nests partitions/children under
+   * their parent. undefined/null = top-level relation or pre-v0.8 cache. */
+  parent_oid?: number | null;
 }
 
 export interface FkInfo {
@@ -60,6 +67,20 @@ export interface EnumInfo {
   labels: string[];
 }
 
+export interface SeqInfo {
+  schema: string;
+  name: string;
+  /** format_type of pg_sequence.seqtypid (int8/int4/int2) */
+  data_type: string | null;
+}
+
+export interface ExtInfo {
+  name: string;
+  version: string;
+  /** schema the extension's objects live in */
+  schema: string;
+}
+
 export interface SchemaSnapshot {
   tables: TableInfo[];
   foreign_keys: FkInfo[];
@@ -68,6 +89,10 @@ export interface SchemaSnapshot {
   indexes: IndexInfo[];
   /** user-defined enum types — powers type-aware cell editors */
   enums: EnumInfo[];
+  /** user-schema sequences — sidebar section; undefined on pre-v0.8 caches */
+  sequences?: SeqInfo[];
+  /** installed extensions — sidebar section; undefined on pre-v0.8 caches */
+  extensions?: ExtInfo[];
   /** current_setting('server_version_num') captured at introspect — gates
    * ctid keyset pagination (tid btree ops are PG 14+). Absent on old caches. */
   server_version_num?: number | null;

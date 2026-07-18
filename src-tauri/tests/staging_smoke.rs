@@ -1805,3 +1805,210 @@ async fn staging_introspect_inheritance() {
         .await
         .expect("cleanup");
 }
+
+// ---------------------------------------------------------------------------
+// v0.8.0-spelunk additions
+// ---------------------------------------------------------------------------
+
+/// Introspect v2: sequences, extensions, table/column comments, and
+/// partition parent oids all ride the SAME single-round-trip batch.
+#[tokio::test]
+#[ignore]
+async fn staging_introspect_v2() {
+    let session = connect_db2("test-iv2").await;
+
+    session
+        .execute_simple(
+            "CREATE SCHEMA IF NOT EXISTS qwry_test;
+             DROP TABLE IF EXISTS qwry_test.qwry_iv2_part CASCADE;
+             DROP SEQUENCE IF EXISTS qwry_test.qwry_iv2_seq;
+             DROP TYPE IF EXISTS qwry_test.qwry_iv2_mood CASCADE;
+             CREATE SEQUENCE qwry_test.qwry_iv2_seq AS bigint;
+             CREATE TYPE qwry_test.qwry_iv2_mood AS ENUM ('sad','ok','happy');
+             CREATE TABLE qwry_test.qwry_iv2_part (id int, k text, PRIMARY KEY (id, k))
+               PARTITION BY LIST (k);
+             CREATE TABLE qwry_test.qwry_iv2_part_a PARTITION OF qwry_test.qwry_iv2_part
+               FOR VALUES IN ('a');
+             CREATE TABLE qwry_test.qwry_iv2_part_b PARTITION OF qwry_test.qwry_iv2_part
+               FOR VALUES IN ('b');
+             COMMENT ON TABLE qwry_test.qwry_iv2_part IS 'iv2 parent';
+             COMMENT ON COLUMN qwry_test.qwry_iv2_part.k IS 'partition key'",
+        )
+        .await
+        .expect("setup");
+
+    let (snap, _) = session.introspect(None).await.expect("introspect");
+    let find = |name: &str| {
+        snap.tables
+            .iter()
+            .find(|t| t.schema == "qwry_test" && t.name == name)
+            .unwrap_or_else(|| panic!("{name} missing from snapshot"))
+    };
+
+    let seq = snap
+        .sequences
+        .iter()
+        .find(|s| s.schema == "qwry_test" && s.name == "qwry_iv2_seq")
+        .expect("sequence missing from snapshot");
+    assert_eq!(seq.data_type.as_deref(), Some("bigint"));
+
+    let en = snap
+        .enums
+        .iter()
+        .find(|e| e.schema == "qwry_test" && e.name == "qwry_iv2_mood")
+        .expect("enum missing from snapshot");
+    assert_eq!(en.labels, vec!["sad", "ok", "happy"]);
+
+    // plpgsql ships in every stock database — the section must never be empty
+    assert!(
+        snap.extensions.iter().any(|x| x.name == "plpgsql" && !x.version.is_empty()),
+        "extensions missing plpgsql: {:?}",
+        snap.extensions
+    );
+
+    let parent = find("qwry_iv2_part");
+    assert_eq!(parent.kind, "p");
+    assert_eq!(parent.comment.as_deref(), Some("iv2 parent"));
+    assert_eq!(parent.parent_oid, None, "a root table must carry no parent");
+    let k = parent
+        .columns
+        .iter()
+        .find(|c| c.name == "k")
+        .expect("k column missing");
+    assert_eq!(k.comment.as_deref(), Some("partition key"));
+
+    for part in ["qwry_iv2_part_a", "qwry_iv2_part_b"] {
+        assert_eq!(
+            find(part).parent_oid,
+            Some(parent.table_oid),
+            "{part} must point at its partition parent"
+        );
+    }
+
+    session
+        .execute_simple(
+            "DROP TABLE qwry_test.qwry_iv2_part CASCADE;
+             DROP SEQUENCE qwry_test.qwry_iv2_seq;
+             DROP TYPE qwry_test.qwry_iv2_mood",
+        )
+        .await
+        .expect("cleanup");
+}
+
+/// table_stats: constraints/indexes/triggers/sizes/activity/comments in one
+/// round trip; the never-used-index inputs are shaped right; and the
+/// pg_stat_ALL_tables source returns an activity row for a MATVIEW (the
+/// pg_stat_user_tables variant drops them).
+#[tokio::test]
+#[ignore]
+async fn staging_table_stats() {
+    let session = connect_db2("test-tstats").await;
+
+    session
+        .execute_simple(
+            "CREATE SCHEMA IF NOT EXISTS qwry_test;
+             DROP MATERIALIZED VIEW IF EXISTS qwry_test.qwry_stats_mv;
+             DROP TABLE IF EXISTS qwry_test.qwry_stats_t CASCADE;
+             CREATE TABLE qwry_test.qwry_stats_t (
+               id int PRIMARY KEY,
+               v text,
+               n int CONSTRAINT qwry_stats_n_pos CHECK (n > 0)
+             );
+             CREATE INDEX qwry_stats_t_v_idx ON qwry_test.qwry_stats_t (v);
+             CREATE OR REPLACE FUNCTION qwry_test.qwry_stats_trg_fn() RETURNS trigger
+               AS $qs$ BEGIN RETURN NEW; END $qs$ LANGUAGE plpgsql;
+             CREATE TRIGGER qwry_stats_trg BEFORE INSERT ON qwry_test.qwry_stats_t
+               FOR EACH ROW EXECUTE FUNCTION qwry_test.qwry_stats_trg_fn();
+             COMMENT ON TABLE qwry_test.qwry_stats_t IS 'stats fixture';
+             COMMENT ON COLUMN qwry_test.qwry_stats_t.v IS 'the v column';
+             INSERT INTO qwry_test.qwry_stats_t VALUES (1, 'one', 1), (2, 'two', 2);
+             CREATE MATERIALIZED VIEW qwry_test.qwry_stats_mv AS
+               SELECT id, v FROM qwry_test.qwry_stats_t",
+        )
+        .await
+        .expect("setup");
+
+    let stats = session
+        .table_stats("qwry_test", "qwry_stats_t")
+        .await
+        .expect("table_stats");
+
+    let pk = stats
+        .constraints
+        .iter()
+        .find(|c| c.kind == "p")
+        .expect("pk constraint missing");
+    assert!(pk.definition.contains("PRIMARY KEY"), "pk def: {}", pk.definition);
+    let chk = stats
+        .constraints
+        .iter()
+        .find(|c| c.name == "qwry_stats_n_pos")
+        .expect("check constraint missing");
+    assert_eq!(chk.kind, "c");
+    assert!(chk.definition.contains("CHECK"), "check def: {}", chk.definition);
+
+    let pkey = stats
+        .indexes
+        .iter()
+        .find(|i| i.is_primary)
+        .expect("pk index missing");
+    assert!(pkey.is_unique && pkey.backs_constraint);
+    let vidx = stats
+        .indexes
+        .iter()
+        .find(|i| i.name == "qwry_stats_t_v_idx")
+        .expect("secondary index missing");
+    assert!(!vidx.is_unique && !vidx.is_primary && !vidx.backs_constraint);
+    assert!(vidx.size_bytes > 0 && !vidx.size_pretty.is_empty());
+    assert!(vidx.definition.contains("CREATE INDEX"), "idx def: {}", vidx.definition);
+    // never-used inputs: fresh index, zero scans, no constraint backing —
+    // exactly the badge shape (pkey must NOT qualify: backs_constraint)
+    assert_eq!(vidx.scans, Some(0), "fresh index must report zero scans");
+
+    let trg = stats
+        .triggers
+        .iter()
+        .find(|t| t.name == "qwry_stats_trg")
+        .expect("trigger missing");
+    assert!(trg.enabled);
+    assert!(trg.definition.contains("BEFORE INSERT"), "trg def: {}", trg.definition);
+
+    assert!(stats.sizes.table_bytes > 0);
+    assert!(stats.sizes.total_bytes >= stats.sizes.table_bytes);
+    assert!(!stats.sizes.total_pretty.is_empty());
+
+    let act = stats.activity.expect("plain table must have a pg_stat row");
+    // collector values lag async — assert presence, not magnitudes
+    assert!(act.n_live_tup.is_some() && act.n_dead_tup.is_some());
+
+    assert_eq!(stats.comment.as_deref(), Some("stats fixture"));
+    assert!(
+        stats
+            .column_comments
+            .iter()
+            .any(|c| c.column == "v" && c.comment == "the v column"),
+        "column comment missing: {:?}",
+        stats.column_comments
+    );
+
+    // THE reason for pg_stat_all_tables: a matview still gets an activity row
+    let mv = session
+        .table_stats("qwry_test", "qwry_stats_mv")
+        .await
+        .expect("matview table_stats");
+    assert!(
+        mv.activity.is_some(),
+        "matview lost its pg_stat row — did the source regress to pg_stat_user_tables?"
+    );
+    assert!(mv.sizes.table_bytes > 0, "matview heap has a size");
+    assert!(mv.triggers.is_empty() && mv.constraints.is_empty());
+
+    session
+        .execute_simple(
+            "DROP MATERIALIZED VIEW qwry_test.qwry_stats_mv;
+             DROP TABLE qwry_test.qwry_stats_t;
+             DROP FUNCTION qwry_test.qwry_stats_trg_fn()",
+        )
+        .await
+        .expect("cleanup");
+}
