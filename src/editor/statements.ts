@@ -106,6 +106,133 @@ export function skipToken(src: string, i: number): number {
   return -1;
 }
 
+/** one changed region of a document edit, in CodeMirror iterChangedRanges
+ * shape: [fromA,toA) in the old doc replaced by [fromB,toB) in the new */
+export interface ChangedRange {
+  fromA: number;
+  toA: number;
+  fromB: number;
+  toB: number;
+}
+
+/** minimal read surface of a CodeMirror Text (kept structural so this module
+ * stays dependency-free and bun-testable) */
+interface DocText {
+  readonly length: number;
+  sliceString(from: number, to: number): string;
+}
+
+/** incremental splitStatementSpans: keep the spans before the edit, re-lex a
+ * bounded window around it, re-attach the (shifted) spans after it once the
+ * lexer re-synchronizes on a statement boundary. Grows the window (up to the
+ * whole tail) when the edit resists adoption — never wrong, only slower.
+ * Restart boundaries are only span ends of NON-final spans: those are always
+ * terminated by a top-level `;` (the `;` branch of the splitter is the only
+ * way a non-final span is pushed). The final span is never one — it may be
+ * unterminated, and can even HAPPEN to end in a `;` that sits inside an
+ * unterminated comment/string — so it is always re-lexed. */
+export function updateStatementSpans(
+  old: StmtSpan[],
+  ranges: readonly ChangedRange[],
+  doc: DocText,
+): StmtSpan[] {
+  if (ranges.length === 0) return old;
+  let fromA = Infinity;
+  let toA = -1;
+  let toB = -1;
+  let delta = 0;
+  for (const r of ranges) {
+    if (r.fromA < fromA) fromA = r.fromA;
+    if (r.toA > toA) toA = r.toA;
+    if (r.toB > toB) toB = r.toB;
+    delta += r.toB - r.fromB - (r.toA - r.fromA);
+  }
+  let p = 0;
+  const maxPrefix = old.length - 1;
+  while (p < maxPrefix && old[p].to < fromA) p++;
+  const prefix = old.slice(0, p);
+  const base = p > 0 ? old[p - 1].to : 0;
+  // spans wholly after the edit stay valid shifted by delta; adopt the first
+  // one whose (shifted) start the re-lex lands on exactly
+  const candidates = new Map<number, number>();
+  for (let i = old.length - 1; i >= 0 && old[i].from >= toA; i--) {
+    candidates.set(old[i].from + delta, i);
+  }
+  const minAdopt = Math.max(toB, base);
+  let hi = Math.min(doc.length, minAdopt + 65536);
+  for (;;) {
+    const tail = lexTail(
+      doc.sliceString(base, hi),
+      base,
+      hi === doc.length,
+      candidates,
+      minAdopt,
+      old,
+      delta,
+    );
+    if (tail) return prefix.length ? prefix.concat(tail) : tail;
+    hi = Math.min(doc.length, base + (hi - base) * 4);
+  }
+}
+
+/** lex statement spans over one window of the doc. Returns null when the
+ * window is too small to decide (a token or the boundary-peek ran off the
+ * end) — the caller grows it. Mirrors splitStatementSpans exactly. */
+function lexTail(
+  text: string,
+  base: number,
+  isFinal: boolean,
+  candidates: Map<number, number>,
+  minAdopt: number,
+  old: StmtSpan[],
+  delta: number,
+): StmtSpan[] | null {
+  const n = text.length;
+  const out: StmtSpan[] = [];
+  let start = 0;
+  let i = 0;
+  const push = (end: number) => {
+    let a = start;
+    let b = end;
+    while (a < b && /\s/.test(text[a])) a++;
+    while (b > a && /\s/.test(text[b - 1])) b--;
+    if (b > a) out.push({ from: base + a, to: base + b });
+  };
+  while (i < n) {
+    const j = skipToken(text, i);
+    if (j !== -1) {
+      // a token that runs to the window edge may be clipped, not unterminated
+      if (j >= n && !isFinal) return null;
+      i = j;
+      continue;
+    }
+    if (text[i] === ";") {
+      push(i + 1);
+      i++;
+      start = i;
+      // boundary: peek at the next statement start for suffix adoption
+      let k = i;
+      while (k < n && /\s/.test(text[k])) k++;
+      if (k >= n) {
+        if (!isFinal) return null;
+      } else {
+        const idx = candidates.get(base + k);
+        if (idx !== undefined && base + k >= minAdopt) {
+          for (let x = idx; x < old.length; x++) {
+            out.push({ from: old[x].from + delta, to: old[x].to + delta });
+          }
+          return out;
+        }
+      }
+      continue;
+    }
+    i++;
+  }
+  if (!isFinal) return null;
+  push(n);
+  return out;
+}
+
 /** first bare keyword of a statement, skipping leading comments (lowercased;
  * "" when none) — head checks on raw regexes miss comment-prefixed statements */
 export function headToken(stmt: string): string {
