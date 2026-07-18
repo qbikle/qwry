@@ -2,6 +2,9 @@
 
 > Session protocol: pick the next unchecked item in the current phase. Build → verify per the phase gate → tick → append session note at bottom. One phase ≈ one session; finishing early, pull from the next phase.
 
+> **▶ ACTIVE PUSH (since 2026-07-18): v0.7 → v0.9 "the launch push".** Plan, wave map, and quality gates live in **[`docs/ROADMAP_v0.9.md`](./ROADMAP_v0.9.md)** — read that next; tick items there + append session notes here as always.
+>
+> *(previous push, complete: v0.3 → v0.6 — see below)*
 > **▶ ACTIVE PUSH (since 2026-06-26): v0.3 → v0.5 "releasable".** The current plan — 5 milestones, 4 cross-cutting tracks (perf · bug-polish · context-menu system · find system), deferred list, and open questions — lives in **[`docs/ROADMAP_v0.5.md`](./ROADMAP_v0.5.md)**. Read that next; tick items + append session notes there. This file keeps the v0.1–v0.2.5 history + the shared session log below.
 
 ## P0 — Scaffold ✅
