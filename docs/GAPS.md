@@ -24,20 +24,20 @@ all feature work.
 ### 1a. Data corruption / wrong writes
 
 - [x] **Multi-statement run is one implicit transaction — UI reports early UPDATEs committed, then a later error rolls back everything** — FIXED 2026-07-02 (keystone): `execute_stream` now runs each split statement as its own `simple_query` (psql autocommit); explicit BEGIN/COMMIT still span; VACUUM works mid-buffer; error positions rebased to whole-buffer chars via `StmtSpan.char_offset`. Proven by `staging_statement_at_a_time` live test. Rode along: StatementStart now fires at true start (real ms for DDL/UPDATE), `affected` always passed through (RETURNING keeps its count).
-- [~] **Editing a truncated (>8KB) cell stages the 8KB prefix — commit destroys everything past 8KB** — GUARDED 2026-07-02: every edit entry point (grid inline editor, inspector pencil/dblclick/editSeq, JSON tree/raw) now refuses until the full value is fetched (chip says so); grid dblclick on truncated routes to inspector and auto-enters edit when loaded. Still open: backend `fetch_cell` command to replace the hand-rolled fetch SQL (quoted/aliased idents, no `.catch`).
+- [x] **Editing a truncated (>8KB) cell stages the 8KB prefix — commit destroys everything past 8KB** — GUARDED 2026-07-02: every edit entry point (grid inline editor, inspector pencil/dblclick/editSeq, JSON tree/raw) now refuses until the full value is fetched (chip says so); grid dblclick on truncated routes to inspector and auto-enters edit when loaded. Still open: backend `fetch_cell` command to replace the hand-rolled fetch SQL (quoted/aliased idents, no `.catch`). — FIXED 2026-07-18 (v0.7.0-bedrock).
 - [x] **Open editor on a NULL cell, click away → stages NULL→`''` silently** — FIXED 2026-07-02: `startedNull` tracked; empty close on a NULL cell stages nothing (empty string only via explicit Set EMPTY); editor shows a NULL placeholder.
 - [x] **One leaf edit re-serializes the whole JSON doc** — FIXED 2026-07-02: raw mode now stages the typed text VERBATIM (parse = validation only) for json AND jsonb; `json` columns tree-edit disabled (raw only); docs containing bare ≥16-digit numbers get tree-edit + pretty-print disabled with a warning chip (raw text shown/copied instead of a rounded re-serialization). Remaining edge: big numbers inside PG *array* raw edits still round (jsToPgArray path).
 - [x] **`structuredValue` treats any text starting `{`/`[` as JSON → text column corrupted** — FIXED 2026-07-02: strict type gate (json/jsonb → JSON.parse; array types → parsePgArray; anything else = plain text); Grid JSON routing now by column type only. Side effect: unmapped results (editability unavailable) show raw text instead of a tree — honest over pretty.
 - [x] **`matched != 1` still COMMITs** — FIXED 2026-07-02: apply_edits/delete_rows now run verify-then-commit (per-statement RETURNING count, any mismatch → ROLLBACK all, `committed:false`); frontend keeps rolled-back edits staged + surfaces why. Proven by `staging_matched_rollback` live test.
 - [x] **Mixed AND/OR filters compile to different logic than the UI shows** — FIXED 2026-07-02: WHERE folds left-associatively, matching the linear UI reading.
-- [ ] **`apply_edits` sends BEGIN…COMMIT on a session already inside the user's transaction → silently commits their open work** — `edit.rs:394`. Track tx state; use SAVEPOINT or refuse.
-- [ ] **ctid-located edits can write a different row after UPDATE/VACUUM row movement** — `edit.rs:169`. Add old-value WHERE predicates or `FOR UPDATE` verify inside the tx.
-- [ ] **Edit casts break on mixed-case / schema-qualified / custom types** — `edit.rs:335,350,481` emit bare `::mystatus`. Quote + schema-qualify via `Type::schema()`.
+- [x] **`apply_edits` sends BEGIN…COMMIT on a session already inside the user's transaction → silently commits their open work** — `edit.rs:394`. Track tx state; use SAVEPOINT or refuse. — FIXED 2026-07-18 (v0.7.0-bedrock).
+- [x] **ctid-located edits can write a different row after UPDATE/VACUUM row movement** — `edit.rs:169`. Add old-value WHERE predicates or `FOR UPDATE` verify inside the tx. — FIXED 2026-07-18 (v0.7.0-bedrock).
+- [x] **Edit casts break on mixed-case / schema-qualified / custom types** — `edit.rs:335,350,481` emit bare `::mystatus`. Quote + schema-qualify via `Type::schema()`. — FIXED 2026-07-18 (v0.7.0-bedrock).
 - [x] **Tree-generated SQL uses unquoted identifiers / Copy-as-INSERT `your_table`** — FIXED 2026-07-02: shared `lib/sqlIdent.ts` (`qi` quote-when-needed w/ reserved list, `qualify`); SchemaTree SELECT/copy refs quoted; copy-as-INSERT emits the real qualified table (single-source results), quoted column names, and drops ctid locator columns.
-- [ ] **GENERATED ALWAYS / identity-ALWAYS columns shown editable — fails only at commit** — `edit.rs:187-245` never reads `attgenerated`/`attidentity`. Mark read-only with reason.
+- [x] **GENERATED ALWAYS / identity-ALWAYS columns shown editable — fails only at commit** — `edit.rs:187-245` never reads `attgenerated`/`attidentity`. Mark read-only with reason. — FIXED 2026-07-18 (v0.7.0-bedrock).
 - [x] **Commit wipes pending edits for statements whose editability map was loading — silently dropped, never applied** — FIXED 2026-07-02: commit clears ONLY keys that actually committed; skipped/rolled-back edits stay staged with a status message.
 - [x] **Draft-row double-commit inserts the row twice** — FIXED 2026-07-02: per-tab in-flight guard on commitDraft.
-- [ ] **Draft row can't express `''`** — `browser.ts:244` skips `text===''` → silently becomes DEFAULT. Track touched-ness; make DEFAULT/NULL/`''` all expressible.
+- [x] **Draft row can't express `''`** — `browser.ts:244` skips `text===''` → silently becomes DEFAULT. Track touched-ness; make DEFAULT/NULL/`''` all expressible. — FIXED 2026-07-18 (v0.7.0-bedrock).
 - [x] **Rename tab pushes the tab's unsaved SQL draft over the linked saved query** — FIXED 2026-07-02: rename updates the saved entry's name only, preserving its stored SQL.
 - [x] **Literal quoting assumes `standard_conforming_strings=on`** — FIXED 2026-07-02: forced on via connect options.
 - [x] **JSON key rename silently overwrites an existing key** — FIXED 2026-07-02: rename onto an existing key is a no-op.
@@ -51,11 +51,11 @@ all feature work.
 - [x] **Cross-tab undo corrupts another tab's SQL** — FIXED 2026-07-02: one EditorState per tab, swapped via `view.setState()` on tab switch — undo history, selection AND cursor are now per-tab (free ride-along: cursor position survives tab switches in-session). Cache dies on theme remount (Compartment fix still separate).
 - [x] **Bulk close (Others/Right/All) bypasses the close guard / close guard ignores the draft row** — FIXED 2026-07-02: bulk closes show ONE aggregate confirm when any closing tab holds staged edits; per-tab close guard now also counts a half-typed inline add-row.
 - [x] **⌘⇧D discard-all-edits: no confirm, no undo** — FIXED 2026-07-02: DangerModal confirm with edit count (undo still a v0.45 item).
-- [ ] **Disconnect / Reconnect / connection-save / recent-strip click silently roll back open transactions** — `connectionMenu.ts:23`, `connections.ts:87`, `Dashboard.tsx:49` (recent-click reconnects even when already connected, killing all tab sessions). Scan `txTabs`, confirm first.
+- [x] **Disconnect / Reconnect / connection-save / recent-strip click silently roll back open transactions** — `connectionMenu.ts:23`, `connections.ts:87`, `Dashboard.tsx:49` (recent-click reconnects even when already connected, killing all tab sessions). Scan `txTabs`, confirm first. — FIXED 2026-07-18 (v0.7.0-bedrock).
 - [~] **Connection editor Esc discards a dirty 8-field form instantly** — FIXED 2026-07-02 for the connection editor (dirty check → "Discard connection changes?" on Esc/Cancel). Still open: inspector JSON/scalar drafts die on Esc/cell-switch with no confirm (`Inspector.tsx`).
 - [x] **A late global error wipes 30k streamed rows off the screen** — FIXED 2026-07-02: error renders as a banner above the grid when statements exist; rows stay browsable.
 - [~] **Restore-closed-tab drops table tabs and `saved_id` links; stack dies on restart** — MOSTLY FIXED 2026-07-02: closed-stack entries now carry kind/table/saved_id — ⌘⇧T reopens table tabs (re-browses) and restores the saved-query link. Stack persistence across restarts still open (needs appdb surface).
-- [~] **Two app instances silently clobber each other's tabs** — busy_timeout added 2026-07-02 (no more instant lock errors); single-instance plugin still open.
+- [x] **Two app instances silently clobber each other's tabs** — busy_timeout added 2026-07-02 (no more instant lock errors); single-instance plugin still open. — FIXED 2026-07-18 (v0.7.0-bedrock).
 
 ### 1c. UI lies (read path)
 
@@ -68,39 +68,40 @@ all feature work.
 - [x] **History lies about timing: ms=0 / undercounted rows race** — FIXED 2026-07-02: history_add now fires from the `finished` event with event-carried ms + summed row counts.
 - [x] **history_search LIKE escaping broken** — FIXED 2026-07-02: `\`, `%`, `_` escaped + `ESCAPE '\\'` clause.
 - [~] **TSV copy mutates data / CSV misses `\r` / JSON collides duplicate columns** — FIXED 2026-07-02: Excel-convention TSV quoting (data never mutated), CSV escapes `\r`, markdown cells `\n`→`<br>`, JSON dedupes duplicate keys (`id`, `id_2`). Still open: JSON values all strings (needs type-aware coercion).
-- [ ] **sslmode=prefer can silently downgrade to plaintext — outcome never surfaced** — `mod.rs:100-119`. Lock indicator + downgrade warning.
-- [ ] **One dead tab session flips the whole profile to "disconnected" AND leaks live backend sessions** — `App.tsx:97` ignores `session_id`; `markDisconnected` (`connections.ts:196`) drops map entries without `ipc.disconnect`. Also: deleting a connected profile leaks primary session + ssh tunnel (`connections.ts:94`).
-- [ ] **Keychain failure silently becomes empty password → "password authentication failed" points at the wrong problem** — `commands.rs:94` `unwrap_or_default()`.
+- [x] **sslmode=prefer can silently downgrade to plaintext — outcome never surfaced** — `mod.rs:100-119`. Lock indicator + downgrade warning. — FIXED 2026-07-18 (v0.7.0-bedrock).
+- [x] **One dead tab session flips the whole profile to "disconnected" AND leaks live backend sessions** — `App.tsx:97` ignores `session_id`; `markDisconnected` (`connections.ts:196`) drops map entries without `ipc.disconnect`. Also: deleting a connected profile leaks primary session + ssh tunnel (`connections.ts:94`). — FIXED 2026-07-18 (v0.7.0-bedrock).
+- [x] **Keychain failure silently becomes empty password → "password authentication failed" points at the wrong problem** — `commands.rs:94` `unwrap_or_default()`. — FIXED 2026-07-18 (v0.7.0-bedrock).
 - [~] **Error position semantics** — PARTIAL FIX 2026-07-02: driver now rebases per-statement PG positions onto whole-buffer chars (squiggles correct for statement index > 0). Still open: UTF-16 vs chars drift on non-ASCII in the frontend anchor (`SqlEditor.tsx:166`), and selection runs get no squiggle at all (`SqlEditor.tsx:162`).
 - [x] **PG DETAIL/HINT dropped from every error** — FIXED 2026-07-02: DriverError::Db + QueryEvent::Error carry detail/hint end-to-end; rendered in the results error pane and in the editor squiggle tooltip.
-- [ ] **Stale selection survives re-run/filter → ⌘C crashes; Set-NULL/delete target phantom rows** — `Grid.tsx:161,251,322,363`. Reset/clamp selection on statement change.
-- [ ] **Right-click doesn't retarget selection — menu acts on previously selected cells (wrong data); no menu without selection** — `Grid.tsx:429`.
+- [x] **Stale selection survives re-run/filter → ⌘C crashes; Set-NULL/delete target phantom rows** — `Grid.tsx:161,251,322,363`. Reset/clamp selection on statement change. — FIXED 2026-07-18 (v0.7.0-bedrock).
+- [x] **Right-click doesn't retarget selection — menu acts on previously selected cells (wrong data); no menu without selection** — `Grid.tsx:429`. — FIXED 2026-07-18 (v0.7.0-bedrock).
 - [x] **`parsePgArray` failure renders as empty `[]`** — FIXED 2026-07-02: returns undefined on malformed/trailing-garbage input → raw text shown.
-- [ ] **Danger no-WHERE scan naive-splits on `;` — dollar-quoted bodies false-positive, string `;` can MASK a real missing WHERE, CTE-wrapped DML never flagged** — `stores/danger.ts:26`. Port the Rust splitter.
+- [x] **Danger no-WHERE scan naive-splits on `;` — dollar-quoted bodies false-positive, string `;` can MASK a real missing WHERE, CTE-wrapped DML never flagged** — `stores/danger.ts:26`. Port the Rust splitter. — FIXED 2026-07-18 (v0.7.0-bedrock).
 - [x] **Splitter mis-lexes `E'…'` escape strings** — FIXED 2026-07-02: E/e-prefixed strings honor backslash escapes (identifier-tail guarded); unit-tested.
 - [x] **"Clear history (all)" clears only the active profile** — FIXED 2026-07-02: relabeled "Clear history (this connection)" — the label no longer lies; a true global clear can come with the history panel.
 - [x] **StatementStart for non-SELECT fires at completion; ms reported ~0 for DDL/UPDATE** — FIXED 2026-07-02 with statement-at-a-time execution.
-- [ ] **Failed/cancelled queries never enter history** `[plan v0.35]` — `results.ts:277` success-path only.
-- [ ] **Save&Connect strands the user on a blank New Connection form; connect failure loses the profile from view** — `connections.ts:89` + `Home.tsx:12`.
-- [ ] **matview/complex-view read-only reason says "add ctid to edit" — a dead end** — `edit.rs:213`.
-- [ ] **Editability 'unavailable' → no reason shown anywhere, double-click silently no-ops** — `Grid.tsx:590`.
+- [x] **Failed/cancelled queries never enter history** `[plan v0.35]` — `results.ts:277` success-path only. — FIXED 2026-07-18 (v0.7.0-bedrock).
+- [x] **Save&Connect strands the user on a blank New Connection form; connect failure loses the profile from view** — `connections.ts:89` + `Home.tsx:12`. — FIXED 2026-07-18 (v0.7.0-bedrock).
+- [x] **matview/complex-view read-only reason says "add ctid to edit" — a dead end** — `edit.rs:213`. — FIXED 2026-07-18 (v0.7.0-bedrock).
+- [x] **Editability 'unavailable' → no reason shown anywhere, double-click silently no-ops** — `Grid.tsx:590`. — FIXED 2026-07-18 (v0.7.0-bedrock).
 
 ### 1d. Robustness (panic/hang class)
 
-- [ ] **Dotted schema/table names split at the wrong dot in edit/delete SQL** *(found 2026-07-02 self-audit)* — `edit.rs:88-93,125`: table identity round-trips as `nspname || '.' || relname` then `split_once('.')` — a schema/table containing a literal dot reassembles as the wrong relation. Fix: carry schema+name as separate fields through EditabilityMap (touches frontend consumers of `tables`).
+- [x] **Dotted schema/table names split at the wrong dot in edit/delete SQL** *(found 2026-07-02 self-audit)* — `edit.rs:88-93,125`: table identity round-trips as `nspname || '.' || relname` then `split_once('.')` — a schema/table containing a literal dot reassembles as the wrong relation. Fix: carry schema+name as separate fields through EditabilityMap (touches frontend consumers of `tables`). — FIXED 2026-07-18 (v0.7.0-bedrock).
 - [x] **Default-menu accelerator watch item** — RESOLVED 2026-07-03: app owns the native menu; Edit uses predefined items (native clipboard), customs emit app events; default File▸Close Window ⌘W gone. Original note: *(2026-07-02)* — agent analysis says Tauri's default menu owns ⌘C/⌘A/⌘Z/⌘W/⌘V key equivalents; EMPIRICALLY ⌘C/⌘A/⌘Z/⌘W reach the webview on this setup and only ⌘V misbehaved (menu-item validation). Grid now has BOTH paths for paste (keydown fallback + paste event). Resolve the whole class when the native menu bar lands (v0.5 P0) — own the menu, rebind Edit items to app events.
 
 
 - [x] **ROW_CAP hit: driver drains the ENTIRE result over the wire** — FIXED 2026-07-02: on the last statement (or a dead sink) the driver cancels its own query at cap+1 and swallows the 57014 as a capped completion; cancel races on fast queries are handled (full drain completes normally). Proven live.
 - [x] **Dead tunnel mid-query = hung query AND hung cancel** — FIXED 2026-07-02: TCP keepalives 30s/10s×3 (dead peer detected ~1min, not 2h); `statement_timeout=5min` + `idle_in_transaction_session_timeout=10min` at connect (Settings will tune; see DECISIONS); cancel wrapped in a 3s deadline with a clear force-disconnect message; disconnect best-effort cancels the in-flight query.
 - [x] **Indexing/unwrap panics on the edit path** — FIXED 2026-07-02: `.first()` + graceful defaults / `ok_or(Internal)` at all three sites.
-- [ ] **One corrupt profile row hides ALL connections** — `appdb.rs:97` aborts on first bad row; `App.tsx:91` no catch. Skip-and-log.
-- [ ] **connect() re-entrant — double-click spawns duplicate primaries (loser leaks)** — `connections.ts:111`; same class: `ensureTabSession` race (`connections.ts:157`).
+- [x] **One corrupt profile row hides ALL connections** — `appdb.rs:97` aborts on first bad row; `App.tsx:91` no catch. Skip-and-log. — FIXED 2026-07-18 (v0.7.0-bedrock).
+- [x] **connect() re-entrant — double-click spawns duplicate primaries (loser leaks)** — `connections.ts:111`; same class: `ensureTabSession` race (`connections.ts:157`). — FIXED 2026-07-18 (v0.7.0-bedrock).
+- [ ] *(2026-07-18 residuals)* Grid FK-nav still splits `map.tables` dotted display strings (nav-only misparse); ConnToast can miss a tab-session death toast (listener-order race vs markDisconnected); DbSwitcher connect-to-clone + saveProfile-invalidate lack the open-tx confirm; delete-profile racing an in-flight connect can resurrect `connected`; force-disconnect cancel records history `error` not `cancelled`.
 - [ ] **ssh stderr never drained after startup — chatty ssh can wedge a days-old tunnel via pipe backpressure** — `tunnel.rs:101`.
-- [ ] **Corrupt stored custom theme bricks the whole UI at startup (NaN → every CSS var invalid)** — `theme.ts` + `settings.ts:101`. Validate on rehydrate.
-- [ ] **No appdb schema versioning; migrations are `let _ = ALTER` that swallow ALL errors** — `appdb.rs:80`. `PRAGMA user_version` + numbered migrations. (Prereq for: history error-flag, tab meta, widths.)
-- [ ] **Two synthesis-blocking overlay bugs**: global shortcuts fire behind modals (⌘W while CloseGuard open silently drops the pending close — `App.tsx:104` no depth check); palette opens UNDER DangerModal but steals its keys (z-40 vs z-50) — assign z from stack position.
-- [ ] **Esc during IME composition closes the overlay** — `escStack.ts:18` no `isComposing` check.
+- [x] **Corrupt stored custom theme bricks the whole UI at startup (NaN → every CSS var invalid)** — `theme.ts` + `settings.ts:101`. Validate on rehydrate. — FIXED 2026-07-18 (v0.7.0-bedrock).
+- [x] **No appdb schema versioning; migrations are `let _ = ALTER` that swallow ALL errors** — `appdb.rs:80`. `PRAGMA user_version` + numbered migrations. (Prereq for: history error-flag, tab meta, widths.) — FIXED 2026-07-18 (v0.7.0-bedrock).
+- [x] **Two synthesis-blocking overlay bugs**: global shortcuts fire behind modals (⌘W while CloseGuard open silently drops the pending close — `App.tsx:104` no depth check); palette opens UNDER DangerModal but steals its keys (z-40 vs z-50) — assign z from stack position. — FIXED 2026-07-18 (v0.7.0-bedrock).
+- [x] **Esc during IME composition closes the overlay** — `escStack.ts:18` no `isComposing` check. — FIXED 2026-07-18 (v0.7.0-bedrock).
 
 ---
 
