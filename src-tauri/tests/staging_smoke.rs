@@ -656,12 +656,26 @@ async fn staging_table_ddl() {
 
 /// Perf-batch A/B: batched verify-then-commit + the cached-mapping (hint)
 /// feed. Proves: (1) hint-fed editability == derived; (2) preview SQL with a
-/// hint is byte-identical to derived preview; (3) a multi-row edit commits
-/// through the batched path with per-row verification; (4) a deliberately
-/// STALE mapping (wrong column name) errors and rolls back EVERYTHING — no
-/// partial writes; (5) a stale PK locator under a hint → matched≠1 → full
-/// rollback; (6) delete_rows batched path (mixed stale → rollback; valid →
-/// commit).
+/// hint equals the derived preview plus the attname guards hint-fed plans
+/// carry; (3) a multi-row edit commits through the batched path with per-row
+/// verification; (4) a deliberately STALE mapping (wrong column name) errors
+/// and rolls back EVERYTHING — no partial writes; (5) a stale PK locator
+/// under a hint → matched≠1 → full rollback; (6) delete_rows batched path
+/// (mixed stale → rollback; valid → commit).
+/// hinted plans append attname-verification guards to the end of the WHERE —
+/// strip that contiguous block to compare the shared core against a derived
+/// (guard-free) plan
+fn strip_name_guards(s: &str) -> String {
+    match s.find(" AND (SELECT attname FROM pg_attribute") {
+        Some(i) => {
+            let tail = &s[i..];
+            let rest = tail.find(" RETURNING").map(|j| &tail[j..]).unwrap_or("");
+            format!("{}{}", &s[..i], rest)
+        }
+        None => s.to_string(),
+    }
+}
+
 #[tokio::test]
 #[ignore]
 async fn staging_batched_and_hinted_paths() {
@@ -753,7 +767,8 @@ async fn staging_batched_and_hinted_paths() {
     };
     let good_hint = mk_hint(&name_of);
 
-    // (2) preview: hint path byte-identical to the derived path
+    // (2) preview: hinted plans = derived plans + attname guards (hint-fed
+    // SQL verifies snapshot-donated names server-side; derived SQL needs none)
     let edits = vec![
         RowEdit { table_oid: oid, col: 1, value: Some("uno".into()), use_default: false, pk: vec![(0, Some("1".into()))], guard: vec![] },
         RowEdit { table_oid: oid, col: 2, value: Some("11".into()), use_default: false, pk: vec![(0, Some("1".into()))], guard: vec![] },
@@ -767,7 +782,19 @@ async fn staging_batched_and_hinted_paths() {
         .build_edit_statements(sql, 0, &edits, Some(good_hint.clone()))
         .await
         .expect("hinted preview");
-    assert_eq!(p_hinted, p_derived, "hinted preview must be byte-identical to derived");
+    assert_eq!(p_hinted.len(), p_derived.len());
+    for (h, d) in p_hinted.iter().zip(p_derived.iter()) {
+        assert!(
+            h.contains("(SELECT attname FROM pg_attribute"),
+            "hinted plan must carry attname guards: {h}"
+        );
+        assert_eq!(
+            &strip_name_guards(h),
+            d,
+            "hinted preview minus guards must be byte-identical to derived"
+        );
+        assert!(!d.contains("pg_attribute"), "derived plan must stay guard-free: {d}");
+    }
 
     // (3) multi-row commit via the batched path, per-row verification
     let outcome = session
@@ -998,6 +1025,64 @@ async fn staging_savepoint_inside_user_tx() {
         .expect("in-tx read 2");
     assert_eq!(mine.statements[0].rows[0][0].as_deref(), Some("uno"), "earlier in-tx edit survives");
     assert_eq!(mine.statements[0].rows[1][0].as_deref(), Some("two"), "failed batch fully undone");
+
+    // the user's OWN savepoint named like ours must survive an edit batch —
+    // batch savepoints carry a unique suffix, so cleanup can't destroy it
+    session
+        .execute_simple("SAVEPOINT qwry_edit_sp")
+        .await
+        .expect("user savepoint");
+    let edits = vec![RowEdit {
+        table_oid: oid,
+        col: 1,
+        value: Some("dos".into()),
+        use_default: false,
+        pk: vec![(0, Some("2".into()))],
+        guard: vec![],
+    }];
+    let outcome = session.apply_edits(sql, 0, edits, None).await.expect("apply3");
+    assert!(outcome.committed, "{:?}", outcome.results);
+    session
+        .execute_simple("ROLLBACK TO SAVEPOINT qwry_edit_sp")
+        .await
+        .expect("the user's qwry_edit_sp savepoint must survive our batch");
+    let mine = session
+        .execute_simple("SELECT v FROM qwry_test.qwry_scratch_sp WHERE id = 2")
+        .await
+        .expect("read after user sp rollback");
+    assert_eq!(
+        mine.statements[0].rows[0][0].as_deref(),
+        Some("two"),
+        "rolling back to the user's savepoint undoes the edit applied after it"
+    );
+
+    // an aborted tx must REFUSE new edit/delete batches with an honest error
+    let _ = session.execute_simple("SELEC oops").await;
+    assert_eq!(session.tx_state(), TxState::FailedTx);
+    let edits = vec![RowEdit {
+        table_oid: oid,
+        col: 1,
+        value: Some("nope".into()),
+        use_default: false,
+        pk: vec![(0, Some("1".into()))],
+        guard: vec![],
+    }];
+    let err = session
+        .apply_edits(sql, 0, edits, None)
+        .await
+        .expect_err("edit batch must refuse an aborted tx");
+    assert!(format!("{err}").contains("aborted"), "{err}");
+    let err = session
+        .delete_rows(sql, 0, oid, vec![vec![(0, Some("1".into()))]], None)
+        .await
+        .expect_err("delete batch must refuse an aborted tx");
+    assert!(format!("{err}").contains("aborted"), "{err}");
+    // recover the tx (un-fails it) for the final user-rollback assertions
+    session
+        .execute_simple("ROLLBACK TO SAVEPOINT qwry_edit_sp")
+        .await
+        .expect("recover via user savepoint");
+    assert_eq!(session.tx_state(), TxState::InTx);
 
     // the user rolls back — EVERYTHING vanishes (proves no COMMIT was sent)
     session.execute_simple("ROLLBACK").await.expect("rollback");
@@ -1368,10 +1453,214 @@ async fn staging_tx_state_tracking() {
         .expect("stream rollback");
     assert_eq!(session.tx_state(), TxState::Idle);
 
+    // opt_transaction filler forms, validated against the live server: the
+    // chained COMMIT must leave a REAL tx open, and the fold must agree
+    session
+        .execute_simple("CREATE TEMP TABLE qwry_tx_probe (i int)")
+        .await
+        .expect("probe table");
+    session.execute_simple("BEGIN").await.expect("begin2");
+    session.execute_simple("SAVEPOINT s2").await.expect("sp2");
+    let _ = session.execute_simple("SELEC oops").await;
+    assert_eq!(session.tx_state(), TxState::FailedTx);
+    session
+        .execute_simple("ROLLBACK WORK TO SAVEPOINT s2")
+        .await
+        .expect("rb work to sp");
+    assert_eq!(
+        session.tx_state(),
+        TxState::InTx,
+        "ROLLBACK WORK TO SAVEPOINT must keep the tx open"
+    );
+    session
+        .execute_simple("INSERT INTO qwry_tx_probe VALUES (1)")
+        .await
+        .expect("insert in tx");
+    session
+        .execute_simple("COMMIT WORK AND CHAIN")
+        .await
+        .expect("commit work and chain");
+    assert_eq!(
+        session.tx_state(),
+        TxState::InTx,
+        "COMMIT WORK AND CHAIN must open the next tx"
+    );
+    session
+        .execute_simple("INSERT INTO qwry_tx_probe VALUES (2)")
+        .await
+        .expect("insert in chained tx");
+    session.execute_simple("ROLLBACK").await.expect("rollback chained");
+    assert_eq!(session.tx_state(), TxState::Idle);
+    let check = session
+        .execute_simple("SELECT count(*) FROM qwry_tx_probe")
+        .await
+        .expect("probe check");
+    // row 1 rode the chained COMMIT; row 2 died with the chained tx's
+    // ROLLBACK — proves the chain really left a tx open
+    assert_eq!(check.statements[0].rows[0][0].as_deref(), Some("1"));
+
+    // failed COMMIT (deferred constraint fires at commit time): the server
+    // ends the tx and returns to idle — the fold must agree, not FailedTx
+    session
+        .execute_simple("CREATE TEMP TABLE qwry_tx_dc (i int UNIQUE DEFERRABLE INITIALLY DEFERRED)")
+        .await
+        .expect("deferred table");
+    session.execute_simple("BEGIN").await.expect("begin3");
+    session
+        .execute_simple("INSERT INTO qwry_tx_dc VALUES (1), (1)")
+        .await
+        .expect("deferred dupes accepted until commit");
+    let err = session
+        .execute_simple("COMMIT")
+        .await
+        .expect_err("COMMIT must fail on the deferred violation");
+    let msg = format!("{err:?}").to_lowercase();
+    assert!(msg.contains("unique") || msg.contains("duplicate"), "unexpected: {msg}");
+    assert_eq!(
+        session.tx_state(),
+        TxState::Idle,
+        "a failed COMMIT ends the tx — folding FailedTx would desync from the server"
+    );
+    session
+        .execute_simple("INSERT INTO qwry_tx_dc VALUES (2)")
+        .await
+        .expect("session usable right after the failed COMMIT");
+
     let events = seen.lock().unwrap().clone();
     assert_eq!(
         events,
-        vec!["in_tx", "failed_tx", "in_tx", "idle", "in_tx", "idle"],
+        vec![
+            "in_tx", "failed_tx", "in_tx", "idle", "in_tx", "idle", // original sequence
+            "in_tx", "failed_tx", "in_tx", "idle", // filler forms (chain fires no change)
+            "in_tx", "idle", // failed deferred COMMIT resolves to idle
+        ],
         "listener must fire on every state CHANGE"
     );
+}
+
+/// Stale snapshot-donated column names must never write the WRONG column:
+/// after an external RENAME + ADD COLUMN reusing the old name, a hint-fed
+/// plan's attname guards make every touched row match 0 → the whole batch
+/// rolls back honestly, and fetch_cell errors instead of returning the wrong
+/// column's value.
+#[tokio::test]
+#[ignore]
+async fn staging_stale_hint_rename_guard() {
+    use qwry_lib::driver::postgres::edit::{ColumnMapHint, EditMapHint, RowEdit};
+
+    let session = connect_db2("test-rename").await;
+    let ddl = connect_db2("test-rename-ddl").await;
+
+    session
+        .execute_simple(
+            "CREATE SCHEMA IF NOT EXISTS qwry_test;
+             DROP TABLE IF EXISTS qwry_test.qwry_scratch_rename;
+             CREATE TABLE qwry_test.qwry_scratch_rename (id int PRIMARY KEY, a text, b text);
+             INSERT INTO qwry_test.qwry_scratch_rename VALUES (1, 'one', 'b1'), (2, 'two', 'b2')",
+        )
+        .await
+        .expect("setup");
+
+    let sql = "SELECT id, a, b FROM qwry_test.qwry_scratch_rename ORDER BY id";
+    let derived = session.editability(sql, 0, None).await.expect("derived map");
+    let oid = derived.columns[0].table_oid;
+    let hint = EditMapHint {
+        columns: derived
+            .columns
+            .iter()
+            .map(|c| ColumnMapHint {
+                col: c.col,
+                table_oid: c.table_oid,
+                attnum: c.attnum,
+                editable: c.editable,
+                type_name: c.type_name.clone(),
+                cast: Some(c.cast.clone()),
+                is_ctid: c.is_ctid,
+                name: match c.attnum {
+                    1 => Some("id".into()),
+                    2 => Some("a".into()),
+                    3 => Some("b".into()),
+                    _ => None,
+                },
+            })
+            .collect(),
+        pk_cols: derived.pk_cols.clone(),
+        table_refs: derived.table_refs.clone(),
+    };
+
+    // the schema shifts BEHIND the snapshot: attnum 2 becomes "a_old" and a
+    // NEW column reuses the name "a" — `SET "a" = …` would hit the new column
+    // and still match 1 row, committing silently without the identity guard
+    ddl.execute_simple(
+        "ALTER TABLE qwry_test.qwry_scratch_rename RENAME COLUMN a TO a_old;
+         ALTER TABLE qwry_test.qwry_scratch_rename ADD COLUMN a text",
+    )
+    .await
+    .expect("external rename+add");
+
+    let edits = vec![RowEdit {
+        table_oid: oid,
+        col: 1,
+        value: Some("HIJACKED".into()),
+        use_default: false,
+        pk: vec![(0, Some("1".into()))],
+        guard: vec![],
+    }];
+    let outcome = session
+        .apply_edits(sql, 0, edits, Some(hint.clone()))
+        .await
+        .expect("apply");
+    assert!(!outcome.committed, "stale column identity must roll the batch back");
+    assert!(outcome.results.iter().all(|r| !r.ok), "{:?}", outcome.results);
+    assert!(
+        outcome.results[0].message.as_deref().unwrap_or("").contains("refresh"),
+        "mismatch message should be actionable: {:?}",
+        outcome.results[0].message
+    );
+    let check = session
+        .execute_simple("SELECT a_old, a FROM qwry_test.qwry_scratch_rename WHERE id = 1")
+        .await
+        .expect("check");
+    assert_eq!(
+        check.statements[0].rows[0][0].as_deref(),
+        Some("one"),
+        "renamed column must be untouched"
+    );
+    assert_eq!(check.statements[0].rows[0][1], None, "NEW column must not be hijacked");
+
+    // fetch_cell through the stale hint errors instead of silently reading
+    // the wrong (new) column
+    let err = session
+        .fetch_cell(sql, 0, 1, vec![(0, Some("1".into()))], Some(hint.clone()))
+        .await
+        .expect_err("stale cell fetch must error");
+    assert!(format!("{err}").contains("refresh"), "{err}");
+
+    // sharpen the delete case: give the NEW column the OLD column's value, so
+    // without the guard the locator would match (through the wrong column)
+    // and delete the row — the guard must make it match 0 and roll back
+    ddl.execute_simple("UPDATE qwry_test.qwry_scratch_rename SET a = 'one' WHERE id = 1")
+        .await
+        .expect("bait the new column");
+    let outcome = session
+        .delete_rows(
+            sql,
+            0,
+            oid,
+            vec![vec![(0, Some("1".into())), (1, Some("one".into()))]],
+            Some(hint),
+        )
+        .await
+        .expect("delete");
+    assert!(!outcome.committed, "stale-named delete locator must not commit");
+    let check = session
+        .execute_simple("SELECT count(*) FROM qwry_test.qwry_scratch_rename")
+        .await
+        .expect("check2");
+    assert_eq!(check.statements[0].rows[0][0].as_deref(), Some("2"), "no row may be deleted");
+
+    session
+        .execute_simple("DROP TABLE qwry_test.qwry_scratch_rename")
+        .await
+        .expect("cleanup");
 }

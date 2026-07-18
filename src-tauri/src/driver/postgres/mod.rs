@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -24,10 +24,14 @@ pub struct PgSession {
     /// server backend pid, captured at connect (pg_backend_pid()); target of
     /// pg_cancel_backend / pg_terminate_backend escalation
     backend_pid: AtomicI32,
+    /// backend_start (pg_stat_activity, wire text), captured with the pid —
+    /// escalation matches BOTH so a recycled pid is never signaled
+    backend_start: Mutex<String>,
     /// TxState as u8 — authoritative transaction status (see driver::TxState)
     tx: AtomicU8,
-    /// a statement is currently executing on this session
-    busy: AtomicBool,
+    /// count of statements currently executing on this session (a counter, not
+    /// a flag: overlapping work must not false-clear completion detection)
+    busy: AtomicUsize,
     /// fired on every tx-state CHANGE (frontend chip feed)
     on_tx: Mutex<Option<TxListener>>,
 }
@@ -141,8 +145,9 @@ where
         conn_handle,
         cfg,
         backend_pid: AtomicI32::new(0),
+        backend_start: Mutex::new(String::new()),
         tx: AtomicU8::new(0),
-        busy: AtomicBool::new(false),
+        busy: AtomicUsize::new(0),
         on_tx: Mutex::new(None),
     }
 }
@@ -194,42 +199,73 @@ pub async fn connect(
         spawn_session(client, connection, TlsChoice::Plain, cfg.clone(), on_notice, on_close)
     };
 
-    // capture the backend pid now — cancel escalation targets it from a fresh
-    // connection, so it must be known before any query can get stuck
-    let out = session.execute_simple("SELECT pg_backend_pid()").await?;
-    let pid: i32 = out
-        .statements
-        .first()
-        .and_then(|s| s.rows.first())
+    // capture the backend identity now — cancel escalation targets it from a
+    // fresh connection, so it must be known before any query can get stuck.
+    // backend_start rides along: pid + start time together name THIS backend,
+    // so a recycled pid can never be cancelled/terminated by mistake.
+    let out = session
+        .execute_simple(
+            "SELECT pg_backend_pid(), backend_start FROM pg_stat_activity \
+             WHERE pid = pg_backend_pid()",
+        )
+        .await?;
+    let row = out.statements.first().and_then(|s| s.rows.first());
+    let pid: i32 = row
         .and_then(|r| r.first().cloned().flatten())
         .and_then(|v| v.parse().ok())
         .ok_or_else(|| DriverError::Connect("could not read backend pid".into()))?;
+    let start = row
+        .and_then(|r| r.get(1).cloned().flatten())
+        .ok_or_else(|| DriverError::Connect("could not read backend start time".into()))?;
     session.backend_pid.store(pid, Ordering::Relaxed);
+    if let Ok(mut s) = session.backend_start.lock() {
+        *s = start;
+    }
     Ok(session)
 }
 
 /// RAII busy marker — cancel escalation polls it to see whether the query died
-struct BusyGuard<'a>(&'a AtomicBool);
+struct BusyGuard<'a>(&'a AtomicUsize);
 impl<'a> BusyGuard<'a> {
-    fn new(flag: &'a AtomicBool) -> Self {
-        flag.store(true, Ordering::Relaxed);
-        BusyGuard(flag)
+    fn new(counter: &'a AtomicUsize) -> Self {
+        counter.fetch_add(1, Ordering::Relaxed);
+        BusyGuard(counter)
     }
 }
 impl Drop for BusyGuard<'_> {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Relaxed);
+        self.0.fetch_sub(1, Ordering::Relaxed);
     }
+}
+
+/// Tx-control head: the verb plus the two tokens after PG's optional
+/// `WORK`/`TRANSACTION` filler (opt_transaction in the grammar) —
+/// `ROLLBACK WORK TO SAVEPOINT sp` and `ROLLBACK TO SAVEPOINT sp` must read
+/// the same. The filler is only skipped after COMMIT/END/ROLLBACK/ABORT
+/// (`PREPARE TRANSACTION` needs its literal second token).
+fn tx_head(sql: &str) -> (String, String, String) {
+    let toks = splitter::statement_tokens(sql, 4);
+    let tok = |i: usize| toks.get(i).cloned().unwrap_or_default();
+    let first = tok(0);
+    let base = if matches!(first.as_str(), "commit" | "end" | "rollback" | "abort")
+        && matches!(tok(1).as_str(), "work" | "transaction")
+    {
+        2
+    } else {
+        1
+    };
+    (first, tok(base), tok(base + 1))
 }
 
 /// fold one completed statement's head into the transaction state
 fn fold_tx(state: TxState, sql: &str) -> TxState {
-    let (first, second) = splitter::statement_head(sql);
+    let (first, second, third) = tx_head(sql);
     match first.as_str() {
         "begin" | "start" => TxState::InTx,
         // COMMIT/END in a failed tx acts as rollback; AND CHAIN opens the next
+        // (AND NO CHAIN does not)
         "commit" | "end" => {
-            if second == "and" {
+            if second == "and" && third == "chain" {
                 TxState::InTx
             } else {
                 TxState::Idle
@@ -239,7 +275,7 @@ fn fold_tx(state: TxState, sql: &str) -> TxState {
             if second == "to" {
                 // ROLLBACK TO SAVEPOINT keeps the tx open and un-fails it
                 TxState::InTx
-            } else if second == "and" {
+            } else if second == "and" && third == "chain" {
                 TxState::InTx
             } else {
                 TxState::Idle
@@ -248,6 +284,22 @@ fn fold_tx(state: TxState, sql: &str) -> TxState {
         // two-phase commit dissociates the tx from the session
         "prepare" if second == "transaction" => TxState::Idle,
         _ => state,
+    }
+}
+
+/// state after a statement ERRORED: inside an explicit tx PG aborts it —
+/// except a failed COMMIT/END (deferred constraint fired at commit time),
+/// which still ends the tx: the server rolls back and returns to idle.
+/// AND CHAIN keeps the conservative fold (the chained tx state is murky).
+fn error_fold(state: TxState, sql: &str) -> TxState {
+    if state == TxState::Idle {
+        return TxState::Idle;
+    }
+    let (first, second, third) = tx_head(sql);
+    if matches!(first.as_str(), "commit" | "end") && !(second == "and" && third == "chain") {
+        TxState::Idle
+    } else {
+        TxState::FailedTx
     }
 }
 
@@ -291,11 +343,10 @@ impl PgSession {
     }
 
     /// a statement errored on this session: inside an explicit tx PG aborts
-    /// the tx; outside, the implicit tx dies with the statement (still idle)
-    pub(crate) fn note_error_outcome(&self) {
-        if self.tx_state() != TxState::Idle {
-            self.set_tx_state(TxState::FailedTx);
-        }
+    /// the tx; outside, the implicit tx dies with the statement (still idle);
+    /// a failed COMMIT/END without AND CHAIN ends the tx (see `error_fold`)
+    pub(crate) fn note_error_outcome(&self, sql: &str) {
+        self.set_tx_state(error_fold(self.tx_state(), sql));
     }
 
     /// fold a successfully executed statement's head into the tracked state
@@ -304,7 +355,7 @@ impl PgSession {
     }
 
     fn busy(&self) -> bool {
-        self.busy.load(Ordering::Relaxed)
+        self.busy.load(Ordering::Relaxed) > 0
     }
 
     /// Execute one or more statements via the simple protocol.
@@ -319,14 +370,45 @@ impl PgSession {
         let msgs = match msgs {
             Ok(m) => m,
             Err(e) => {
-                // a failed multi-statement message rolls back as one implicit
-                // tx; the state only stays open when the user's tx was already
-                // open, or the batch itself may have opened one before failing
-                let heads_open_tx = splitter::split_statements(sql).iter().any(|s| {
-                    matches!(splitter::statement_head(s).0.as_str(), "begin" | "start")
+                // A failed message: DML since the last COMMIT rolls back, but
+                // tx-control heads BEFORE the failing statement did execute
+                // (a BEGIN opened the tx, a COMMIT already committed). The
+                // server's error position (chars into the whole message)
+                // locates the failing statement when present; fold the heads
+                // before it, then apply the per-statement error outcome. A
+                // multi-statement error WITHOUT a position falls back to the
+                // position-blind conservative classifier (any BEGIN head, or
+                // an already-open tx → FailedTx) — only edit batches flow
+                // through here today, and those never put tx control after
+                // the wrapper, so the fallback cannot mis-fold them.
+                let spans = splitter::split_statement_spans(sql);
+                let pos = e.as_db_error().and_then(|db| match db.position() {
+                    Some(tokio_postgres::error::ErrorPosition::Original(p)) => {
+                        Some(*p as usize)
+                    }
+                    _ => None,
                 });
-                if self.tx_state() != TxState::Idle || heads_open_tx {
-                    self.set_tx_state(TxState::FailedTx);
+                match (spans.len(), pos) {
+                    (1, _) => self.note_error_outcome(&spans[0].sql),
+                    (n, Some(p)) if n > 1 => {
+                        let failing =
+                            spans.iter().rposition(|s| s.char_offset < p).unwrap_or(0);
+                        for s in &spans[..failing] {
+                            self.fold_tx_head(&s.sql);
+                        }
+                        self.note_error_outcome(&spans[failing].sql);
+                    }
+                    _ => {
+                        let heads_open_tx = spans.iter().any(|s| {
+                            matches!(
+                                splitter::statement_head(&s.sql).0.as_str(),
+                                "begin" | "start"
+                            )
+                        });
+                        if self.tx_state() != TxState::Idle || heads_open_tx {
+                            self.set_tx_state(TxState::FailedTx);
+                        }
+                    }
                 }
                 return Err(map_pg_err(e));
             }
@@ -443,26 +525,47 @@ impl PgSession {
         }
     }
 
-    /// pg_cancel_backend(pid) over a fresh short-lived connection
-    pub async fn cancel_out_of_band(&self) -> Result<()> {
+    /// (pid, backend_start) captured at connect — out-of-band signals match
+    /// BOTH via pg_stat_activity so a recycled pid is never signaled
+    fn backend_identity(&self) -> Option<(i32, String)> {
         let pid = self.backend_pid();
         if pid == 0 {
-            return Err(DriverError::Internal("backend pid unknown — cannot escalate cancel".into()));
+            return None;
         }
-        self.run_on_fresh_connection(&format!("SELECT pg_cancel_backend({pid})"))
+        let start = self.backend_start.lock().ok()?.clone();
+        if start.is_empty() {
+            return None;
+        }
+        Some((pid, start))
+    }
+
+    fn backend_signal_sql(&self, func: &str) -> Option<String> {
+        let (pid, start) = self.backend_identity()?;
+        Some(format!(
+            "SELECT {func}(pid) FROM pg_stat_activity \
+             WHERE pid = {pid} AND backend_start = '{}'",
+            start.replace('\'', "''")
+        ))
+    }
+
+    /// pg_cancel_backend over a fresh short-lived connection
+    pub async fn cancel_out_of_band(&self) -> Result<()> {
+        let sql = self.backend_signal_sql("pg_cancel_backend").ok_or_else(|| {
+            DriverError::Internal("backend identity unknown — cannot escalate cancel".into())
+        })?;
+        self.run_on_fresh_connection(&sql)
             .await
             .map_err(|e| DriverError::Internal(format!("out-of-band cancel failed: {e}")))
     }
 
-    /// pg_terminate_backend(pid) over a fresh connection — kills the server
+    /// pg_terminate_backend over a fresh connection — kills the server
     /// process outright. Never called automatically; the UI offers it as the
     /// last tier behind an explicit confirm.
     pub async fn terminate_backend(&self) -> Result<()> {
-        let pid = self.backend_pid();
-        if pid == 0 {
-            return Err(DriverError::Internal("backend pid unknown — cannot terminate".into()));
-        }
-        self.run_on_fresh_connection(&format!("SELECT pg_terminate_backend({pid})"))
+        let sql = self.backend_signal_sql("pg_terminate_backend").ok_or_else(|| {
+            DriverError::Internal("backend identity unknown — cannot terminate".into())
+        })?;
+        self.run_on_fresh_connection(&sql)
             .await
             .map_err(|e| DriverError::Internal(format!("terminate failed: {e}")))
     }
@@ -526,7 +629,7 @@ fn map_pg_err(e: tokio_postgres::Error) -> DriverError {
 
 #[cfg(test)]
 mod tx_tests {
-    use super::fold_tx;
+    use super::{error_fold, fold_tx};
     use crate::driver::TxState::*;
 
     #[test]
@@ -549,5 +652,49 @@ mod tx_tests {
         assert_eq!(fold_tx(Idle, "-- c\n begin work"), InTx);
         assert_eq!(fold_tx(InTx, "PREPARE TRANSACTION 'gx'"), Idle);
         assert_eq!(fold_tx(InTx, "PREPARE p AS SELECT 1"), InTx);
+    }
+
+    #[test]
+    fn fold_opt_transaction_filler() {
+        // WORK/TRANSACTION filler must not hide the decisive token
+        assert_eq!(fold_tx(InTx, "ROLLBACK WORK TO SAVEPOINT sp"), InTx);
+        assert_eq!(fold_tx(FailedTx, "ROLLBACK TRANSACTION TO sp"), InTx);
+        assert_eq!(fold_tx(InTx, "COMMIT WORK AND CHAIN"), InTx);
+        assert_eq!(fold_tx(InTx, "COMMIT TRANSACTION AND CHAIN"), InTx);
+        assert_eq!(fold_tx(InTx, "END TRANSACTION AND CHAIN"), InTx);
+        assert_eq!(fold_tx(InTx, "END WORK AND CHAIN"), InTx);
+        assert_eq!(fold_tx(InTx, "ROLLBACK WORK AND CHAIN"), InTx);
+        // …and plain filler forms still end the tx
+        assert_eq!(fold_tx(InTx, "COMMIT WORK"), Idle);
+        assert_eq!(fold_tx(InTx, "COMMIT TRANSACTION"), Idle);
+        assert_eq!(fold_tx(InTx, "END WORK"), Idle);
+        assert_eq!(fold_tx(InTx, "ROLLBACK WORK"), Idle);
+        assert_eq!(fold_tx(InTx, "ROLLBACK TRANSACTION"), Idle);
+        assert_eq!(fold_tx(InTx, "ABORT TRANSACTION"), Idle);
+        // AND NO CHAIN ends the tx (only AND CHAIN keeps it open)
+        assert_eq!(fold_tx(InTx, "COMMIT AND NO CHAIN"), Idle);
+        assert_eq!(fold_tx(InTx, "COMMIT WORK AND NO CHAIN"), Idle);
+        assert_eq!(fold_tx(InTx, "END TRANSACTION AND NO CHAIN"), Idle);
+        assert_eq!(fold_tx(InTx, "ROLLBACK AND NO CHAIN"), Idle);
+        assert_eq!(fold_tx(FailedTx, "ROLLBACK WORK AND NO CHAIN"), Idle);
+    }
+
+    #[test]
+    fn error_outcomes() {
+        // errors outside a tx leave it idle
+        assert_eq!(error_fold(Idle, "SELECT boom"), Idle);
+        assert_eq!(error_fold(Idle, "COMMIT"), Idle);
+        // errors inside a tx abort it…
+        assert_eq!(error_fold(InTx, "SELECT boom"), FailedTx);
+        assert_eq!(error_fold(FailedTx, "SELECT boom"), FailedTx);
+        // …except a failed COMMIT/END, which the server resolves to idle
+        assert_eq!(error_fold(InTx, "COMMIT"), Idle);
+        assert_eq!(error_fold(InTx, "commit work"), Idle);
+        assert_eq!(error_fold(InTx, "END"), Idle);
+        assert_eq!(error_fold(InTx, "END TRANSACTION"), Idle);
+        assert_eq!(error_fold(InTx, "COMMIT AND NO CHAIN"), Idle);
+        // AND CHAIN keeps the conservative fold
+        assert_eq!(error_fold(InTx, "COMMIT AND CHAIN"), FailedTx);
+        assert_eq!(error_fold(InTx, "COMMIT WORK AND CHAIN"), FailedTx);
     }
 }

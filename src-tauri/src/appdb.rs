@@ -105,7 +105,8 @@ impl AppDb {
         Ok(Self(Mutex::new(conn)))
     }
 
-    pub fn list_profiles(&self) -> Result<Vec<Profile>> {
+    /// second element = skipped-row count, surfaced to the UI as a warning
+    pub fn list_profiles(&self) -> Result<(Vec<Profile>, usize)> {
         let conn = self.0.lock().unwrap();
         let mut stmt = conn
             .prepare("SELECT id, data FROM profiles ORDER BY position, rowid")
@@ -116,20 +117,25 @@ impl AppDb {
         // one corrupt row degrades to "that profile missing", never "all
         // connections gone" — skip and log instead of aborting the list
         let mut out = Vec::new();
+        let mut skipped = 0usize;
         for row in rows {
             let (id, data) = match row {
                 Ok(v) => v,
                 Err(e) => {
+                    skipped += 1;
                     eprintln!("appdb: skipping corrupt profile row: {e}");
                     continue;
                 }
             };
             match serde_json::from_str::<Profile>(&data) {
                 Ok(p) => out.push(p),
-                Err(e) => eprintln!("appdb: skipping corrupt profile row {id}: {e}"),
+                Err(e) => {
+                    skipped += 1;
+                    eprintln!("appdb: skipping corrupt profile row {id}: {e}");
+                }
             }
         }
-        Ok(out)
+        Ok((out, skipped))
     }
 
     pub fn save_profile(&self, profile: &Profile) -> Result<()> {
@@ -274,16 +280,25 @@ fn add_column_if_missing(conn: &Connection, table: &str, col: &str, decl: &str) 
 }
 
 /// collect decoded rows, skipping (and logging) any that fail — one bad row
-/// must cost one row, not the whole list
-fn collect_ok<T>(rows: impl Iterator<Item = rusqlite::Result<T>>, what: &str) -> Vec<T> {
+/// must cost one row, not the whole list. Returns the skip count so callers
+/// can surface it to the UI. NEVER use for tabs: a skipped tab row feeding
+/// the replace-all tabs_save would permanently delete that tab's SQL.
+fn collect_ok<T>(
+    rows: impl Iterator<Item = rusqlite::Result<T>>,
+    what: &str,
+) -> (Vec<T>, usize) {
     let mut out = Vec::new();
+    let mut skipped = 0usize;
     for row in rows {
         match row {
             Ok(v) => out.push(v),
-            Err(e) => eprintln!("appdb: skipping corrupt {what} row: {e}"),
+            Err(e) => {
+                skipped += 1;
+                eprintln!("appdb: skipping corrupt {what} row: {e}");
+            }
         }
     }
-    out
+    (out, skipped)
 }
 
 fn cap_sql(sql: &str) -> Cow<'_, str> {
@@ -334,6 +349,10 @@ impl AppDb {
 }
 
 impl AppDb {
+    /// Row decode errors PROPAGATE here (unlike the other lists): tabs feed a
+    /// replace-all `tabs_save`, so a silently skipped row would come back as
+    /// the permanent deletion of that tab's SQL. The frontend's loaded-gate +
+    /// retry loop is the designed protection and it needs the error.
     pub fn tabs_list(&self) -> Result<Vec<TabRow>> {
         let conn = self.0.lock().unwrap();
         let mut stmt = conn
@@ -351,7 +370,11 @@ impl AppDb {
                 })
             })
             .map_err(internal)?;
-        Ok(collect_ok(rows, "tab"))
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(internal)?);
+        }
+        Ok(out)
     }
 
     /// replace-all save — tab counts are tiny, atomicity matters more
@@ -400,7 +423,7 @@ impl AppDb {
         profile_id: Option<&str>,
         query: &str,
         limit: i64,
-    ) -> Result<Vec<HistoryRow>> {
+    ) -> Result<(Vec<HistoryRow>, usize)> {
         let conn = self.0.lock().unwrap();
         // profile_id NULL = search across every connection (history panel)
         let mut stmt = conn
@@ -424,7 +447,7 @@ impl AppDb {
     }
 
     /// most recent queries across all profiles (for the home dashboard)
-    pub fn history_recent(&self, limit: i64) -> Result<Vec<HistoryRow>> {
+    pub fn history_recent(&self, limit: i64) -> Result<(Vec<HistoryRow>, usize)> {
         let conn = self.0.lock().unwrap();
         let mut stmt = conn
             .prepare(
@@ -450,7 +473,7 @@ fn map_history_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryRow> {
 }
 
 impl AppDb {
-    pub fn saved_list(&self) -> Result<Vec<SavedQuery>> {
+    pub fn saved_list(&self) -> Result<(Vec<SavedQuery>, usize)> {
         let conn = self.0.lock().unwrap();
         let mut stmt = conn
             .prepare("SELECT id, name, sql, created_at, profile_id FROM saved_queries ORDER BY name")
@@ -548,12 +571,13 @@ mod tests {
         assert_eq!(user_version(&db), SCHEMA_VERSION);
 
         db.save_profile(&profile("a")).unwrap();
-        assert_eq!(db.list_profiles().unwrap().len(), 1);
+        assert_eq!(db.list_profiles().unwrap().0.len(), 1);
 
         db.history_add("a", "select 1", 1.5, 1, HistoryStatus::Cancelled)
             .unwrap();
-        let h = db.history_recent(10).unwrap();
+        let (h, skipped) = db.history_recent(10).unwrap();
         assert_eq!(h.len(), 1);
+        assert_eq!(skipped, 0);
         assert_eq!(h[0].status, HistoryStatus::Cancelled);
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -569,8 +593,8 @@ mod tests {
         }
         let db = AppDb::open(&dir).unwrap();
         assert_eq!(user_version(&db), SCHEMA_VERSION);
-        assert_eq!(db.list_profiles().unwrap().len(), 1);
-        assert_eq!(db.history_recent(10).unwrap().len(), 1);
+        assert_eq!(db.list_profiles().unwrap().0.len(), 1);
+        assert_eq!(db.history_recent(10).unwrap().0.len(), 1);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -619,7 +643,7 @@ mod tests {
         let db = AppDb::open(&dir).unwrap();
         assert_eq!(user_version(&db), SCHEMA_VERSION);
 
-        let profiles = db.list_profiles().unwrap();
+        let (profiles, _) = db.list_profiles().unwrap();
         assert_eq!(profiles.len(), 1);
         assert_eq!(profiles[0].id, "p1");
         let pos: i64 = db
@@ -635,7 +659,7 @@ mod tests {
         assert_eq!(tabs[0].saved_id, None);
         assert_eq!(tabs[0].profile_id, None);
 
-        let h = db.history_recent(10).unwrap();
+        let (h, _) = db.history_recent(10).unwrap();
         assert_eq!(h.len(), 1);
         assert_eq!(h[0].rows, 3);
         assert_eq!(h[0].status, HistoryStatus::Ok);
@@ -688,8 +712,8 @@ mod tests {
 
         let db = AppDb::open(&dir).unwrap();
         assert_eq!(user_version(&db), SCHEMA_VERSION);
-        assert_eq!(db.list_profiles().unwrap().len(), 1);
-        let h = db.history_recent(10).unwrap();
+        assert_eq!(db.list_profiles().unwrap().0.len(), 1);
+        let (h, _) = db.history_recent(10).unwrap();
         assert_eq!(h.len(), 1);
         assert_eq!(h[0].status, HistoryStatus::Ok);
         let _ = std::fs::remove_dir_all(&dir);
@@ -719,14 +743,15 @@ mod tests {
                 [],
             )
             .unwrap();
-        let profiles = db.list_profiles().unwrap();
+        let (profiles, skipped) = db.list_profiles().unwrap();
         assert_eq!(profiles.len(), 2);
+        assert_eq!(skipped, 1, "corrupt row must be counted for the UI warning");
         assert!(profiles.iter().all(|p| p.id.starts_with("good")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn corrupt_tab_and_history_rows_skipped() {
+    fn corrupt_tab_row_errors_history_row_skipped() {
         let dir = tmp_dir();
         let db = AppDb::open(&dir).unwrap();
         db.tabs_save(&[TabRow {
@@ -739,6 +764,7 @@ mod tests {
         }])
         .unwrap();
         db.history_add("p", "select 1", 1.0, 1, HistoryStatus::Ok).unwrap();
+        assert_eq!(db.tabs_list().unwrap().len(), 1);
         {
             let conn = db.0.lock().unwrap();
             conn.execute(
@@ -753,9 +779,12 @@ mod tests {
             )
             .unwrap();
         }
-        assert_eq!(db.tabs_list().unwrap().len(), 1);
-        let h = db.history_recent(10).unwrap();
+        // tabs must ERROR, not skip — a skipped row fed back through the
+        // replace-all tabs_save would permanently delete that tab's SQL
+        assert!(db.tabs_list().is_err(), "corrupt tab row must surface as an error");
+        let (h, skipped) = db.history_recent(10).unwrap();
         assert_eq!(h.len(), 1);
+        assert_eq!(skipped, 1);
         assert_eq!(h[0].sql, "select 1");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -766,7 +795,7 @@ mod tests {
         let db = AppDb::open(&dir).unwrap();
         let long = "x".repeat(HISTORY_SQL_CAP + 5_000);
         db.history_add("p", &long, 1.0, 0, HistoryStatus::Ok).unwrap();
-        let h = db.history_recent(1).unwrap();
+        let (h, _) = db.history_recent(1).unwrap();
         assert!(h[0].sql.ends_with(HISTORY_TRUNC_MARKER));
         assert_eq!(h[0].sql.len(), HISTORY_SQL_CAP + HISTORY_TRUNC_MARKER.len());
         let _ = std::fs::remove_dir_all(&dir);

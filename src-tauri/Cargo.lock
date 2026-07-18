@@ -3087,7 +3087,7 @@ dependencies = [
 
 [[package]]
 name = "qwry"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "futures-util",

@@ -93,7 +93,7 @@ impl PgSession {
                 Ok(s) => s,
                 Err(e) => {
                     let mapped = rebase(e);
-                    self.note_error_outcome();
+                    self.note_error_outcome(&span.sql);
                     if let DriverError::Db { message, position, code, detail, hint } = &mapped {
                         emit(
                             QueryEvent::Error {
@@ -155,7 +155,7 @@ impl PgSession {
                         }
                         // stop at the failing statement; earlier statements
                         // have already truly committed (autocommit)
-                        self.note_error_outcome();
+                        self.note_error_outcome(&span.sql);
                         if let DriverError::Db { message, position, code, detail, hint } = &mapped {
                             emit(
                                 QueryEvent::Error {

@@ -24,9 +24,24 @@ struct TxStateChanged {
     state: &'static str,
 }
 
+/// an appdb list dropped corrupt rows — surfaced as a frontend toast
+#[derive(Clone, serde::Serialize)]
+struct AppDbWarning {
+    table: &'static str,
+    skipped: usize,
+}
+
+fn warn_skipped(app: &AppHandle, table: &'static str, skipped: usize) {
+    if skipped > 0 {
+        let _ = app.emit("appdb-warning", AppDbWarning { table, skipped });
+    }
+}
+
 #[tauri::command]
-pub async fn profiles_list(state: State<'_, AppState>) -> Result<Vec<Profile>> {
-    state.appdb.list_profiles()
+pub async fn profiles_list(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<Profile>> {
+    let (profiles, skipped) = state.appdb.list_profiles()?;
+    warn_skipped(&app, "profiles", skipped);
+    Ok(profiles)
 }
 
 #[tauri::command]
@@ -77,6 +92,7 @@ pub async fn clone_connection(
     let src = state
         .appdb
         .list_profiles()?
+        .0
         .into_iter()
         .find(|p| p.id == src_profile_id)
         .ok_or(driver::DriverError::Internal("no such profile".into()))?;
@@ -86,8 +102,10 @@ pub async fn clone_connection(
     p.dbname = dbname.clone();
     p.name = format!("{base} · {dbname}");
     state.appdb.save_profile(&p)?;
-    if let Ok(Some(pw)) = secrets::get_password(&src_profile_id) {
-        let _ = secrets::set_password(&p.id, &pw);
+    // a keychain failure must surface, not silently leave the clone
+    // password-less (same contract as every other keychain site)
+    if let Some(pw) = secrets::get_password(&src_profile_id)? {
+        secrets::set_password(&p.id, &pw)?;
     }
     Ok(p)
 }
@@ -117,6 +135,7 @@ pub async fn connection_uri(
     let p = state
         .appdb
         .list_profiles()?
+        .0
         .into_iter()
         .find(|p| p.id == profile_id)
         .ok_or(driver::DriverError::Internal("no such profile".into()))?;
@@ -152,6 +171,7 @@ pub async fn connect(
     let profile = state
         .appdb
         .list_profiles()?
+        .0
         .into_iter()
         .find(|p| p.id == profile_id)
         .ok_or(driver::DriverError::Internal("no such profile".into()))?;
@@ -546,27 +566,39 @@ pub async fn history_add(
 
 #[tauri::command]
 pub async fn history_search(
+    app: AppHandle,
     state: State<'_, AppState>,
     profile_id: Option<String>,
     query: String,
     limit: Option<i64>,
 ) -> Result<Vec<crate::appdb::HistoryRow>> {
-    state
-        .appdb
-        .history_search(profile_id.as_deref(), &query, limit.unwrap_or(100))
+    let (rows, skipped) =
+        state
+            .appdb
+            .history_search(profile_id.as_deref(), &query, limit.unwrap_or(100))?;
+    warn_skipped(&app, "history", skipped);
+    Ok(rows)
 }
 
 #[tauri::command]
 pub async fn history_recent(
+    app: AppHandle,
     state: State<'_, AppState>,
     limit: Option<i64>,
 ) -> Result<Vec<crate::appdb::HistoryRow>> {
-    state.appdb.history_recent(limit.unwrap_or(8))
+    let (rows, skipped) = state.appdb.history_recent(limit.unwrap_or(8))?;
+    warn_skipped(&app, "history", skipped);
+    Ok(rows)
 }
 
 #[tauri::command]
-pub async fn saved_list(state: State<'_, AppState>) -> Result<Vec<crate::appdb::SavedQuery>> {
-    state.appdb.saved_list()
+pub async fn saved_list(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::appdb::SavedQuery>> {
+    let (rows, skipped) = state.appdb.saved_list()?;
+    warn_skipped(&app, "saved_queries", skipped);
+    Ok(rows)
 }
 
 #[tauri::command]

@@ -21,7 +21,8 @@
 //! BEGIN/COMMIT — the user's transaction is never committed or rolled back by
 //! an edit. The verified-batch contract is identical in both modes.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde::{Deserialize, Serialize};
 use tokio_postgres::types::Type;
@@ -172,6 +173,9 @@ struct ResolvedMap {
     tables: HashMap<u32, TableRef>,
     /// (table_oid, attnum) → real column name
     names: HashMap<(u32, i16), String>,
+    /// names came from a frontend hint (snapshot-donated) — generated SQL
+    /// must carry attname-verification predicates (see `NameGuards`)
+    hinted: bool,
 }
 
 impl ResolvedMap {
@@ -258,6 +262,41 @@ fn eq_pred(name: &str, m: &ColumnEditMeta, v: &Option<String>) -> String {
     }
 }
 
+/// Attname-verification predicates for hint-fed plans. A snapshot-donated
+/// attnum→name pair can go stale in a way row locators can't catch (RENAME
+/// the old column + ADD COLUMN under the old name → the generated SQL hits
+/// the WRONG column and still matches 1 row), so every hint-named column a
+/// statement uses gets an attname probe ANDed into its WHERE — a mismatch
+/// matches 0 rows and the existing verify-then-commit machinery rolls the
+/// whole batch back. The probes ride the same batch: still 2 RTTs.
+#[derive(Default)]
+struct NameGuards(BTreeMap<(u32, i16), String>);
+
+impl NameGuards {
+    fn note(&mut self, m: &ColumnEditMeta, name: &str) {
+        if !m.is_ctid && m.table_oid != 0 && m.attnum > 0 {
+            self.0.insert((m.table_oid, m.attnum), name.to_string());
+        }
+    }
+
+    fn predicates(&self) -> impl Iterator<Item = String> + '_ {
+        self.0.iter().map(|((oid, att), name)| {
+            format!(
+                "(SELECT attname FROM pg_attribute WHERE attrelid = {oid} AND attnum = {att}) = {}",
+                ql(name)
+            )
+        })
+    }
+}
+
+/// mismatch message for a hint-fed statement that matched 0 rows — the name
+/// guards make "column identity changed" one of the honest causes
+fn hinted_zero_matched() -> String {
+    "0 rows matched (expected 1) — row locator stale or column identity changed; \
+     refresh and retry"
+        .into()
+}
+
 /// a usable hint has a name for every non-ctid column that maps to a real
 /// table attribute, and identifies every table its pk_cols reference
 fn hint_complete(h: &EditMapHint) -> bool {
@@ -275,14 +314,21 @@ struct TableFacts {
     identity_always: HashSet<i16>,
 }
 
-const EDIT_SAVEPOINT: &str = "qwry_edit_sp";
+/// process-global sequence: every batch gets its OWN savepoint name, so our
+/// cleanup can never roll back or destroy a user's identically-named savepoint
+static EDIT_SP_SEQ: AtomicUsize = AtomicUsize::new(0);
+
+fn next_edit_savepoint() -> String {
+    format!("qwry_edit_sp_{}", EDIT_SP_SEQ.fetch_add(1, Ordering::Relaxed))
+}
 
 /// how the verified batch is transaction-wrapped
 enum BatchTx {
     /// session was idle — our own BEGIN…COMMIT
     Own,
-    /// inside the user's open transaction — SAVEPOINT/RELEASE, NEVER commit
-    Savepoint,
+    /// inside the user's open transaction — SAVEPOINT/RELEASE under a unique
+    /// per-batch name, NEVER commit
+    Savepoint(String),
 }
 
 impl PgSession {
@@ -301,9 +347,15 @@ impl PgSession {
             .get(statement_index as usize)
             .ok_or_else(|| DriverError::Internal("statement index out of range".into()))?;
 
-        let prepared = self.client.prepare(stmt_sql).await.map_err(|e| {
+        let prepared = {
+            // busy-marked like any statement — cancel escalation's completion
+            // polling must see catalog work on this session too
+            let _busy = super::BusyGuard::new(&self.busy);
+            self.client.prepare(stmt_sql).await
+        }
+        .map_err(|e| {
             // a failed prepare inside an explicit tx aborts it
-            self.note_error_outcome();
+            self.note_error_outcome(stmt_sql);
             map_pg_err(e)
         })?;
 
@@ -574,6 +626,7 @@ impl PgSession {
                     columns,
                     tables: h.table_refs,
                     names,
+                    hinted: true,
                 });
             }
             // incomplete hint → silently fall through to full derivation
@@ -612,6 +665,7 @@ impl PgSession {
             columns: map.columns,
             tables: map.table_refs,
             names,
+            hinted: false,
         })
     }
 
@@ -649,6 +703,7 @@ impl PgSession {
         edits: Vec<RowEdit>,
         map_hint: Option<EditMapHint>,
     ) -> Result<EditOutcome> {
+        self.refuse_failed_tx()?;
         let map = self.resolve_map(sql, statement_index, map_hint).await?;
         let planned = plan_edits(&map, &edits)?;
         if planned.is_empty() {
@@ -680,10 +735,15 @@ impl PgSession {
                 }
             } else {
                 mismatch = true;
+                let message = if matched == 0 && map.hinted {
+                    hinted_zero_matched()
+                } else {
+                    format!("{matched} rows matched (expected 1)")
+                };
                 for &ei in &p.edit_indices {
                     results[ei] = EditResult {
                         ok: false,
-                        message: Some(format!("{matched} rows matched (expected 1)")),
+                        message: Some(message.clone()),
                         new_value: None,
                     };
                 }
@@ -725,6 +785,7 @@ impl PgSession {
         rows: Vec<Vec<(u32, Option<String>)>>,
         map_hint: Option<EditMapHint>,
     ) -> Result<EditOutcome> {
+        self.refuse_failed_tx()?;
         let map = self.resolve_map(sql, statement_index, map_hint).await?;
         let table = map
             .tables
@@ -734,6 +795,7 @@ impl PgSession {
         let mut deletes = Vec::with_capacity(rows.len());
         for locator in &rows {
             let mut where_parts = Vec::new();
+            let mut guards = NameGuards::default();
             for (c, v) in locator {
                 let m = map
                     .col_meta(*c)
@@ -742,11 +804,15 @@ impl PgSession {
                     .name_of(m)
                     .ok_or_else(|| DriverError::Internal("locator name lookup failed".into()))?;
                 where_parts.push(eq_pred(&n, m, v));
+                guards.note(m, &n);
             }
             if where_parts.is_empty() {
                 return Err(DriverError::Internal(
                     "refusing to delete with an empty row locator".into(),
                 ));
+            }
+            if map.hinted {
+                where_parts.extend(guards.predicates());
             }
             deletes.push(format!(
                 "DELETE FROM {} WHERE {} RETURNING ctid::text",
@@ -773,6 +839,8 @@ impl PgSession {
                 ok: matched == 1,
                 message: if matched == 1 {
                     None
+                } else if matched == 0 && map.hinted {
+                    Some(hinted_zero_matched())
                 } else {
                     Some(format!("{matched} rows matched (expected 1)"))
                 },
@@ -830,6 +898,8 @@ impl PgSession {
             ));
         }
         let mut where_parts = Vec::with_capacity(locator.len());
+        let mut guards = NameGuards::default();
+        guards.note(m, &name);
         for (c, v) in &locator {
             let lm = map
                 .col_meta(*c)
@@ -838,6 +908,10 @@ impl PgSession {
                 .name_of(lm)
                 .ok_or_else(|| DriverError::Internal("locator name lookup failed".into()))?;
             where_parts.push(eq_pred(&ln, lm, v));
+            guards.note(lm, &ln);
+        }
+        if map.hinted {
+            where_parts.extend(guards.predicates());
         }
         let q = format!(
             "SELECT {}::text FROM {} WHERE {} LIMIT 2",
@@ -852,6 +926,13 @@ impl PgSession {
             .map(|s| s.rows.as_slice())
             .unwrap_or(&[]);
         if rows.len() != 1 {
+            if rows.is_empty() && map.hinted {
+                return Err(DriverError::Internal(
+                    "cell fetch matched 0 rows (expected 1) — row locator stale or \
+                     column identity changed; refresh and retry"
+                        .into(),
+                ));
+            }
             return Err(DriverError::Internal(format!(
                 "cell fetch matched {} rows (expected 1)",
                 rows.len()
@@ -868,18 +949,31 @@ impl PgSession {
     /// RELEASE) so the outer transaction is NEVER committed or rolled back.
     /// Any error (SQL or protocol) undoes the batch before returning Err —
     /// it can never half-apply.
+    /// an edit/delete batch must never start inside an aborted transaction —
+    /// even our SAVEPOINT would fail there, and the only honest fix is the
+    /// user's own ROLLBACK
+    fn refuse_failed_tx(&self) -> Result<()> {
+        if self.tx_state() == TxState::FailedTx {
+            return Err(DriverError::Internal(
+                "current transaction is aborted — ROLLBACK first".into(),
+            ));
+        }
+        Ok(())
+    }
+
     async fn run_verified_batch<'a>(
         &self,
         stmts: impl Iterator<Item = &'a str>,
     ) -> Result<(Vec<StatementResult>, BatchTx)> {
+        self.refuse_failed_tx()?;
         let mode = if self.tx_state() == TxState::Idle {
             BatchTx::Own
         } else {
-            BatchTx::Savepoint
+            BatchTx::Savepoint(next_edit_savepoint())
         };
-        let mut batch = match mode {
+        let mut batch = match &mode {
             BatchTx::Own => String::from("BEGIN"),
-            BatchTx::Savepoint => format!("SAVEPOINT {EDIT_SAVEPOINT}"),
+            BatchTx::Savepoint(sp) => format!("SAVEPOINT {sp}"),
         };
         let mut n = 0usize;
         for s in stmts {
@@ -914,9 +1008,9 @@ impl PgSession {
     async fn undo_batch(&self, mode: &BatchTx) {
         let sql = match mode {
             BatchTx::Own => "ROLLBACK".to_string(),
-            BatchTx::Savepoint => format!(
-                "ROLLBACK TO SAVEPOINT {EDIT_SAVEPOINT}; RELEASE SAVEPOINT {EDIT_SAVEPOINT}"
-            ),
+            BatchTx::Savepoint(sp) => {
+                format!("ROLLBACK TO SAVEPOINT {sp}; RELEASE SAVEPOINT {sp}")
+            }
         };
         let _ = self.execute_simple(&sql).await;
     }
@@ -926,7 +1020,7 @@ impl PgSession {
     async fn finish_batch(&self, mode: &BatchTx) -> Result<()> {
         let sql = match mode {
             BatchTx::Own => "COMMIT".to_string(),
-            BatchTx::Savepoint => format!("RELEASE SAVEPOINT {EDIT_SAVEPOINT}"),
+            BatchTx::Savepoint(sp) => format!("RELEASE SAVEPOINT {sp}"),
         };
         self.execute_simple(&sql).await.map(|_| ())
     }
@@ -1010,12 +1104,22 @@ fn plan_edits(map: &ResolvedMap, edits: &[RowEdit]) -> Result<Vec<PlannedUpdate>
         map.col_meta(e.col)
             .filter(|m| m.editable && m.table_oid == e.table_oid)
             .ok_or_else(|| DriverError::Internal(format!("column {} not editable", e.col)))?;
+        // length-prefixed value components — an unescaped separator would let
+        // two composite text PKs collide into one group and write one row's
+        // edit into the other (("v|1=w","z") vs ("v","w|1=z"))
         let mut sig = e.table_oid.to_string();
         for (c, v) in &e.pk {
             sig.push('|');
             sig.push_str(&c.to_string());
-            sig.push('=');
-            sig.push_str(v.as_deref().unwrap_or("\u{0}NULL"));
+            match v {
+                None => sig.push_str("=N"),
+                Some(s) => {
+                    sig.push('=');
+                    sig.push_str(&s.len().to_string());
+                    sig.push(':');
+                    sig.push_str(s);
+                }
+            }
         }
         let g = groups.entry(sig.clone()).or_insert_with(|| {
             order.push(sig);
@@ -1040,6 +1144,7 @@ fn plan_edits(map: &ResolvedMap, edits: &[RowEdit]) -> Result<Vec<PlannedUpdate>
         let mut set_parts = Vec::new();
         let mut returning = Vec::new();
         let mut edit_indices = Vec::new();
+        let mut guards = NameGuards::default();
         for (ei, c, v, use_default) in &g.sets {
             let m = map
                 .col_meta(*c)
@@ -1047,6 +1152,7 @@ fn plan_edits(map: &ResolvedMap, edits: &[RowEdit]) -> Result<Vec<PlannedUpdate>
             let n = map
                 .name_of(m)
                 .ok_or_else(|| DriverError::Internal("column name lookup failed".into()))?;
+            guards.note(m, &n);
             let value_sql = if *use_default {
                 "DEFAULT".to_string()
             } else {
@@ -1073,11 +1179,15 @@ fn plan_edits(map: &ResolvedMap, edits: &[RowEdit]) -> Result<Vec<PlannedUpdate>
                 .name_of(m)
                 .ok_or_else(|| DriverError::Internal("locator name lookup failed".into()))?;
             where_parts.push(eq_pred(&n, m, v));
+            guards.note(m, &n);
         }
         if g.pk.is_empty() || where_parts.is_empty() {
             return Err(DriverError::Internal(
                 "refusing to update with an empty row locator".into(),
             ));
+        }
+        if map.hinted {
+            where_parts.extend(guards.predicates());
         }
 
         planned.push(PlannedUpdate {
@@ -1131,6 +1241,7 @@ mod tests {
             ],
             tables,
             names,
+            hinted: false,
         }
     }
 
@@ -1223,5 +1334,116 @@ mod tests {
         assert!(stable_equality("jsonb"));
         assert!(stable_equality("int4"));
         assert!(stable_equality("_int4"));
+    }
+
+    /// composite text PK map: two text columns (attnums 1, 2) both in the PK
+    fn text_pk_map() -> ResolvedMap {
+        let mut tables = HashMap::new();
+        tables.insert(9u32, TableRef { schema: "public".into(), name: "t".into() });
+        let mut names = HashMap::new();
+        names.insert((9u32, 1i16), "p".to_string());
+        names.insert((9u32, 2i16), "q".to_string());
+        names.insert((9u32, 3i16), "v".to_string());
+        ResolvedMap {
+            columns: vec![
+                meta(0, 9, 1, "text", "text", false),
+                meta(1, 9, 2, "text", "text", false),
+                meta(2, 9, 3, "text", "text", false),
+            ],
+            tables,
+            names,
+            hinted: false,
+        }
+    }
+
+    #[test]
+    fn group_signature_separator_collision() {
+        // the audit pair: ("v|1=w","z") and ("v","w|1=z") built identical
+        // unescaped signatures — they must plan as TWO updates, never one
+        let map = text_pk_map();
+        let edits = vec![
+            RowEdit {
+                table_oid: 9,
+                col: 2,
+                value: Some("x".into()),
+                use_default: false,
+                pk: vec![(0, Some("v|1=w".into())), (1, Some("z".into()))],
+                guard: vec![],
+            },
+            RowEdit {
+                table_oid: 9,
+                col: 2,
+                value: Some("y".into()),
+                use_default: false,
+                pk: vec![(0, Some("v".into())), (1, Some("w|1=z".into()))],
+                guard: vec![],
+            },
+        ];
+        let planned = plan_edits(&map, &edits).unwrap();
+        assert_eq!(planned.len(), 2, "colliding signatures merged two rows into one UPDATE");
+        assert!(planned[0].sql.contains("'v|1=w'"), "{}", planned[0].sql);
+        assert!(planned[1].sql.contains("'w|1=z'"), "{}", planned[1].sql);
+        // NULL stays distinct from any literal value
+        let edits = vec![
+            RowEdit {
+                table_oid: 9,
+                col: 2,
+                value: Some("x".into()),
+                use_default: false,
+                pk: vec![(0, None), (1, Some("a".into()))],
+                guard: vec![],
+            },
+            RowEdit {
+                table_oid: 9,
+                col: 2,
+                value: Some("y".into()),
+                use_default: false,
+                pk: vec![(0, Some("N".into())), (1, Some("a".into()))],
+                guard: vec![],
+            },
+        ];
+        assert_eq!(plan_edits(&map, &edits).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn hinted_plans_carry_attname_guards() {
+        let mut map = test_map();
+        map.hinted = true;
+        let edits = vec![RowEdit {
+            table_oid: 7,
+            col: 1,
+            value: Some("x".into()),
+            use_default: false,
+            pk: vec![(0, Some("1".into()))],
+            guard: vec![],
+        }];
+        let planned = plan_edits(&map, &edits).unwrap();
+        let sql = &planned[0].sql;
+        // one guard per hint-named column used (SET col attnum 2 + pk attnum 1)
+        assert!(
+            sql.contains(
+                "(SELECT attname FROM pg_attribute WHERE attrelid = 7 AND attnum = 1) = 'id'"
+            ),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(
+                "(SELECT attname FROM pg_attribute WHERE attrelid = 7 AND attnum = 2) = 'Name'"
+            ),
+            "{sql}"
+        );
+        // derived plans stay guard-free
+        map.hinted = false;
+        let planned = plan_edits(&map, &edits).unwrap();
+        assert!(!planned[0].sql.contains("pg_attribute"), "{}", planned[0].sql);
+    }
+
+    #[test]
+    fn savepoint_names_unique() {
+        let a = next_edit_savepoint();
+        let b = next_edit_savepoint();
+        assert_ne!(a, b);
+        assert!(a.starts_with("qwry_edit_sp_"), "{a}");
+        assert!(b.starts_with("qwry_edit_sp_"), "{b}");
     }
 }
