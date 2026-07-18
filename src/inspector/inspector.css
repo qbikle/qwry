@@ -100,6 +100,15 @@
 .insp-chip.ro {
   color: var(--fg-faint);
 }
+.insp-chip-retry {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  padding: 0;
+}
 
 /* icon toolbar */
 .insp-tools {
@@ -339,6 +348,32 @@
   margin-left: 14px;
   border-left: 1px solid var(--border);
   padding-left: 6px;
+}
+
+/* explicit child-cap expander — capped children are never silently hidden */
+.jt-more {
+  display: block;
+  margin: 1px 0;
+  padding: 1px 6px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-xs);
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  text-align: left;
+}
+.jt-more:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+/* honest note when the search walk hit its node cap */
+.jt-capnote {
+  padding: 2px 6px;
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
 }
 
 .jt-key {

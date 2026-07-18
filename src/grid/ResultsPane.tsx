@@ -312,7 +312,17 @@ function PendingEditsStatus() {
   if (count === 0 && !lastError) return null;
   return (
     <span className="status-edits">
-      {lastError && <span className="status-edit-error">{lastError}</span>}
+      {lastError && (
+        // "building copy…" is progress, not a failure — render it neutral,
+        // not in the danger-red error styling (prefix convention, no store field)
+        <span
+          className={
+            lastError.startsWith("building copy…") ? "status-edit-progress" : "status-edit-error"
+          }
+        >
+          {lastError}
+        </span>
+      )}
       {count > 0 && (
         <>
           <span className="status-edit-count">

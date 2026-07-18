@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { EditorState, Prec, type Extension } from "@codemirror/state";
+import { EditorState, Prec, type Extension, type Text } from "@codemirror/state";
 import {
   EditorView,
   keymap,
@@ -11,7 +11,15 @@ import {
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { FORMAT_PRESETS, formatDefault, formatWithPreset, minifyBuffer } from "./format";
-import { cteStandaloneSql, parseCtes, spanAtCursor, splitStatementSpans } from "./statements";
+import {
+  cteStandaloneSql,
+  parseCtes,
+  spanAtCursor,
+  splitStatementSpans,
+  updateStatementSpans,
+  type ChangedRange,
+  type StmtSpan,
+} from "./statements";
 import { Decoration, ViewPlugin, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import {
   autocompletion,
@@ -101,24 +109,58 @@ async function smartPaste(view: EditorView, shape: "in" | "values") {
   view.focus();
 }
 
+/** allocation-free equality between a CodeMirror rope and a string —
+ * length check first, then chunk-wise compare (never materializes the doc) */
+function docEqualsString(doc: Text, s: string): boolean {
+  if (doc.length !== s.length) return false;
+  let pos = 0;
+  const iter = doc.iter();
+  for (iter.next(); !iter.done; iter.next()) {
+    if (!s.startsWith(iter.value, pos)) return false;
+    pos += iter.value.length;
+  }
+  return pos === s.length;
+}
+
 /** subtle band over the statement the caret sits in — makes the ⌘↵ scope
  * visible at a glance. Only drawn when the buffer holds 2+ statements. */
 const stmtScopeDeco = Decoration.line({ class: "cm-stmt-scope" });
 const stmtScopePlugin = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet = Decoration.none;
+    // spans are kept incrementally — a keystroke typically re-lexes only a
+    // small window around the edit. Not a hard <16ms guarantee: the final
+    // span must be re-lexed to the doc end before it is trusted, so one
+    // giant statement still costs O(text after the edit) per keystroke
+    spans: StmtSpan[];
+    lastFrom = -1;
+    lastTo = -1;
     constructor(view: EditorView) {
+      this.spans = splitStatementSpans(view.state.doc.toString());
       this.decorations = this.build(view);
     }
     update(u: ViewUpdate) {
-      if (u.docChanged || u.selectionSet) this.decorations = this.build(u.view);
+      if (u.docChanged) {
+        const ranges: ChangedRange[] = [];
+        u.changes.iterChangedRanges((fromA, toA, fromB, toB) => {
+          ranges.push({ fromA, toA, fromB, toB });
+        });
+        this.spans = updateStatementSpans(this.spans, ranges, u.state.doc);
+        // line layout may have moved even within an unchanged span
+        this.lastFrom = -1;
+        this.lastTo = -1;
+        this.decorations = this.build(u.view);
+      } else if (u.selectionSet) {
+        this.decorations = this.build(u.view);
+      }
     }
     build(view: EditorView): DecorationSet {
-      const doc = view.state.doc.toString();
-      // ONE parse per rebuild — spanAtCursor would re-split the whole doc
-      // (this runs on every keystroke; the <16ms budget is law)
-      const spans = splitStatementSpans(doc);
-      if (spans.length < 2) return Decoration.none;
+      const spans = this.spans;
+      if (spans.length < 2) {
+        this.lastFrom = -1;
+        this.lastTo = -1;
+        return Decoration.none;
+      }
       const pos = view.state.selection.main.head;
       let span = spans[spans.length - 1];
       for (const sp of spans) {
@@ -127,6 +169,10 @@ const stmtScopePlugin = ViewPlugin.fromClass(
           break;
         }
       }
+      // caret moved within the same statement — decorations still valid
+      if (span.from === this.lastFrom && span.to === this.lastTo) return this.decorations;
+      this.lastFrom = span.from;
+      this.lastTo = span.to;
       const from = view.state.doc.lineAt(span.from).number;
       const to = view.state.doc.lineAt(span.to).number;
       // a pasted 5k-line VALUES statement must not mint 5k decorations per
@@ -175,6 +221,15 @@ export function SqlEditor() {
 
   useEffect(() => {
     if (!hostRef.current) return;
+
+    // the exact string handed to setSql — lets the connections subscriber
+    // dismiss its own echo (and every unrelated store update) by IDENTITY
+    // instead of re-materializing + comparing a 2MB doc each time
+    let lastSyncedSql: string | null = null;
+    // whether we currently show PG-error diagnostics — a streamed result
+    // arrives in many batches and each one used to dispatch a clearing
+    // transaction (plus an O(doc) toString); skip when there's nothing to clear
+    let hasDiags = false;
 
     const runKeymap = Prec.highest(
       keymap.of([
@@ -267,7 +322,11 @@ export function SqlEditor() {
       qwryHighlight,
       EditorView.updateListener.of((u) => {
         if (u.docChanged) {
-          useConnections.getState().setSql(u.state.doc.toString());
+          // ONE materialization per edit — the store, the tabs mirror and the
+          // echo check below all share this exact string
+          const sql = u.state.doc.toString();
+          lastSyncedSql = sql;
+          useConnections.getState().setSql(sql);
         }
       }),
     ];
@@ -326,8 +385,12 @@ export function SqlEditor() {
       // stale-cache guard: the tab's sql is kept in sync with the doc while
       // active, so a mismatch means something changed it while inactive
       view.setState(
-        cached && cached.doc.toString() === next.sql ? cached : makeState(next.sql),
+        cached && docEqualsString(cached.doc, next.sql) ? cached : makeState(next.sql),
       );
+      // setState bypasses the update listener: the synced-string identity is
+      // stale now, and a cached state may carry diagnostics we didn't count
+      lastSyncedSql = null;
+      hasDiags = true;
       // ⌘T while the editor is already mounted — same landing
       if (editorFocusSignal.current) claimFocus();
     });
@@ -347,49 +410,65 @@ export function SqlEditor() {
     // reflect SAME-TAB external sql changes into the doc. Tab switches are
     // handled by the state swap above (which runs first — select() sets
     // activeId before setSql — so by the time this fires the doc already
-    // matches and it no-ops).
+    // matches and it no-ops). This fires on EVERY connections-store update
+    // (connState, txTabs, …), so the fast paths matter: identity check for
+    // our own echo, then length + chunk compare — never a full toString.
     const unsub = useConnections.subscribe((s) => {
-      const doc = view.state.doc.toString();
-      if (s.sql !== doc) {
-        view.dispatch({
-          changes: { from: 0, to: doc.length, insert: s.sql },
-        });
+      if (s.sql === lastSyncedSql) return;
+      if (docEqualsString(view.state.doc, s.sql)) {
+        lastSyncedSql = s.sql;
+        return;
       }
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: s.sql },
+      });
     });
 
     // PG error position → squiggle. Works for whole-buffer runs AND
     // statement/selection runs: the executed text must still sit at its
     // recorded offset in the buffer (i.e. the user hasn't edited over it).
+    // fires per streamed batch — touch the doc ONLY when there's a failure to
+    // place (bounded slices, no toString) and never dispatch a no-op clear
     const unsubLint = useResults.subscribe((s) => {
-      const doc = view.state.doc.toString();
       const failed = s.statements.find((st) => st.error?.position != null);
-      const off = s.executedOffset ?? 0;
-      const stillThere =
-        s.executedSql != null && doc.slice(off, off + s.executedSql.length) === s.executedSql;
-      if (failed && stillThere) {
-        const pos = Math.min(off + failed.error!.position! - 1, doc.length - 1);
-        const wordEnd = /[\w$]*/.exec(doc.slice(pos + 1))?.[0].length ?? 0;
-        // PG's DETAIL/HINT are often the actual answer — show them at the squiggle
-        const err = failed.error!;
-        const message = [
-          err.message,
-          err.detail ? `DETAIL: ${err.detail}` : null,
-          err.hint ? `HINT: ${err.hint}` : null,
-        ]
-          .filter(Boolean)
-          .join("\n");
-        view.dispatch(
-          setDiagnostics(view.state, [
-            {
-              from: Math.max(0, pos),
-              to: Math.min(doc.length, pos + 1 + wordEnd),
-              severity: "error",
-              message,
-            },
-          ]),
-        );
-      } else {
+      if (failed) {
+        const docLen = view.state.doc.length;
+        const off = s.executedOffset ?? 0;
+        const stillThere =
+          s.executedSql != null &&
+          off + s.executedSql.length <= docLen &&
+          view.state.sliceDoc(off, off + s.executedSql.length) === s.executedSql;
+        if (stillThere) {
+          const pos = Math.min(off + failed.error!.position! - 1, docLen - 1);
+          const wordEnd =
+            /[\w$]*/.exec(view.state.sliceDoc(pos + 1, Math.min(docLen, pos + 257)))?.[0]
+              .length ?? 0;
+          // PG's DETAIL/HINT are often the actual answer — show them at the squiggle
+          const err = failed.error!;
+          const message = [
+            err.message,
+            err.detail ? `DETAIL: ${err.detail}` : null,
+            err.hint ? `HINT: ${err.hint}` : null,
+          ]
+            .filter(Boolean)
+            .join("\n");
+          view.dispatch(
+            setDiagnostics(view.state, [
+              {
+                from: Math.max(0, pos),
+                to: Math.min(docLen, pos + 1 + wordEnd),
+                severity: "error",
+                message,
+              },
+            ]),
+          );
+          hasDiags = true;
+          return;
+        }
+      }
+      if (hasDiags) {
         view.dispatch(setDiagnostics(view.state, []));
+        hasDiags = false;
       }
     });
 

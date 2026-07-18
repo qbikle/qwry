@@ -41,6 +41,12 @@ const NUMERIC_TYPES = new Set([
   "int2", "int4", "int8", "float4", "float8", "numeric", "oid", "money",
 ]);
 
+// ⌘C selections at/above this cell count build their TSV in rAF-yielded
+// slices — a 50k-row ⌘A+⌘C built a >100MB string synchronously (seconds of
+// beachball). Below it the copy stays fully synchronous (zero added latency).
+const COPY_ASYNC_CELLS = 16_000;
+const COPY_SLICE_ROWS = 4_000;
+
 // flash a read-only reason through the status bar's existing message slot —
 // double-click/Enter/type-to-edit on an uneditable cell must never no-op mute
 let reasonTimer: ReturnType<typeof setTimeout> | undefined;
@@ -50,6 +56,25 @@ function flashReadOnlyReason(msg: string) {
   reasonTimer = setTimeout(() => {
     if (useEdits.getState().lastError === msg) useEdits.setState({ lastError: null });
   }, 2500);
+}
+
+// chunked-copy slice scheduling: rAF stalls while the window is occluded
+// (WKWebView suspends rAF) — race it against a timeout, first wins, cancel
+// the loser, so a background build still finishes
+function nextCopyTick(fn: () => void) {
+  let done = false;
+  const raf = requestAnimationFrame(() => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    fn();
+  });
+  const timer = setTimeout(() => {
+    if (done) return;
+    done = true;
+    cancelAnimationFrame(raf);
+    fn();
+  }, 32);
 }
 
 /** One data cell — memoized on primitive props so an arrow key / drag step /
@@ -782,21 +807,61 @@ export function Grid({
     [editing, rows, statement.index, rowAt, colAt, sel.moveFocus, rowVirt, colVirt],
   );
 
+  // monotonically bumped per copy — a newer copy (or unmount) abandons any
+  // in-flight chunked build so it can't overwrite a later copy's clipboard
+  const copyRun = useRef(0);
+  /** runId of the chunked build in flight (null = none) — abandon detection
+   * can't lean on the progress message, which a real error may displace */
+  const copyBuildRun = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      copyRun.current++;
+      if (copyBuildRun.current != null) {
+        // remount/unmount mid-build (statement chip, tab switch): the OLD
+        // clipboard content survives — never abandon without saying so
+        // (flash is a store write, it outlives this component)
+        copyBuildRun.current = null;
+        flashReadOnlyReason("copy cancelled — result changed before it finished");
+      }
+    },
+    [],
+  );
+
   const copySelection = useCallback(
     (format: CopyFormat) => {
       const rect: SelRect | null = sel.rect;
       if (!rect) return;
+      copyRun.current++;
+      if (copyBuildRun.current != null) {
+        // a superseded chunked build leaves its progress message behind —
+        // the new copy takes the slot over, no cancel flash (the user asked)
+        copyBuildRun.current = null;
+        const cur = useEdits.getState().lastError;
+        if (cur?.startsWith("building copy…")) useEdits.setState({ lastError: null });
+      }
+      // truncated cells copy as their 8KB prefix — count the ones inside the
+      // selection (walk the truncated set, not the rect: the set stays small)
+      // and flash so the prefix never ships silently as the full value
+      let truncCount = 0;
+      for (const key of statement.truncated) {
+        const sep = key.indexOf(":");
+        const vr0 = rowViewOf ? rowViewOf[Number(key.slice(0, sep))] : Number(key.slice(0, sep));
+        if (vr0 === undefined || vr0 < rect.r0 || vr0 > rect.r1) continue;
+        const vc0 = colViewOf ? colViewOf[Number(key.slice(sep + 1))] : Number(key.slice(sep + 1));
+        if (vc0 === undefined || vc0 < rect.c0 || vc0 > rect.c1) continue;
+        truncCount++;
+      }
+      const truncFlash = () => {
+        if (truncCount > 0)
+          flashReadOnlyReason(
+            `${truncCount} truncated cell${truncCount === 1 ? "" : "s"} copied as 8KB prefix — open in inspector for full values`,
+          );
+      };
       // the selection rect is view-space — resolve through the sort/reorder
       // maps so what's copied is exactly what's on screen
       const dataCs: number[] = [];
       for (let c = rect.c0; c <= rect.c1; c++) dataCs.push(colAt(c));
       const selCols = dataCs.map((dc) => cols[dc]);
-      const selRows: (string | null)[][] = [];
-      for (let r = rect.r0; r <= rect.r1; r++) {
-        const row = rows[rowAt(r)];
-        if (!row) continue; // selection outlived a shrunk result — never crash ⌘C
-        selRows.push(dataCs.map((dc) => row[dc]));
-      }
       // copy-as-INSERT gets the REAL table name (single-source results) and
       // drops locator ctid columns — an INSERT with ctid is invalid SQL
       const map = editMap && editMap !== "loading" && editMap !== "unavailable" ? editMap : null;
@@ -809,16 +874,71 @@ export function Grid({
               .filter((i) => i >= 0),
           )
         : undefined;
+
+      const totalRows = rect.r1 - rect.r0 + 1;
+      // big TSV copies build in rAF-yielded slices, progress through the
+      // status-bar message slot. Fidelity contract: formatCells joins TSV rows
+      // with \n and adds no header, so stitching per-slice outputs with \n is
+      // byte-identical to one full formatCells call.
+      if (format === "tsv" && totalRows * dataCs.length >= COPY_ASYNC_CELLS) {
+        const runId = copyRun.current;
+        copyBuildRun.current = runId;
+        const parts: string[] = [];
+        let r = rect.r0;
+        const step = () => {
+          if (copyRun.current !== runId) return; // superseded — abandon
+          const slice: (string | null)[][] = [];
+          const end = Math.min(rect.r1, r + COPY_SLICE_ROWS - 1);
+          for (; r <= end; r++) {
+            const row = rows[rowAt(r)];
+            if (!row) continue; // selection outlived a shrunk result
+            slice.push(dataCs.map((dc) => row[dc]));
+          }
+          if (slice.length > 0)
+            parts.push(formatCells(selCols, slice, format, { table, ctidCols }));
+          if (r <= rect.r1) {
+            // a progress tick may only overwrite an empty slot or its own
+            // previous tick — never a real error that landed mid-build
+            const cur = useEdits.getState().lastError;
+            if (cur === null || cur.startsWith("building copy…"))
+              useEdits.setState({
+                lastError: `building copy… ${Math.round(((r - rect.r0) / totalRows) * 100)}%`,
+              });
+            nextCopyTick(step);
+            return;
+          }
+          writeText(parts.join("\n"))
+            .catch(console.error)
+            .finally(() => {
+              if (copyBuildRun.current === runId) copyBuildRun.current = null;
+              if (copyRun.current !== runId) return;
+              const cur = useEdits.getState().lastError;
+              if (cur?.startsWith("building copy…")) useEdits.setState({ lastError: null });
+              truncFlash();
+            });
+        };
+        step();
+        return;
+      }
+
+      const selRows: (string | null)[][] = [];
+      for (let r = rect.r0; r <= rect.r1; r++) {
+        const row = rows[rowAt(r)];
+        if (!row) continue; // selection outlived a shrunk result — never crash ⌘C
+        selRows.push(dataCs.map((dc) => row[dc]));
+      }
       // a SINGLE cell copies raw — TSV quoting ("" doubling, wrapping) is for
       // multi-cell spreadsheet paste and reads as garbage in an input field
       if (format === "tsv" && selRows.length === 1 && selRows[0].length === 1) {
         writeText(selRows[0][0] ?? "").catch(console.error);
+        truncFlash();
         return;
       }
       // tauri plugin, not navigator.clipboard — dev origin is insecure-context
       writeText(formatCells(selCols, selRows, format, { table, ctidCols })).catch(console.error);
+      truncFlash();
     },
-    [sel.rect, cols, rows, editMap, rowAt, colAt],
+    [sel.rect, cols, rows, editMap, rowAt, colAt, statement.truncated, rowViewOf, colViewOf],
   );
 
   /** export loaded rows (or the selection when it spans >1 cell) to a file
@@ -1222,6 +1342,15 @@ export function Grid({
         rowVirt.scrollToIndex(next.r);
         colVirt.scrollToIndex(next.c);
       };
+      if (e.key === "Escape" && copyBuildRun.current != null) {
+        // cancel an in-flight chunked ⌘C — the clipboard still holds the OLD
+        // content, same honesty flash as the remount-abandon path
+        e.preventDefault();
+        copyRun.current++;
+        copyBuildRun.current = null;
+        flashReadOnlyReason("copy cancelled — result changed before it finished");
+        return;
+      }
       if (e.key === "Escape" && showDraft) {
         // grid-focused Esc: an EMPTY draft band closes; one with typed values
         // refocuses instead — a stray Esc must never eat half-typed data
@@ -1587,23 +1716,43 @@ export function Grid({
   };
 
   const resizing = useRef<{ col: number; startX: number; startW: number } | null>(null);
+  // resize drags are rAF-coalesced: one width write per frame off cached start
+  // metrics — a raw mousemove handler re-rendered the grid per pointer event
+  const resizeRaf = useRef<number | null>(null);
+  const resizeX = useRef(0);
   const onResizeStart = (viewCol: number, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     const col = colAt(viewCol); // widths are stored per UNDERLYING column
     resizing.current = { col, startX: e.clientX, startW: colWidths[col] };
+    resizeX.current = e.clientX;
     const onMove = (me: MouseEvent) => {
-      const r = resizing.current;
-      if (!r) return;
-      const w = Math.max(MIN_COL_W, r.startW + (me.clientX - r.startX));
-      setWidths((prev) => prev.map((pw, i) => (i === r.col ? w : pw)));
+      resizeX.current = me.clientX;
+      if (resizeRaf.current != null) return;
+      resizeRaf.current = requestAnimationFrame(() => {
+        resizeRaf.current = null;
+        const r = resizing.current;
+        if (!r) return;
+        const w = Math.max(MIN_COL_W, r.startW + (resizeX.current - r.startX));
+        setWidths((prev) => prev.map((pw, i) => (i === r.col ? w : pw)));
+      });
     };
     const onUp = () => {
-      resizing.current = null;
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
-      // widthsRef holds the post-drag array (state updates are async)
-      saveStoredWidths(colSig(cols), widthsRef.current);
+      if (resizeRaf.current != null) {
+        cancelAnimationFrame(resizeRaf.current);
+        resizeRaf.current = null;
+      }
+      const r = resizing.current;
+      resizing.current = null;
+      if (!r) return;
+      // apply the final width synchronously — a pending frame may not have
+      // flushed, and the persisted array must match what's on screen
+      const w = Math.max(MIN_COL_W, r.startW + (resizeX.current - r.startX));
+      const final = widthsRef.current.map((pw, i) => (i === r.col ? w : pw));
+      setWidths(final);
+      saveStoredWidths(colSig(cols), final);
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);

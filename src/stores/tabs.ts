@@ -304,17 +304,20 @@ export const useTabs = create<TabsState>((set, get) => ({
       return;
     }
     let newActive = activeId;
+    let fallback: Tab | null = null;
     if (activeId === id) {
       // neighbor within the VISIBLE strip, not the global array — closing a
       // tab must never teleport focus to another connection's hidden tab
       const visAll = visibleTabs(tabs, get().pinned, pid);
       const visIdx = visAll.findIndex((t) => t.id === id);
-      const fallback = visNext[Math.max(0, visIdx - 1)] ?? visNext[visNext.length - 1];
+      fallback = visNext[Math.max(0, visIdx - 1)] ?? visNext[visNext.length - 1];
       newActive = fallback.id;
       rememberActive(pid, fallback.id);
-      useConnections.getState().setSql(fallback.sql);
     }
+    // activeId before setSql — same order as select/closeAll, so the editor's
+    // subscribers land on the fallback tab instead of the dying one's doc
     set({ tabs: next, activeId: newActive, closedStack: remember });
+    if (fallback) useConnections.getState().setSql(fallback.sql);
     persist();
   },
 

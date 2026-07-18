@@ -2,6 +2,18 @@
   padding: var(--sp-1) var(--sp-2) var(--sp-2) var(--sp-2);
 }
 
+/* virtualized row window (scroll element is the ancestor .sb-tables) */
+.tree-vlist {
+  position: relative;
+  width: 100%;
+}
+.tree-vrow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+
 .tree-filter {
   width: 100%;
   margin-bottom: var(--sp-1);

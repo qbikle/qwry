@@ -374,6 +374,11 @@ pub async fn execute_stream(
 /// (profile id + connection signature), the snapshot is also persisted to the
 /// appdb schema cache so the NEXT connect can hydrate instantly
 /// (stale-while-revalidate; see `schema_cache_get`).
+///
+/// pg_catalog functions (~3k rows, only change with the server build) come
+/// from the appdb cache keyed by the full server_version string; a miss
+/// fetches them once and persists. A corrupt cache row parses as a miss and
+/// self-heals on the re-put. User-schema functions are always fetched live.
 #[tauri::command]
 pub async fn introspect(
     state: State<'_, AppState>,
@@ -381,12 +386,31 @@ pub async fn introspect(
     cache_key: Option<String>,
     cache_sig: Option<String>,
 ) -> Result<crate::driver::postgres::introspect::SchemaSnapshot> {
+    use crate::driver::postgres::introspect::FuncInfo;
     let session = state
         .session(&session_id)
         .ok_or(driver::DriverError::NoSession)?;
-    let snap = session.introspect().await?;
+    let ver = session.server_version();
+    let cached: Option<Vec<FuncInfo>> = if ver.is_empty() {
+        None // unknown build — never serve possibly-wrong catalog functions
+    } else {
+        state
+            .appdb
+            .pg_catalog_funcs_get(&ver)
+            .ok()
+            .flatten()
+            .and_then(|s| serde_json::from_str(&s).ok())
+    };
+    let (snap, fresh_catalog) = session.introspect(cached).await?;
+    if !ver.is_empty() {
+        if let Some(cat) = &fresh_catalog {
+            // best-effort — a failed cache write must never fail the introspect
+            if let Ok(data) = serde_json::to_string(cat) {
+                let _ = state.appdb.pg_catalog_funcs_put(&ver, &data);
+            }
+        }
+    }
     if let (Some(key), Some(sig)) = (cache_key, cache_sig) {
-        // best-effort — a failed cache write must never fail the introspect
         if let Ok(data) = serde_json::to_string(&snap) {
             let _ = state.appdb.schema_cache_put(&key, &sig, &data);
         }
