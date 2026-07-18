@@ -18,12 +18,28 @@ import { useConnections } from "../stores/connections";
 import { useInspector } from "../stores/inspector";
 import { useSchema } from "../stores/schema";
 import { RowPeek } from "./RowPeek";
+import { RecordView } from "./RecordView";
+import { FkPicker } from "./FkPicker";
+import { Histogram, type HistogramMode } from "./Histogram";
+import { flashReadOnlyReason } from "./flashReason";
+import {
+  altCycleNulls,
+  cycleChain,
+  jsonNoEquality,
+  multiSortIndices,
+  shiftToggleChain,
+  textishLabelCols,
+  type ChainEntry,
+  type FkPickTarget,
+  type SortSpec,
+} from "./spelunkLogic";
+import { browseEffectiveChain, browseWhere, dispatchBrowseChain } from "./browseContract";
 import { hitKey, useFind } from "../stores/find";
 import { ContextMenu, type MenuNode } from "../app/overlay/ContextMenu";
 import { useGridStats } from "../stores/gridStats";
 import { useGridFilter } from "../stores/gridFilter";
 import { useSettings } from "../stores/settings";
-import { ChevronUp, ChevronsUpDown, Plus } from "lucide-react";
+import { ChevronUp, ChevronsUpDown, Link2, Plus } from "lucide-react";
 import "./grid.css";
 
 /** registered by TableBrowser for infinite scroll; null in plain editor mode */
@@ -46,17 +62,6 @@ const NUMERIC_TYPES = new Set([
 // beachball). Below it the copy stays fully synchronous (zero added latency).
 const COPY_ASYNC_CELLS = 16_000;
 const COPY_SLICE_ROWS = 4_000;
-
-// flash a read-only reason through the status bar's existing message slot —
-// double-click/Enter/type-to-edit on an uneditable cell must never no-op mute
-let reasonTimer: ReturnType<typeof setTimeout> | undefined;
-function flashReadOnlyReason(msg: string) {
-  useEdits.setState({ lastError: msg });
-  clearTimeout(reasonTimer);
-  reasonTimer = setTimeout(() => {
-    if (useEdits.getState().lastError === msg) useEdits.setState({ lastError: null });
-  }, 2500);
-}
 
 // chunked-copy slice scheduling: rAF stalls while the window is occluded
 // (WKWebView suspends rAF) — race it against a timeout, first wins, cancel
@@ -181,6 +186,7 @@ function CellEditor({
   placeholder,
   kind,
   enumLabels,
+  fk,
   onDraft,
   onSave,
   onCommit,
@@ -194,6 +200,8 @@ function CellEditor({
   placeholder?: string;
   kind: "text" | "bool" | "enum";
   enumLabels?: string[];
+  /** column is a single-column FK — offer the referenced-row picker */
+  fk?: FkPickTarget | null;
   onDraft: (d: string) => void;
   /** advance moves focus after staging: true = down (Enter), "right" = Tab */
   onSave: (advance?: boolean | "right") => void;
@@ -205,6 +213,22 @@ function CellEditor({
   // Esc must discard WITHOUT the unmount-blur saving the draft
   const cancelled = useRef(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  // FK picker: while it's open the picker input holds focus — the textarea
+  // blur must NOT save-and-close under it
+  const [pickerAt, setPickerAt] = useState<{ x: number; y: number } | null>(null);
+  const pickerOpen = useRef(false);
+  const openPicker = () => {
+    if (!fk) return;
+    const r = wrapRef.current?.getBoundingClientRect();
+    pickerOpen.current = true;
+    setPickerAt({ x: r?.left ?? 0, y: (r?.bottom ?? 0) + 4 });
+  };
+  const closePicker = () => {
+    pickerOpen.current = false;
+    setPickerAt(null);
+    taRef.current?.focus();
+  };
   const grow = () => {
     const el = taRef.current;
     if (!el) return;
@@ -237,11 +261,17 @@ function CellEditor({
       onNull();
       return true;
     }
+    if (e.key === "ArrowDown" && e.metaKey && fk) {
+      e.preventDefault();
+      openPicker();
+      return true;
+    }
     return false;
   };
 
   return (
     <div
+      ref={wrapRef}
       className="vgrid-celledit"
       style={{
         transform: `translate(${x + ROWNUM_W}px, ${y + HEADER_H}px)`,
@@ -330,8 +360,9 @@ function CellEditor({
             }
           }}
           onBlur={() => {
-            // click-outside = save; Esc/∅ already handled
-            if (!cancelled.current) onSave();
+            // click-outside = save; Esc/∅ already handled; an open FK picker
+            // holds focus deliberately — never save-and-close under it
+            if (!cancelled.current && !pickerOpen.current) onSave();
           }}
         />
       )}
@@ -348,6 +379,32 @@ function CellEditor({
         >
           ∅
         </button>
+      )}
+      {kind === "text" && fk && (
+        <button
+          className="vgrid-fkbtn"
+          title={`Pick from ${fk.table} (⌘↓)`}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openPicker();
+          }}
+        >
+          <Link2 size={12} strokeWidth={2.2} />
+        </button>
+      )}
+      {pickerAt && fk && (
+        <FkPicker
+          point={pickerAt}
+          target={fk}
+          onPick={(v) => {
+            // through the normal editor-commit path — staged, never written
+            cancelled.current = true;
+            pickerOpen.current = false;
+            onCommit(v);
+          }}
+          onClose={closePicker}
+        />
       )}
     </div>
   );
@@ -431,21 +488,26 @@ export function Grid({
   // Everything data-keyed (staged edits, truncated markers, find hits,
   // editability) stays on UNDERLYING indexes — sorting after staging an edit
   // must never make ⌘S write through the wrong row.
-  const [clientSort, setClientSort] = useState<{ col: number; dir: "asc" | "desc" } | null>(null);
+  // client sort is a CHAIN (shift-click appends tiebreakers, ⌥-click cycles
+  // NULLS placement); a single-entry chain is the old tri-state sort
+  const [clientChain, setClientChain] = useState<ChainEntry<number>[]>([]);
   const [colOrder, setColOrder] = useState<number[] | null>(null);
   /** DATA indexes of hidden columns (view-level, like sort/reorder) */
   const [hiddenCols, setHiddenCols] = useState<ReadonlySet<number>>(new Set());
   useEffect(() => {
-    setClientSort(null);
+    setClientChain([]);
     setColOrder(null);
     setHiddenCols(new Set());
   }, [statement.index, cols.length]);
   // an open inline editor holds VIEW coords — a sort/reorder under it would
-  // make save resolve through the NEW maps and stage onto the wrong cell
+  // make save resolve through the NEW maps and stage onto the wrong cell.
+  // The record view and histogram hold view/value snapshots — same rule.
   useEffect(() => {
     setEditing(null);
+    setRecord(null);
+    setHisto(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientSort, colOrder, statement.index]);
+  }, [clientChain, colOrder, statement.index]);
 
   /** view→data column list: reorder permutation minus hidden columns */
   const viewCols = useMemo(() => {
@@ -504,31 +566,23 @@ export function Grid({
   }, [filterText, rows]);
 
   // client-side sort over LOADED rows — editor results only; the browser's
-  // paged data sorts server-side (a client sort of one page would lie)
+  // paged data sorts server-side (a client sort of one page would lie).
+  // Stable multi-key sort: ties keep stream order, NULLs default last
+  // (⌥-click flips an entry to NULLS-first).
   const rowOrder = useMemo(() => {
-    if ((!clientSort || insertable) && !filterIdx) return null;
+    const sorting = clientChain.length > 0 && !insertable;
+    if (!sorting && !filterIdx) return null;
     const base = filterIdx ?? rows.map((_, i) => i);
-    if (!clientSort || insertable) return base;
-    const { col, dir } = clientSort;
-    const numeric = isNumericCol(col);
-    const mul = dir === "asc" ? 1 : -1;
-    const idx = [...base];
-    idx.sort((a, b) => {
-      const va = rows[a][col];
-      const vb = rows[b][col];
-      if (va === null && vb === null) return 0;
-      if (va === null) return 1; // NULLs always last in the view
-      if (vb === null) return -1;
-      if (numeric) {
-        const na = Number(va);
-        const nb = Number(vb);
-        if (!Number.isNaN(na) && !Number.isNaN(nb)) return (na - nb) * mul;
-      }
-      return va < vb ? -mul : va > vb ? mul : 0;
-    });
-    return idx;
+    if (!sorting) return base;
+    const specs: SortSpec[] = clientChain.map((e) => ({
+      col: e.key,
+      mul: e.dir === "asc" ? 1 : -1,
+      numeric: isNumericCol(e.key),
+      nullsFirst: e.nulls === "first",
+    }));
+    return multiSortIndices(base, rows, specs);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientSort, filterIdx, rows, insertable, editMap]);
+  }, [clientChain, filterIdx, rows, insertable, editMap]);
 
   const rowAt = useCallback(
     (view: number) => (rowOrder ? (rowOrder[view] ?? view) : view),
@@ -580,12 +634,14 @@ export function Grid({
   // ANY view remap (quick-filter, sort, column reorder) invalidates an open
   // editor and the range selection — both hold VIEW coords, and batch actions
   // (Set NULL, fill down, paste, delete) re-resolve them through the NEW maps
-  // onto different data rows. Drop both on every remap.
+  // onto different data rows. Drop both on every remap (record view too — it
+  // holds view rows).
   useEffect(() => {
     setEditing(null);
+    setRecord(null);
     sel.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rawFilter, clientSort, colOrder, hiddenCols]);
+  }, [rawFilter, clientChain, colOrder, hiddenCols]);
   // publish the match count for the status bar's "n of m" readout
   useEffect(() => {
     useGridFilter.getState().setMatches(filterIdx ? filterIdx.length : null);
@@ -686,6 +742,14 @@ export function Grid({
   } | null>(null);
   /** transposed single-row viewer (Space) */
   const [peekRow, setPeekRow] = useState<number | null>(null);
+  /** record view (⇧Space): one view row = record mode, two = row diff */
+  const [record, setRecord] = useState<{ rows: [number] | [number, number] } | null>(null);
+  /** value-distribution panel (header context menu) */
+  const [histo, setHisto] = useState<{
+    point: { x: number; y: number };
+    column: string;
+    mode: HistogramMode;
+  } | null>(null);
 
   // focused cell drives the inspector — debounced so holding an arrow key
   // doesn't re-render (and re-parse) the inspector on every step
@@ -1332,6 +1396,7 @@ export function Grid({
     (e: React.KeyboardEvent) => {
       if (editing) return; // cell editor owns the keyboard
       if (peekRow !== null) return; // row peek modal owns the keyboard
+      if (record !== null) return; // record view modal owns the keyboard
       // embedded inputs (draft band, future controls) own their keys — the
       // grammar was eating Backspace/Tab/arrows and staging NULLs while typing
       const tag = (e.target as HTMLElement).tagName;
@@ -1452,6 +1517,12 @@ export function Grid({
         setSelectionValue(null); // stage NULL over the selection (undoable)
         return;
       }
+      if (e.key === " " && sel.focus && !meta && e.shiftKey) {
+        // ⇧Space = record view (the peek's big sibling — editable, ⌘↑/⌘↓ nav)
+        e.preventDefault();
+        setRecord({ rows: [sel.focus.r] });
+        return;
+      }
       if (e.key === " " && sel.focus && !meta) {
         e.preventDefault();
         setPeekRow((p) => (p === null ? sel.focus!.r : null));
@@ -1475,7 +1546,7 @@ export function Grid({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [copySelection, sel, viewLen, viewColLen, rowVirt, colVirt, startEdit, editing, fillDown, pasteIntoSelection, setSelectionValue, showDraft, cancelDraft],
+    [copySelection, sel, viewLen, viewColLen, rowVirt, colVirt, startEdit, editing, peekRow, record, fillDown, pasteIntoSelection, setSelectionValue, showDraft, cancelDraft],
   );
 
   // a result row is deletable iff exactly one source table has a locator
@@ -1759,7 +1830,12 @@ export function Grid({
   };
 
   // ---- header gestures: click = sort · drag = reorder · ⌘/⇧-click = select column ----
-  const browserSort = useBrowser((s) => s.sort);
+  // browse sort chain (store contract — sortChain is the ordering truth)
+  const browserChain = useBrowser((s) => s.sortChain);
+  const browseChainEff = useMemo(
+    () => (insertable ? browseEffectiveChain(browserChain) : []),
+    [insertable, browserChain],
+  );
   const [reorderFrom, setReorderFrom] = useState<number | null>(null);
   /** x-offset (content space) of the insertion boundary while reordering */
   const [dropLine, setDropLine] = useState<number | null>(null);
@@ -1792,35 +1868,41 @@ export function Grid({
     [viewColFromX, viewOffsets],
   );
 
-  /** header-menu direct sort/clear (cycle-free variants of toggleSort) */
+  /** header-menu direct sort/clear (cycle-free, resets any chain) */
   const toggleSortTo = (dataC: number, dir: "asc" | "desc") => {
     const name = cols[dataC]?.name;
     if (!name) return;
-    if (insertable) useBrowser.getState().setSort({ col: name, dir: dir.toUpperCase() as "ASC" | "DESC" });
-    else setClientSort({ col: dataC, dir });
+    // browser data is paged — its sort must be a real ORDER BY on the server
+    if (insertable) dispatchBrowseChain([{ key: name, dir }]);
+    else setClientChain([{ key: dataC, dir }]);
   };
   const clearSort = () => {
-    if (insertable) useBrowser.getState().setSort(null);
-    else setClientSort(null);
+    if (insertable) dispatchBrowseChain([]);
+    else setClientChain([]);
   };
 
-  const toggleSort = (dataC: number) => {
-    const name = cols[dataC]?.name;
-    if (!name) return;
+  /** sort-arrow click: plain = single-sort tri-state (existing grammar) ·
+   * ⇧-click = append/toggle this column in the chain · ⌥-click = cycle NULLS
+   * first/last on this column's entry */
+  const sortClick = (dataC: number, e: React.MouseEvent) => {
     if (insertable) {
-      // browser data is paged — sort must be a real ORDER BY on the server
-      const b = useBrowser.getState();
-      const cur = b.sort;
-      if (!cur || cur.col !== name) b.setSort({ col: name, dir: "ASC" });
-      else if (cur.dir === "ASC") b.setSort({ col: name, dir: "DESC" });
-      else b.setSort(null);
+      const name = cols[dataC]?.name;
+      if (!name) return;
+      const cur = browseChainEff;
+      const next = e.altKey
+        ? altCycleNulls(cur, name)
+        : e.shiftKey
+          ? shiftToggleChain(cur, name)
+          : cycleChain(cur, name);
+      if (next === cur) return; // ⌥ on an unsorted column — nothing to change
+      dispatchBrowseChain(next);
     } else {
-      setClientSort((cur) =>
-        !cur || cur.col !== dataC
-          ? { col: dataC, dir: "asc" }
-          : cur.dir === "asc"
-            ? { col: dataC, dir: "desc" }
-            : null,
+      setClientChain((cur) =>
+        e.altKey
+          ? altCycleNulls(cur, dataC)
+          : e.shiftKey
+            ? shiftToggleChain(cur, dataC)
+            : cycleChain(cur, dataC),
       );
     }
   };
@@ -1894,6 +1976,82 @@ export function Grid({
 
   const inRect = (r: number, c: number, rect: SelRect | null) =>
     !!rect && r >= rect.r0 && r <= rect.r1 && c >= rect.c0 && c <= rect.c1;
+
+  /** header menu → value distribution. Browse tabs GROUP BY on the server
+   * (tab's existing session, the exact compiled WHERE the browse queries
+   * embed); editor results and json columns (no server equality) bucket
+   * client-side over LOADED rows with an honest scope note. */
+  const openHistogram = (dataC: number, point: { x: number; y: number }) => {
+    const name = cols[dataC]?.name;
+    if (!name) return;
+    const table = insertable ? useBrowser.getState().table : null;
+    const tn = colType(dataC) ?? table?.columns.find((c) => c.name === name)?.type;
+    const sessionId = useResults.getState().executedSessionId;
+    if (insertable && table && sessionId && !jsonNoEquality(tn)) {
+      setHisto({
+        point,
+        column: name,
+        mode: {
+          kind: "server",
+          sessionId,
+          schema: table.schema,
+          table: table.name,
+          // the EXACT WHERE the browse queries embed (builder or raw mode)
+          where: browseWhere(),
+          note: null,
+        },
+      });
+      return;
+    }
+    const values: (string | null)[] = new Array(rows.length);
+    for (let r = 0; r < rows.length; r++) values[r] = rows[r][dataC] ?? null;
+    const note = jsonNoEquality(tn)
+      ? `json has no server-side equality — computed over ${rows.length.toLocaleString()} loaded rows`
+      : insertable
+        ? `no live session — computed over ${rows.length.toLocaleString()} loaded rows`
+        : `loaded ${rows.length.toLocaleString()} rows only`;
+    setHisto({ point, column: name, mode: { kind: "client", values, note } });
+  };
+
+  /** editing an FK column offers the referenced-row picker: FK identity from
+   * the editability map's table_refs + the snapshot's foreign keys (the same
+   * sources FK-follow navigation uses) */
+  const fkPickTargetFor = useCallback((viewC: number): FkPickTarget | null => {
+    const map = editMap && editMap !== "loading" && editMap !== "unavailable" ? editMap : null;
+    if (!map || !snapshot) return null;
+    const dataC = colAt(viewC);
+    const meta = map.columns[dataC];
+    const ref = meta ? map.table_refs[meta.table_oid] : undefined;
+    const colName = cols[dataC]?.name;
+    if (!ref || !colName) return null;
+    const fk = snapshot.foreign_keys.find(
+      (k) =>
+        k.src_schema === ref.schema &&
+        k.src_table === ref.name &&
+        k.src_cols.length === 1 &&
+        k.src_cols[0] === colName,
+    );
+    if (!fk || fk.dst_cols.length !== 1) return null;
+    const dst = snapshot.tables.find(
+      (t) => t.schema === fk.dst_schema && t.name === fk.dst_table,
+    );
+    return {
+      schema: fk.dst_schema,
+      table: fk.dst_table,
+      refCol: fk.dst_cols[0],
+      labelCols: dst ? textishLabelCols(dst.columns, fk.dst_cols[0]) : [],
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editMap, snapshot, cols, colAt]);
+  // identity-stable per edited cell — FkPicker's fetch effect keys on it, and
+  // a fresh object every Grid render would refetch on unrelated re-renders
+  const editingFk = useMemo(
+    () => (editing && editing.kind === "text" ? fkPickTargetFor(editing.c) : null),
+    // keyed on the CELL, not the editing object — draft keystrokes must not
+    // churn the target identity
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [editing?.r, editing?.c, editing?.kind, fkPickTargetFor],
+  );
 
   return (
     <div
@@ -1990,13 +2148,29 @@ export function Grid({
               const tn = colType(dataC);
               const glyph = typeIcon(tn);
               const name = cols[dataC].name;
-              const sortDir = insertable
-                ? browserSort && browserSort.col === name
-                  ? browserSort.dir.toLowerCase()
-                  : null
-                : clientSort && clientSort.col === dataC
-                  ? clientSort.dir
-                  : null;
+              // sort state from the CHAIN (browse: server chain via contract;
+              // editor: local client chain) — pos/nulls feed the badge
+              let sortDir: "asc" | "desc" | null = null;
+              let sortPos = 0;
+              let sortLen = 0;
+              let sortNulls: "first" | "last" | undefined;
+              if (insertable) {
+                sortLen = browseChainEff.length;
+                const si = browseChainEff.findIndex((en) => en.key === name);
+                if (si >= 0) {
+                  sortDir = browseChainEff[si].dir;
+                  sortPos = si + 1;
+                  sortNulls = browseChainEff[si].nulls;
+                }
+              } else {
+                sortLen = clientChain.length;
+                const si = clientChain.findIndex((en) => en.key === dataC);
+                if (si >= 0) {
+                  sortDir = clientChain[si].dir;
+                  sortPos = si + 1;
+                  sortNulls = clientChain[si].nulls;
+                }
+              }
               return (
                 <div
                   key={vc.key}
@@ -2022,15 +2196,24 @@ export function Grid({
                     </span>
                   )}
                   <span className="vgrid-hname">{name}</span>
+                  {sortDir && (sortLen > 1 || sortNulls) && (
+                    <span
+                      className="vgrid-sortpos"
+                      title={`sort ${sortPos} of ${sortLen}${sortNulls ? ` · NULLS ${sortNulls.toUpperCase()}` : ""}`}
+                    >
+                      {sortLen > 1 ? sortPos : ""}
+                      {sortNulls ? (sortNulls === "first" ? "∅↑" : "∅↓") : ""}
+                    </span>
+                  )}
                   <button
                     className={`vgrid-sortbtn${sortDir ? " on" : ""}${sortDir === "desc" ? " desc" : ""}`}
-                    title={
+                    title={`${
                       sortDir === "asc"
                         ? "Sorted ascending — click for descending"
                         : sortDir === "desc"
                           ? "Sorted descending — click to clear"
                           : "Sort"
-                    }
+                    }\n⇧click: add to sort chain · ⌥click: NULLS first/last`}
                     tabIndex={-1}
                     onMouseDown={(e) => {
                       // never start a reorder/select from the sort affordance
@@ -2040,7 +2223,7 @@ export function Grid({
                     onDoubleClick={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation();
-                      toggleSort(dataC);
+                      sortClick(dataC, e);
                     }}
                   >
                     {sortDir ? (
@@ -2244,6 +2427,7 @@ export function Grid({
               placeholder={editing.startedNull ? "NULL" : undefined}
               kind={editing.kind}
               enumLabels={editing.enumLabels}
+              fk={editingFk}
               onDraft={(d) => setEditing((e) => (e ? { ...e, draft: d } : e))}
               onSave={(advance) => saveEdit(editing.draft, advance)}
               onCommit={(v, advance) => saveEdit(v, advance)}
@@ -2279,7 +2463,7 @@ export function Grid({
               label: "Sort descending",
               onSelect: () => toggleSortTo(headerMenu.dataC, "desc"),
             },
-            ...(clientSort || (insertable && browserSort)
+            ...((insertable ? browseChainEff.length > 0 : clientChain.length > 0)
               ? ([
                   { kind: "item", label: "Clear sort", onSelect: clearSort },
                 ] as MenuNode[])
@@ -2287,12 +2471,20 @@ export function Grid({
             { kind: "sep" },
             {
               kind: "item",
+              label: "Value distribution",
+              onSelect: () => openHistogram(headerMenu.dataC, { x: headerMenu.x, y: headerMenu.y }),
+            },
+            { kind: "sep" },
+            {
+              kind: "item",
               label: `Hide column ${cols[headerMenu.dataC]?.name ?? ""}`,
               // hiding the LAST visible column would leave an unusable grid
               disabled: viewColLen <= 1,
               onSelect: () => {
-                // an invisible active sort is undiscoverable — clear it
-                if (!insertable && clientSort?.col === headerMenu.dataC) setClientSort(null);
+                // an invisible active sort is undiscoverable — drop this
+                // column's chain entry (others keep their positions)
+                if (!insertable)
+                  setClientChain((c) => c.filter((en) => en.key !== headerMenu.dataC));
                 setHiddenCols((prev) => new Set([...prev, headerMenu.dataC]));
               },
             },
@@ -2370,6 +2562,22 @@ export function Grid({
               hint: "space",
               onSelect: () => sel.focus && setPeekRow(sel.focus.r),
             },
+            {
+              kind: "item",
+              label: "Open as record",
+              hint: "⇧space",
+              onSelect: () => sel.focus && setRecord({ rows: [sel.focus.r] }),
+            },
+            ...(sel.rect && sel.rect.r1 - sel.rect.r0 === 1
+              ? ([
+                  {
+                    kind: "item",
+                    label: "Compare 2 rows",
+                    onSelect: () =>
+                      sel.rect && setRecord({ rows: [sel.rect.r0, sel.rect.r1] }),
+                  },
+                ] as MenuNode[])
+              : []),
             ...fkMenuItems(),
             ...(insertable && sel.focus
               ? ([
@@ -2437,6 +2645,40 @@ export function Grid({
             setPeekRow(null);
             containerRef.current?.focus();
           }}
+        />
+      )}
+
+      {record !== null && (
+        <RecordView
+          statement={statement}
+          viewRows={record.rows}
+          rowAt={rowAt}
+          colAt={colAt}
+          rowCount={viewLen}
+          typeOf={colType}
+          editMetaOf={colEditMeta}
+          onStep={(dir) =>
+            setRecord((r) =>
+              r && r.rows.length === 1
+                ? { rows: [Math.max(0, Math.min(viewLen - 1, r.rows[0] + dir))] }
+                : r,
+            )
+          }
+          onClose={() => {
+            setRecord(null);
+            containerRef.current?.focus();
+          }}
+        />
+      )}
+
+      {histo !== null && (
+        <Histogram
+          // fetch runs on mount — a different column/anchor must remount
+          key={`${histo.column}:${histo.mode.kind}:${histo.point.x},${histo.point.y}`}
+          point={histo.point}
+          column={histo.column}
+          mode={histo.mode}
+          onClose={() => setHisto(null)}
         />
       )}
 
