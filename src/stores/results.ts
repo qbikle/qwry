@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import * as ipc from "../ipc/commands";
 import type { ColumnMeta, DriverError, QueryEvent } from "../ipc/types";
+import { headToken } from "../editor/statements";
 import { useConnections } from "./connections";
 import { useTabs } from "./tabs";
 
@@ -111,6 +112,14 @@ function writeTab(
  * confirm prompts, so a second ⌘↵ during a modal would overwrite the danger
  * resolver and orphan the first invocation */
 const runInflight = new Set<string>();
+
+/** sessions the user force-terminated (last cancel tier) — their run's
+ * connection-closed rejection is a cancel, not an error */
+const terminatedSessions = new Set<string>();
+
+/** statement heads that change the schema (real statement boundaries; heads
+ * read past leading comments) */
+const DDL_HEADS = new Set(["create", "alter", "drop", "comment", "grant", "revoke", "truncate"]);
 
 // Row batches arrive faster than React should render. Buffer per tab+statement
 // and flush on a rAF tick.
@@ -392,7 +401,7 @@ export const useResults = create<ResultsState>((set, get) => ({
       // every tab's cached editability maps (they carry table/column/pk
       // identity that DDL can invalidate)
       const ranDdl = (get().byTab[tabId]?.statements ?? []).some(
-        (st) => !st.error && /^\s*(create|alter|drop|comment|grant|revoke|truncate)\b/i.test(st.sql),
+        (st) => !st.error && DDL_HEADS.has(headToken(st.sql)),
       );
       if (ranDdl) {
         const { useSchema } = await import("./schema");
@@ -402,6 +411,11 @@ export const useResults = create<ResultsState>((set, get) => ({
       }
     } catch (e) {
       const err = e as DriverError;
+      // 57014 = user cancel, 57P01 = pg_terminate_backend; a force-disconnect
+      // (last cancel tier) rejects with a connection-closed shape instead —
+      // the terminatedSessions flag marks it as the cancel it was
+      const cancelled =
+        err?.code === "57014" || err?.code === "57P01" || terminatedSessions.has(sessionId);
       // failed/cancelled runs enter history too — flagged, never silently
       // absent; a failed write logs but must not break the run path
       if (!historyDone) {
@@ -412,7 +426,7 @@ export const useResults = create<ResultsState>((set, get) => ({
             sql,
             performance.now() - runStart,
             historyRows,
-            err?.code === "57014" ? "cancelled" : "error",
+            cancelled ? "cancelled" : "error",
           )
           .catch((e2) => console.error("history_add failed", e2));
       }
@@ -421,11 +435,13 @@ export const useResults = create<ResultsState>((set, get) => ({
       }));
       const msg = (err?.message ?? "").toLowerCase();
       if (/connection|closed|communicat|broken pipe|reset|terminat|no such session/.test(msg)) {
-        useConnections.setState((s) => ({
-          connState: { ...s.connState, [activeProfileId]: "disconnected" },
-        }));
+        // reap the EXECUTED session only — sibling tabs on the profile keep
+        // their live sessions (flipping the whole profile contradicted the
+        // per-session reaping in markDisconnected)
+        useConnections.getState().markDisconnected(activeProfileId, sessionId);
       }
     } finally {
+      terminatedSessions.delete(sessionId);
       writeTab(set, tabId, { running: false });
       runInflight.delete(tabId);
     }
@@ -439,32 +455,41 @@ export const useResults = create<ResultsState>((set, get) => ({
       // control connection if the query didn't die — driver-side
       await ipc.cancel(sessionId);
     } catch (e) {
+      const conns = useConnections.getState();
+      const entry = Object.entries(conns.tabSessions).find(([, sid]) => sid === sessionId);
+      // the terminated session's OWN profile — teardown must never touch the
+      // tab's sibling sessions on other profiles
+      const profileId = entry?.[0].split("::")[0] ?? get().executedProfileId;
+      const msg = (e as { message?: string }).message ?? String(e);
+      // the session is already gone — nothing to terminate; just forget it so
+      // the next run builds a fresh one
+      if (msg.includes("no such session")) {
+        if (profileId) conns.markDisconnected(profileId, sessionId);
+        return;
+      }
       // both cancel tiers failed. Last tier: pg_terminate_backend (kills the
       // server process) + force-disconnect — explicit confirm, never automatic
       const { confirmDanger } = await import("./danger");
-      const msg = (e as { message?: string }).message ?? String(e);
+      const inTx = entry ? !!conns.txTabs[entry[0]] : false;
       const ok = await confirmDanger(
         "Cancel didn't stop the query",
-        `${msg}\n\nTerminate the server-side query (pg_terminate_backend) and force-disconnect this tab's session? A fresh session is created on the next run.`,
+        `${msg}\n\nTerminate the server-side query (pg_terminate_backend) and force-disconnect this tab's session? A fresh session is created on the next run.${
+          inTx ? "\n\nThis tab has an open transaction — it will be rolled back." : ""
+        }`,
         "Terminate & disconnect",
       );
       if (!ok) return;
+      terminatedSessions.add(sessionId); // history logs the fallout as a cancel
       try {
         await ipc.terminateBackend(sessionId);
       } catch {
-        // server unreachable — the disconnect below still unsticks the UI;
+        // server unreachable — the teardown below still unsticks the UI;
         // the server reaps the query via keepalives
       }
-      void ipc.disconnect(sessionId);
-      // forget the dead session so the next run builds a fresh one
-      const { useConnections } = await import("./connections");
-      const conns = useConnections.getState();
-      const entry = Object.entries(conns.tabSessions).find(([, sid]) => sid === sessionId);
-      if (entry) {
-        const [key] = entry;
-        const tabId = key.split("::").slice(1).join("::");
-        conns.closeTabSessions(tabId);
-      }
+      // scoped teardown: disconnects + forgets ONLY the executed session (the
+      // old closeTabSessions killed every profile's session for the tab)
+      if (profileId) conns.markDisconnected(profileId, sessionId);
+      else void ipc.disconnect(sessionId);
     }
   },
 }));

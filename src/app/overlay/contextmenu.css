@@ -71,10 +71,8 @@
   background: var(--border-strong);
 }
 
-/* submenu floats above its parent menu's catcher layer */
-.ctx-subpanel {
-  z-index: 45;
-}
+/* submenu z is inline (parent overlay layer z + 1) — a static value here
+   painted UNDER the parent's dynamic catcher and went mouse-dead */
 
 /* long menus scroll instead of running off-screen */
 .ctx-menu {

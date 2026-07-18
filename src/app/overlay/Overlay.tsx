@@ -104,7 +104,9 @@ export function useClampedPosition(
 
 /** Popup anchored at a viewport point (e.g. a right-click), clamped to the
  *  viewport with edge-flip. The positioned wrapper owns left/top — content must
- *  not set its own position. `onKey` (topmost-only) drives keyboard nav. */
+ *  not set its own position. `onKey` (topmost-only) drives keyboard nav.
+ *  Function children receive the layer's z — a separately-portaled panel (e.g.
+ *  a submenu) must paint above this layer's full-screen click catcher. */
 export function AnchoredOverlay({
   point,
   onClose,
@@ -118,7 +120,7 @@ export function AnchoredOverlay({
   onKey?: (e: KeyboardEvent) => void;
   layerClassName?: string;
   margin?: number;
-  children: ReactNode;
+  children: ReactNode | ((z: number | null) => ReactNode);
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const z = useOverlayLayer(onClose, onKey);
@@ -142,7 +144,7 @@ export function AnchoredOverlay({
           visibility: pos ? "visible" : "hidden",
         }}
       >
-        {children}
+        {typeof children === "function" ? children(z) : children}
       </div>
     </div>,
     document.body,

@@ -207,8 +207,20 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                   const { activeProfileId: pid, profiles } = useConnections.getState();
                   if (!pid) return;
                   const { useEdits } = await import("../stores/edits");
-                  const pending = Object.values(useEdits.getState().byTab).reduce(
-                    (n, t) => n + Object.keys(t.pending).length,
+                  // count only THIS profile's tabs — staged edits on another
+                  // connection survive its disconnect and must not inflate
+                  // the warning
+                  const tabList = useTabs.getState().tabs;
+                  const pending = Object.entries(useEdits.getState().byTab).reduce(
+                    (n, [tabId, t]) => {
+                      const cnt = Object.keys(t.pending).length;
+                      if (cnt === 0) return n;
+                      const owner =
+                        tabList.find((x) => x.id === tabId)?.profile_id ??
+                        useResults.getState().byTab[tabId]?.executedProfileId ??
+                        null;
+                      return owner === pid ? n + cnt : n;
+                    },
                     0,
                   );
                   const name = profiles.find((p) => p.id === pid)?.name ?? "connection";

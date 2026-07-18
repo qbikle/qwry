@@ -18,6 +18,9 @@ let installed = false;
 /** stacking base for overlay layers; each push gets BASE_Z + its 1-based depth,
  *  so a later overlay always paints above the one it opened over */
 const BASE_Z = 50;
+/** ceiling for dynamic overlay z — fixed chrome (prod strip, z 60) must stay
+ *  on top; ties between clamped layers fall back to DOM order */
+export const MAX_OVERLAY_Z = 59;
 let zSeq = 0;
 
 function onKeyDown(e: KeyboardEvent) {
@@ -47,7 +50,7 @@ function ensureListener() {
 export function pushOverlay(entry: OverlayEntry): { z: number; pop: () => void } {
   ensureListener();
   stack.push(entry);
-  const z = BASE_Z + ++zSeq;
+  const z = Math.min(BASE_Z + ++zSeq, MAX_OVERLAY_Z);
   return {
     z,
     pop: () => {

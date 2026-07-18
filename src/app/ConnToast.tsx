@@ -12,8 +12,13 @@ export function ConnToast() {
   const clearError = useConnections((s) => s.clearError);
   const profiles = useConnections((s) => s.profiles);
   const editConnection = useConnections((s) => s.editConnection);
-  /** a live session died with a driver-known reason (session-closed event) */
-  const [closed, setClosed] = useState<{ profileId: string; reason: string } | null>(null);
+  // session-death toasts render straight from the store — markDisconnected
+  // decides which deaths are toast-worthy (it knows which branch fired), so
+  // nothing here depends on listener registration order
+  const closed = useConnections((s) => s.closedToast);
+  const clearClosedToast = useConnections((s) => s.clearClosedToast);
+  /** app-db rows skipped at load (appdb-warning event from the backend) */
+  const [warn, setWarn] = useState<{ table: string; skipped: number } | null>(null);
 
   useEffect(() => {
     if (!error) return;
@@ -23,33 +28,33 @@ export function ConnToast() {
 
   useEffect(() => {
     if (!closed) return;
-    const t = setTimeout(() => setClosed(null), 8000);
+    const t = setTimeout(clearClosedToast, 8000);
     return () => clearTimeout(t);
-  }, [closed]);
+  }, [closed, clearClosedToast]);
 
   useEffect(() => {
+    if (!warn) return;
+    const t = setTimeout(() => setWarn(null), 8000);
+    return () => clearTimeout(t);
+  }, [warn]);
+
+  useEffect(() => {
+    // StrictMode double-mounts: a listen() resolving after the first mount's
+    // cleanup must unregister itself, not leak a duplicate listener
+    let disposed = false;
     let un: (() => void) | undefined;
     void import("@tauri-apps/api/event").then(({ listen }) =>
-      listen<{ session_id: string; profile_id: string; reason: string | null }>(
-        "session-closed",
-        (e) => {
-          const { session_id, profile_id, reason } = e.payload;
-          if (!reason) return;
-          // a spare dying quietly (bastion idle-drop) is routine — only toast
-          // sessions the user actually holds (primary/tab), or a primary death
-          // the store already registered (listener-order race)
-          const conn = useConnections.getState();
-          const known =
-            conn.sessions[profile_id] === session_id ||
-            Object.values(conn.tabSessions).includes(session_id);
-          if (!known && conn.connState[profile_id] !== "disconnected") return;
-          setClosed({ profileId: profile_id, reason });
-        },
-      ).then((u) => {
-        un = u;
+      listen<{ table: string; skipped: number }>("appdb-warning", (e) => {
+        setWarn(e.payload);
+      }).then((u) => {
+        if (disposed) u();
+        else un = u;
       }),
     );
-    return () => un?.();
+    return () => {
+      disposed = true;
+      un?.();
+    };
   }, []);
 
   const profile = errorProfileId ? profiles.find((p) => p.id === errorProfileId) : null;
@@ -57,6 +62,21 @@ export function ConnToast() {
 
   return (
     <AnimatePresence>
+      {!error && !closed && warn && (
+        <motion.div className="conn-toast" {...popIn}>
+          <TriangleAlert size={15} className="conn-toast-icon" />
+          <div className="conn-toast-body">
+            <div className="conn-toast-title">Some saved data couldn’t be loaded</div>
+            <div className="conn-toast-msg">
+              {warn.skipped} saved {warn.table} {warn.skipped === 1 ? "entry" : "entries"}{" "}
+              couldn’t be read and {warn.skipped === 1 ? "was" : "were"} skipped
+            </div>
+          </div>
+          <button className="conn-toast-close" title="Dismiss" onClick={() => setWarn(null)}>
+            <X size={14} />
+          </button>
+        </motion.div>
+      )}
       {!error && closed && (
         <motion.div className="conn-toast" {...popIn}>
           <TriangleAlert size={15} className="conn-toast-icon" />
@@ -67,7 +87,7 @@ export function ConnToast() {
             </div>
             <div className="conn-toast-msg">{closed.reason}</div>
           </div>
-          <button className="conn-toast-close" title="Dismiss" onClick={() => setClosed(null)}>
+          <button className="conn-toast-close" title="Dismiss" onClick={clearClosedToast}>
             <X size={14} />
           </button>
         </motion.div>

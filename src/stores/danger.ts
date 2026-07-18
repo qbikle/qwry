@@ -72,9 +72,10 @@ function skipWsComments(stmt: string, i: number): number {
   }
 }
 
-/** a WHERE keyword at paren depth 0 from `i` on — a WHERE inside a subselect
- * (or a string/comment/dollar-quote) doesn't make the outer DML safe */
-function hasTopLevelWhere(stmt: string, i: number): boolean {
+/** a bare keyword from `i` on, outside strings/comments/dollar-quotes;
+ * `topLevel` restricts to paren depth 0 — a WHERE inside a subselect doesn't
+ * make the outer DML safe */
+function hasKeyword(stmt: string, i: number, word: string, topLevel: boolean): boolean {
   const n = stmt.length;
   let depth = 0;
   while (i < n) {
@@ -97,7 +98,13 @@ function hasTopLevelWhere(stmt: string, i: number): boolean {
     if (isWordChar(ch)) {
       let k = i + 1;
       while (k < n && isWordChar(stmt[k])) k++;
-      if (depth === 0 && k - i === 5 && /^where$/i.test(stmt.slice(i, k))) return true;
+      if (
+        (!topLevel || depth === 0) &&
+        k - i === word.length &&
+        stmt.slice(i, k).toLowerCase() === word
+      ) {
+        return true;
+      }
       i = k;
       continue;
     }
@@ -120,7 +127,8 @@ function headAfterWith(stmt: string): { word: string; end: number } {
 }
 
 /** the statement (or one of its data-modifying CTE bodies) is an UPDATE or
- * DELETE with no top-level WHERE */
+ * DELETE with no top-level WHERE, a MERGE with no WHERE anywhere (its guards
+ * live in ON/WHEN subclauses), or a TRUNCATE (no WHERE form exists) */
 function dmlWithoutWhere(stmt: string): boolean {
   const parse = parseCtes(stmt);
   if (parse) {
@@ -129,8 +137,10 @@ function dmlWithoutWhere(stmt: string): boolean {
     }
   }
   const { word, end } = headAfterWith(stmt);
+  if (word === "truncate") return true;
+  if (word === "merge") return !hasKeyword(stmt, end, "where", false);
   if (word !== "update" && word !== "delete") return false;
-  return !hasTopLevelWhere(stmt, end);
+  return !hasKeyword(stmt, end, "where", true);
 }
 
 /** UPDATE or DELETE statements with no WHERE clause — real statement
@@ -143,10 +153,17 @@ export function dangerousStatements(sql: string): string[] {
     .map((s) => s.trim());
 }
 
-const MUTATING = new Set(["insert", "update", "delete", "truncate", "drop", "alter"]);
+const MUTATING = new Set([
+  "insert", "update", "delete", "merge", "truncate", "drop", "alter", "create", "call", "do",
+]);
 
+/** EXPLAIN ANALYZE executes the statement — anything that can write must warn.
+ * COPY mutates only in its FROM form; SELECT … INTO creates a table. */
 export const isMutating = (sql: string): boolean => {
-  if (MUTATING.has(headAfterWith(sql).word)) return true;
+  const { word, end } = headAfterWith(sql);
+  if (MUTATING.has(word)) return true;
+  if (word === "copy" && hasKeyword(sql, end, "from", true)) return true;
+  if (word === "select" && hasKeyword(sql, end, "into", true)) return true;
   // a data-modifying CTE executes its writes even when the outer head is SELECT
   const parse = parseCtes(sql);
   return !!parse && parse.ctes.some((c) => isMutating(sql.slice(c.bodyFrom, c.bodyTo)));

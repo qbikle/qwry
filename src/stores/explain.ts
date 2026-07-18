@@ -75,7 +75,10 @@ export const useExplain = create<ExplainState>((set) => ({
     if (!sessionId) return;
 
     const { isMutating, confirmDanger } = await import("./danger");
-    if (isMutating(sql)) {
+    // scan every statement, not just the buffer head — `SELECT 1; DELETE FROM t`
+    // must warn even though the buffer heads at SELECT
+    const { splitStatementSpans } = await import("../editor/statements");
+    if (splitStatementSpans(sql).some((sp) => isMutating(sql.slice(sp.from, sp.to)))) {
       const ok = await confirmDanger(
         "EXPLAIN ANALYZE executes the statement",
         `This will actually run:\n\n${sql.trim().slice(0, 400)}`,

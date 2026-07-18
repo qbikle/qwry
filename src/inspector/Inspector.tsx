@@ -11,7 +11,7 @@ import {
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import * as ipc from "../ipc/commands";
 import { buildEditMapHint } from "../lib/editHints";
-import { editKey, useEdits } from "../stores/edits";
+import { ctidGuardPairs, editKey, useEdits } from "../stores/edits";
 import { useInspector } from "../stores/inspector";
 import { useResults } from "../stores/results";
 import { useSchema } from "../stores/schema";
@@ -101,6 +101,11 @@ export function Inspector() {
       pc,
       stmt.rows[target.row]?.[pc] ?? null,
     ]);
+    // ctid rows move under UPDATE/VACUUM FULL — AND in the same old-value
+    // guard as edits so a moved row shows matched ≠ 1, never a wrong value
+    if (editMap.columns[pkCols[0]]?.is_ctid) {
+      locator.push(...ctidGuardPairs(editMap, meta.table_oid, stmt, target.row));
+    }
     const snap = res.executedProfileId
       ? useSchema.getState().snapshots[res.executedProfileId]
       : undefined;

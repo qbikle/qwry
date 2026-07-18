@@ -10,6 +10,7 @@ import { motion } from "motion/react";
 import { ChevronRight } from "lucide-react";
 import { menuIn } from "../../design/springs";
 import { AnchoredOverlay } from "./Overlay";
+import { MAX_OVERLAY_Z } from "./escStack";
 import "./contextmenu.css";
 
 export type MenuNode =
@@ -149,56 +150,64 @@ export function ContextMenu({
       onKey={onKey}
       layerClassName={layerClassName}
     >
-      <motion.div className="ctx-menu" {...menuIn}>
-        {items.map((it, i) => {
-          if (it.kind === "sep") return <div key={i} className="ctx-sep" />;
-          const isSub = it.kind === "submenu";
-          const danger = it.kind === "item" && it.danger;
-          const disabled = it.kind === "item" && it.disabled;
-          const hot = i === active && (openSub === null || openSub === i);
-          return (
-            <div
-              key={i}
-              ref={(el) => {
-                itemEls.current[i] = el;
-              }}
-              className={`ctx-item${hot ? " hot" : ""}${danger ? " danger" : ""}${disabled ? " disabled" : ""}`}
-              onMouseEnter={() => {
-                if (disabled) return;
-                setActive(i);
-                if (isSub) openSubmenu(i);
-                else setOpenSub(null);
-              }}
-              // keep the menu focusless (WKWebView buttons grab focus oddly)
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                if (disabled) return;
-                if (isSub) openSubmenu(i);
-                else activate(it);
-              }}
-            >
-              <span className="ctx-label">{it.label}</span>
-              {it.kind === "item" && it.hint && (
-                <span className="ctx-hint">{it.hint}</span>
-              )}
-              {isSub && (
-                <span className="ctx-arrow">
-                  <ChevronRight size={13} />
-                </span>
-              )}
-            </div>
-          );
-        })}
-      </motion.div>
+      {(layerZ) => (
+        <>
+          <motion.div className="ctx-menu" {...menuIn}>
+            {items.map((it, i) => {
+              if (it.kind === "sep") return <div key={i} className="ctx-sep" />;
+              const isSub = it.kind === "submenu";
+              const danger = it.kind === "item" && it.danger;
+              const disabled = it.kind === "item" && it.disabled;
+              const hot = i === active && (openSub === null || openSub === i);
+              return (
+                <div
+                  key={i}
+                  ref={(el) => {
+                    itemEls.current[i] = el;
+                  }}
+                  className={`ctx-item${hot ? " hot" : ""}${danger ? " danger" : ""}${disabled ? " disabled" : ""}`}
+                  onMouseEnter={() => {
+                    if (disabled) return;
+                    setActive(i);
+                    if (isSub) openSubmenu(i);
+                    else setOpenSub(null);
+                  }}
+                  // keep the menu focusless (WKWebView buttons grab focus oddly)
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    if (disabled) return;
+                    if (isSub) openSubmenu(i);
+                    else activate(it);
+                  }}
+                >
+                  <span className="ctx-label">{it.label}</span>
+                  {it.kind === "item" && it.hint && (
+                    <span className="ctx-hint">{it.hint}</span>
+                  )}
+                  {isSub && (
+                    <span className="ctx-arrow">
+                      <ChevronRight size={13} />
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </motion.div>
 
-      {openSub !== null && subPoint && (
-        <SubPanel
-          point={subPoint}
-          items={subItems}
-          active={subActive}
-          onHover={setSubActive}
-          onActivate={activate}
-        />
+          {openSub !== null && subPoint && (
+            <SubPanel
+              point={subPoint}
+              items={subItems}
+              active={subActive}
+              // above the parent layer's full-screen catcher (dynamic z from the
+              // overlay stack) or the submenu is mouse-dead; ties at the ceiling
+              // resolve by DOM order — the portal mounts after the layer
+              z={layerZ != null ? Math.min(layerZ + 1, MAX_OVERLAY_Z) : undefined}
+              onHover={setSubActive}
+              onActivate={activate}
+            />
+          )}
+        </>
       )}
     </AnchoredOverlay>
   );
@@ -210,12 +219,15 @@ function SubPanel({
   point,
   items,
   active,
+  z,
   onHover,
   onActivate,
 }: {
   point: { x: number; y: number; leftEdge: number };
   items: MenuNode[];
   active: number;
+  /** parent layer z + 1 — must beat the parent's full-screen click catcher */
+  z?: number;
   onHover: (i: number) => void;
   onActivate: (node: MenuNode) => void;
 }) {
@@ -264,6 +276,7 @@ function SubPanel({
         left: pos?.left ?? point.x,
         top: pos?.top ?? point.y,
         visibility: pos ? "visible" : "hidden",
+        zIndex: z,
       }}
     >
       <motion.div className="ctx-menu" {...menuIn}>

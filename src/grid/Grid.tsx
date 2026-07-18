@@ -5,7 +5,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { invoke } from "@tauri-apps/api/core";
 import { useResults, type StatementState } from "../stores/results";
-import { editKey, useEdits } from "../stores/edits";
+import { ctidGuardPairs, editKey, useEdits } from "../stores/edits";
 import * as ipc from "../ipc/commands";
 import type { EditabilityMap } from "../ipc/types";
 import { formatCells, type CopyFormat } from "./clipboard";
@@ -1372,16 +1372,14 @@ export function Grid({
       const dataR = rowAt(r);
       const row = rows[dataR];
       if (!row) continue; // never build a locator from a phantom row
-      const loc = pkCols.map((pc) => [pc, row[pc]] as [number, string | null]);
-      if (isCtid) {
-        const seen = new Set<number>();
-        for (const c of map.columns) {
-          if (c.table_oid !== deletableTableOid || c.is_ctid || c.attnum <= 0) continue;
-          if (statement.truncated.has(`${dataR}:${c.col}`) || seen.has(c.attnum)) continue;
-          seen.add(c.attnum);
-          loc.push([c.col, row[c.col] ?? null]);
-        }
+      // a truncated locator cell is only the display prefix — a WHERE built
+      // from it matches 0 rows and fails with a misleading message
+      if (pkCols.some((pc) => statement.truncated.has(`${dataR}:${pc}`))) {
+        flashReadOnlyReason("locator value is truncated — cannot safely identify this row");
+        return;
       }
+      const loc = pkCols.map((pc) => [pc, row[pc]] as [number, string | null]);
+      if (isCtid) loc.push(...ctidGuardPairs(map, deletableTableOid, statement, dataR));
       locators.push(loc);
     }
     if (locators.length === 0) return;
@@ -1566,14 +1564,26 @@ export function Grid({
     if (!f || !table) return;
     const dataR = rowAt(f.r);
     const prefill: Record<string, { text: string; isNull: boolean; touched?: boolean }> = {};
+    // a truncated cell holds only the display prefix — silently inserting it
+    // would corrupt the copy; leave those columns untouched (= DEFAULT) and say so
+    const skippedCols: string[] = [];
     cols.forEach((c, i) => {
       if (c.name === "ctid" || table.pk.includes(c.name)) return;
+      if (statement.truncated.has(`${dataR}:${i}`)) {
+        skippedCols.push(c.name);
+        return;
+      }
       const v = rows[dataR][i];
       // prefilled values are deliberate — a duplicated '' must insert '', not DEFAULT
       prefill[c.name] =
         v === null ? { text: "", isNull: true } : { text: v, isNull: false, touched: true };
     });
     useBrowser.getState().beginDraft(prefill);
+    if (skippedCols.length > 0) {
+      flashReadOnlyReason(
+        `truncated column${skippedCols.length === 1 ? "" : "s"} not copied (left as DEFAULT): ${skippedCols.join(", ")}`,
+      );
+    }
   };
 
   const resizing = useRef<{ col: number; startX: number; startW: number } | null>(null);
@@ -1967,19 +1977,24 @@ export function Grid({
                             if (!text.includes("\t") && !text.includes("\n")) return;
                             e.preventDefault();
                             // tabs → a copied grid/spreadsheet ROW: spread
-                            // across the draft cells from this column on
+                            // across the draft cells from this column on.
+                            // Empty fields stay untouched (= DEFAULT) — the
+                            // spreadsheet convention; a deliberate '' is still
+                            // reachable by typing in the cell
                             if (text.includes("\t")) {
                               const values = text.replace(/\n+$/, "").split(/\r?\n/)[0].split("\t");
                               let vi = 0;
                               for (let view = vc.index; view < viewColLen && vi < values.length; view++) {
                                 const cn = cols[colAt(view)].name;
                                 if (cn === "ctid") continue;
+                                const v = values[vi];
+                                vi++;
+                                if (v === "") continue;
                                 setDraftCell(cn, {
-                                  text: values[vi],
+                                  text: v,
                                   isNull: false,
                                   touched: true,
                                 });
-                                vi++;
                               }
                               return;
                             }
