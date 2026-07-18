@@ -17,6 +17,13 @@
 3. Driver/edit-path changes: staging suite green —
    `QWRY_TEST_HOST=$STAGING_DB_HOST … cargo test --test staging_smoke -- --ignored`.
    NEVER against prod.
+   **Two staging DBs**: `crawler_data_production` (112GB, real data — read-only /
+   big-table perf tests, pre-existing scratch tests) and `squad` (small, CREATE ok —
+   ALL new DDL-creating fixtures: schemas/types/matviews/triggers, write-heavy
+   round-trips, synthetic keyset benchmarks; env `QWRY_TEST_DB2=squad`). squad rule:
+   fixtures live ONLY in a `qwry_test` schema, never public (it's a real staging app
+   db) — drop at teardown. squad also serves as the second connection profile for
+   multi-connection UI testing (workspaces, pins, db switcher).
 4. Adversarial code-review agents over the wave diff; confirmed findings fixed
    before PR.
 5. Docs updated in the same wave: this file ticked, ROADMAP.md session note,
