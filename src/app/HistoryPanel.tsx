@@ -97,6 +97,10 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
             >
               <span className="history-sql">{r.sql.replace(/\s+/g, " ")}</span>
               <span className="history-meta">
+                {r.status !== "ok" && (
+                  <span className={`history-dot ${r.status}`} title={r.status} />
+                )}
+                {r.status !== "ok" && `${r.status} · `}
                 {profileName(r.profile_id)} · {r.rows} rows · {Math.round(r.ms)}ms ·{" "}
                 {relTime(r.ran_at)}
               </span>

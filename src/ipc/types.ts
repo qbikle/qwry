@@ -20,6 +20,8 @@ export interface Profile {
   ssh_key?: string | null;
 }
 
+export type HistoryStatus = "ok" | "error" | "cancelled";
+
 export interface HistoryRow {
   id: number;
   profile_id: string;
@@ -27,6 +29,7 @@ export interface HistoryRow {
   ms: number;
   rows: number;
   ran_at: string;
+  status: HistoryStatus;
 }
 
 export interface ColumnMeta {
