@@ -1364,23 +1364,38 @@ export function Grid({
     const pkCols = map.pk_cols[deletableTableOid];
     if (!pkCols?.length) return;
 
+    // ctid locators get the same row-movement guard as edits: pin identity
+    // with the row's old values (untruncated same-table columns, deduped)
+    const isCtid = map.columns[pkCols[0]]?.is_ctid;
     const locators: [number, string | null][][] = [];
     for (let r = rect.r0; r <= rect.r1; r++) {
-      const row = rows[rowAt(r)];
+      const dataR = rowAt(r);
+      const row = rows[dataR];
       if (!row) continue; // never build a locator from a phantom row
-      locators.push(pkCols.map((pc) => [pc, row[pc]] as [number, string | null]));
+      const loc = pkCols.map((pc) => [pc, row[pc]] as [number, string | null]);
+      if (isCtid) {
+        const seen = new Set<number>();
+        for (const c of map.columns) {
+          if (c.table_oid !== deletableTableOid || c.is_ctid || c.attnum <= 0) continue;
+          if (statement.truncated.has(`${dataR}:${c.col}`) || seen.has(c.attnum)) continue;
+          seen.add(c.attnum);
+          loc.push([c.col, row[c.col] ?? null]);
+        }
+      }
+      locators.push(loc);
     }
     if (locators.length === 0) return;
     const tableName = map.tables[deletableTableOid] ?? "table";
     const n = locators.length;
     const preview = locators
       .slice(0, 8)
-      .map(
-        (loc) =>
-          `WHERE ${loc
-            .map(([c, v]) => `${cols[c]?.name ?? `col${c}`} = ${v ?? "NULL"}`)
-            .join(" AND ")}`,
-      )
+      .map((loc) => {
+        const parts = loc
+          .slice(0, 4)
+          .map(([c, v]) => `${cols[c]?.name ?? `col${c}`} = ${v ?? "NULL"}`);
+        if (loc.length > 4) parts.push(`… +${loc.length - 4} identity checks`);
+        return `WHERE ${parts.join(" AND ")}`;
+      })
       .join("\n");
 
     const { confirmDanger } = await import("../stores/danger");
@@ -1418,7 +1433,7 @@ export function Grid({
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel.rect, deletableTableOid, editMap, rows, statement.index]);
+  }, [sel.rect, deletableTableOid, editMap, rows, statement.index, statement.truncated, rowAt]);
 
   // planner row estimates for the "Referenced by" submenu — fired when the
   // context menu opens (labels read them by src key). EXPLAIN uses per-value
