@@ -179,7 +179,14 @@
       (+staging_introspect_v2, +staging_table_stats — matview-safe stats proven);
       keyset-proof.ts 20 cases / 220 assertions (NULLS-override ladders, mixed-dir
       chains, raw-WHERE composition, jump re-anchor gapless).
-- [ ] Adversarial audit round; confirmed findings fixed.
+- [x] Audit round: 4 adversarial reviewers → ~25 confirmed findings, ALL fixed.
+      Ladder math independently re-derived: all 8 (dir,placement,seek) combos MATCH,
+      multi-key + jump re-anchor live-proven gapless — no S1/S2 in keyset. Fixes:
+      anchor truncation (O(n²) fallback shape), NULLS gates on NOT NULL (planner
+      cliff), RecordView hidden-column leak/dup, unique-index drop advice, live
+      Columns cell, session-scope for histogram/picker, newline-safe raw-WHERE
+      composition. Harness 20→28 cases w/ explicit no-fallback assertions.
+      Final: tsc ✓ vite ✓ clippy 0 ✓ unit 34/34 ✓ staging 20/20 ✓ harness 28/185 ✓.
 
 ---
 
