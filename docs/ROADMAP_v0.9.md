@@ -197,11 +197,11 @@
       re-enters the verified-batch pipeline (a stale undo rolls back honestly).
 - [ ] Buffer time-machine: step the editor back through executed versions of THIS
       tab (leapfrog #11).
-- [ ] History panel upgrade: dedupe/grouping, timestamps visible, per-connection
+- [x] History panel upgrade: dedupe/grouping, timestamps visible, per-connection
       filter chips (GAPS §3 persistence).
 - [ ] .sql file open/save/drop onto window (GAPS §3 editor).
 - [ ] In-editor history stepping ⌥↑/⌥↓ (psql muscle memory) (GAPS §3 editor).
-- [ ] CSV/TSV import wizard: file → column mapping → typed batches → dry-run
+- [x] CSV/TSV import wizard: file → column mapping → typed batches → dry-run
       validation → commit with per-row error report. Never silently drops rows.
 
 ### Gate

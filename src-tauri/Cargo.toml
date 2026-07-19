@@ -38,4 +38,5 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-dialog = "2"
 objc2 = "0.6.4"
+csv = "1.3"
 
