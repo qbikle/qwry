@@ -219,14 +219,18 @@
 
 ## v0.9.0-flightcheck — launch polish
 
-- [ ] Focus discipline: restore focus on every overlay close; modal focus trap +
+- [x] Focus discipline: restore focus on every overlay close; modal focus trap +
       role=dialog (GAPS §3 shell).
-- [ ] CloseGuard/DangerModal keyboard conventions: ⌘⌫ destructive confirm, plain
+- [x] CloseGuard/DangerModal keyboard conventions: ⌘⌫ destructive confirm, plain
       Enter = safe action (Mac convention — GAPS §3 shell).
-- [ ] Empty states with CTAs (no dead ends; ⌘K hints) (GAPS §3 shell).
-- [ ] UI zoom ⌘+/⌘−/⌘0 (GAPS §3 shell).
-- [ ] Window title shows connection · db (GAPS §3 shell).
-- [ ] Reduced-motion + springs replay audit (GAPS §2.17 residue).
+- [x] Empty states with CTAs (no dead ends; ⌘K hints) (GAPS §3 shell).
+- [x] UI zoom ⌘+/⌘−/⌘0 (GAPS §3 shell).
+- [x] Window title shows connection · db (GAPS §3 shell).
+- [x] Reduced-motion + springs replay audit (GAPS §2.17 residue): audit found
+      NO data-driven remount replays (Grid's per tab:stmt key carries no
+      entrance spring; chips/sidebar rows/dash cards are static); fixed the two
+      presets-bypass stragglers — rail avatars' hand-rolled spring → railItemIn,
+      ZenScreen quote tween + wave canvas now honor prefers-reduced-motion.
 - [ ] Final design loop: one pass over every surface against tokens.css; kill the
       last raw sizes.
 - [ ] README + screenshots + first-run experience.

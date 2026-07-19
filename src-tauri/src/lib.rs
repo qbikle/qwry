@@ -150,6 +150,12 @@ fn build_menu(app: &tauri::App) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> 
         .item(&item("inspector", "Toggle Inspector", Some("Cmd+I"))?)
         .item(&item("theme", "Theme…", None)?)
         .separator()
+        // muda has no "Plus" key — Cmd+= is the canonical zoom-in accelerator
+        // (Safari-style; the frontend fallback also accepts ⌘⇧= aka ⌘+)
+        .item(&item("zoom-in", "Zoom In", Some("Cmd+="))?)
+        .item(&item("zoom-out", "Zoom Out", Some("Cmd+-"))?)
+        .item(&item("zoom-reset", "Actual Size", Some("Cmd+0"))?)
+        .separator()
         .item(&item("history", "Query History", Some("Cmd+Y"))?)
         .item(&item("refresh-schema", "Refresh Schema", Some("Cmd+R"))?)
         .build()?;

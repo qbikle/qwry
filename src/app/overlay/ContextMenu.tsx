@@ -152,7 +152,7 @@ export function ContextMenu({
     >
       {(layerZ) => (
         <>
-          <motion.div className="ctx-menu" {...menuIn}>
+          <motion.div className="ctx-menu" role="menu" {...menuIn}>
             {items.map((it, i) => {
               if (it.kind === "sep") return <div key={i} className="ctx-sep" />;
               const isSub = it.kind === "submenu";
@@ -166,6 +166,9 @@ export function ContextMenu({
                     itemEls.current[i] = el;
                   }}
                   className={`ctx-item${hot ? " hot" : ""}${danger ? " danger" : ""}${disabled ? " disabled" : ""}`}
+                  role="menuitem"
+                  aria-disabled={disabled || undefined}
+                  aria-haspopup={isSub || undefined}
                   onMouseEnter={() => {
                     if (disabled) return;
                     setActive(i);
@@ -279,7 +282,7 @@ function SubPanel({
         zIndex: z,
       }}
     >
-      <motion.div className="ctx-menu" {...menuIn}>
+      <motion.div className="ctx-menu" role="menu" {...menuIn}>
         {searchable && (
           <input
             className="ctx-search"
@@ -312,6 +315,8 @@ function SubPanel({
                 rowEls.current[i] = el;
               }}
               className={`ctx-item${i === active ? " hot" : ""}${it.danger ? " danger" : ""}${it.disabled ? " disabled" : ""}`}
+              role="menuitem"
+              aria-disabled={it.disabled || undefined}
               onMouseEnter={() => !it.disabled && onHover(i)}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => !it.disabled && onActivate(it)}

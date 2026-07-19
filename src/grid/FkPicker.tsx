@@ -105,6 +105,8 @@ export function FkPicker({
     <AnchoredOverlay
       point={point}
       onClose={onClose}
+      role="dialog"
+      label={`Pick referenced row from ${target.table}`}
       onKey={(e) => {
         if (e.key === "ArrowDown") {
           e.preventDefault();

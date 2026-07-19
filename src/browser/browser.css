@@ -368,7 +368,7 @@
 .st-kind {
   font-size: var(--text-2xs);
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   color: var(--fg-faint) !important;
   white-space: nowrap;
 }

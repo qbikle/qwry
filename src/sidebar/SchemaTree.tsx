@@ -777,6 +777,20 @@ export function SchemaTree({ profileId }: { profileId: string }) {
           );
         })}
       </div>
+      {treeRows.length === 0 &&
+        (filter ? (
+          // filter no-match is a dead end without a way back — offer it
+          <div className="tree-empty">
+            <span>No tables match “{filterInput}”</span>
+            <button className="tree-retry" onClick={() => setFilterInput("")}>
+              Clear filter
+            </button>
+          </div>
+        ) : (
+          <div className="tree-empty">
+            <span>No tables in this database yet.</span>
+          </div>
+        ))}
       {menu && (
         <ContextMenu
           point={menu}

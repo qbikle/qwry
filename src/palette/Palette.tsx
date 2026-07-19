@@ -111,7 +111,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
   };
 
   return (
-    <Modal backdropClassName="pal-backdrop" onClose={close}>
+    <Modal backdropClassName="pal-backdrop" label="Command palette" onClose={close}>
       <motion.div className="pal-wrap" {...popIn}>
       <Command className="pal" shouldFilter={true} loop>
         <Command.Input

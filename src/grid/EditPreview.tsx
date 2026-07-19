@@ -21,9 +21,14 @@ export function EditPreview() {
   return (
     <Modal
       backdropClassName="ep-backdrop"
+      label="Commit staged edits"
       onClose={closePreview}
       onKey={(e) => {
-        // Enter = commit (only while committable + topmost)
+        // Enter = commit — DELIBERATELY unlike CloseGuard/DangerModal, where
+        // plain Enter maps to the safe action and the destructive confirm
+        // needs ⌘⌫. Committing is this dialog's PRIMARY action: the user
+        // explicitly opened a review of the exact SQL (⌘S), so Enter here is
+        // an informed accept, not a destructive surprise.
         if (e.key === "Enter" && canCommit) {
           e.preventDefault();
           e.stopImmediatePropagation();

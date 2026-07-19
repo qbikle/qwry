@@ -22,6 +22,7 @@
   --glass-tint: transparent;
   --danger: #ff5c69;
   --danger-soft: rgba(255, 92, 105, 0.14);
+  --danger-fg: #ffffff; /* text on a danger-filled control (mirror of --accent-fg) */
   --ok: #3ecf8e;
   --warn: #f5a623;
   --warn-soft: rgba(245, 166, 35, 0.12);

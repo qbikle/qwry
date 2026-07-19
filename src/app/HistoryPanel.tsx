@@ -234,6 +234,7 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <Modal
+      label="Query history"
       onClose={onClose}
       onKey={(e) => {
         if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -316,7 +317,7 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
                 ? "couldn't load history"
                 : query || statusFilter !== "all" || profileFilter
                   ? "No matches."
-                  : "No queries yet."}
+                  : "No queries yet — queries you run appear here."}
             </div>
           )}
           {items.map((it, i) =>

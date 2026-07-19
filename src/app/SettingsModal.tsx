@@ -2,7 +2,7 @@ import { motion } from "motion/react";
 import { Minus, Plus } from "lucide-react";
 import { popIn } from "../design/springs";
 import { FORMAT_PRESETS } from "../editor/format";
-import { useSettings, type Mode } from "../stores/settings";
+import { useSettings, zoomBy, type Mode } from "../stores/settings";
 import { useUI } from "../stores/ui";
 import { Modal } from "./overlay/Overlay";
 import "./app.css";
@@ -20,6 +20,7 @@ export function SettingsModal() {
   const setMode = useSettings((s) => s.setMode);
   const glassAlpha = useSettings((s) => s.glassAlpha);
   const setGlass = useSettings((s) => s.setGlass);
+  const uiZoom = useSettings((s) => s.uiZoom);
   const fontSize = useSettings((s) => s.fontSize);
   const setFontSize = useSettings((s) => s.setFontSize);
   const wrapLines = useSettings((s) => s.wrapLines);
@@ -40,7 +41,7 @@ export function SettingsModal() {
   if (!open) return null;
 
   return (
-    <Modal onClose={() => setOpen(false)}>
+    <Modal label="Settings" onClose={() => setOpen(false)}>
       <motion.div className="settings-modal" {...popIn}>
         <div className="settings-title">Settings</div>
 
@@ -85,6 +86,18 @@ export function SettingsModal() {
           >
             Choose theme…
           </button>
+        </div>
+        <div className="settings-row">
+          <span className="settings-label">UI zoom</span>
+          <div className="settings-stepper">
+            <button onClick={() => zoomBy(-1)} aria-label="zoom out">
+              <Minus size={12} />
+            </button>
+            <span>{uiZoom}%</span>
+            <button onClick={() => zoomBy(1)} aria-label="zoom in">
+              <Plus size={12} />
+            </button>
+          </div>
         </div>
 
         <div className="settings-section">Editor</div>

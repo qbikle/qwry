@@ -186,6 +186,7 @@ export function RecordView({
   return (
     <>
       <Modal
+        label={diff ? "Compare rows" : "Record view"}
         onClose={() => {
           // layered close: an open inline editor absorbs the first Esc/
           // outside-click (its own overlay entry handles Esc; this covers the

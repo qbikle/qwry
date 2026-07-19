@@ -13,15 +13,21 @@ export function DangerModal() {
   return (
     <Modal
       backdropClassName="danger-backdrop"
+      label={prompt.title}
       onClose={() => resolve(false)}
-      // explicit keyboard grammar: Esc cancels (stack), ⌘↵ confirms. Plain
-      // Enter deliberately does NOT confirm a destructive action — but it must
-      // not silently hit the focused Cancel either, that reads as "broken".
+      // Mac destructive-confirm grammar (Postico): Esc AND plain Enter are the
+      // SAFE action (Cancel) — Enter must never fire a destructive confirm.
+      // The confirm needs the deliberate ⌘⌫ chord, shown on the button.
       onKey={(e) => {
-        if (e.key !== "Enter") return;
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        if (e.metaKey || e.ctrlKey) resolve(true);
+        if (e.key === "Enter") {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          resolve(false);
+        } else if (e.key === "Backspace" && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          resolve(true);
+        }
       }}
     >
       <motion.div className="danger-modal" {...popIn}>
@@ -29,10 +35,10 @@ export function DangerModal() {
         <pre className="danger-detail">{prompt.detail}</pre>
         <div className="danger-actions">
           <button autoFocus onClick={() => resolve(false)}>
-            Cancel <span className="danger-key">esc</span>
+            Cancel <span className="danger-key">⏎</span>
           </button>
           <button className="danger-go" onClick={() => resolve(true)}>
-            {prompt.confirmLabel} <span className="danger-key">⌘↵</span>
+            {prompt.confirmLabel} <span className="danger-key">⌘⌫</span>
           </button>
         </div>
       </motion.div>

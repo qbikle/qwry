@@ -1,6 +1,12 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import { bufferSnapshotsClear, fileStat, readTextFile, writeTextFile } from "../ipc/commands";
+import {
+  bufferSnapshotsClear,
+  fileStat,
+  profilesList,
+  readTextFile,
+  writeTextFile,
+} from "../ipc/commands";
 import { useConnections } from "./connections";
 import type { TableInfo } from "./schema";
 
@@ -176,6 +182,13 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") void flushTabs();
 });
 
+/** first-run tour — seeded once into a fresh appdb (no profiles, no tabs) */
+const WELCOME_SQL = `-- welcome to qwry
+-- ⌘K palette · ⌘T new tab · ⌘↵ run the statement under the cursor
+-- connect via the + in the rail, then try:
+SELECT now();
+`;
+
 const blank = (n: number, pid: string | null): Tab => ({
   id: crypto.randomUUID(),
   name: "new qwry",
@@ -273,6 +286,18 @@ export const useTabs = create<TabsState>((set, get) => ({
         (t) => t.sql.trim() !== "" && !restoredIds.has(t.id),
       );
       const tabs = [...restored, ...scratch]; // zero tabs is a legal state
+      // first run: nothing persisted AND no connection profiles → seed one
+      // welcome tab. The profiles read is our own (loadProfiles races this
+      // load, so the connections store may not be populated yet). profile_id
+      // stays null → visible under whichever connection is created first.
+      // Not persisted here — it enters the appdb only if the user edits it;
+      // any profile or persisted tab on later launches skips the seed.
+      if (tabs.length === 0) {
+        const profiles = await profilesList().catch(() => null);
+        if (profiles !== null && profiles.length === 0) {
+          tabs.push({ ...blank(1, null), name: "welcome", sql: WELCOME_SQL });
+        }
+      }
       // launch happens on the home surface (no profile) — every tab is
       // visible; the per-profile active tab is applied on connect
       const remembered = localStorage.getItem("qwry.activeTab");

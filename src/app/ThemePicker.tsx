@@ -86,7 +86,11 @@ export function ThemePicker() {
 
   return (
     // Esc/backdrop backs out of the draft sub-form first, then closes the picker
-    <Modal backdropClassName="tp-backdrop" onClose={() => (draft ? setDraft(null) : close())}>
+    <Modal
+      backdropClassName="tp-backdrop"
+      label="Theme"
+      onClose={() => (draft ? setDraft(null) : close())}
+    >
       <motion.div className="tp-modal" {...popIn}>
         <div className="tp-head">
           <span className="tp-title">Theme</span>

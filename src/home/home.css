@@ -37,7 +37,7 @@
 }
 .dash-error-retry:hover {
   background: var(--danger);
-  color: #fff;
+  color: var(--danger-fg);
 }
 
 .dash-grid {
@@ -431,7 +431,7 @@
 }
 .ce-actions .ce-del.armed {
   background: var(--danger);
-  color: #fff;
+  color: var(--danger-fg);
 }
 
 /* paste-DSN hint next to the Connection section label */
@@ -464,4 +464,57 @@
   margin-top: 10px;
   font-size: var(--text-xs);
   color: var(--ok);
+}
+
+/* dashboard empty state — first-run CTA */
+.dash-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  padding: var(--sp-6) var(--sp-4);
+  margin: var(--sp-4) 0;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+.dash-hero-title {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--fg);
+}
+.dash-hero-sub {
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+}
+.dash-hero-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-top: var(--sp-2);
+  padding: var(--sp-2) var(--sp-4);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+.dash-hero-btn:hover {
+  filter: brightness(1.08);
+}
+.dash-hero-hint {
+  margin-top: var(--sp-2);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}
+.dash-hero-hint kbd {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--bg-raised);
 }

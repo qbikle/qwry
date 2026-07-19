@@ -23,7 +23,7 @@
   font-family: var(--font-mono);
 }
 .tb-seg button.active {
-  background: var(--bg-active);
+  background: var(--accent-soft);
   color: var(--fg);
 }
 

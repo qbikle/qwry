@@ -244,13 +244,6 @@
   background: var(--accent);
   color: var(--accent-fg);
 }
-.ed-menu-hint {
-  color: var(--fg-faint);
-}
-.ed-menu button:hover .ed-menu-hint {
-  color: rgba(255, 255, 255, 0.7);
-}
-
 /* function search palette */
 .fn-search-backdrop {
   position: absolute;

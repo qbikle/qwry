@@ -28,16 +28,51 @@ export function useOverlayLayer(
   closeRef.current = onClose;
   const keyRef = useRef(onKey);
   keyRef.current = onKey;
+  // capture the opener at FIRST RENDER — by effect time an autoFocus inside
+  // the overlay may already have stolen focus, and restore would then target
+  // the overlay's own (soon-removed) input instead of what opened it
+  const opener = useRef<Element | null | undefined>(undefined);
+  if (opener.current === undefined) opener.current = document.activeElement;
   const [z, setZ] = useState<number | null>(null);
   useEffect(() => {
     const { z, pop } = pushOverlay({
       onClose: () => closeRef.current(),
       onKey: (e) => keyRef.current?.(e),
+      restoreFocus: opener.current ?? null,
     });
     setZ(z);
     return pop;
   }, []);
   return z;
+}
+
+/** conservative "can receive Tab focus" selector — the backdrop's own
+ *  tabindex=-1 focus sink is deliberately excluded */
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
+  'textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]';
+
+/** Tab/⇧Tab cycle inside the topmost modal only (escStack routes keys to the
+ *  top layer, so a stacked modal can never leak Tab into the surface — or the
+ *  modal — beneath it). Focus outside the modal enters at the first/last
+ *  focusable instead of walking the hidden background. */
+function trapTab(e: KeyboardEvent, root: HTMLElement | null) {
+  if (!root) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  const els = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+    (el) => el.getClientRects().length > 0,
+  );
+  if (els.length === 0) return;
+  const cur = document.activeElement as HTMLElement | null;
+  const idx = cur ? els.indexOf(cur) : -1;
+  const next =
+    idx === -1
+      ? e.shiftKey
+        ? els.length - 1
+        : 0
+      : (idx + (e.shiftKey ? -1 : 1) + els.length) % els.length;
+  els[next].focus({ preventScroll: true });
 }
 
 /** Centered modal: dimmed backdrop, outside-click + Esc to close, portaled to
@@ -47,19 +82,42 @@ export function Modal({
   onKey,
   backdropClassName,
   dismissable = true,
+  label,
   children,
 }: {
   onClose: () => void;
   /** extra keys handled only while this modal is the topmost overlay (e.g. Enter
-   *  to confirm) — handler owns its preventDefault/stopImmediatePropagation */
+   *  to confirm) — handler owns its preventDefault/stopImmediatePropagation.
+   *  Tab never reaches it: the modal's focus trap claims it first. */
   onKey?: (e: KeyboardEvent) => void;
   backdropClassName?: string;
   dismissable?: boolean;
+  /** accessible dialog name (aria-label) — pass from every consumer */
+  label?: string;
   children: ReactNode;
 }) {
-  const z = useOverlayLayer(onClose, onKey);
+  const backdropRef = useRef<HTMLDivElement>(null);
+  const z = useOverlayLayer(onClose, (e) => {
+    if (e.key === "Tab") {
+      trapTab(e, backdropRef.current);
+      return;
+    }
+    onKey?.(e);
+  });
+  // a modal owns the keyboard: pull focus off the surface underneath (typing
+  // must never leak into the editor behind the dialog) — unless something
+  // inside (an autoFocus input) already claimed it
+  useEffect(() => {
+    const el = backdropRef.current;
+    if (el && !el.contains(document.activeElement)) el.focus({ preventScroll: true });
+  }, []);
   return createPortal(
     <div
+      ref={backdropRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={label}
+      tabIndex={-1}
       className={backdropClassName ?? "ov-backdrop"}
       style={z != null ? { zIndex: z } : undefined}
       onMouseDown={(e) => {
@@ -113,6 +171,8 @@ export function AnchoredOverlay({
   onKey,
   layerClassName,
   margin = 8,
+  role,
+  label,
   children,
 }: {
   point: { x: number; y: number };
@@ -120,6 +180,10 @@ export function AnchoredOverlay({
   onKey?: (e: KeyboardEvent) => void;
   layerClassName?: string;
   margin?: number;
+  /** ARIA role for the anchored panel (e.g. "menu", "dialog") — popovers are
+   *  deliberately NOT focus-trapped; keyboard nav runs through onKey */
+  role?: string;
+  label?: string;
   children: ReactNode | ((z: number | null) => ReactNode);
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -137,6 +201,8 @@ export function AnchoredOverlay({
       <div
         ref={wrapRef}
         className="ov-anchor-pos"
+        role={role}
+        aria-label={label}
         style={{
           position: "fixed",
           left: pos?.left ?? point.x,

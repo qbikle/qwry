@@ -10,10 +10,31 @@
 export type OverlayEntry = {
   onClose: () => void;
   onKey?: (e: KeyboardEvent) => void;
+  /** element that held focus when the overlay opened — focus returns to it on
+   *  close (captured at render time, BEFORE any autoFocus inside the overlay) */
+  restoreFocus?: Element | null;
 };
 
 const stack: OverlayEntry[] = [];
 let installed = false;
+/** bumped on every push — a pending focus-restore aborts if a newer overlay
+ *  opened in the meantime (it owns focus and carries its own restore point) */
+let pushSeq = 0;
+
+/** Put focus back where it was when the overlay opened. A gone/unfocusable
+ *  opener falls back to the main surface (editor, then the main card) — focus
+ *  must never be left stranded on <body>. */
+function restoreFocusTo(el: Element | null | undefined) {
+  const target = el instanceof HTMLElement && el.isConnected ? el : null;
+  if (target) {
+    target.focus({ preventScroll: true });
+    if (document.activeElement === target) return;
+  }
+  const fallback =
+    document.querySelector<HTMLElement>(".main-card .cm-content") ??
+    document.querySelector<HTMLElement>(".main-card");
+  fallback?.focus({ preventScroll: true });
+}
 
 /** stacking base for overlay layers; each push gets BASE_Z + its 1-based depth,
  *  so a later overlay always paints above the one it opened over */
@@ -50,6 +71,7 @@ function ensureListener() {
 export function pushOverlay(entry: OverlayEntry): { z: number; pop: () => void } {
   ensureListener();
   stack.push(entry);
+  pushSeq++;
   const z = Math.min(BASE_Z + ++zSeq, MAX_OVERLAY_Z);
   return {
     z,
@@ -57,6 +79,18 @@ export function pushOverlay(entry: OverlayEntry): { z: number; pop: () => void }
       const i = stack.lastIndexOf(entry);
       if (i >= 0) stack.splice(i, 1);
       if (stack.length === 0) zSeq = 0;
+      // Restore focus AFTER React finishes removing the overlay's DOM (focus
+      // lands on <body> then). Deferred a microtask so a close that
+      // immediately opens another overlay (Settings → Theme…, StrictMode
+      // re-mount) skips the restore — the newer overlay owns focus. An action
+      // that deliberately focused something else on close also wins.
+      const seqAtPop = pushSeq;
+      queueMicrotask(() => {
+        if (pushSeq !== seqAtPop) return;
+        const ae = document.activeElement;
+        if (ae && ae !== document.body && ae !== document.documentElement) return;
+        restoreFocusTo(entry.restoreFocus);
+      });
     },
   };
 }

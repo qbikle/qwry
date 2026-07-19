@@ -6,9 +6,11 @@ import { useEdits } from "../stores/edits";
 import { Modal } from "./overlay/Overlay";
 import "./app.css";
 
-/** confirm before closing a tab that has uncommitted cell edits (Esc = keep ·
- * Enter = discard & close · ⌘↵ = commit & close) or unsaved drift against its
- * backing .sql file (Esc = keep · Enter = close anyway). */
+/** confirm before closing a tab that has uncommitted cell edits (Esc/Enter =
+ * keep · ⌘⌫ = discard & close · ⌘↵ = commit & close) or unsaved drift against
+ * its backing .sql file (Esc/Enter = keep · ⌘⌫ = close anyway). Mac
+ * destructive-confirm grammar: plain Enter is always the SAFE action; the
+ * destructive one needs the ⌘⌫ chord (Postico convention). */
 export function CloseGuardModal() {
   const pending = useCloseGuard((s) => s.pending);
   const cancel = useCloseGuard((s) => s.cancel);
@@ -28,14 +30,21 @@ export function CloseGuardModal() {
   return (
     <Modal
       backdropClassName="danger-backdrop"
+      label={fileOnly ? "Unsaved changes" : "Unsaved edits"}
       onClose={cancel}
       onKey={(e) => {
-        // Enter = discard/close, ⌘/Ctrl+Enter = commit — only while topmost.
-        if (e.key !== "Enter") return;
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        if ((e.metaKey || e.ctrlKey) && !fileOnly) void commit();
-        else discard();
+        // plain Enter = SAFE (keep the tab), ⌘⌫ = destructive (discard),
+        // ⌘↵ = commit & close — only while topmost.
+        if (e.key === "Enter") {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          if ((e.metaKey || e.ctrlKey) && !fileOnly) void commit();
+          else cancel();
+        } else if (e.key === "Backspace" && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          discard();
+        }
       }}
     >
       <motion.div className="cg-modal" {...popIn}>
@@ -58,7 +67,7 @@ export function CloseGuardModal() {
         </div>
         <div className="cg-actions">
           <button onClick={cancel}>
-            Keep <span className="cg-key">esc</span>
+            Keep <span className="cg-key">⏎</span>
           </button>
           {!fileOnly && (
             <button className="cg-commit" onClick={() => void commit()}>
@@ -66,7 +75,7 @@ export function CloseGuardModal() {
             </button>
           )}
           <button className="cg-discard" onClick={discard}>
-            {fileOnly ? "Close anyway" : "Discard & close"} <span className="cg-key">⏎</span>
+            {fileOnly ? "Close anyway" : "Discard & close"} <span className="cg-key">⌘⌫</span>
           </button>
         </div>
       </motion.div>

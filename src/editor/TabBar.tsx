@@ -281,7 +281,12 @@ export function TabBar() {
           const meta = pinMeta(t);
           const firstLine = t.sql.split("\n").find((l) => l.trim()) ?? "";
           return (
-            <AnchoredOverlay point={pinInfo} onClose={() => setPinInfo(null)}>
+            <AnchoredOverlay
+              point={pinInfo}
+              onClose={() => setPinInfo(null)}
+              role="dialog"
+              label="Pinned tab info"
+            >
               <motion.div className="pin-info" {...popIn}>
                 <div className="pin-info-head">
                   <span className="pin-info-dot" style={{ background: meta.color }} />

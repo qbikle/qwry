@@ -23,7 +23,7 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
       ["⌘W", "Close tab"],
       ["⌘⇧T", "Reopen closed tab"],
       ["⌃Tab / ⌃⇧Tab", "Next / previous tab"],
-      ["⌘1…9, ⌘0", "Jump to tab"],
+      ["⌘1…9", "Jump to tab"],
       ["drag", "Reorder tabs"],
     ],
   },
@@ -53,6 +53,8 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
       ["⌘,", "Settings"],
       ["⌘I", "Inspector"],
       ["⌘R", "Refresh schema"],
+      ["⌘+ / ⌘−", "Zoom UI in / out"],
+      ["⌘0", "Reset zoom"],
       ["⌘?", "This cheatsheet"],
     ],
   },
@@ -60,7 +62,7 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
 
 export function ShortcutsModal({ onClose }: { onClose: () => void }) {
   return (
-    <Modal onClose={onClose}>
+    <Modal label="Keyboard shortcuts" onClose={onClose}>
       <motion.div className="keys-modal" {...popIn}>
         <div className="settings-title">Keyboard shortcuts</div>
         <div className="keys-grid">
