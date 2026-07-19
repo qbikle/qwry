@@ -6,7 +6,7 @@ import { useUI } from "../stores/ui";
 import { ThemePicker } from "./ThemePicker";
 import { useConnections } from "../stores/connections";
 import { useInspector } from "../stores/inspector";
-import { useTabs } from "../stores/tabs";
+import { openFilePaths, openSqlFileDialog, saveActiveToFile, useTabs } from "../stores/tabs";
 import { blankProfile, ConnectionRail } from "../sidebar/ConnectionRail";
 import { editorFormat, editorRunText } from "../editor/SqlEditor";
 import { openTxCount, skey } from "../stores/connections";
@@ -334,6 +334,14 @@ export function App() {
             if (activeId) useCloseGuard.getState().request(activeId);
             break;
           }
+          // File ▸ Open… / Save — ids reserved for the native menu items
+          // (lib.rs); the ⌘O/⌘⇧S window shortcuts below work regardless
+          case "open-file":
+            void openSqlFileDialog();
+            break;
+          case "save-file":
+            void saveActiveToFile();
+            break;
           case "restore-tab":
             useTabs.getState().restoreClosed();
             break;
@@ -396,6 +404,33 @@ export function App() {
       }),
     );
 
+    // OS file drops (Finder → editor) open .sql/.txt as tabs. Tauri-level,
+    // not HTML5: with dragDropEnabled (the default) WKWebView never delivers
+    // HTML5 file-drop events. Gated to the main (editor) card so stray drops
+    // on the rail/sidebar don't hijack; internal drags (tab strip, grid) are
+    // mouse-event based and never enter this path.
+    let unlistenDrag: (() => void) | undefined;
+    void import("@tauri-apps/api/webview").then(({ getCurrentWebview }) =>
+      getCurrentWebview()
+        .onDragDropEvent((e) => {
+          if (e.payload.type !== "drop") return;
+          const files = e.payload.paths.filter((p) => /\.(sql|txt)$/i.test(p));
+          if (files.length === 0) return;
+          if (useConnections.getState().homeMode) return; // no tab strip there
+          // payload position is PHYSICAL px — scale to logical before hit-test
+          const scale = window.devicePixelRatio || 1;
+          const x = e.payload.position.x / scale;
+          const y = e.payload.position.y / scale;
+          const r = document.querySelector(".main-card")?.getBoundingClientRect();
+          if (!r || x < r.left || x > r.right || y < r.top || y > r.bottom) return;
+          void openFilePaths(files);
+        })
+        .then((un) => {
+          if (disposed) un();
+          else unlistenDrag = un;
+        }),
+    );
+
     // palette action → history panel (palette has no access to App state)
     const onOpenHistory = () => setHistoryOpen(true);
     window.addEventListener("qwry:open-history", onOpenHistory);
@@ -431,6 +466,14 @@ export function App() {
       if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "t") {
         e.preventDefault();
         useTabs.getState().newTab();
+      }
+      if (e.metaKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "o") {
+        e.preventDefault();
+        void openSqlFileDialog();
+      }
+      if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        void saveActiveToFile();
       }
       if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "t") {
         e.preventDefault();
@@ -536,6 +579,7 @@ export function App() {
       unlistenClosed?.();
       unlistenClose?.();
       unlistenMenu?.();
+      unlistenDrag?.();
     };
   }, [loadProfiles]);
 

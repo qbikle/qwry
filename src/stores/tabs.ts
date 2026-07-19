@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { bufferSnapshotsClear, readTextFile, writeTextFile } from "../ipc/commands";
 import { useConnections } from "./connections";
 import type { TableInfo } from "./schema";
 
@@ -18,6 +19,12 @@ export interface Tab {
    * workspaces — visible under every connection until first edited under one
    * (adopt-on-touch), so no pre-existing tab ever silently disappears. */
   profile_id: string | null;
+  /** backing .sql file on disk — SESSION-ONLY: the appdb tabs table has no
+   * column for it (tabs_save strips to the appdb fields), so a restart drops
+   * the link but never the text */
+  file_path?: string;
+  /** exact text last read from / written to file_path — dirty dot = drift */
+  file_saved_sql?: string;
 }
 
 interface ClosedTab {
@@ -27,6 +34,8 @@ interface ClosedTab {
   kind: Tab["kind"];
   table: TableInfo | null;
   profile_id: string | null;
+  file_path?: string;
+  file_saved_sql?: string;
 }
 
 interface TabsState {
@@ -42,6 +51,8 @@ interface TabsState {
   newTab: (sql?: string, name?: string, savedId?: string | null) => void;
   /** open (or focus) a data-browser tab for a table; returns the tab id */
   openTableTab: (table: TableInfo) => string;
+  /** open (or focus) a query tab backed by a .sql file on disk */
+  openFileTab: (path: string, contents: string) => string;
   closeTab: (id: string) => void;
   select: (id: string) => void;
   /** drag-reorder: move VISIBLE index `from` to sit at VISIBLE boundary `to` */
@@ -178,6 +189,8 @@ const asClosed = (t: Tab): ClosedTab => ({
   kind: t.kind,
   table: t.table,
   profile_id: t.profile_id,
+  file_path: t.file_path,
+  file_saved_sql: t.file_saved_sql,
 });
 
 /** one aggregate prompt when bulk-closing tabs that hold uncommitted edits */
@@ -257,6 +270,32 @@ export const useTabs = create<TabsState>((set, get) => ({
     persist();
   },
 
+  openFileTab: (path, contents) => {
+    const { tabs, pinned } = get();
+    // the same file twice focuses the existing tab — never a duplicate.
+    // Scoped to the VISIBLE strip: a foreign workspace's tab must not be
+    // focused invisibly (reopening there gets its own tab instead).
+    const existing = visibleTabs(tabs, pinned, activePid()).find((t) => t.file_path === path);
+    if (existing) {
+      get().select(existing.id);
+      editorFocusSignal.current = true;
+      return existing.id;
+    }
+    const t: Tab = {
+      ...blank(tabs.length + 1, activePid()),
+      sql: contents,
+      name: path.split("/").pop() || "file.sql",
+      file_path: path,
+      file_saved_sql: contents,
+    };
+    set({ tabs: [...tabs, t], activeId: t.id });
+    rememberActive(activePid(), t.id);
+    useConnections.getState().setSql(contents);
+    editorFocusSignal.current = true;
+    persist();
+    return t.id;
+  },
+
   openTableTab: (table) => {
     const { tabs } = get();
     const id = crypto.randomUUID();
@@ -280,6 +319,8 @@ export const useTabs = create<TabsState>((set, get) => ({
     const { tabs, activeId, closedStack, pinned } = get();
     // drop the closed tab's dedicated DB session(s)
     useConnections.getState().closeTabSessions(id);
+    // the tab's buffer time-machine dies with it (a ⌘⇧T restore gets a NEW id)
+    void bufferSnapshotsClear(id).catch(() => {});
     const closing = tabs.find((t) => t.id === id);
     const remember =
       closing && (closing.sql.trim() !== "" || closing.kind === "table")
@@ -389,7 +430,10 @@ export const useTabs = create<TabsState>((set, get) => ({
       const closing = visibleTabs(tabs, pinned, pid).filter((t) => !pinned.has(t.id));
       if (closing.length === 0) return;
       if (!(await confirmBulkClose(closing.map((t) => t.id)))) return;
-      closing.forEach((t) => useConnections.getState().closeTabSessions(t.id));
+      closing.forEach((t) => {
+        useConnections.getState().closeTabSessions(t.id);
+        void bufferSnapshotsClear(t.id).catch(() => {});
+      });
       const closingIds = new Set(closing.map((t) => t.id));
       const remember = [
         ...closing.filter((t) => t.sql.trim() !== "" || t.kind === "table").map(asClosed),
@@ -463,6 +507,17 @@ export const useTabs = create<TabsState>((set, get) => ({
       // ⌘⇧T means "bring it back HERE" — newTab stamps the current profile;
       // the saved-query link survives so the restored tab still syncs
       get().newTab(top.sql, top.name, top.saved_id);
+      // a file-backed tab keeps its disk link (and dirty state) through ⌘⇧T
+      if (top.file_path) {
+        const id = get().activeId;
+        set((s) => ({
+          tabs: s.tabs.map((t) =>
+            t.id === id
+              ? { ...t, file_path: top.file_path, file_saved_sql: top.file_saved_sql }
+              : t,
+          ),
+        }));
+      }
     }
   },
 
@@ -532,6 +587,69 @@ useConnections.subscribe((s, prev) => {
   if (s.activeProfileId === prev.activeProfileId) return;
   ensureActiveVisible();
 });
+
+// ---------------------------------------------------------------------------
+// .sql files on disk — File ▸ Open… ⌘O / File ▸ Save ⌘⇧S / window drops
+
+export async function openFilePaths(paths: string[]): Promise<void> {
+  for (const path of paths) {
+    try {
+      const contents = await readTextFile(path);
+      useTabs.getState().openFileTab(path, contents);
+    } catch (e) {
+      console.error("open file failed", path, e);
+      const { confirmDanger } = await import("./danger");
+      await confirmDanger("Couldn't open file", `${path}\n${String(e)}`, "OK");
+    }
+  }
+}
+
+export async function openSqlFileDialog(): Promise<void> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const sel = await open({
+    multiple: true,
+    filters: [{ name: "SQL", extensions: ["sql", "txt"] }],
+  });
+  if (!sel) return;
+  await openFilePaths(Array.isArray(sel) ? sel : [sel]);
+}
+
+/** write the active query tab to its remembered path, or ask for one. The
+ * first save adopts the chosen filename as the tab name. */
+export async function saveActiveToFile(): Promise<void> {
+  const { tabs, activeId } = useTabs.getState();
+  const tab = tabs.find((t) => t.id === activeId);
+  if (!tab || tab.kind !== "query") return;
+  let path = tab.file_path ?? null;
+  const firstSave = !path;
+  if (!path) {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    path = await save({
+      defaultPath: /\.sql$/i.test(tab.name) ? tab.name : `${tab.name}.sql`,
+      filters: [{ name: "SQL", extensions: ["sql"] }],
+    });
+    if (!path) return;
+  }
+  const dest = path; // settled (closure below must see `string`, not `string|null`)
+  // the store text is kept in sync with the editor per keystroke, so this IS
+  // the buffer (no editor round trip needed)
+  const sql = tab.sql;
+  try {
+    await writeTextFile(dest, sql);
+  } catch (e) {
+    console.error("save file failed", dest, e);
+    const { confirmDanger } = await import("./danger");
+    await confirmDanger("Couldn't save file", `${dest}\n${String(e)}`, "OK");
+    return;
+  }
+  const name = firstSave ? dest.split("/").pop() || tab.name : tab.name;
+  useTabs.setState((s) => ({
+    tabs: s.tabs.map((t) =>
+      t.id === tab.id ? { ...t, file_path: dest, file_saved_sql: sql, name } : t,
+    ),
+  }));
+  if (firstSave) persist(); // the rename is appdb-visible; file fields aren't
+}
 
 // editor text changes flow into the active tab (and debounce to disk).
 // This is also the ADOPTION point: a legacy tab (profile_id null) edited

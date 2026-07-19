@@ -9,7 +9,13 @@ import {
   drawSelection,
   placeholder,
 } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentWithTab,
+  isolateHistory,
+} from "@codemirror/commands";
 import { FORMAT_PRESETS, formatDefault, formatWithPreset, minifyBuffer } from "./format";
 import {
   cteStandaloneSql,
@@ -24,6 +30,7 @@ import { Decoration, ViewPlugin, type DecorationSet, type ViewUpdate } from "@co
 import {
   autocompletion,
   completionKeymap,
+  completionStatus,
   closeBrackets,
   closeBracketsKeymap,
 } from "@codemirror/autocomplete";
@@ -37,6 +44,8 @@ import {
   highlightSelectionMatches,
 } from "@codemirror/search";
 import { useState } from "react";
+import { History } from "lucide-react";
+import * as ipc from "../ipc/commands";
 import { useConnections } from "../stores/connections";
 import { useExplain } from "../stores/explain";
 import { useInspector } from "../stores/inspector";
@@ -200,6 +209,15 @@ function runTarget(view: EditorView): { text: string; offset: number } {
   return { text: doc, offset: 0 };
 }
 
+/** appdb timestamps are UTC "YYYY-MM-DD HH:MM:SS" (datetime('now')) — render
+ * as a local wall-clock time for the time-machine banner */
+function snapTime(ts: string): string {
+  const d = new Date(ts.endsWith("Z") ? ts : ts.replace(" ", "T") + "Z");
+  return isNaN(d.getTime())
+    ? ts
+    : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 /** Query ▸ Format SQL (menu) reaches the mounted editor through this */
 export const editorFormat: { current: (() => void) | null } = { current: null };
 
@@ -211,6 +229,8 @@ export function SqlEditor() {
   const viewRef = useRef<EditorView | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [fnSearch, setFnSearch] = useState(false);
+  // buffer time-machine banner: non-null while a past run is shown read-only
+  const [tt, setTt] = useState<{ time: string; pos: number; count: number } | null>(null);
   const fnInComplete = useSettings((s) => s.fnInComplete);
   const toggleFnInComplete = useSettings((s) => s.toggleFnInComplete);
   // CodeMirror's `dark` flag must match the theme, so remount on theme change
@@ -231,12 +251,176 @@ export function SqlEditor() {
     // transaction (plus an O(doc) toString); skip when there's nothing to clear
     let hasDiags = false;
 
+    // ------------------------------------------------------------------
+    // Buffer time-machine (⌃⌘←/→). While viewing, the LIVE EditorState is
+    // parked in ttState.draftState (doc + selection + undo history) and the
+    // view shows a throwaway READ-ONLY state per snapshot — swaps go through
+    // setState, which bypasses the update listener, so a snapshot can never
+    // leak into the sql store / tab persistence. Enter restores the snapshot
+    // as ONE undoable transaction; Esc returns the parked state untouched.
+    let ttState: {
+      snaps: ipc.BufferSnapshot[];
+      idx: number;
+      draftState: EditorState;
+    } | null = null;
+
+    // ⌥↑/⌥↓ quick history walk (psql). Slot 0 = the live draft; i>=1 maps to
+    // snaps[i-1] (newest-first). Unlike the time-machine this REPLACES the
+    // buffer per step (each an undoable tx) — no banner, no read-only.
+    let walk: { snaps: string[]; idx: number; draft: string } | null = null;
+    let walkDispatching = false;
+
+    const showSnap = (view: EditorView) => {
+      const t = ttState!;
+      const snap = t.snaps[t.idx];
+      view.setState(
+        EditorState.create({
+          doc: snap.sql,
+          extensions: [extensions, EditorState.readOnly.of(true)],
+        }),
+      );
+      // setState bypasses the update listener — same discipline as tab switch
+      lastSyncedSql = null;
+      hasDiags = true;
+      setTt({ time: snapTime(snap.taken_at), pos: t.idx + 1, count: t.snaps.length });
+      view.focus();
+    };
+
+    /** leave time-travel, restoring the parked live state. `apply` then lays
+     * the viewed snapshot over the live buffer as one undoable tx (⌘Z works) */
+    const exitTimeTravel = (view: EditorView, apply: boolean) => {
+      const t = ttState;
+      if (!t) return;
+      ttState = null;
+      setTt(null);
+      view.setState(t.draftState);
+      lastSyncedSql = null;
+      hasDiags = true;
+      if (apply) {
+        const sql = t.snaps[t.idx].sql;
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: sql },
+          selection: { anchor: sql.length },
+          annotations: isolateHistory.of("full"),
+          scrollIntoView: true,
+        });
+      } else {
+        // safety net: an external setSql that landed while viewing must win
+        // over the parked draft (the store subscriber was suspended)
+        const storeSql = useConnections.getState().sql;
+        if (!docEqualsString(view.state.doc, storeSql)) {
+          view.dispatch({
+            changes: { from: 0, to: view.state.doc.length, insert: storeSql },
+          });
+        }
+      }
+      view.focus();
+    };
+
+    const ttStepBack = (view: EditorView): boolean => {
+      walk = null; // the two steppers never interleave
+      if (ttState) {
+        if (ttState.idx + 1 < ttState.snaps.length) {
+          ttState.idx++;
+          showSnap(view);
+        }
+        return true;
+      }
+      const tabId = useTabs.getState().activeId;
+      if (!tabId) return true;
+      const draftState = view.state;
+      void ipc
+        .bufferSnapshotsList(tabId)
+        .then((snaps) => {
+          // stale press: anything moved meanwhile (typing, tab switch, a
+          // second ⌃⌘← that already entered) — drop it
+          if (editorGone || ttState || view.state !== draftState) return;
+          if (useTabs.getState().activeId !== tabId) return;
+          // the newest snapshot usually IS the current buffer (it just ran) —
+          // start at the first one that differs
+          let idx = 0;
+          while (idx < snaps.length && docEqualsString(draftState.doc, snaps[idx].sql)) idx++;
+          if (idx >= snaps.length) return; // no older version to show
+          ttState = { snaps, idx, draftState };
+          showSnap(view);
+        })
+        .catch((e) => console.error("buffer_snapshots_list failed", e));
+      return true;
+    };
+
+    const ttStepFwd = (view: EditorView): boolean => {
+      if (!ttState) return false;
+      if (ttState.idx === 0) {
+        exitTimeTravel(view, false); // forward past the newest = back to live
+      } else {
+        ttState.idx--;
+        showSnap(view);
+      }
+      return true;
+    };
+
+    // ⌥↑ STARTS a walk only when the caret sits at the absolute doc start,
+    // nothing is selected, no completion popup is open, and the buffer is a
+    // single statement or ≤10 lines (whole scripts are protected — the keys
+    // fall through to moveLine there). Mid-walk only the selection/completion
+    // gates apply, so repeated presses cycle without re-homing the caret.
+    const walkGateOk = (view: EditorView): boolean =>
+      view.state.selection.main.empty && completionStatus(view.state) === null;
+
+    const walkTextAt = (i: number): string => (i === 0 ? walk!.draft : walk!.snaps[i - 1]);
+
+    const walkStep = (view: EditorView, delta: 1 | -1) => {
+      const w = walk;
+      if (!w) return;
+      // skip entries identical to what's shown (list dedupe is only
+      // consecutive; the draft often equals the newest snapshot)
+      const cur = view.state.doc;
+      let i = w.idx + delta;
+      while (i >= 0 && i <= w.snaps.length && docEqualsString(cur, walkTextAt(i))) i += delta;
+      if (i < 0 || i > w.snaps.length) return;
+      w.idx = i;
+      const text = walkTextAt(i);
+      walkDispatching = true;
+      try {
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: text },
+          selection: { anchor: text.length },
+          annotations: isolateHistory.of("full"),
+          scrollIntoView: true,
+        });
+      } finally {
+        walkDispatching = false;
+      }
+    };
+
+    const walkStart = (view: EditorView) => {
+      const tabId = useTabs.getState().activeId;
+      if (!tabId) return;
+      const startState = view.state;
+      void ipc
+        .bufferSnapshotsList(tabId)
+        .then((snaps) => {
+          if (editorGone || walk || ttState || view.state !== startState) return;
+          if (useTabs.getState().activeId !== tabId) return;
+          if (snaps.length === 0) return;
+          const w = { snaps: snaps.map((s) => s.sql), idx: 0, draft: startState.doc.toString() };
+          walk = w;
+          walkStep(view, 1);
+          if (w.idx === 0) walk = null; // nothing older that differs
+        })
+        .catch((e) => console.error("buffer_snapshots_list failed", e));
+    };
+
     const runKeymap = Prec.highest(
       keymap.of([
         {
-          // run selection when present, else the statement under the caret
+          // run selection when present, else the statement under the caret.
+          // Swallowed while time-traveling — the banner owns Enter/Esc there
+          // and running the VIEWED text would be a silent foot-gun.
           key: "Mod-Enter",
           run: (view) => {
+            if (ttState) return true;
+            walk = null; // a run ends the ⌥↑ cycle (psql-style)
             const t = runTarget(view);
             void useResults.getState().run(t.text, t.offset);
             return true;
@@ -245,6 +429,8 @@ export function SqlEditor() {
         {
           key: "Mod-Shift-Enter",
           run: (view) => {
+            if (ttState) return true;
+            walk = null;
             void useResults.getState().run(view.state.doc.toString(), 0);
             return true;
           },
@@ -259,6 +445,7 @@ export function SqlEditor() {
         {
           key: "Mod-Shift-u",
           run: () => {
+            if (ttState) return true; // FnSearch inserts into the buffer
             setFnSearch(true);
             return true;
           },
@@ -267,6 +454,7 @@ export function SqlEditor() {
           // explain mirrors ⌘↵ scope: selection, else statement under caret
           key: "Mod-e",
           run: (view) => {
+            if (ttState) return true;
             void useExplain.getState().run(runTarget(view).text);
             return true;
           },
@@ -279,7 +467,59 @@ export function SqlEditor() {
             return true;
           },
         },
-        { key: "Mod-Shift-f", run: formatDefault },
+        {
+          // format dispatches straight to the doc — must not touch a snapshot
+          key: "Mod-Shift-f",
+          run: (view) => (ttState ? true : formatDefault(view)),
+        },
+        // ---- buffer time-machine ----
+        { key: "Ctrl-Cmd-ArrowLeft", run: ttStepBack },
+        { key: "Ctrl-Cmd-ArrowRight", run: ttStepFwd },
+        {
+          key: "Enter",
+          run: (view) => {
+            if (!ttState) return false;
+            exitTimeTravel(view, true); // restore = one undoable transaction
+            return true;
+          },
+        },
+        {
+          key: "Escape",
+          run: (view) => {
+            if (!ttState) return false;
+            exitTimeTravel(view, false); // back to the live buffer untouched
+            return true;
+          },
+        },
+        // ---- ⌥↑/⌥↓ in-editor history stepping (psql muscle memory) ----
+        {
+          key: "Alt-ArrowUp",
+          run: (view) => {
+            if (ttState) return true;
+            if (!walkGateOk(view)) return false;
+            if (walk) {
+              walkStep(view, 1);
+              return true;
+            }
+            if (view.state.selection.main.head !== 0) return false;
+            if (
+              view.state.doc.lines > 10 &&
+              splitStatementSpans(view.state.doc.toString()).length > 1
+            )
+              return false;
+            walkStart(view);
+            return true;
+          },
+        },
+        {
+          key: "Alt-ArrowDown",
+          run: (view) => {
+            if (ttState) return true;
+            if (!walk || !walkGateOk(view)) return false;
+            walkStep(view, -1);
+            return true;
+          },
+        },
       ]),
     );
 
@@ -322,6 +562,13 @@ export function SqlEditor() {
       qwryHighlight,
       EditorView.updateListener.of((u) => {
         if (u.docChanged) {
+          // a real edit invalidates the ⌥↑ walk (its draft slot went stale);
+          // our own walk steps survive via the flag
+          if (walk && !walkDispatching) walk = null;
+          // belt: a read-only snapshot view must NEVER flow into the store —
+          // doc changes can't normally happen there, but a leak would persist
+          // snapshot text over the user's live buffer
+          if (ttState) return;
           // ONE materialization per edit — the store, the tabs mirror and the
           // echo check below all share this exact string
           const sql = u.state.doc.toString();
@@ -377,7 +624,15 @@ export function SqlEditor() {
         }
         return;
       }
-      if (currentTab) tabStates.set(currentTab, view.state);
+      // a tab switch mid-time-travel parks the OLD tab's LIVE state (never
+      // the read-only viewing state); the ⌥↑ walk dies with tab focus
+      const parked = ttState ? ttState.draftState : view.state;
+      if (ttState) {
+        ttState = null;
+        setTt(null);
+      }
+      walk = null;
+      if (currentTab) tabStates.set(currentTab, parked);
       currentTab = s.activeId;
       const next = s.tabs.find((t) => t.id === s.activeId);
       if (!next) return;
@@ -395,10 +650,15 @@ export function SqlEditor() {
       if (editorFocusSignal.current) claimFocus();
     });
 
-    // toolbar Run/Explain read this so they honour the same scope as ⌘↵
-    editorRunText.current = () => runTarget(view);
-    editorFormat.current = () => formatDefault(view);
+    // toolbar Run/Explain read this so they honour the same scope as ⌘↵.
+    // While time-traveling they see an empty target (run/explain no-op on
+    // blank sql) — the mouse paths must not execute the VIEWED snapshot.
+    editorRunText.current = () => (ttState ? { text: "", offset: 0 } : runTarget(view));
+    editorFormat.current = () => {
+      if (!ttState) formatDefault(view);
+    };
     editorInsert.current = (text) => {
+      if (ttState) return; // snapshots are read-only
       const sel = view.state.selection.main;
       view.dispatch({
         changes: { from: sel.from, to: sel.to, insert: text },
@@ -414,6 +674,10 @@ export function SqlEditor() {
     // (connState, txTabs, …), so the fast paths matter: identity check for
     // our own echo, then length + chunk compare — never a full toString.
     const unsub = useConnections.subscribe((s) => {
+      // viewing a snapshot: the live buffer is parked in ttState.draftState —
+      // reflecting store sql into the READ-ONLY view would clobber the
+      // snapshot; exitTimeTravel reconciles any external change on the way out
+      if (ttState) return;
       if (s.sql === lastSyncedSql) return;
       if (docEqualsString(view.state.doc, s.sql)) {
         lastSyncedSql = s.sql;
@@ -477,6 +741,11 @@ export function SqlEditor() {
       unsubLint();
       unsubTabs();
       editorGone = true; // stop any in-flight focus loop on this view
+      // theme/wrap remount starts outside time-travel (the live buffer is in
+      // the tab store; the fresh mount rebuilds from it)
+      ttState = null;
+      walk = null;
+      setTt(null);
       editorRunText.current = null;
       editorFormat.current = null;
       editorInsert.current = null;
@@ -487,13 +756,27 @@ export function SqlEditor() {
 
   return (
     <div
-      className="sql-editor-wrap"
+      className={`sql-editor-wrap${tt ? " tt-viewing" : ""}`}
       onContextMenu={(e) => {
         e.preventDefault();
-        setMenu({ x: e.clientX, y: e.clientY });
+        // the menu's actions (run/format/paste) all target the live buffer —
+        // suppress it while a read-only snapshot is shown
+        if (!tt) setMenu({ x: e.clientX, y: e.clientY });
       }}
     >
       <div ref={hostRef} className="sql-editor" />
+      {tt && (
+        <div className="tt-banner" role="status">
+          <span className="tt-glyph">
+            <History size={12} />
+          </span>
+          viewing run from {tt.time}
+          <span className="tt-pos">
+            {tt.pos}/{tt.count}
+          </span>
+          <span className="tt-hint">⏎ restores · esc returns · ⌃⌘←→ step</span>
+        </div>
+      )}
       {menu && (
         <ContextMenu
           point={menu}

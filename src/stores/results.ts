@@ -288,6 +288,16 @@ export const useResults = create<ResultsState>((set, get) => ({
       }
     }
 
+    // never-lose-work: every committed run parks the tab's FULL buffer in the
+    // time-machine (query tabs only — table-browse runs land here too);
+    // dedupe + the 50/tab cap live in the appdb layer
+    const buffer = useConnections.getState().sql;
+    if (buffer.trim() && useTabs.getState().tabs.find((t) => t.id === tabId)?.kind === "query") {
+      void ipc
+        .bufferSnapshotAdd(tabId, buffer)
+        .catch((e) => console.error("buffer_snapshot_add failed", e));
+    }
+
     if (pendingRows) pendingRows.delete(tabId);
     writeTab(set, tabId, {
       statements: [],
