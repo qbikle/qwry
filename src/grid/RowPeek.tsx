@@ -22,6 +22,7 @@ export function RowPeek({
   viewRow,
   rowAt,
   colAt,
+  viewColLen,
   rowCount,
   typeOf,
   editMetaOf,
@@ -33,6 +34,9 @@ export function RowPeek({
   rowAt: (view: number) => number;
   /** view→data column map so the peek lists columns in the GRID's order */
   colAt: (view: number) => number;
+  /** TRUE view column count — colAt past it falls back to identity, which
+   * would leak hidden columns (and duplicate the last one) */
+  viewColLen: number;
   rowCount: number;
   typeOf: (dataCol: number) => string | undefined;
   editMetaOf: (dataCol: number) => ColumnEditMeta | undefined;
@@ -48,6 +52,14 @@ export function RowPeek({
   // walking to another row abandons an open pop-out
   useEffect(() => setPopCol(null), [dataR]);
 
+  // rows can be replaced/shrunk under the open modal — a gone row must CLOSE
+  // the peek, not render null: the grid still holds peekRow ≠ null and would
+  // silently keep routing the keyboard here
+  const rowGone = !row;
+  useEffect(() => {
+    if (rowGone) onClose();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowGone]);
   if (!row) return null;
 
   const prettyOf = (i: number): string | null => {
@@ -93,7 +105,7 @@ export function RowPeek({
             <span className="rowpeek-keys">↑↓ walk rows · dbl-click edit · esc close</span>
           </div>
           <div className="rowpeek-body">
-            {statement.columns.map((_, view) => {
+            {Array.from({ length: viewColLen }, (_, view) => {
               const i = colAt(view); // data index — everything below is data-keyed
               const c = statement.columns[i];
               const k = editKey(statement.index, dataR, i);

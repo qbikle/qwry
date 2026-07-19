@@ -1,10 +1,11 @@
 // Distinct-value histogram ("Value distribution" in the header menu).
-// Browse tabs run a real GROUP BY on the table over the tab's EXISTING
-// session (plus the compiled filter WHERE when the browse store exports it —
-// otherwise unfiltered, and the panel says so). Editor results — and json
-// columns, which have no server-side equality — bucket client-side over the
-// LOADED rows and label the scope honestly. Rendered with tokens only; NULL
-// is its own labeled bucket.
+// Browse tabs run a real GROUP BY on the table over an existing session
+// (primary preferred — the tab session is ⌘. cancel's target; plus the
+// compiled filter WHERE when the browse store exports it — otherwise
+// unfiltered, and the panel says so). Editor results — and json columns,
+// which have no server-side equality — bucket client-side over the LOADED
+// rows and label the scope honestly. Rendered with tokens only; NULL is its
+// own labeled bucket, excluded from the distinct count.
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { menuIn } from "../design/springs";
@@ -27,6 +28,9 @@ export type HistogramMode =
       where: string | null;
       /** honesty label (e.g. filters not applied); null = clean scope */
       note: string | null;
+      /** loaded-row values for the client-side fallback when the server
+       * GROUP BY has no equality operator for the type (42883) */
+      fallbackValues: (string | null)[];
     }
   | {
       kind: "client";
@@ -38,7 +42,9 @@ export type HistogramMode =
 interface HistResult {
   buckets: HistBucket[];
   total: number;
+  /** distinct NON-NULL values — the NULL bucket is labeled separately */
   distinct: number;
+  hasNull: boolean;
 }
 
 const fmtPct = (share: number): string => {
@@ -60,6 +66,8 @@ export function Histogram({
 }) {
   const [res, setRes] = useState<HistResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  /** server GROUP BY fell back to client bucketing — its honest scope label */
+  const [fallbackNote, setFallbackNote] = useState<string | null>(null);
 
   useEffect(() => {
     let stale = false;
@@ -76,10 +84,12 @@ export function Histogram({
         if (stale) return;
         const rows = out.statements[0]?.rows ?? [];
         const total = rows.length > 0 ? Number(rows[0][2]) : 0;
-        const distinct = rows.length > 0 ? Number(rows[0][3]) : 0;
+        const groups = rows.length > 0 ? Number(rows[0][3]) : 0;
+        const distinct = rows.length > 0 ? Number(rows[0][4]) : 0;
         setRes({
           total,
           distinct,
+          hasNull: groups > distinct,
           buckets: rows.map((r) => {
             const count = Number(r[1]);
             return { value: r[0], count, share: total > 0 ? count / total : 0 };
@@ -88,6 +98,16 @@ export function Histogram({
       })
       .catch((e) => {
         if (stale) return;
+        // 42883 (undefined function) = no equality operator for the type
+        // (domain-over-json class) — the server can't GROUP BY it; bucket the
+        // LOADED rows client-side and label the scope honestly
+        if (((e as { code?: string | null }).code ?? null) === "42883") {
+          setRes(bucketize(mode.fallbackValues));
+          setFallbackNote(
+            `no server-side equality for this type — computed over ${mode.fallbackValues.length.toLocaleString()} loaded rows`,
+          );
+          return;
+        }
         setErr((e as { message?: string }).message ?? String(e));
       });
     return () => {
@@ -96,7 +116,7 @@ export function Histogram({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const note = mode.note;
+  const note = fallbackNote ?? mode.note;
 
   return (
     <AnchoredOverlay point={point} onClose={onClose}>
@@ -136,8 +156,9 @@ export function Histogram({
         )}
         {res && !err && (
           <div className="histo-foot">
-            {res.distinct > HISTOGRAM_TOP ? `top ${HISTOGRAM_TOP} of ` : ""}
-            {res.distinct.toLocaleString()} distinct · {res.total.toLocaleString()} rows
+            {res.distinct + (res.hasNull ? 1 : 0) > HISTOGRAM_TOP ? `top ${HISTOGRAM_TOP} of ` : ""}
+            {res.distinct.toLocaleString()} distinct{res.hasNull ? " + NULL" : ""} ·{" "}
+            {res.total.toLocaleString()} rows
           </div>
         )}
         {note && <div className="histo-note">{note}</div>}

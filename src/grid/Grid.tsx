@@ -19,7 +19,7 @@ import { useInspector } from "../stores/inspector";
 import { useSchema } from "../stores/schema";
 import { RowPeek } from "./RowPeek";
 import { RecordView } from "./RecordView";
-import { FkPicker } from "./FkPicker";
+import { FkPicker, preferredSessionId } from "./FkPicker";
 import { Histogram, type HistogramMode } from "./Histogram";
 import { flashReadOnlyReason } from "./flashReason";
 import {
@@ -27,6 +27,7 @@ import {
   cycleChain,
   jsonNoEquality,
   multiSortIndices,
+  nullsFirstOf,
   shiftToggleChain,
   textishLabelCols,
   type ChainEntry,
@@ -176,6 +177,42 @@ function estimateWidths(st: StatementState): number[] {
     }
     return Math.max(MIN_COL_W, Math.min(MAX_COL_W, Math.round(max * CHAR_W + 24)));
   });
+}
+
+/** sort-arrow tooltip — speaks the CHAIN grammar: what click / ⇧-click /
+ * ⌥-click will actually do given the current chain state (the single-sort
+ * wording only appears when this column really is the whole chain) */
+function sortBtnTitle(s: {
+  dir: "asc" | "desc" | null;
+  chainLen: number;
+  nulls?: "first" | "last";
+  /** catalog NOT NULL (browse) — the ⌥ gesture is gated, say so */
+  notNull?: boolean;
+}): string {
+  const solo = s.chainLen === 1 && s.dir !== null;
+  const click = solo
+    ? s.dir === "asc"
+      ? "Sorted ascending — click: flip to descending"
+      : "Sorted descending — click: clear sort"
+    : s.chainLen > 0
+      ? "click: sort by this column only (asc, replaces the chain)"
+      : "click: sort ascending";
+  const shift =
+    s.dir === "asc"
+      ? "⇧click: flip this chain entry to descending"
+      : s.dir === "desc"
+        ? "⇧click: remove from sort chain"
+        : "⇧click: add to sort chain (asc)";
+  const alt = s.notNull
+    ? "⌥click: NULLS n/a — column is NOT NULL"
+    : s.dir === null
+      ? "⌥click: NULLS first/last (sorted columns only)"
+      : s.nulls === undefined
+        ? "⌥click: NULLS FIRST"
+        : s.nulls === "first"
+          ? "⌥click: NULLS LAST"
+          : "⌥click: NULLS back to default";
+  return `${click}\n${shift}\n${alt}`;
 }
 
 function CellEditor({
@@ -567,8 +604,9 @@ export function Grid({
 
   // client-side sort over LOADED rows — editor results only; the browser's
   // paged data sorts server-side (a client sort of one page would lie).
-  // Stable multi-key sort: ties keep stream order, NULLs default last
-  // (⌥-click flips an entry to NULLS-first).
+  // Stable multi-key sort: ties keep stream order, NULL placement defaults
+  // to PG's direction-dependent rule (asc last, desc first — nullsFirstOf);
+  // ⌥-click pins an entry to explicit FIRST/LAST.
   const rowOrder = useMemo(() => {
     const sorting = clientChain.length > 0 && !insertable;
     if (!sorting && !filterIdx) return null;
@@ -578,7 +616,7 @@ export function Grid({
       col: e.key,
       mul: e.dir === "asc" ? 1 : -1,
       numeric: isNumericCol(e.key),
-      nullsFirst: e.nulls === "first",
+      nullsFirst: nullsFirstOf(e.dir, e.nulls),
     }));
     return multiSortIndices(base, rows, specs);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -642,6 +680,16 @@ export function Grid({
     sel.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawFilter, clientChain, colOrder, hiddenCols]);
+  // rows identity changes too (stream flush mid-query): with a client
+  // sort/filter active the view→data row map re-sorts under an open record
+  // view / row peek, whose held view rows would silently show different data
+  // rows. No remap active (rowOrder null) = append-only, both stay valid.
+  useEffect(() => {
+    if (!rowOrder) return;
+    setRecord(null);
+    setPeekRow(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows]);
   // publish the match count for the status bar's "n of m" readout
   useEffect(() => {
     useGridFilter.getState().setMatches(filterIdx ? filterIdx.length : null);
@@ -699,6 +747,9 @@ export function Grid({
 
   // inline new-row draft (table browser only)
   const draftRow = useBrowser((s) => s.draftRow);
+  /** the browsed relation (browse tabs only) — gates row mutations on kind
+   * 'r' and feeds catalog NOT NULL into the sort-arrow NULLS affordance */
+  const browseTable = useBrowser((s) => s.table);
   const draftError = useBrowser((s) => s.draftError);
   const setDraftCell = useBrowser((s) => s.setDraftCell);
   const commitDraft = useBrowser((s) => s.commitDraft);
@@ -1889,13 +1940,26 @@ export function Grid({
       const name = cols[dataC]?.name;
       if (!name) return;
       const cur = browseChainEff;
-      const next = e.altKey
-        ? altCycleNulls(cur, name)
-        : e.shiftKey
-          ? shiftToggleChain(cur, name)
-          : cycleChain(cur, name);
-      if (next === cur) return; // ⌥ on an unsorted column — nothing to change
-      dispatchBrowseChain(next);
+      if (e.altKey) {
+        // catalog NOT NULL: the override is inert, but the emitted NULLS
+        // clause defeats the index (Seq Scan + Sort on every page) — refuse
+        // with a reason. Covers the implicit PK tiebreaker (PK ⇒ NOT NULL).
+        const ci = browseTable?.columns.find((c) => c.name === name);
+        if (ci?.not_null) {
+          const inChain = cur.some((en) => en.key === name);
+          flashReadOnlyReason(
+            !inChain && browseTable?.pk.includes(name)
+              ? `${name} is the implicit PK tiebreaker (NOT NULL) — NULLS placement doesn't apply`
+              : `${name} is NOT NULL — NULLS FIRST/LAST would only slow the query`,
+          );
+          return;
+        }
+        const next = altCycleNulls(cur, name);
+        if (next === cur) return; // ⌥ on an unsorted column — nothing to change
+        dispatchBrowseChain(next);
+        return;
+      }
+      dispatchBrowseChain(e.shiftKey ? shiftToggleChain(cur, name) : cycleChain(cur, name));
     } else {
       setClientChain((cur) =>
         e.altKey
@@ -1978,7 +2042,8 @@ export function Grid({
     !!rect && r >= rect.r0 && r <= rect.r1 && c >= rect.c0 && c <= rect.c1;
 
   /** header menu → value distribution. Browse tabs GROUP BY on the server
-   * (tab's existing session, the exact compiled WHERE the browse queries
+   * (primary session preferred — ⌘. cancel targets the tab session; same
+   * pick as runExactCount — with the exact compiled WHERE the browse queries
    * embed); editor results and json columns (no server equality) bucket
    * client-side over LOADED rows with an honest scope note. */
   const openHistogram = (dataC: number, point: { x: number; y: number }) => {
@@ -1986,7 +2051,9 @@ export function Grid({
     if (!name) return;
     const table = insertable ? useBrowser.getState().table : null;
     const tn = colType(dataC) ?? table?.columns.find((c) => c.name === name)?.type;
-    const sessionId = useResults.getState().executedSessionId;
+    const sessionId = preferredSessionId();
+    const values: (string | null)[] = new Array(rows.length);
+    for (let r = 0; r < rows.length; r++) values[r] = rows[r][dataC] ?? null;
     if (insertable && table && sessionId && !jsonNoEquality(tn)) {
       setHisto({
         point,
@@ -1999,12 +2066,13 @@ export function Grid({
           // the EXACT WHERE the browse queries embed (builder or raw mode)
           where: browseWhere(),
           note: null,
+          // 42883 (no equality operator, domain-over-json class) falls back
+          // to client bucketing over these — with its own honest label
+          fallbackValues: values,
         },
       });
       return;
     }
-    const values: (string | null)[] = new Array(rows.length);
-    for (let r = 0; r < rows.length; r++) values[r] = rows[r][dataC] ?? null;
     const note = jsonNoEquality(tn)
       ? `json has no server-side equality — computed over ${rows.length.toLocaleString()} loaded rows`
       : insertable
@@ -2207,13 +2275,14 @@ export function Grid({
                   )}
                   <button
                     className={`vgrid-sortbtn${sortDir ? " on" : ""}${sortDir === "desc" ? " desc" : ""}`}
-                    title={`${
-                      sortDir === "asc"
-                        ? "Sorted ascending — click for descending"
-                        : sortDir === "desc"
-                          ? "Sorted descending — click to clear"
-                          : "Sort"
-                    }\n⇧click: add to sort chain · ⌥click: NULLS first/last`}
+                    title={sortBtnTitle({
+                      dir: sortDir,
+                      chainLen: sortLen,
+                      nulls: sortNulls,
+                      notNull: insertable
+                        ? browseTable?.columns.find((c) => c.name === name)?.not_null
+                        : undefined,
+                    })}
                     tabIndex={-1}
                     onMouseDown={(e) => {
                       // never start a reorder/select from the sort affordance
@@ -2482,9 +2551,15 @@ export function Grid({
               disabled: viewColLen <= 1,
               onSelect: () => {
                 // an invisible active sort is undiscoverable — drop this
-                // column's chain entry (others keep their positions)
-                if (!insertable)
+                // column's chain entry in BOTH modes (others keep their
+                // positions; badges renumber naturally)
+                if (insertable) {
+                  const name = cols[headerMenu.dataC]?.name;
+                  const next = browseChainEff.filter((en) => en.key !== name);
+                  if (next.length !== browseChainEff.length) dispatchBrowseChain(next);
+                } else {
                   setClientChain((c) => c.filter((en) => en.key !== headerMenu.dataC));
+                }
                 setHiddenCols((prev) => new Set([...prev, headerMenu.dataC]));
               },
             },
@@ -2579,8 +2654,10 @@ export function Grid({
                 ] as MenuNode[])
               : []),
             ...fkMenuItems(),
-            ...(insertable && sel.focus
+            ...(insertable && sel.focus && browseTable?.kind === "r"
               ? ([
+                  // plain relations only — same gate as the Add-row button: a
+                  // view/matview draft could only fail at commit time
                   {
                     kind: "item",
                     label: "Duplicate row…",
@@ -2635,6 +2712,7 @@ export function Grid({
           viewRow={peekRow}
           rowAt={rowAt}
           colAt={colAt}
+          viewColLen={viewColLen}
           rowCount={viewLen}
           typeOf={colType}
           editMetaOf={colEditMeta}
@@ -2654,6 +2732,7 @@ export function Grid({
           viewRows={record.rows}
           rowAt={rowAt}
           colAt={colAt}
+          viewColLen={viewColLen}
           rowCount={viewLen}
           typeOf={colType}
           editMetaOf={colEditMeta}

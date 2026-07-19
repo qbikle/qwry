@@ -1,19 +1,36 @@
 // FK-cell picker (Postico parity): while editing a foreign-key cell, pick the
 // referenced row from a live-searched list instead of typing the key blind.
 // Anchored overlay (own esc-stack entry — Esc closes the picker, not the cell
-// editor); the search runs a read-only SELECT on the tab's EXISTING session
-// (never a new one), debounced ~200ms, identifiers/literals quoted through
-// the shared safe helpers only. Errors render here, honestly.
+// editor); the search runs a read-only SELECT on an EXISTING session (primary
+// preferred — see preferredSessionId), debounced ~200ms, identifiers/literals
+// quoted through the shared safe helpers only. Errors render here, honestly.
 import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { menuIn } from "../design/springs";
 import { AnchoredOverlay } from "../app/overlay/Overlay";
 import * as ipc from "../ipc/commands";
 import { useResults } from "../stores/results";
+import { useConnections } from "../stores/connections";
 import { fkPickerSql, type FkPickTarget } from "./spelunkLogic";
 import "./grid.css";
 
 const DEBOUNCE_MS = 200;
+
+/** session for grid side-queries (FK picker, histogram): the result's
+ * profile, PRIMARY session preferred — the tab session is what ⌘. cancels,
+ * and a side-query there would die with (or delay) the tab's own work — with
+ * any live tab session of that profile as fallback. Same rule as
+ * runExactCount's count probe. */
+export function preferredSessionId(): string | undefined {
+  const res = useResults.getState();
+  const conn = useConnections.getState();
+  const pid = res.executedProfileId ?? conn.activeProfileId;
+  if (!pid) return res.executedSessionId ?? undefined;
+  return (
+    conn.sessions[pid] ??
+    Object.entries(conn.tabSessions).find(([k]) => k.startsWith(`${pid}::`))?.[1]
+  );
+}
 
 export function FkPicker({
   point,
@@ -37,11 +54,12 @@ export function FkPicker({
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // the ACTIVE tab's session — the same one the result ran on; a picker on
-    // a dead session reports instead of silently showing nothing
-    const sessionId = useResults.getState().executedSessionId;
+    // primary session preferred (⌘. cancel targets the tab session — a
+    // picker query there would collide with it); a picker with no live
+    // session reports instead of silently showing nothing
+    const sessionId = preferredSessionId();
     if (!sessionId) {
-      setErr("no live session for this tab");
+      setErr("no live session");
       setLoading(false);
       return;
     }

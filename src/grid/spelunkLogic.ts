@@ -68,9 +68,17 @@ export interface SortSpec {
   col: number;
   mul: 1 | -1;
   numeric: boolean;
-  /** true = NULLs sort to the top; false = bottom (the grid's historical
-   * default, direction-independent) */
+  /** true = NULLs sort to the top; false = bottom. Compute via nullsFirstOf
+   * so the client default matches the server's direction-dependent one. */
   nullsFirst: boolean;
+}
+
+/** effective NULL placement for a chain entry — PG semantics: an explicit
+ * NULLS FIRST/LAST wins; the default is DIRECTION-DEPENDENT (ASC ⇒ NULLS
+ * LAST, DESC ⇒ NULLS FIRST), so the three ⌥-cycle states are three distinct
+ * behaviors: default follows the direction, first/last stay pinned. */
+export function nullsFirstOf(dir: "asc" | "desc", nulls?: "first" | "last"): boolean {
+  return nulls ? nulls === "first" : dir === "desc";
 }
 
 /** stable multi-key sort of `base` (data-row indexes) by the chain specs —
@@ -122,21 +130,25 @@ export interface HistBucket {
   share: number;
 }
 
-/** top-N value counts over loaded rows; NULL is its own bucket */
+/** top-N value counts over loaded rows; NULL is its own bucket, labeled
+ * separately — `distinct` counts NON-NULL values only (`hasNull` says whether
+ * a NULL bucket exists) */
 export function bucketize(
   values: readonly (string | null)[],
   top = HISTOGRAM_TOP,
-): { buckets: HistBucket[]; total: number; distinct: number } {
+): { buckets: HistBucket[]; total: number; distinct: number; hasNull: boolean } {
   const counts = new Map<string | null, number>();
   for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
   const entries = [...counts.entries()].sort((x, y) => y[1] - x[1]);
   const total = values.length;
+  const hasNull = counts.has(null);
   return {
     buckets: entries
       .slice(0, top)
       .map(([value, count]) => ({ value, count, share: total > 0 ? count / total : 0 })),
     total,
-    distinct: counts.size,
+    distinct: counts.size - (hasNull ? 1 : 0),
+    hasNull,
   };
 }
 
@@ -150,8 +162,10 @@ export function jsonNoEquality(typeName: string | undefined): boolean {
 
 /** value-distribution query: one round trip returns the top groups plus the
  * whole-source totals via window aggregates (sum of group counts = total
- * rows, count over groups = distinct values — windows run after GROUP BY and
- * before LIMIT). `where` is a pre-compiled predicate (browse filters) or null. */
+ * rows, count(*) over groups = group count, count(col) over groups = distinct
+ * NON-NULL values since each group row carries its key — windows run after
+ * GROUP BY and before LIMIT; group count minus non-null count says whether a
+ * NULL bucket exists). `where` is a pre-compiled predicate or null. */
 export function histogramSql(s: {
   schema: string;
   table: string;
@@ -160,7 +174,7 @@ export function histogramSql(s: {
 }): string {
   const w = s.where ? `\nWHERE ${s.where}` : "";
   return (
-    `SELECT ${qi(s.column)}, count(*), sum(count(*)) OVER (), count(*) OVER ()` +
+    `SELECT ${qi(s.column)}, count(*), sum(count(*)) OVER (), count(*) OVER (), count(${qi(s.column)}) OVER ()` +
     `\nFROM ${qualify(s.schema, s.table)}${w}` +
     `\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT ${HISTOGRAM_TOP}`
   );

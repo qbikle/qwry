@@ -1423,6 +1423,12 @@
 .rv-truncbtn:hover {
   text-decoration: underline;
 }
+/* diff mode: truncated sides say the comparison scope out loud */
+.rv-trunchint {
+  color: var(--fg-faint);
+  font-size: var(--text-2xs);
+  font-style: italic;
+}
 /* in-place editor row */
 .rv-edit {
   flex: 1;

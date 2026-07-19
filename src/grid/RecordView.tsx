@@ -44,6 +44,7 @@ export function RecordView({
   viewRows,
   rowAt,
   colAt,
+  viewColLen,
   rowCount,
   typeOf,
   editMetaOf,
@@ -56,6 +57,9 @@ export function RecordView({
   rowAt: (view: number) => number;
   /** view→data column map so columns list in the GRID's order */
   colAt: (view: number) => number;
+  /** TRUE view column count — colAt past it falls back to identity, which
+   * would leak hidden columns (and duplicate the last one) */
+  viewColLen: number;
   rowCount: number;
   typeOf: (dataCol: number) => string | undefined;
   editMetaOf: (dataCol: number) => ColumnEditMeta | undefined;
@@ -98,10 +102,19 @@ export function RecordView({
     return diffMask(a, b);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [diff, rowSig, pending, statement.rows, nCols]);
-  const differCount = mask ? mask.filter(Boolean).length : 0;
+  // header count speaks VISIBLE columns only — same scope as the listing
+  let differCount = 0;
+  if (mask) for (let v = 0; v < viewColLen; v++) if (mask[colAt(v)]) differCount++;
 
-  // rows can be replaced/shrunk under the open modal (browser re-run)
-  if (rowsData.some((r) => !r)) return null;
+  // rows can be replaced/shrunk under the open modal (browser re-run) — a
+  // gone row must CLOSE the record, not render null: the grid still holds
+  // record ≠ null and would silently keep routing the keyboard here
+  const rowGone = rowsData.some((r) => !r);
+  useEffect(() => {
+    if (rowGone) onClose();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowGone]);
+  if (rowGone) return null;
 
   const openEdit = (i: number) => {
     const meta = editMetaOf(i);
@@ -201,7 +214,8 @@ export function RecordView({
                 <>
                   Compare rows {viewRows[0] + 1} · {(viewRows[1] ?? 0) + 1}{" "}
                   <span className="rowpeek-of">
-                    {differCount} of {nCols} column{nCols === 1 ? "" : "s"} differ
+                    {differCount} of {viewColLen} visible column{viewColLen === 1 ? "" : "s"}{" "}
+                    differ
                   </span>
                 </>
               ) : (
@@ -236,7 +250,7 @@ export function RecordView({
             )}
           </div>
           <div className="rowpeek-body">
-            {statement.columns.map((_, view) => {
+            {Array.from({ length: viewColLen }, (_, view) => {
               const i = colAt(view); // data index — everything below is data-keyed
               const c = statement.columns[i];
               const tn = typeOf(i);
@@ -271,20 +285,24 @@ export function RecordView({
                     {label}
                     {[0, 1].map((side) => {
                       const v = effVal(side, i);
+                      const peS = pending[editKey(statement.index, dataRs[side], i)];
                       const trunc = statement.truncated.has(`${dataRs[side]}:${i}`);
                       return (
                         <span
                           key={side}
                           className={`rowpeek-val rv-side${differs ? " rv-diff" : " rv-same"}`}
                         >
-                          {v === null ? (
-                            <span className="vgrid-nullchip">NULL</span>
-                          ) : v === "" ? (
-                            <span className="vgrid-emptychip">∅ empty</span>
-                          ) : (
-                            v
+                          {/* same renderValue path as record mode — a staged
+                              Set-DEFAULT must show DEFAULT, never lie as NULL */}
+                          {renderValue(v, null, !!peS?.useDefault)}
+                          {trunc && (
+                            <span
+                              className="vgrid-trunc"
+                              title="Truncated — the diff sees only the 8KB prefix"
+                            >
+                              {" "}…⧉ <span className="rv-trunchint">compared on 8KB prefix</span>
+                            </span>
                           )}
-                          {trunc && <span className="vgrid-trunc"> …⧉</span>}
                         </span>
                       );
                     })}

@@ -6,9 +6,10 @@ import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { popIn } from "../design/springs";
 import { Modal } from "../app/overlay/Overlay";
-import { useEdits } from "../stores/edits";
+import { editKey, useEdits } from "../stores/edits";
 import { isArrayType, jsToPgArray, structuredValue } from "../inspector/format";
 import { JsonField } from "../inspector/JsonField";
+import { flashReadOnlyReason } from "./flashReason";
 import "./grid.css";
 
 /** JSON.parse would silently round-trip 16+-digit ints through float64 —
@@ -38,6 +39,15 @@ export function stageCellDraft(a: {
   typeName: string | undefined;
   original: string | null;
 }): string | null {
+  // draft text identical to the cell's ORIGINAL raw text = nothing to stage —
+  // never manufacture an edit out of a no-change close (a pending edit on the
+  // cell still falls through: setEdit(original) is the revert path)
+  if (
+    a.draft === a.original &&
+    !useEdits.getState().pending[editKey(a.stmtIndex, a.row, a.col)]
+  ) {
+    return null;
+  }
   const isJson = a.typeName === "json" || a.typeName === "jsonb";
   const isArr = isArrayType(a.typeName);
   let value = a.draft;
@@ -80,6 +90,10 @@ export function ValuePop({
 }) {
   const [draft, setDraft] = useState(initial);
   const [err, setErr] = useState<string | null>(null);
+  // the pop opens on the PRETTY-PRINTED value — staging an untouched draft
+  // would silently rewrite `json` (byte-preserving) cells with pretty bytes.
+  // dirty = the user deliberately changed the text (typing, or Format).
+  const dirty = useRef(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   // json/jsonb/arrays edit in a syntax-highlighted CodeMirror; free text
   // stays a plain textarea (no JSON tokens to color)
@@ -94,11 +108,24 @@ export function ValuePop({
     el.setSelectionRange(el.value.length, el.value.length);
   }, []);
 
-  const stage = () => setErr(onStage(draft));
+  const stage = () => {
+    if (!dirty.current) {
+      // untouched pop — Stage is a no-change close, never a real edit
+      flashReadOnlyReason("no changes");
+      onClose();
+      return;
+    }
+    setErr(onStage(draft));
+  };
+
+  const markDirty = (d: string) => {
+    dirty.current = true;
+    setDraft(d);
+  };
 
   const autoFormat = () => {
     try {
-      setDraft(JSON.stringify(JSON.parse(draft), null, 2));
+      markDirty(JSON.stringify(JSON.parse(draft), null, 2));
       setErr(null);
     } catch (ex) {
       setErr(`not valid JSON: ${(ex as Error).message}`);
@@ -130,7 +157,7 @@ export function ValuePop({
             <JsonField
               value={draft}
               autoFocus
-              onChange={setDraft}
+              onChange={markDirty}
               onSave={stage}
               onCancel={onClose}
             />
@@ -140,7 +167,7 @@ export function ValuePop({
             ref={taRef}
             value={draft}
             spellCheck={false}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => markDirty(e.target.value)}
           />
         )}
         {err && <div className="valuepop-err">{err}</div>}
