@@ -12,7 +12,11 @@
 //!   names the batch (and the row, when the server position lands inside a
 //!   tuple). Rows are never silently dropped, padded, or coerced — a short
 //!   or long CSV record is a per-row error (`flexible(false)`), and a
-//!   client-side bad row aborts a commit run outright.
+//!   client-side bad row aborts a commit run outright. A connection-class
+//!   failure DURING the COMMIT itself is reported as outcome "unknown" —
+//!   the server may have applied it. Commit runs carrying the validate run's
+//!   `expected_stat` refuse when the file changed in between, and both
+//!   transactions pin `standard_conforming_strings = on` via SET LOCAL.
 //!
 //! Encoding: UTF-8 only (a bad byte is a per-row error naming the row).
 //! Quoting mirrors `driver/postgres/edit.rs` (`ql`/`qi`) — those helpers are
@@ -73,6 +77,26 @@ fn cast_for(typname: &str, nspname: &str) -> String {
 
 fn internal(msg: impl Into<String>) -> DriverError {
     DriverError::Internal(msg.into())
+}
+
+/// file identity snapshot (mtime + size) — the validate→commit TOCTOU gate
+/// and the `file_stat` command (mirrored in src/ipc/types.ts)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileStat {
+    pub mtime_ms: i64,
+    pub size: u64,
+}
+
+pub fn stat_file(path: &str) -> Result<FileStat> {
+    let md = std::fs::metadata(path).map_err(|e| internal(format!("stat {path}: {e}")))?;
+    let mtime = md
+        .modified()
+        .map_err(|e| internal(format!("stat {path}: {e}")))?;
+    let mtime_ms = match mtime.duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => d.as_millis() as i64,
+        Err(e) => -(e.duration().as_millis() as i64),
+    };
+    Ok(FileStat { mtime_ms, size: md.len() })
 }
 
 // ---------------------------------------------------------------------------
@@ -364,6 +388,10 @@ pub struct ImportSpec {
     pub null_token: Option<String>,
     /// "validate" (always rolls back) | "commit" (one all-or-nothing tx)
     pub mode: String,
+    /// commit only: the `file_stat` a validate run reported — a mismatch at
+    /// commit time refuses outright ("file changed since validation")
+    #[serde(default)]
+    pub expected_stat: Option<FileStat>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -381,15 +409,31 @@ pub struct RowIssue {
     pub message: String,
 }
 
+/// end state of an import run — `Unknown` is the honest answer when the
+/// connection died DURING COMMIT: the server may or may not have applied it
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportOutcome {
+    Committed,
+    RolledBack,
+    Unknown,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ImportReport {
     pub total_rows: u64,
-    /// validate: rows that passed; commit: rows persisted (0 unless committed)
+    /// validate: rows that passed; commit: rows persisted (0 unless
+    /// committed; also 0 on an Unknown outcome — never claim persistence)
     pub ok_rows: u64,
     pub errors: Vec<RowIssue>,
     /// error collection stopped at MAX_ERRORS — "…and possibly more"
     pub more_errors: bool,
     pub committed: bool,
+    /// "committed" | "rolled_back" | "unknown" on the wire
+    pub outcome: ImportOutcome,
+    /// file identity at validate time — feed back as `expected_stat` on the
+    /// commit run to catch the file changing in between; None on commit runs
+    pub file_stat: Option<FileStat>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -651,6 +695,24 @@ pub async fn run_import(
             "this session has an open transaction — COMMIT or ROLLBACK it first, then import",
         ));
     }
+    // TOCTOU gate: a commit run must operate on the exact bytes the validate
+    // run rehearsed — stat before reading anything, refuse on any drift
+    if mode == Mode::Commit {
+        if let Some(expected) = &spec.expected_stat {
+            if stat_file(&spec.path)? != *expected {
+                return Err(internal(
+                    "file changed since validation — validate again before committing",
+                ));
+            }
+        }
+    }
+    // validate stats the file up front (before the count pass reads it) so a
+    // later commit can prove it rehearsed these exact bytes
+    let file_stat = if mode == Mode::Validate {
+        Some(stat_file(&spec.path)?)
+    } else {
+        None
+    };
 
     let casts = fetch_casts(session, &spec.schema, &spec.table, &spec.columns).await?;
     let targets: Vec<String> = spec.columns.iter().map(|c| c.target.clone()).collect();
@@ -666,7 +728,12 @@ pub async fn run_import(
     }
     on_progress(0, total);
 
-    session.execute_simple("BEGIN").await?;
+    // SET LOCAL pins conforming-string semantics for THIS transaction: the
+    // generated literals escape by doubling quotes only, which a session-level
+    // standard_conforming_strings=off would silently mangle
+    session
+        .execute_simple("BEGIN;\nSET LOCAL standard_conforming_strings = on")
+        .await?;
     let body = import_body(
         session, spec, &rule, delim, mode, &targets, &casts, total, on_progress,
     )
@@ -677,10 +744,11 @@ pub async fn run_import(
             let _ = session.execute_simple("ROLLBACK").await;
             Err(e)
         }
-        (Mode::Validate, Ok(report)) => {
+        (Mode::Validate, Ok(mut report)) => {
             // the validate contract: NOTHING persists (no COMMIT was ever
             // issued, so even a failed ROLLBACK can't have committed rows)
             session.execute_simple("ROLLBACK").await?;
+            report.file_stat = file_stat;
             Ok(report)
         }
         (Mode::Commit, Ok(mut report)) => {
@@ -688,10 +756,32 @@ pub async fn run_import(
                 match session.execute_simple("COMMIT").await {
                     // ok_rows already accumulated per batch — the true count
                     // even if the file changed between the count pass and now
-                    Ok(_) => report.committed = true,
+                    Ok(_) => {
+                        report.committed = true;
+                        report.outcome = ImportOutcome::Committed;
+                    }
+                    Err(e) if commit_indeterminate(&e) => {
+                        // the connection died DURING COMMIT — the server may
+                        // have applied it before the link dropped. Claiming
+                        // "nothing imported" here would invite a duplicate
+                        // re-run; say the only honest thing we know.
+                        let _ = session.execute_simple("ROLLBACK").await;
+                        report.errors.push(RowIssue {
+                            row: 0,
+                            line: 0,
+                            message: format!(
+                                "connection lost during COMMIT — the import may or may not \
+                                 have been applied; verify the row count before retrying \
+                                 ({})",
+                                issue_message(&e)
+                            ),
+                        });
+                        report.ok_rows = 0;
+                        report.outcome = ImportOutcome::Unknown;
+                    }
                     Err(e) => {
-                        // deferred constraints can fail AT commit — the tx is
-                        // gone either way; report it, nothing persisted
+                        // a real SQLSTATE at commit (deferred constraint…) —
+                        // the server rolled back; certain, nothing persisted
                         let _ = session.execute_simple("ROLLBACK").await;
                         report.errors.push(RowIssue {
                             row: 0,
@@ -707,6 +797,18 @@ pub async fn run_import(
             }
             Ok(report)
         }
+    }
+}
+
+/// COMMIT errors where the server MAY have committed before the failure
+/// reached us: transport/protocol errors (no SQLSTATE at all) and the 08*
+/// connection-exception class. Everything with a real non-08 SQLSTATE is a
+/// server-side refusal — the transaction is certainly rolled back.
+fn commit_indeterminate(e: &DriverError) -> bool {
+    match e {
+        DriverError::Db { code: None, .. } => true,
+        DriverError::Db { code: Some(c), .. } => c.starts_with("08"),
+        _ => false,
     }
 }
 
@@ -728,6 +830,8 @@ async fn import_body(
         errors: Vec::new(),
         more_errors: false,
         committed: false,
+        outcome: ImportOutcome::RolledBack,
+        file_stat: None,
     };
     let mut rdr = csv::ReaderBuilder::new()
         .delimiter(delim)

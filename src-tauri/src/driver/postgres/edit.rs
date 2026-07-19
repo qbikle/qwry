@@ -19,7 +19,13 @@
 //! Transaction safety: when the session already sits inside the USER's open
 //! transaction, the batch is wrapped in SAVEPOINT/RELEASE instead of
 //! BEGIN/COMMIT — the user's transaction is never committed or rolled back by
-//! an edit. The verified-batch contract is identical in both modes.
+//! an edit. The verified-batch contract is identical in both modes, but ONLY
+//! Own-mode (BEGIN…COMMIT) batches mint undo plans: a RELEASE'd savepoint is
+//! not durable (the user's ROLLBACK resurrects the pre-edit state), so a
+//! savepoint-mode batch never produces an undo offer. Own-mode batches also
+//! pin datestyle/intervalstyle via SET LOCAL (reverted at COMMIT/ROLLBACK) so
+//! captured wire text reparses identically at undo time regardless of session
+//! GUC drift in between.
 //!
 //! Inverse-SQL undo: every UPDATE captures the row's OLD values inside the
 //! same statement (`UPDATE t AS __t SET … FROM (SELECT <changed cols> FROM t
@@ -321,6 +327,11 @@ pub struct UndoCol {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureMeta {
     pub table: TableRef,
+    /// pg_class oid of `table` at capture time — backs the relname identity
+    /// probe on guarded SQL; 0 (plans persisted before the probe existed)
+    /// skips it
+    #[serde(default)]
+    pub table_oid: u32,
     pub sets: Vec<UndoCol>,
     pub locator: Vec<UndoCol>,
     pub guards: Vec<UndoCol>,
@@ -340,21 +351,43 @@ pub enum UndoStmt {
     /// names excluded from the INSERT (OVERRIDING SYSTEM VALUE deliberately
     /// not used — an identity-ALWAYS column gets a fresh value; honesty over
     /// magic). `cols` carries EVERY captured column with type identity.
+    /// The generated SQL is existence-gated (`INSERT … SELECT … WHERE NOT
+    /// EXISTS`, locator = `pk` when captured, else ALL column values) so a
+    /// resurrected/re-inserted equivalent row inserts 0 rows and the batch
+    /// rolls back honestly instead of duplicating; `name_guards` +
+    /// `table_oid` carry the schema-identity probes.
     Insert {
         table: TableRef,
+        #[serde(default)]
+        table_oid: u32,
         cols: Vec<UndoCol>,
         skip: Vec<String>,
+        /// PK column names at capture time; empty = no PK (locator falls
+        /// back to every captured column value)
+        #[serde(default)]
+        pk: Vec<String>,
+        /// (table_oid, attnum, expected attname) probes ANDed into the gate
+        #[serde(default)]
+        name_guards: Vec<(u32, i16, String)>,
     },
     /// re-delete a re-inserted row (redo of a delete): located by the ctid
     /// captured from the INSERT, pinned by every non-skip column value.
+    /// `table_oid`/`pk`/`name_guards` ride along so the next inverse INSERT
+    /// keeps its existence gate and identity probes.
     Delete {
         table: TableRef,
+        #[serde(default)]
+        table_oid: u32,
         locator: Vec<UndoCol>,
         guards: Vec<UndoCol>,
         /// full column identity list — the next inverse INSERT rebuilds from
         /// this (values refreshed from the DELETE's RETURNING *)
         cols: Vec<UndoCol>,
         skip: Vec<String>,
+        #[serde(default)]
+        pk: Vec<String>,
+        #[serde(default)]
+        name_guards: Vec<(u32, i16, String)>,
     },
 }
 
@@ -400,6 +433,13 @@ fn name_guard_preds(name_guards: &[(u32, i16, String)]) -> impl Iterator<Item = 
     })
 }
 
+/// relation-identity probe: verifies oid→relname so an external
+/// rename+recreate (same name, new oid — or oid reuse under a new name) can
+/// never retarget guarded SQL; a dropped oid yields NULL → matches 0
+fn relname_guard(oid: u32, name: &str) -> String {
+    format!("(SELECT relname FROM pg_class WHERE oid = {oid}) = {}", ql(name))
+}
+
 /// The capture-form UPDATE. One result set, RETURNING one row per updated
 /// target row — matched==1 verification is unchanged from the plain grammar:
 /// the FROM subselect and the outer WHERE carry the IDENTICAL predicate set,
@@ -408,8 +448,8 @@ fn name_guard_preds(name_guards: &[(u32, i16, String)]) -> impl Iterator<Item = 
 /// subselect (guards failed) updates zero rows. RETURNING layout:
 /// `__old.<sets>` (old values) · `__t.<sets>` (new values) · `__t.<locator>`
 /// (post-update locator — the NEW ctid after row movement).
-/// `include_name_guards`: attname identity probes ride the inner WHERE only
-/// (they are row-independent gates; doubling them adds nothing to counting).
+/// `include_name_guards`: attname + relname identity probes ride the inner
+/// WHERE only (row-independent gates; doubling them adds nothing to counting).
 fn build_capture_update(meta: &CaptureMeta, include_name_guards: bool) -> String {
     let t = table_path(&meta.table);
     let set_parts: Vec<String> = meta
@@ -437,6 +477,9 @@ fn build_capture_update(meta: &CaptureMeta, include_name_guards: bool) -> String
     let mut inner_where = where_preds(&meta.locator, &meta.guards, None);
     if include_name_guards {
         inner_where.extend(name_guard_preds(&meta.name_guards));
+        if meta.table_oid != 0 {
+            inner_where.push(relname_guard(meta.table_oid, &meta.table.name));
+        }
     }
     let outer_where = where_preds(&meta.locator, &meta.guards, Some(UPD_TARGET_ALIAS));
     let mut returning: Vec<String> = Vec::new();
@@ -506,6 +549,7 @@ fn inverse_of_update(meta: &CaptureMeta, row: &[Option<String>]) -> Option<UndoS
     );
     Some(UndoStmt::Update(CaptureMeta {
         table: meta.table.clone(),
+        table_oid: meta.table_oid,
         sets,
         locator,
         guards,
@@ -519,12 +563,15 @@ fn revert_stmt_sql(stmt: &UndoStmt) -> String {
     match stmt {
         // persisted name guards are deliberate — always include them
         UndoStmt::Update(meta) => build_capture_update(meta, true),
-        UndoStmt::Insert { table, cols, skip } => {
+        UndoStmt::Insert { table, table_oid, cols, skip, pk, name_guards } => {
             let insertable: Vec<&UndoCol> =
                 cols.iter().filter(|c| !skip.contains(&c.name)).collect();
             if insertable.is_empty() {
+                // all-generated table — DEFAULT VALUES takes no WHERE, so
+                // this vanishing edge stays ungated
                 format!("INSERT INTO {} DEFAULT VALUES RETURNING ctid::text", table_path(table))
             } else {
+                let t = table_path(table);
                 let names = insertable.iter().map(|c| qi(&c.name)).collect::<Vec<_>>().join(", ");
                 let vals = insertable
                     .iter()
@@ -534,17 +581,46 @@ fn revert_stmt_sql(stmt: &UndoStmt) -> String {
                     })
                     .collect::<Vec<_>>()
                     .join(", ");
+                // existence gate: a row equal to what we'd re-create (by PK
+                // when captured, else by every captured value) blocks the
+                // insert — 0 rows → the matched==1 verification rolls the
+                // whole undo back instead of minting a near-duplicate
+                let by_pk: Vec<&UndoCol> = pk
+                    .iter()
+                    .filter_map(|p| cols.iter().find(|c| &c.name == p))
+                    .collect();
+                let locator: Vec<&UndoCol> = if !pk.is_empty() && by_pk.len() == pk.len() {
+                    by_pk
+                } else {
+                    cols.iter().collect()
+                };
+                let exists = locator
+                    .iter()
+                    .map(|c| eq_pred_parts(None, &c.name, &c.type_name, &c.cast, &c.value))
+                    .collect::<Vec<_>>()
+                    .join(" AND ");
+                let mut gates = vec![format!("NOT EXISTS (SELECT 1 FROM {t} WHERE {exists})")];
+                gates.extend(name_guard_preds(name_guards));
+                if *table_oid != 0 {
+                    gates.push(relname_guard(*table_oid, &table.name));
+                }
                 format!(
-                    "INSERT INTO {} ({names}) VALUES ({vals}) RETURNING ctid::text",
-                    table_path(table)
+                    "INSERT INTO {t} ({names}) SELECT {vals} WHERE {} RETURNING ctid::text",
+                    gates.join(" AND ")
                 )
             }
         }
-        UndoStmt::Delete { table, locator, guards, .. } => format!(
-            "DELETE FROM {} WHERE {} RETURNING *",
-            table_path(table),
-            where_preds(locator, guards, None).join(" AND "),
-        ),
+        UndoStmt::Delete { table, table_oid, locator, guards, .. } => {
+            let mut preds = where_preds(locator, guards, None);
+            if *table_oid != 0 {
+                preds.push(relname_guard(*table_oid, &table.name));
+            }
+            format!(
+                "DELETE FROM {} WHERE {} RETURNING *",
+                table_path(table),
+                preds.join(" AND "),
+            )
+        }
     }
 }
 
@@ -558,11 +634,12 @@ fn flip_description(desc: &str) -> String {
 
 /// Revert plan for a committed DELETE batch: one INSERT per deleted row,
 /// columns + values from each DELETE's `RETURNING *`, type identity + skip
-/// flags (GENERATED / identity-ALWAYS) from the catalog probe that rode the
-/// batch. Any name the probe can't identify → refuse the revert (None) rather
-/// than persist a wrong one.
+/// flags (GENERATED / identity-ALWAYS) + attnum/PK identity from the catalog
+/// probe that rode the batch. Any name the probe can't identify → refuse the
+/// revert (None) rather than persist a wrong one.
 fn build_delete_revert(
     table: &TableRef,
+    table_oid: u32,
     delete_results: &[StatementResult],
     probe: Option<&StatementResult>,
 ) -> Option<UndoPlan> {
@@ -570,14 +647,22 @@ fn build_delete_revert(
     // attname → (skip, type_name, cast)
     let mut meta: HashMap<&str, (bool, String, String)> = HashMap::new();
     let mut skip: Vec<String> = Vec::new();
+    let mut pk: Vec<String> = Vec::new();
+    let mut name_guards: Vec<(u32, i16, String)> = Vec::new();
     for row in &probe.rows {
         let name = row.first()?.as_deref()?;
         let is_skip = row.get(1)?.as_deref()? == "true";
         let type_name = row.get(2)?.as_deref()?;
         let type_schema = row.get(3)?.as_deref()?;
+        let attnum: i16 = row.get(4)?.as_deref()?.parse().ok()?;
+        let is_pk = row.get(5)?.as_deref()? == "true";
         if is_skip {
             skip.push(name.to_string());
         }
+        if is_pk {
+            pk.push(name.to_string());
+        }
+        name_guards.push((table_oid, attnum, name.to_string()));
         meta.insert(
             name,
             (
@@ -606,8 +691,11 @@ fn build_delete_revert(
         }
         stmts.push(UndoStmt::Insert {
             table: table.clone(),
+            table_oid,
             cols,
             skip: skip.clone(),
+            pk: pk.clone(),
+            name_guards: name_guards.clone(),
         });
     }
     let n = stmts.len();
@@ -626,11 +714,12 @@ fn build_delete_revert(
 fn build_inverse(stmt: &UndoStmt, res: &StatementResult) -> Option<UndoStmt> {
     match stmt {
         UndoStmt::Update(meta) => inverse_of_update(meta, res.rows.first()?),
-        UndoStmt::Insert { table, cols, skip } => {
+        UndoStmt::Insert { table, table_oid, cols, skip, pk, name_guards } => {
             let ctid = res.rows.first()?.first()?.clone();
             ctid.as_ref()?;
             Some(UndoStmt::Delete {
                 table: table.clone(),
+                table_oid: *table_oid,
                 locator: vec![UndoCol {
                     name: "ctid".into(),
                     type_name: "tid".into(),
@@ -645,9 +734,11 @@ fn build_inverse(stmt: &UndoStmt, res: &StatementResult) -> Option<UndoStmt> {
                     .collect(),
                 cols: cols.clone(),
                 skip: skip.clone(),
+                pk: pk.clone(),
+                name_guards: name_guards.clone(),
             })
         }
-        UndoStmt::Delete { table, cols, skip, .. } => {
+        UndoStmt::Delete { table, table_oid, cols, skip, pk, name_guards, .. } => {
             let row = res.rows.first()?;
             if res.columns.len() != row.len() {
                 return None;
@@ -663,8 +754,11 @@ fn build_inverse(stmt: &UndoStmt, res: &StatementResult) -> Option<UndoStmt> {
             }
             Some(UndoStmt::Insert {
                 table: table.clone(),
+                table_oid: *table_oid,
                 cols: refreshed,
                 skip: skip.clone(),
+                pk: pk.clone(),
+                name_guards: name_guards.clone(),
             })
         }
     }
@@ -676,24 +770,42 @@ fn build_inverse(stmt: &UndoStmt, res: &StatementResult) -> Option<UndoStmt> {
 /// the WRONG column and still matches 1 row), so every hint-named column a
 /// statement uses gets an attname probe ANDed into its WHERE — a mismatch
 /// matches 0 rows and the existing verify-then-commit machinery rolls the
-/// whole batch back. The probes ride the same batch: still 2 RTTs.
+/// whole batch back. `tables` carries the oid→relname probe per distinct
+/// table for the same reason (rename+recreate must never retarget).
+/// The probes ride the same batch: still 2 RTTs.
 #[derive(Default)]
-struct NameGuards(BTreeMap<(u32, i16), String>);
+struct NameGuards {
+    cols: BTreeMap<(u32, i16), String>,
+    tables: BTreeMap<u32, String>,
+}
 
 impl NameGuards {
     fn note(&mut self, m: &ColumnEditMeta, name: &str) {
         if !m.is_ctid && m.table_oid != 0 && m.attnum > 0 {
-            self.0.insert((m.table_oid, m.attnum), name.to_string());
+            self.cols.insert((m.table_oid, m.attnum), name.to_string());
+        }
+    }
+
+    fn note_table(&mut self, oid: u32, name: &str) {
+        if oid != 0 {
+            self.tables.insert(oid, name.to_string());
         }
     }
 
     fn predicates(&self) -> impl Iterator<Item = String> + '_ {
-        self.0.iter().map(|((oid, att), name)| {
-            format!(
-                "(SELECT attname FROM pg_attribute WHERE attrelid = {oid} AND attnum = {att}) = {}",
-                ql(name)
+        self.cols
+            .iter()
+            .map(|((oid, att), name)| {
+                format!(
+                    "(SELECT attname FROM pg_attribute WHERE attrelid = {oid} AND attnum = {att}) = {}",
+                    ql(name)
+                )
+            })
+            .chain(
+                self.tables
+                    .iter()
+                    .map(|(oid, name)| relname_guard(*oid, name)),
             )
-        })
     }
 }
 
@@ -1176,8 +1288,12 @@ impl PgSession {
             return Ok(EditOutcome { results, committed: false, revert: None });
         }
         // revert plan from the captured old values — refused (None) rather
-        // than persisted wrong if any row misses the capture layout
-        let revert = {
+        // than persisted wrong if any row misses the capture layout. Only
+        // Own-mode batches mint one: a savepoint-mode RELEASE is not durable
+        // (the user's ROLLBACK resurrects state), so no undo is ever offered
+        let revert = if matches!(mode, BatchTx::Savepoint(_)) {
+            None
+        } else {
             let mut stmts = Vec::with_capacity(planned.len());
             let mut tables: HashSet<String> = HashSet::new();
             let mut complete = true;
@@ -1251,6 +1367,7 @@ impl PgSession {
                 ));
             }
             if map.hinted {
+                guards.note_table(table_oid, &table.name);
                 where_parts.extend(guards.predicates());
             }
             deletes.push(format!(
@@ -1263,11 +1380,15 @@ impl PgSession {
             return Ok(EditOutcome { results: vec![], committed: false, revert: None });
         }
         // rides the batch (zero extra round trips): column identity + skip
-        // flags for the revert INSERTs. DDL can't shift it mid-batch — the
+        // flags + attnum/PK membership for the revert INSERTs (existence gate
+        // + schema-identity probes). DDL can't shift it mid-batch — the
         // DELETEs' ROW EXCLUSIVE lock blocks ALTER TABLE until we finish.
         let probe = format!(
             "SELECT a.attname, (a.attgenerated <> '' OR a.attidentity = 'a')::text, \
-                    t.typname, n.nspname \
+                    t.typname, n.nspname, a.attnum::text, \
+                    (EXISTS (SELECT 1 FROM pg_index i \
+                             WHERE i.indrelid = a.attrelid AND i.indisprimary \
+                               AND a.attnum = ANY(i.indkey)))::text \
              FROM pg_attribute a \
              JOIN pg_type t ON t.oid = a.atttypid \
              JOIN pg_namespace n ON n.oid = t.typnamespace \
@@ -1314,7 +1435,12 @@ impl PgSession {
             }
             return Ok(EditOutcome { results, committed: false, revert: None });
         }
-        let revert = build_delete_revert(table, &out, probe_out.as_ref());
+        // savepoint-mode deletes are never undo-logged (RELEASE isn't durable)
+        let revert = if matches!(mode, BatchTx::Savepoint(_)) {
+            None
+        } else {
+            build_delete_revert(table, table_oid, &out, probe_out.as_ref())
+        };
         match self.finish_batch(&mode).await {
             Ok(()) => Ok(EditOutcome { results, committed: true, revert }),
             Err(e) => {
@@ -1364,7 +1490,9 @@ impl PgSession {
         }
         match self.finish_batch(&mode).await {
             Ok(()) => {
-                let redo_plan = if redo_complete {
+                // no redo row for a savepoint-mode undo — like any batch
+                // inside the user's open transaction it isn't durable
+                let redo_plan = if redo_complete && !matches!(mode, BatchTx::Savepoint(_)) {
                     Some(UndoPlan {
                         stmts: redo,
                         description: flip_description(&plan.description),
@@ -1411,6 +1539,7 @@ impl PgSession {
         let mut where_parts = Vec::with_capacity(locator.len());
         let mut guards = NameGuards::default();
         guards.note(m, &name);
+        guards.note_table(m.table_oid, &table.name);
         for (c, v) in &locator {
             let lm = map
                 .col_meta(*c)
@@ -1453,11 +1582,12 @@ impl PgSession {
     }
 
     /// Send `<wrapper>; stmt₁; …; stmtₙ` as ONE simple-query message and return
-    /// the per-statement results for stmt₁…stmtₙ (the wrapper's result
+    /// the per-statement results for stmt₁…stmtₙ (the wrapper results
     /// stripped), leaving the batch OPEN for the caller to finish or undo.
-    /// Idle session → wrapper is BEGIN (finish=COMMIT, undo=ROLLBACK); inside
-    /// the user's transaction → SAVEPOINT (finish=RELEASE, undo=ROLLBACK TO +
-    /// RELEASE) so the outer transaction is NEVER committed or rolled back.
+    /// Idle session → wrapper is BEGIN + SET LOCAL datestyle/intervalstyle
+    /// (finish=COMMIT, undo=ROLLBACK); inside the user's transaction →
+    /// SAVEPOINT (finish=RELEASE, undo=ROLLBACK TO + RELEASE) so the outer
+    /// transaction is NEVER committed or rolled back.
     /// Any error (SQL or protocol) undoes the batch before returning Err —
     /// it can never half-apply.
     /// an edit/delete batch must never start inside an aborted transaction —
@@ -1482,9 +1612,20 @@ impl PgSession {
         } else {
             BatchTx::Savepoint(next_edit_savepoint())
         };
-        let mut batch = match &mode {
-            BatchTx::Own => String::from("BEGIN"),
-            BatchTx::Savepoint(sp) => format!("SAVEPOINT {sp}"),
+        // Own mode pins the GUCs that shape wire text: captured values and
+        // undo-time reparses must agree even if the session's datestyle/
+        // intervalstyle drifted in between. SET LOCAL reverts at COMMIT/
+        // ROLLBACK, so the user's session settings are untouched after.
+        // Each SET contributes ONE CommandComplete → wrapped = 3 (BEGIN +
+        // 2×SET) result sets to account for; savepoint mode stays at 1.
+        let (mut batch, wrapped) = match &mode {
+            BatchTx::Own => (
+                String::from(
+                    "BEGIN;\nSET LOCAL datestyle = 'ISO';\nSET LOCAL intervalstyle = 'postgres'",
+                ),
+                3usize,
+            ),
+            BatchTx::Savepoint(sp) => (format!("SAVEPOINT {sp}"), 1usize),
         };
         let mut n = 0usize;
         for s in stmts {
@@ -1499,19 +1640,19 @@ impl PgSession {
                 return Err(e);
             }
         };
-        // wrapper + n statements, in order — anything else means our
-        // accounting of the message stream is wrong, and verification would
-        // misattribute counts to rows. Refuse and undo.
-        if out.statements.len() != n + 1 {
+        // wrapper statements + n statements, in order — anything else means
+        // our accounting of the message stream is wrong, and verification
+        // would misattribute counts to rows. Refuse and undo.
+        if out.statements.len() != n + wrapped {
             self.undo_batch(&mode).await;
             return Err(DriverError::Internal(format!(
                 "commit batch returned {} result sets, expected {}",
                 out.statements.len(),
-                n + 1
+                n + wrapped
             )));
         }
         let mut stmts = out.statements;
-        stmts.remove(0);
+        stmts.drain(..wrapped);
         Ok((stmts, mode))
     }
 
@@ -1713,12 +1854,13 @@ fn plan_edits(map: &ResolvedMap, edits: &[RowEdit]) -> Result<Vec<PlannedUpdate>
 
         let meta = CaptureMeta {
             table: table.clone(),
+            table_oid: g.table_oid,
             sets,
             locator,
             guards: guard_cols,
             // captured for the revert plan on BOTH paths; only hinted commit
             // SQL includes them (derived names are server truth at commit)
-            name_guards: ng.0.iter().map(|((o, a), n)| (*o, *a, n.clone())).collect(),
+            name_guards: ng.cols.iter().map(|((o, a), n)| (*o, *a, n.clone())).collect(),
         };
         planned.push(PlannedUpdate {
             sql: build_capture_update(&meta, map.hinted),
@@ -1975,10 +2117,16 @@ mod tests {
             ),
             "{sql}"
         );
+        // …plus ONE relation-identity probe for the table
+        assert!(
+            sql.contains("(SELECT relname FROM pg_class WHERE oid = 7) = 'ta.ble'"),
+            "{sql}"
+        );
         // derived plans stay guard-free
         map.hinted = false;
         let planned = plan_edits(&map, &edits).unwrap();
         assert!(!planned[0].sql.contains("pg_attribute"), "{}", planned[0].sql);
+        assert!(!planned[0].sql.contains("pg_class"), "{}", planned[0].sql);
     }
 
     #[test]
@@ -2027,6 +2175,7 @@ mod tests {
         };
         let meta = CaptureMeta {
             table: TableRef { schema: "public".into(), name: "t".into() },
+            table_oid: 7,
             sets: vec![col("v", Some("new"))],
             locator: vec![col("id", Some("1"))],
             guards: vec![col("other", Some("o"))],
@@ -2067,26 +2216,48 @@ mod tests {
             use_default: false,
         };
         let table = TableRef { schema: "public".into(), name: "t".into() };
-        // INSERT excludes skip (generated / identity-ALWAYS) columns
+        // INSERT excludes skip (generated / identity-ALWAYS) columns; no PK
+        // captured → the existence gate matches on EVERY captured value
         let ins = UndoStmt::Insert {
             table: table.clone(),
+            table_oid: 0,
             cols: vec![col("id", Some("1")), col("gen", Some("2")), col("v", None)],
             skip: vec!["gen".into()],
+            pk: vec![],
+            name_guards: vec![],
         };
         assert_eq!(
             revert_stmt_sql(&ins),
-            r#"INSERT INTO "public"."t" ("id", "v") VALUES ('1', NULL) RETURNING ctid::text"#
+            r#"INSERT INTO "public"."t" ("id", "v") SELECT '1', NULL WHERE NOT EXISTS (SELECT 1 FROM "public"."t" WHERE "id" = '1'::text AND "gen" = '2'::text AND "v" IS NULL) RETURNING ctid::text"#
+        );
+        // PK captured → the gate locates by PK only; attname + relname
+        // identity probes AND into the same gate
+        let ins_pk = UndoStmt::Insert {
+            table: table.clone(),
+            table_oid: 42,
+            cols: vec![col("id", Some("1")), col("gen", Some("2")), col("v", None)],
+            skip: vec!["gen".into()],
+            pk: vec!["id".into()],
+            name_guards: vec![(42, 1, "id".into()), (42, 3, "v".into())],
+        };
+        assert_eq!(
+            revert_stmt_sql(&ins_pk),
+            r#"INSERT INTO "public"."t" ("id", "v") SELECT '1', NULL WHERE NOT EXISTS (SELECT 1 FROM "public"."t" WHERE "id" = '1'::text) AND (SELECT attname FROM pg_attribute WHERE attrelid = 42 AND attnum = 1) = 'id' AND (SELECT attname FROM pg_attribute WHERE attrelid = 42 AND attnum = 3) = 'v' AND (SELECT relname FROM pg_class WHERE oid = 42) = 't' RETURNING ctid::text"#
         );
         // all columns generated → DEFAULT VALUES
         let ins2 = UndoStmt::Insert {
             table: table.clone(),
+            table_oid: 0,
             cols: vec![col("gen", Some("2"))],
             skip: vec!["gen".into()],
+            pk: vec![],
+            name_guards: vec![],
         };
         assert!(revert_stmt_sql(&ins2).contains("DEFAULT VALUES"));
         // DELETE: ctid locator + value pins, RETURNING * for the next inverse
         let del = UndoStmt::Delete {
-            table,
+            table: table.clone(),
+            table_oid: 0,
             locator: vec![UndoCol {
                 name: "ctid".into(),
                 type_name: "tid".into(),
@@ -2097,10 +2268,28 @@ mod tests {
             guards: vec![col("v", Some("x"))],
             cols: vec![],
             skip: vec![],
+            pk: vec![],
+            name_guards: vec![],
         };
         assert_eq!(
             revert_stmt_sql(&del),
             r#"DELETE FROM "public"."t" WHERE "ctid" = '(0,3)'::tid AND "v" = 'x'::text RETURNING *"#
+        );
+        // DELETE with a known oid carries the relname identity probe
+        let UndoStmt::Delete { locator, guards, .. } = del else { unreachable!() };
+        let del_oid = UndoStmt::Delete {
+            table,
+            table_oid: 42,
+            locator,
+            guards,
+            cols: vec![],
+            skip: vec![],
+            pk: vec![],
+            name_guards: vec![],
+        };
+        assert_eq!(
+            revert_stmt_sql(&del_oid),
+            r#"DELETE FROM "public"."t" WHERE "ctid" = '(0,3)'::tid AND "v" = 'x'::text AND (SELECT relname FROM pg_class WHERE oid = 42) = 't' RETURNING *"#
         );
     }
 
@@ -2126,52 +2315,82 @@ mod tests {
     #[test]
     fn delete_revert_and_insert_inverse() {
         let table = TableRef { schema: "public".into(), name: "t".into() };
-        // probe: attname, skip, typname, nspname (attnum order)
+        // probe: attname, skip, typname, nspname, attnum, is_pk (attnum order)
         let probe = stmt_result(
-            &["attname", "skip", "typname", "nspname"],
+            &["attname", "skip", "typname", "nspname", "attnum", "is_pk"],
             vec![
-                vec![Some("id".into()), Some("false".into()), Some("int4".into()), Some("pg_catalog".into())],
-                vec![Some("v".into()), Some("false".into()), Some("text".into()), Some("pg_catalog".into())],
-                vec![Some("dbl".into()), Some("true".into()), Some("int4".into()), Some("pg_catalog".into())],
+                vec![Some("id".into()), Some("false".into()), Some("int4".into()), Some("pg_catalog".into()), Some("1".into()), Some("true".into())],
+                vec![Some("v".into()), Some("false".into()), Some("text".into()), Some("pg_catalog".into()), Some("2".into()), Some("false".into())],
+                vec![Some("dbl".into()), Some("true".into()), Some("int4".into()), Some("pg_catalog".into()), Some("3".into()), Some("false".into())],
             ],
         );
         let deleted = stmt_result(
             &["id", "v", "dbl"],
             vec![vec![Some("1".into()), None, Some("2".into())]],
         );
-        let plan = build_delete_revert(&table, &[deleted], Some(&probe)).unwrap();
+        let plan = build_delete_revert(&table, 42, &[deleted], Some(&probe)).unwrap();
         assert_eq!(plan.stmts.len(), 1);
-        let UndoStmt::Insert { cols, skip, .. } = &plan.stmts[0] else { panic!("expected insert") };
+        let UndoStmt::Insert { cols, skip, pk, name_guards, table_oid, .. } = &plan.stmts[0] else {
+            panic!("expected insert")
+        };
         assert_eq!(skip, &vec!["dbl".to_string()]);
         assert_eq!(cols.len(), 3, "ALL columns captured, skip filtered at SQL time");
+        assert_eq!(pk, &vec!["id".to_string()], "probe must surface PK membership");
+        assert_eq!(*table_oid, 42);
         assert_eq!(
-            revert_stmt_sql(&plan.stmts[0]),
-            r#"INSERT INTO "public"."t" ("id", "v") VALUES ('1', NULL) RETURNING ctid::text"#
+            name_guards,
+            &vec![(42, 1, "id".to_string()), (42, 2, "v".to_string()), (42, 3, "dbl".to_string())]
         );
+        let sql = revert_stmt_sql(&plan.stmts[0]);
+        assert!(
+            sql.starts_with(
+                r#"INSERT INTO "public"."t" ("id", "v") SELECT '1', NULL WHERE NOT EXISTS (SELECT 1 FROM "public"."t" WHERE "id" = '1'::int4)"#
+            ),
+            "{sql}"
+        );
+        assert!(sql.contains("(SELECT attname FROM pg_attribute WHERE attrelid = 42 AND attnum = 2) = 'v'"), "{sql}");
+        assert!(sql.contains("(SELECT relname FROM pg_class WHERE oid = 42) = 't'"), "{sql}");
+        assert!(sql.ends_with("RETURNING ctid::text"), "{sql}");
 
         // applying the INSERT yields a Delete inverse via the returned ctid
         let ins_res = stmt_result(&["ctid"], vec![vec![Some("(0,9)".into())]]);
         let inv = build_inverse(&plan.stmts[0], &ins_res).unwrap();
-        let UndoStmt::Delete { locator, guards, .. } = &inv else { panic!("expected delete") };
+        let UndoStmt::Delete { locator, guards, pk, name_guards, table_oid, .. } = &inv else {
+            panic!("expected delete")
+        };
         assert_eq!(locator[0].name, "ctid");
         assert_eq!(locator[0].value.as_deref(), Some("(0,9)"));
         assert!(guards.iter().all(|g| g.name != "dbl"), "skip cols never pin identity");
+        assert_eq!(pk, &vec!["id".to_string()], "identity rides the inverse");
+        assert_eq!(*table_oid, 42);
+        assert_eq!(name_guards.len(), 3);
 
-        // applying the DELETE yields the Insert back, values refreshed by NAME
+        // applying the DELETE yields the Insert back, values refreshed by
+        // NAME, existence-gate identity intact
         let del_res = stmt_result(
             &["id", "v", "dbl"],
             vec![vec![Some("1".into()), None, Some("2".into())]],
         );
         let back = build_inverse(&inv, &del_res).unwrap();
-        assert!(matches!(back, UndoStmt::Insert { .. }));
+        let UndoStmt::Insert { pk, table_oid, .. } = &back else { panic!("expected insert") };
+        assert_eq!(pk, &vec!["id".to_string()]);
+        assert_eq!(*table_oid, 42);
 
         // a probe row with a NULL name refuses the plan
         let bad_probe = stmt_result(
-            &["attname", "skip", "typname", "nspname"],
-            vec![vec![None, Some("false".into()), Some("int4".into()), Some("pg_catalog".into())]],
+            &["attname", "skip", "typname", "nspname", "attnum", "is_pk"],
+            vec![vec![None, Some("false".into()), Some("int4".into()), Some("pg_catalog".into()), Some("1".into()), Some("false".into())]],
         );
         let deleted2 = stmt_result(&["id"], vec![vec![Some("1".into())]]);
-        assert!(build_delete_revert(&table, &[deleted2], Some(&bad_probe)).is_none());
+        assert!(build_delete_revert(&table, 42, &[deleted2], Some(&bad_probe)).is_none());
+
+        // a probe missing the attnum/is_pk columns (accounting drift) refuses
+        let short_probe = stmt_result(
+            &["attname", "skip", "typname", "nspname"],
+            vec![vec![Some("id".into()), Some("false".into()), Some("int4".into()), Some("pg_catalog".into())]],
+        );
+        let deleted3 = stmt_result(&["id"], vec![vec![Some("1".into())]]);
+        assert!(build_delete_revert(&table, 42, &[deleted3], Some(&short_probe)).is_none());
     }
 
     #[test]

@@ -7,6 +7,7 @@ import type {
   EditMapHint,
   EditOutcome,
   ExecOutcome,
+  FileStat,
   HistoryRow,
   HistoryStatus,
   Profile,
@@ -238,6 +239,10 @@ export const bufferSnapshotsList = (tabId: string) =>
 
 export const bufferSnapshotsClear = (tabId: string) =>
   invoke<void>("buffer_snapshots_clear", { tabId });
+
+/** stat a file without reading it — size gates before open, mtime stamps for
+ * the save-conflict check (FileStat lives in types.ts) */
+export const fileStat = (path: string) => invoke<FileStat>("file_stat", { path });
 
 /** read a .sql/.txt file for File ▸ Open… / window drops */
 export const readTextFile = (path: string) => invoke<string>("read_text_file", { path });

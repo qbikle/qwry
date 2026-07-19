@@ -6,7 +6,7 @@
 use std::io::Write;
 
 use qwry_lib::driver::{postgres, Profile};
-use qwry_lib::import::{run_import, ImportColumnSpec, ImportSpec};
+use qwry_lib::import::{run_import, ImportColumnSpec, ImportOutcome, ImportSpec};
 
 fn env(k: &str) -> String {
     std::env::var(k).unwrap_or_else(|_| panic!("missing env {k}"))
@@ -111,6 +111,7 @@ fn spec(path: &str, table: &str, mode: &str) -> ImportSpec {
         null_mode: "empty".into(),
         null_token: None,
         mode: mode.into(),
+        expected_stat: None,
     }
 }
 
@@ -306,10 +307,74 @@ async fn staging_csv_import_all_or_nothing() {
     .await
     .expect("good commit");
     assert!(report.committed, "good commit failed: {:?}", report.errors);
+    assert_eq!(report.outcome, ImportOutcome::Committed);
     assert_eq!(report.ok_rows, 1200);
     assert_eq!(count(&session, table).await, 1200);
     assert_eq!(ticks.last(), Some(&(1200, 1200)));
     assert!(ticks.windows(2).all(|w| w[0].0 <= w[1].0), "monotonic progress");
+
+    drop_fixture(&session, table).await;
+}
+
+/// validate→commit TOCTOU gate: the validate report carries the file's
+/// mtime+size identity; a commit fed that stat refuses when the file changed
+/// in between (nothing written), and a re-validate → fresh-stat commit lands
+/// the CURRENT file's rows exactly
+#[tokio::test]
+#[ignore]
+async fn staging_csv_import_file_changed_gate() {
+    let session = connect("imp-toctou").await;
+    let table = "qwry_import_toctou";
+    fresh_fixture(&session, table).await;
+    let path = write_csv(
+        "toctou",
+        "id,name,ok,created_at,amount\n\
+         1,one,true,2026-01-01 00:00:00,1.00\n\
+         2,two,false,,2.00\n",
+    );
+
+    let report = run_import(&session, &spec(&path, table, "validate"), &mut |_, _| {})
+        .await
+        .expect("validate");
+    assert!(report.errors.is_empty(), "unexpected: {:?}", report.errors);
+    assert_eq!(report.outcome, ImportOutcome::RolledBack);
+    let stat = report.file_stat.expect("validate report must carry the file stat");
+
+    // the file changes AFTER validation (different size — mtime granularity
+    // must not be the only tripwire)
+    let path = write_csv(
+        "toctou",
+        "id,name,ok,created_at,amount\n\
+         1,one,true,2026-01-01 00:00:00,1.00\n\
+         2,two,false,,2.00\n\
+         3,three,true,2026-01-03 00:00:00,3.00\n",
+    );
+    let mut stale = spec(&path, table, "commit");
+    stale.expected_stat = Some(stat);
+    let err = run_import(&session, &stale, &mut |_, _| {})
+        .await
+        .expect_err("commit against a changed file must refuse");
+    assert!(
+        format!("{err}").contains("file changed since validation"),
+        "refusal must be actionable: {err}"
+    );
+    assert_eq!(count(&session, table).await, 0, "refused commit must write nothing");
+    // the session is idle again — a fresh run must be possible
+    let report = run_import(&session, &spec(&path, table, "validate"), &mut |_, _| {})
+        .await
+        .expect("re-validate");
+    assert_eq!(report.total_rows, 3);
+    let fresh = report.file_stat.expect("fresh stat");
+    let mut commit = spec(&path, table, "commit");
+    commit.expected_stat = Some(fresh);
+    let report = run_import(&session, &commit, &mut |_, _| {})
+        .await
+        .expect("commit with fresh stat");
+    assert!(report.committed, "fresh-stat commit failed: {:?}", report.errors);
+    assert_eq!(report.outcome, ImportOutcome::Committed);
+    assert_eq!(report.ok_rows, 3);
+    assert!(report.file_stat.is_none(), "commit reports carry no stat");
+    assert_eq!(count(&session, table).await, 3);
 
     drop_fixture(&session, table).await;
 }

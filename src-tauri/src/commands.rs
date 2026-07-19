@@ -365,6 +365,15 @@ pub async fn read_text_file(path: String) -> Result<String> {
         .map_err(|e| driver::DriverError::Internal(format!("read {path}: {e}")))
 }
 
+/// mtime + size identity for a file on disk — the frontend's cheap probe for
+/// on-disk .sql conflict detection and import size gating
+#[tauri::command]
+pub async fn file_stat(path: String) -> Result<crate::import::FileStat> {
+    tauri::async_runtime::spawn_blocking(move || crate::import::stat_file(&path))
+        .await
+        .map_err(|e| driver::DriverError::Internal(format!("stat task failed: {e}")))?
+}
+
 #[tauri::command]
 pub async fn table_ddl(
     state: State<'_, AppState>,
@@ -574,11 +583,13 @@ pub async fn undo_log_latest(
     state.appdb.undo_log_latest(&profile_id)
 }
 
-/// Apply a persisted revert plan on the session that committed it. The row is
-/// consumed up-front (an undo is single-shot — NEVER auto-retried); the plan
-/// re-enters the verified-batch pipeline, so a stale undo rolls back honestly.
-/// A session mismatch refuses: undo is never offered across reconnects, and
-/// the server-side check backs the frontend's session stamp.
+/// Apply a persisted revert plan on the session that committed it. Session
+/// identity is verified on a PEEK first — a refused undo must not consume the
+/// offer — and only a passing row is taken (an undo is single-shot — NEVER
+/// auto-retried); the plan re-enters the verified-batch pipeline, so a stale
+/// undo rolls back honestly. A session mismatch refuses: undo is never
+/// offered across reconnects, and the server-side check backs the frontend's
+/// session stamp.
 #[tauri::command]
 pub async fn undo_apply(
     state: State<'_, AppState>,
@@ -588,15 +599,19 @@ pub async fn undo_apply(
     let session = state
         .session(&session_id)
         .ok_or(driver::DriverError::NoSession)?;
-    let row = state
+    let peeked = state
         .appdb
-        .undo_log_take(undo_id)?
+        .undo_log_peek(undo_id)?
         .ok_or_else(|| driver::DriverError::Internal("undo offer expired — nothing to undo".into()))?;
-    if row.session_key != session_id {
+    if peeked.session_key != session_id {
         return Err(driver::DriverError::Internal(
             "undo offer is stale — it belongs to a previous connection".into(),
         ));
     }
+    let row = state
+        .appdb
+        .undo_log_take(undo_id)?
+        .ok_or_else(|| driver::DriverError::Internal("undo offer expired — nothing to undo".into()))?;
     let plan: crate::driver::postgres::edit::UndoPlan = serde_json::from_str(&row.revert_sql)
         .map_err(|e| driver::DriverError::Internal(format!("undo record unreadable: {e}")))?;
     let (outcome, redo) = session.apply_revert(&plan).await?;

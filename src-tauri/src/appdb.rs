@@ -716,6 +716,24 @@ impl AppDb {
         }
     }
 
+    /// read one unexpired undo row WITHOUT consuming it — undo_apply checks
+    /// session identity on the peeked row FIRST and only then takes, so a
+    /// refused undo never burns the offer
+    pub fn undo_log_peek(&self, id: i64) -> Result<Option<UndoLogRow>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, profile_id, session_key, created_at, description, revert_sql, expires_at
+                 FROM undo_log WHERE id = ?1 AND expires_at > datetime('now')",
+            )
+            .map_err(internal)?;
+        let mut rows = stmt.query([id]).map_err(internal)?;
+        match rows.next().map_err(internal)? {
+            Some(r) => Ok(Some(map_undo_row(r).map_err(internal)?)),
+            None => Ok(None),
+        }
+    }
+
     /// atomically consume one undo row (select + delete in a transaction) —
     /// an undo is single-shot whether it succeeds or rolls back; expired rows
     /// consume to None

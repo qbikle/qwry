@@ -265,6 +265,7 @@ pub fn run() {
             commands::test_connection,
             commands::write_text_file,
             commands::read_text_file,
+            commands::file_stat,
             commands::disconnect,
             commands::execute,
             commands::execute_stream,

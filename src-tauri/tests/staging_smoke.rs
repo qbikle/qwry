@@ -674,17 +674,23 @@ async fn staging_table_ddl() {
 /// and rolls back EVERYTHING — no partial writes; (5) a stale PK locator
 /// under a hint → matched≠1 → full rollback; (6) delete_rows batched path
 /// (mixed stale → rollback; valid → commit).
-/// hinted plans AND attname-verification guards into the inner (FOR UPDATE)
-/// WHERE — strip each guard predicate to compare the shared core against a
-/// derived (guard-free) plan. Guard shape:
+/// hinted plans AND attname-verification guards plus one relname identity
+/// probe into the inner (FOR UPDATE) WHERE — strip each guard predicate to
+/// compare the shared core against a derived (guard-free) plan. Guard shapes:
 /// ` AND (SELECT attname FROM pg_attribute WHERE …) = 'name'`
+/// ` AND (SELECT relname FROM pg_class WHERE …) = 'name'`
 fn strip_name_guards(s: &str) -> String {
     let mut out = s.to_string();
-    while let Some(i) = out.find(" AND (SELECT attname FROM pg_attribute") {
-        let rest = &out[i..];
-        let eq = rest.find(") = '").expect("guard predicate shape");
-        let close = rest[eq + 5..].find('\'').expect("guard closing quote");
-        out.replace_range(i..i + eq + 5 + close + 1, "");
+    for probe in [
+        " AND (SELECT attname FROM pg_attribute",
+        " AND (SELECT relname FROM pg_class",
+    ] {
+        while let Some(i) = out.find(probe) {
+            let rest = &out[i..];
+            let eq = rest.find(") = '").expect("guard predicate shape");
+            let close = rest[eq + 5..].find('\'').expect("guard closing quote");
+            out.replace_range(i..i + eq + 5 + close + 1, "");
+        }
     }
     out
 }
@@ -2313,6 +2319,103 @@ async fn staging_inverse_undo() {
         .await
         .expect("ctid check");
     assert_eq!(check.statements[0].rows[0][0].as_deref(), Some("one"), "value restored");
+
+    // (7) savepoint-mode batches (inside the USER's open tx) must mint NO
+    // undo plan: RELEASE isn't durable — the user's ROLLBACK resurrects the
+    // pre-edit state, so an undo offer would be a lie
+    session.execute_simple("BEGIN").await.expect("begin user tx");
+    let edits = vec![RowEdit {
+        table_oid: oid,
+        col: 1,
+        value: Some("tres".into()),
+        use_default: false,
+        pk: vec![(0, Some("3".into()))],
+        guard: vec![],
+    }];
+    let outcome = session.apply_edits(sql, 0, edits, None).await.expect("sp apply");
+    assert!(outcome.committed, "{:?}", outcome.results);
+    assert!(
+        outcome.revert.is_none(),
+        "savepoint-mode edit batch must NOT produce an undo plan"
+    );
+    let outcome = session
+        .delete_rows(sql, 0, oid, vec![vec![(0, Some("6".into()))]], None)
+        .await
+        .expect("sp delete");
+    assert!(outcome.committed, "{:?}", outcome.results);
+    assert!(
+        outcome.revert.is_none(),
+        "savepoint-mode delete batch must NOT produce an undo plan"
+    );
+    session.execute_simple("ROLLBACK").await.expect("user rollback");
+    let check = session
+        .execute_simple(
+            "SELECT v FROM qwry_test.qwry_undo_t WHERE id = 3; SELECT count(*) FROM qwry_test.qwry_undo_t",
+        )
+        .await
+        .expect("check sp");
+    assert_eq!(check.statements[0].rows[0][0].as_deref(), Some("three"), "user ROLLBACK erased the edit");
+    assert_eq!(check.statements[1].rows[0][0].as_deref(), Some("5"), "user ROLLBACK erased the delete");
+
+    // (8) existence gate on delete-undo: an equivalent row re-inserted after
+    // the delete (external write or resurrected state) must refuse the undo
+    // instead of minting a duplicate
+    let outcome = session
+        .delete_rows(sql, 0, oid, vec![vec![(0, Some("5".into()))]], None)
+        .await
+        .expect("delete id 5");
+    assert!(outcome.committed);
+    let plan = outcome.revert.expect("delete revert plan (id 5)");
+    session
+        .execute_simple("INSERT INTO qwry_test.qwry_undo_t VALUES (5, 'dup', 1)")
+        .await
+        .expect("re-insert equivalent row");
+    let (out, redo) = session.apply_revert(&plan).await.expect("gated undo");
+    assert!(!out.committed, "existence gate must roll the undo back");
+    assert!(
+        out.message.as_deref().unwrap_or("").contains("data changed"),
+        "honest message expected: {:?}",
+        out.message
+    );
+    assert!(redo.is_none(), "a refused undo must not mint a redo");
+    let check = session
+        .execute_simple("SELECT count(*) FROM qwry_test.qwry_undo_t WHERE id = 5")
+        .await
+        .expect("check gate");
+    assert_eq!(
+        check.statements[0].rows[0][0].as_deref(),
+        Some("1"),
+        "exactly one row — the gate must never duplicate"
+    );
+
+    // (9) INSERT-arm schema-identity guard: rename+add between the delete and
+    // its undo must refuse — without the attname probes the captured value
+    // would be written into the WRONG (new) column and still "succeed"
+    let outcome = session
+        .delete_rows(sql, 0, oid, vec![vec![(0, Some("6".into()))]], None)
+        .await
+        .expect("delete id 6");
+    assert!(outcome.committed);
+    let plan = outcome.revert.expect("delete revert plan (id 6)");
+    session
+        .execute_simple(
+            "ALTER TABLE qwry_test.qwry_undo_t RENAME COLUMN v TO v_old;
+             ALTER TABLE qwry_test.qwry_undo_t ADD COLUMN v text",
+        )
+        .await
+        .expect("external rename+add");
+    let (out, redo) = session.apply_revert(&plan).await.expect("guarded undo");
+    assert!(!out.committed, "stale column identity must roll the undo back");
+    assert!(redo.is_none());
+    let check = session
+        .execute_simple("SELECT count(*) FROM qwry_test.qwry_undo_t WHERE id = 6")
+        .await
+        .expect("check guard");
+    assert_eq!(
+        check.statements[0].rows[0][0].as_deref(),
+        Some("0"),
+        "nothing may be resurrected through a stale column identity"
+    );
 
     session
         .execute_simple(

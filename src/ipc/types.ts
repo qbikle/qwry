@@ -282,6 +282,14 @@ export interface CsvPreview {
   field_count: number;
 }
 
+/** file identity snapshot (mtime + size) — mirrors import.rs FileStat.
+ * Returned by `file_stat` and by validate-run ImportReports; feed it back as
+ * `expected_stat` on the commit run to catch the file changing in between. */
+export interface FileStat {
+  mtime_ms: number;
+  size: number;
+}
+
 export interface ImportColumnSpec {
   /** 0-based source field index */
   src: number;
@@ -301,6 +309,9 @@ export interface ImportSpec {
   null_token: string | null;
   /** validate = always rolls back; commit = one all-or-nothing transaction */
   mode: "validate" | "commit";
+  /** commit only: the FileStat the validate run reported — the backend
+   * refuses with "file changed since validation" on any mismatch */
+  expected_stat?: FileStat | null;
 }
 
 export interface ImportProgress {
@@ -324,6 +335,13 @@ export interface ImportReport {
   /** error collection stopped at the cap — "…and possibly more" */
   more_errors: boolean;
   committed: boolean;
+  /** commit resolution: "unknown" = the connection was lost during COMMIT —
+   * the import may or may not have been applied (never claim a rollback).
+   * Absent/other values mean `committed` is authoritative. */
+  outcome?: "committed" | "rolled_back" | "unknown" | null;
+  /** file identity at validate time (validate runs only) — feed back as
+   * `expected_stat` on the commit run */
+  file_stat?: FileStat | null;
 }
 
 export type QueryEvent =
