@@ -1,7 +1,7 @@
-//! Live CSV-import tests against the user's staging DB (squad, qwry_test
+//! Live CSV-import tests against a staging DB (QWRY_TEST_DB2, qwry_test
 //! schema). Ignored by default; run with:
 //!   source ~/.claude/.env.claude && cargo test --test staging_csv_import -- --ignored --test-threads=1
-//! using QWRY_TEST_HOST/USER/PASSWORD (+ QWRY_TEST_DB2, default "squad").
+//! using QWRY_TEST_HOST/USER/PASSWORD (+ QWRY_TEST_DB2 for the fixture db).
 
 use std::io::Write;
 
@@ -13,7 +13,7 @@ fn env(k: &str) -> String {
 }
 
 fn db2() -> String {
-    std::env::var("QWRY_TEST_DB2").unwrap_or_else(|_| "squad".into())
+    std::env::var("QWRY_TEST_DB2").expect("set QWRY_TEST_DB2 to the fixture database")
 }
 
 fn test_profile(id: &str) -> Profile {

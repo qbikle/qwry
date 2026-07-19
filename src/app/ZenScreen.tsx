@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { prefersReducedMotion } from "../design/springs";
 import "./app.css";
 
 /** quotes + small thoughts for the zero-tab zen screen — DB-flavored calm */
@@ -109,10 +110,26 @@ function Waves() {
     fit();
     const ro = new ResizeObserver(fit);
     if (canvas.parentElement) ro.observe(canvas.parentElement);
-    raf = requestAnimationFrame(draw);
+
+    // prefers-reduced-motion: the sheet renders once, statically — no drift
+    // loop. Tracks the live OS setting so flipping it mid-session applies.
+    const mq = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    const start = () => {
+      if (!raf) raf = requestAnimationFrame(draw);
+    };
+    const stop = () => {
+      cancelAnimationFrame(raf);
+      raf = 0;
+      paint();
+    };
+    if (mq?.matches) paint();
+    else start();
+    const onMotionPref = (e: MediaQueryListEvent) => (e.matches ? stop() : start());
+    mq?.addEventListener?.("change", onMotionPref);
 
     return () => {
       cancelAnimationFrame(raf);
+      mq?.removeEventListener?.("change", onMotionPref);
       ro.disconnect();
     };
   }, []);
@@ -144,10 +161,16 @@ export function ZenScreen() {
             <motion.p
               key={idx}
               className="zen-quote"
-              initial={{ opacity: 0, y: 8 }}
+              // collapses under prefers-reduced-motion like the spring
+              // presets (read per render — the quote swaps every 14s)
+              initial={prefersReducedMotion() ? { opacity: 1, y: 0 } : { opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.8, ease: "easeOut" }}
+              exit={prefersReducedMotion() ? { opacity: 0 } : { opacity: 0, y: -8 }}
+              transition={
+                prefersReducedMotion()
+                  ? { duration: 0 }
+                  : { duration: 0.8, ease: "easeOut" }
+              }
             >
               {THOUGHTS[idx]}
             </motion.p>

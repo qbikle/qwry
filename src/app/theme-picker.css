@@ -114,21 +114,6 @@
   white-space: nowrap;
 }
 
-/* active check — small badge, top-right corner */
-.tp-check {
-  position: absolute;
-  top: 7px;
-  right: 7px;
-  width: 17px;
-  height: 17px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
-}
-
 /* hover action (edit / duplicate) — bottom-right corner */
 .tp-action {
   position: absolute;
@@ -178,10 +163,6 @@
   background: var(--bg-raised);
   border-radius: var(--radius-inner);
 }
-.tp-create-row {
-  display: flex;
-  gap: var(--sp-2);
-}
 .tp-input {
   flex: 1;
   background: var(--bg-panel);
@@ -215,29 +196,6 @@
 .tp-color span {
   position: absolute;
   inset: 0;
-}
-.tp-slider {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  font-size: var(--text-xs);
-  color: var(--fg-muted);
-}
-.tp-slider input[type="range"] {
-  -webkit-appearance: none;
-  appearance: none;
-  height: 10px;
-  border-radius: var(--radius-sm);
-  outline: none;
-}
-.tp-slider input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #fff;
-  border: 2px solid rgba(0, 0, 0, 0.3);
-  cursor: pointer;
 }
 .tp-create-actions {
   display: flex;
@@ -274,33 +232,13 @@
 }
 .tp-create-actions .tp-del-btn:hover {
   background: var(--danger);
-  color: #fff;
+  color: var(--danger-fg);
 }
 
 .tp-foot {
   font-size: var(--text-xs);
   color: var(--fg-faint);
   text-align: center;
-}
-
-/* custom-theme anchor controls */
-.tp-presets {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.tp-preset {
-  padding: 4px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--bg-panel);
-  color: var(--fg-muted);
-  cursor: pointer;
-  font-size: var(--text-xs);
-}
-.tp-preset:hover {
-  color: var(--fg);
-  border-color: var(--accent);
 }
 
 .tp-colors {

@@ -119,7 +119,7 @@ export function Histogram({
   const note = fallbackNote ?? mode.note;
 
   return (
-    <AnchoredOverlay point={point} onClose={onClose}>
+    <AnchoredOverlay point={point} onClose={onClose} role="dialog" label={`${column} value distribution`}>
       <motion.div className="histo" {...menuIn}>
         <div className="histo-head">
           <span className="histo-col">{column}</span>

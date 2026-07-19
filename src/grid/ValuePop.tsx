@@ -134,6 +134,7 @@ export function ValuePop({
 
   return (
     <Modal
+      label={`Edit ${colName}`}
       onClose={onClose}
       onKey={(e) => {
         if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {

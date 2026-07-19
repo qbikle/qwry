@@ -186,6 +186,7 @@ export function RecordView({
   return (
     <>
       <Modal
+        label={diff ? "Compare rows" : "Record view"}
         onClose={() => {
           // layered close: an open inline editor absorbs the first Esc/
           // outside-click (its own overlay entry handles Esc; this covers the
@@ -409,10 +410,30 @@ function RvInlineEdit({
   const [draft, setDraft] = useState(initial);
   const done = useRef(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
-  useOverlayLayer(() => {
-    done.current = true;
-    onCancel();
-  });
+  const rootRef = useRef<HTMLDivElement>(null);
+  // this layer is topmost while open, which suspends the parent Modal's Tab
+  // trap — trap Tab at the editor's own edge or focus walks out of the modal
+  useOverlayLayer(
+    () => {
+      done.current = true;
+      onCancel();
+    },
+    (e) => {
+      if (e.key !== "Tab") return;
+      const root = rootRef.current;
+      if (!root) return;
+      const items = Array.from(
+        root.querySelectorAll<HTMLElement>("button, select, textarea, input"),
+      ).filter((el) => el.getClientRects().length > 0);
+      if (items.length === 0) return;
+      e.preventDefault();
+      const idx = items.indexOf(document.activeElement as HTMLElement);
+      const next = e.shiftKey
+        ? items[(idx <= 0 ? items.length : idx) - 1]
+        : items[(idx + 1) % items.length];
+      next?.focus();
+    },
+  );
 
   const grow = () => {
     const el = taRef.current;
@@ -436,7 +457,7 @@ function RvInlineEdit({
 
   if (kind === "bool") {
     return (
-      <div className="vgrid-boolpick rv-edit">
+      <div className="vgrid-boolpick rv-edit" ref={rootRef}>
         {(
           [
             ["t", "true"],
@@ -461,7 +482,7 @@ function RvInlineEdit({
 
   if (kind === "enum") {
     return (
-      <div className="rv-edit">
+      <div className="rv-edit" ref={rootRef}>
         <select
           autoFocus
           className="vgrid-enumpick"

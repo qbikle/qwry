@@ -61,6 +61,38 @@
 .stmt-body {
   flex: 1;
   min-height: 0;
+  position: relative; /* anchors the .grid-zero empty-state pane */
+}
+
+/* zero-result pane — sits under the (still visible) column headers */
+.grid-zero {
+  position: absolute;
+  inset: 0;
+  top: 30px; /* = grid HEADER_H — keep the headers readable above the pane */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  pointer-events: none;
+  color: var(--fg-faint);
+}
+.grid-zero-title {
+  font-size: var(--text-md);
+  color: var(--fg-muted);
+}
+.grid-zero-sub {
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.grid-zero-sub kbd,
+.grid-msg kbd {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--bg-raised);
 }
 
 /* status bar */
@@ -530,13 +562,7 @@
 }
 .vgrid-menu button.danger:hover {
   background: var(--danger);
-  color: white;
-}
-
-.vgrid-menu-sep {
-  height: 1px;
-  margin: 4px 6px;
-  background: var(--border-strong);
+  color: var(--danger-fg);
 }
 
 /* ---- find-in-results bar (⌘F) ---- */
@@ -624,7 +650,7 @@
   font-size: var(--text-2xs);
   font-style: normal;
   line-height: 16px;
-  letter-spacing: 0.4px;
+  letter-spacing: 0.05em;
   vertical-align: 1px;
   user-select: none;
 }
@@ -780,7 +806,7 @@
   color: var(--accent);
   font-size: var(--text-2xs);
   line-height: 16px;
-  letter-spacing: 0.4px;
+  letter-spacing: 0.05em;
   user-select: none;
 }
 
@@ -1301,7 +1327,7 @@
   top: 1px;
   bottom: 1px;
   background: var(--accent-soft);
-  border-radius: 0 3px 3px 0;
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
   pointer-events: none;
 }
 .histo-val {

@@ -58,25 +58,6 @@
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
 }
-.insp-icon {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  background: none;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--fg-faint);
-  cursor: pointer;
-}
-.insp-icon:hover {
-  background: var(--bg-hover);
-  color: var(--fg);
-}
-
 /* status chips */
 .insp-chip {
   display: flex;

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Reorder } from "motion/react";
 import { House, Plus } from "lucide-react";
+import { railItemIn } from "../design/springs";
 import { confirmTxRollback, useConnections } from "../stores/connections";
 import * as ipc from "../ipc/commands";
 import type { Profile } from "../ipc/types";
@@ -85,10 +86,12 @@ export function ConnectionRail() {
               value={p}
               className={`rail-item${active ? " active" : ""}`}
               style={{ ["--c"]: avatarColor(p, i) } as React.CSSProperties}
-              initial={{ opacity: 0, scale: 0.5 }}
-              animate={{ opacity: 1, scale: 1 }}
+              // canonical preset (was a hand-rolled spring): collapses under
+              // prefers-reduced-motion like every other entrance. Keys are
+              // profile ids, so the pop only plays on genuinely new avatars —
+              // reorder/edit/state churn never remounts them.
+              {...railItemIn}
               whileDrag={{ scale: 1.14, zIndex: 10 }}
-              transition={{ type: "spring", stiffness: 600, damping: 30, mass: 0.6 }}
               title={`${p.name || p.host}${p.is_prod ? " · PROD" : ""}`}
               onClick={() => {
                 if (state === "connected") {

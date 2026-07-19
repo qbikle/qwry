@@ -11,7 +11,7 @@ import { blankProfile, ConnectionRail } from "../sidebar/ConnectionRail";
 import { editorFormat, editorRunText, editorTimeTraveling } from "../editor/SqlEditor";
 import { openTxCount, skey } from "../stores/connections";
 import { overlayOpen } from "./overlay/escStack";
-import { useSettings } from "../stores/settings";
+import { useSettings, zoomBy, zoomReset } from "../stores/settings";
 import { SettingsModal } from "./SettingsModal";
 import { HistoryPanel } from "./HistoryPanel";
 import { ShortcutsModal } from "./ShortcutsModal";
@@ -121,6 +121,22 @@ export function App() {
     if (c) document.documentElement.style.setProperty("--conn-color", c);
     else document.documentElement.style.removeProperty("--conn-color");
   }, [activeProfile?.color, connected]);
+
+  // window title mirrors the active connection ("qwry — profile · db") for
+  // Mission Control / ⌘-tab / Dock; plain "qwry" on home. Debounced a tick so
+  // rail-switch churn writes once. Never credentials — name/host + db only.
+  const titleProfile = connected && !homeMode ? activeProfile : null;
+  const titleName = titleProfile ? titleProfile.name || titleProfile.host : null;
+  const titleDb = titleProfile?.dbname ?? null;
+  useEffect(() => {
+    const title = titleName ? `qwry — ${titleName} · ${titleDb}` : "qwry";
+    const t = window.setTimeout(() => {
+      void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
+        getCurrentWindow().setTitle(title),
+      );
+    }, 80);
+    return () => window.clearTimeout(t);
+  }, [titleName, titleDb]);
 
   // user-draggable layout (editor/results split, sidebar width): CSS vars
   // during drag — zero re-renders — persisted to localStorage on release
@@ -320,9 +336,20 @@ export function App() {
       listen<string>("menu", (e) => {
         // an open overlay owns the interaction — the menu path used to act
         // BEHIND modals (Close Tab under an open CloseGuard etc.), mirroring
-        // the keyboard guard below. Help and Quit stay reachable, like ⌘?.
-        if (overlayOpen() && e.payload !== "shortcuts" && e.payload !== "quit") return;
+        // the keyboard guard below. Help, Quit and the (view-level, harmless)
+        // zoom items stay reachable, like ⌘?.
+        const overlayExempt = ["shortcuts", "quit", "zoom-in", "zoom-out", "zoom-reset"];
+        if (overlayOpen() && !overlayExempt.includes(e.payload)) return;
         switch (e.payload) {
+          case "zoom-in":
+            zoomBy(1);
+            break;
+          case "zoom-out":
+            zoomBy(-1);
+            break;
+          case "zoom-reset":
+            zoomReset();
+            break;
           case "new-tab":
             useTabs.getState().newTab();
             break;
@@ -454,6 +481,24 @@ export function App() {
         setKeysOpen(true);
         return;
       }
+      // UI zoom works everywhere, modals included (view-level, harmless) —
+      // fallback for the View-menu accelerators. WebKit reports the unshifted
+      // key with ⌘ held, so classic ⌘⇧= (aka ⌘+) arrives as "=".
+      if (e.metaKey && !e.altKey && (e.key === "=" || e.key === "+")) {
+        e.preventDefault();
+        zoomBy(1);
+        return;
+      }
+      if (e.metaKey && !e.altKey && (e.key === "-" || e.key === "_")) {
+        e.preventDefault();
+        zoomBy(-1);
+        return;
+      }
+      if (e.metaKey && !e.shiftKey && !e.altKey && e.key === "0") {
+        e.preventDefault();
+        zoomReset();
+        return;
+      }
       // an open overlay owns the keyboard: without this, ⌘W through the
       // palette/history/settings closed tabs BEHIND the modal (escStack only
       // hard-claims Escape; everything else used to fall through to here)
@@ -505,10 +550,10 @@ export function App() {
         e.preventDefault();
         useTabs.getState().cycle(e.shiftKey ? -1 : 1);
       }
-      if (e.metaKey && !e.shiftKey && /^[0-9]$/.test(e.key)) {
+      // ⌘1…9 jump to tab — ⌘0 now belongs to zoom reset (macOS convention)
+      if (e.metaKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
         e.preventDefault();
-        const n = e.key === "0" ? 10 : Number(e.key);
-        useTabs.getState().selectByIndex(n - 1);
+        useTabs.getState().selectByIndex(Number(e.key) - 1);
       }
       if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "f") {
         e.preventDefault();
@@ -640,8 +685,9 @@ export function App() {
         <ConnectionRail />
 
         {homeMode ? (
-          // full-screen connection surface (dashboard / editor)
-          <motion.main className="main-card card" {...panelIn}>
+          // full-screen connection surface (dashboard / editor); tabIndex -1 =
+          // programmatic focus target for overlay-close restore fallback
+          <motion.main className="main-card card" tabIndex={-1} {...panelIn}>
             <Home />
           </motion.main>
         ) : (
@@ -659,7 +705,7 @@ export function App() {
               <div className="sidebar-resize" onMouseDown={startSidebarResize} />
             </motion.aside>
 
-            <motion.main className="main-card card" {...panelIn}>
+            <motion.main className="main-card card" tabIndex={-1} {...panelIn}>
               {activeProfile ? (
                 <>
                   <TabBar />

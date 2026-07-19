@@ -111,6 +111,10 @@
   display: flex;
   flex-direction: column;
 }
+/* programmatic focus target (overlay-close restore fallback) — no ring */
+.main-card:focus {
+  outline: none;
+}
 
 .inspector-card {
   flex-shrink: 0;
@@ -260,32 +264,6 @@
   color: var(--fg);
 }
 
-/* inspector reopen tab, flush against the main card's right edge */
-.inspector-reopen {
-  /* top-right, same glyph family as the open-state's close control */
-  position: absolute;
-  right: 8px;
-  top: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: var(--radius-inner);
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-right: none;
-  color: var(--fg-muted);
-  cursor: pointer;
-  z-index: 6;
-  font-size: var(--text-md);
-  line-height: 1;
-}
-.inspector-reopen:hover {
-  color: var(--fg);
-  background: var(--bg-hover);
-}
-
 .inspector-resize {
   position: absolute;
   left: -4px;
@@ -322,21 +300,6 @@
   margin-right: 7px;
   flex-shrink: 0;
 }
-
-.me-newtab {
-  margin-top: 10px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-strong);
-  background: var(--bg-raised);
-  color: var(--fg);
-  font-size: var(--text-sm);
-  cursor: pointer;
-}
-.me-newtab:hover { border-color: var(--accent); }
 
 .v2-tool.on { color: var(--accent); }
 

@@ -82,52 +82,68 @@ export function Dashboard() {
         </div>
       )}
 
-      <div className="dash-grid">
-        {profiles.map((p, i) => {
-          const state = connState[p.id] ?? "disconnected";
-          return (
-            <div
-              key={p.id}
-              className="dash-card"
-              onClick={() => openConn(p.id)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setMenu({ x: e.clientX, y: e.clientY, profile: p });
-              }}
-              title={state === "connected" ? `Open ${p.name || p.host}` : `Connect to ${p.name || p.host}`}
-            >
-              <Avatar profile={p} index={i} size={44} />
-              <div className="dash-card-body">
-                <div className="dash-card-name">
-                  {p.name || p.host}
-                  {p.is_prod && <span className="badge badge-danger">PROD</span>}
-                </div>
-                <div className="dash-card-sub">
-                  {p.host}:{p.port} · {p.dbname}
-                </div>
-              </div>
-              <span className={`dash-state ${state}`} />
-              <button
-                className="dash-edit"
-                title="Edit connection"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  editConnection(p);
+      {profiles.length === 0 && !profilesError ? (
+        // first-run / empty state: a real CTA, not a lonely "+" tile
+        <div className="dash-hero">
+          <div className="dash-hero-title">No connections yet</div>
+          <div className="dash-hero-sub">
+            Connect to a PostgreSQL database to start querying.
+          </div>
+          <button className="dash-hero-btn" onClick={() => editConnection(blankProfile())}>
+            <Plus size={15} /> Add your first connection
+          </button>
+          <div className="dash-hero-hint">
+            <kbd>⌘K</kbd> opens the command palette anytime
+          </div>
+        </div>
+      ) : (
+        <div className="dash-grid">
+          {profiles.map((p, i) => {
+            const state = connState[p.id] ?? "disconnected";
+            return (
+              <div
+                key={p.id}
+                className="dash-card"
+                onClick={() => openConn(p.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setMenu({ x: e.clientX, y: e.clientY, profile: p });
                 }}
+                title={state === "connected" ? `Open ${p.name || p.host}` : `Connect to ${p.name || p.host}`}
               >
-                <Pencil size={13} />
-              </button>
-            </div>
-          );
-        })}
+                <Avatar profile={p} index={i} size={44} />
+                <div className="dash-card-body">
+                  <div className="dash-card-name">
+                    {p.name || p.host}
+                    {p.is_prod && <span className="badge badge-danger">PROD</span>}
+                  </div>
+                  <div className="dash-card-sub">
+                    {p.host}:{p.port} · {p.dbname}
+                  </div>
+                </div>
+                <span className={`dash-state ${state}`} />
+                <button
+                  className="dash-edit"
+                  title="Edit connection"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    editConnection(p);
+                  }}
+                >
+                  <Pencil size={13} />
+                </button>
+              </div>
+            );
+          })}
 
-        <button className="dash-card dash-new" onClick={() => editConnection(blankProfile())}>
-          <span className="dash-new-icon">
-            <Plus size={22} />
-          </span>
-          <span>New connection</span>
-        </button>
-      </div>
+          <button className="dash-card dash-new" onClick={() => editConnection(blankProfile())}>
+            <span className="dash-new-icon">
+              <Plus size={22} />
+            </span>
+            <span>New connection</span>
+          </button>
+        </div>
+      )}
 
       {recent.length > 0 && (
         <div className="dash-recent">

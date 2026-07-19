@@ -1,60 +1,79 @@
 # qwry
 
-A fast, keyboard-first PostgreSQL client for macOS. Built because the alternatives each miss something: Postico's intellisense is weak, Beekeeper can't edit cells from arbitrary query results (and paywalls JSON formatting), pgAdmin is pgAdmin.
+A fast, local PostgreSQL client for macOS. Tauri 2 (Rust core) · React 19 · CodeMirror 6 — ~15 MB app, ~6 MB dmg, no telemetry, no account, no cloud.
 
-Tauri 2 (Rust core) · React 19 · CodeMirror 6 · ~15 MB app, ~6 MB dmg.
+Two invariants govern every feature:
 
-## What it does well
+- **Never slow, at any scale.** Cold start under 500 ms, completion under a keystroke, a million-row result scrolls at 60 fps, and browsing page 5,000 of an 8-million-row table costs the same as page 1 (keyset pagination, not OFFSET).
+- **Never lie about or corrupt data.** Every write is previewed as the exact SQL it will run, verified row-by-row inside one transaction, and refused entirely — zero partial writes — if anything under it moved. Errors, truncations, and caps are always said out loud.
 
-**SQL intellisense that actually understands your query.** Columns scoped to the tables in your FROM clause, `alias.` completion, FK-aware `JOIN … ON` one-shot suggestions, usage-ranked results, PG error squiggles at the exact position. The 3.5k `pg_catalog` functions stay out of your way — Ctrl-Space or ⌘⇧U when you want them.
+## What it does that others don't
 
-**Edit any query result.** Run any SELECT — joins included. Double-click a cell, type, ⌘S. qwry maps result columns back to their source tables via the wire protocol's `table_oid`/`attnum` metadata, finds the primary key, and shows you the exact `UPDATE … WHERE pk = … RETURNING …` before committing everything in one transaction. Edits to several cells of one row collapse into a single UPDATE. No primary key in the result? It falls back to `ctid`. Insert and delete rows from the table browser too. Read-only cells tell you *why* (computed expression, PK not selected, …).
+- **Inverse-SQL undo after commit.** The commit transaction captures OLD values and persists a revert script; a toast offers Undo. The undo itself re-enters the same verified pipeline — a stale undo rolls back honestly instead of guessing.
+- **Buffer time-machine.** Step the editor back through every executed version of the current tab (⌃⌘←/→), read-only, Enter to restore. Never lose the query that worked.
+- **CTE runner.** Run one CTE out of a `WITH` chain as its own statement — debug the middle of a pipeline without dismantling it.
+- **Distinct-value histograms.** A column header menu shows the value distribution of the result ("paid 78% · pending 12%") with counts, streamed and capped honestly.
+- **Keyset browsing.** The table browser paginates by key, with PK (or ctid) tiebreakers — no duplicate or dropped rows under non-unique sorts, no O(n²) OFFSET cliff.
+- **Record view + row diff.** ⇧Space flips a row into a transposed single-record inspector with prev/next; select two rows to highlight exactly which columns differ.
+- **Verified-batch editing — of any query result.** Run any SELECT, joins included; qwry maps result cells back to source tables via wire-protocol metadata, shows the exact `UPDATE … WHERE … RETURNING` before commit, and verifies each row matched exactly one target. Read-only cells tell you *why*, with the recipe to make them editable.
+- **Prod safe-mode.** Connections flagged production get a persistent warning strip, a locked titlebar chip, and guards in front of destructive statements (`UPDATE`/`DELETE` without `WHERE`, streamed impact estimates).
 
-**First-class JSON.** Collapsible jsonb tree in the inspector with ⌘F search (filter, highlight, jump between hits), click-to-copy values, ⌥-click for paths, and in-place type-preserving editing of values and keys right in the tree. Free.
+Beyond those: FROM-scoped SQL completion with FK-aware `JOIN … ON` suggestions, per-tab dedicated connections (real `BEGIN`/`COMMIT` isolation with a transaction chip), out-of-band query cancel that a stuck session can't block, structure tab with constraints/indexes/triggers/per-table stats, multi-column sort with NULLS control, filter builder with a raw-WHERE escape hatch that shows you the SQL it built, CSV import wizard with dry-run validation and per-row error reporting, first-class JSON tree editing, `.sql` file open/save, searchable per-connection history, ⌘K palette, EXPLAIN ANALYZE visualizer, SSH tunnels via your system `ssh`, Keychain-stored credentials, and a theme engine with curated palettes.
 
-**Real transactions.** Every query tab gets its own dedicated connection, so `BEGIN`/`COMMIT`/`ROLLBACK` and temp state stay coherent and isolated — a tab shows a dot while a transaction is open.
+## Screenshots
 
-**Fast.** Results stream from Rust in batches over Tauri channels into a custom virtualized grid — a million-row result scrolls smoothly. ⌘. cancels instantly via the PG cancel protocol.
+<!-- captured by the maintainer; files live in docs/screenshots/ -->
 
-**Looks the part.** Floating rounded cards on a themed-glass gutter, a connection rail of customizable avatars (colour + glyph, drag to reorder), a colour engine with curated palettes + custom themes (each with a synthesised light/dark variant), and springy Linear/Arc-style motion. Edit a saved connection and it actually re-points — stale sessions and SSH tunnels are torn down so the next query hits the new host.
+<!-- ![Home dashboard — connection cards with recent activity](docs/screenshots/dashboard.png) (capture pending) -->
+<!-- ![SQL editor with scoped completion and a streaming result grid](docs/screenshots/editor.png) (capture pending) -->
+<!-- ![Record view — transposed single-row inspector with prev/next](docs/screenshots/record-view.png) (capture pending) -->
+<!-- ![Structure tab — constraints, indexes, triggers, table stats](docs/screenshots/structure.png) (capture pending) -->
+<!-- ![Distinct-value histogram from a column header menu](docs/screenshots/histogram.png) (capture pending) -->
+<!-- ![CSV import wizard — column mapping and dry-run validation](docs/screenshots/import.png) (capture pending) -->
 
-Also: table browser (filters with AND/OR, searchable sort, structure tab, row insert/delete), SSH tunnels via your system `ssh` (honours `~/.ssh/config`), per-connection home dashboard with recent activity, in-app database switcher, light/dark/system themes, macOS vibrancy, persistent tabs, saved queries, searchable history, ⌘K command palette, EXPLAIN ANALYZE visualizer with hot-node highlighting, guards for UPDATE/DELETE without WHERE, prod-connection warning strip, Keychain-stored credentials, no telemetry.
+## Install
 
-## Keyboard map
-
-| | |
-|---|---|
-| ⌘↵ run (selection if any) | ⌘. cancel |
-| ⌘E explain analyze | ⌘K palette |
-| ⌘S save tab / commit cell edits | ⌘⇧D discard edits |
-| ⌘T / ⌘W new / close tab | ⌘⇧T restore closed tab |
-| ⌃Tab cycle tabs | ⌘1–9, ⌘0 jump to tab |
-| ⌘I inspector | ⌘⇧U function search |
-| ⌘⇧F filter tables | ⌘R refresh schema |
-| ⌘F search JSON (inspector) | |
-
-## Build
+Build from source (macOS only):
 
 ```sh
-# prerequisites: rust (rustup), bun, xcode CLT
+# requirements: macOS, Rust (rustup), Bun, Xcode CLT
 bun install
-bun run tauri dev      # development
-bun run tauri build    # release .app + .dmg
+bun run tauri build    # produces the .app and .dmg under src-tauri/target
 ```
 
-Backend integration tests run live against a real database:
+`bun run tauri dev` runs the app with hot reload.
+
+## Architecture
+
+The Rust core (`src-tauri/src/`) owns everything that touches a database. A `DbDriver` trait fronts the PostgreSQL implementation, which speaks tokio-postgres over the **simple protocol** so every value arrives as psql-identical wire text — no lossy client-side type conversion. Results stream to the frontend in batches over Tauri channels. The driver tracks transaction state authoritatively, cancels queries out-of-band (`pg_cancel_backend` from a fresh connection, so a busy session can never block its own cancel), and derives editability maps from `prepare()` metadata. Around it: SSH tunnels via the system `ssh` (honours `~/.ssh/config`), credentials in the macOS Keychain, and app state in SQLite with numbered migrations.
+
+The frontend (`src/`) is React 19 with zustand stores, a CodeMirror 6 editor driven by a custom completion engine on lezer, and a hand-rolled virtualized grid on TanStack Virtual. All motion goes through spring presets; all styling through the token system in `src/design/tokens.css`. Perf budgets are enforced, not aspirational: cold start < 500 ms, keystroke-to-completion < 16 ms, 60 fps grid scroll minimum.
+
+The `docs/` directory is the project's memory. `ARCHITECTURE.md` is the design truth, `ROADMAP.md` holds the phase plan plus a dated session log of what was built and every gotcha hit along the way, `DECISIONS.md` is an ADR-lite ledger, and `GAPS.md` tracks known debt. Development happens wave-by-wave — implement, gate, adversarial audit, ship — and the docs are updated in the same wave, always. Read them first if you're contributing.
+
+## Development
+
+```sh
+source ~/.cargo/env              # Rust toolchain (required every shell)
+bun install                      # frontend deps
+bun run tauri dev                # run app (dev, hot reload)
+bun run tauri build              # release .app/.dmg
+cd src-tauri && cargo check      # fast Rust typecheck
+cd src-tauri && cargo clippy     # lint
+bunx tsc --noEmit                # TS typecheck
+```
+
+Backend integration tests run live against a real PostgreSQL database you control — point them at a disposable staging database, **never production**:
 
 ```sh
 QWRY_TEST_HOST=… QWRY_TEST_USER=… QWRY_TEST_PASSWORD=… QWRY_TEST_DB=… \
   cargo test --test staging_smoke -- --ignored
 ```
 
-## Architecture
+Some suites use a second, writable database (`QWRY_TEST_DB2`) for DDL-creating fixtures; those confine themselves to a `qwry_test` schema and drop it at teardown.
 
-Rust core (`src-tauri/`): tokio-postgres over the **simple protocol** (every type arrives as psql-identical wire text), streaming executor, one-round-trip pg_catalog introspection, editability mapping via `prepare()`, SQLite app-state, Keychain secrets. Frontend (`src/`): zustand stores, custom completion engine on lezer, virtualized grid on TanStack Virtual, motion springs.
+PostgreSQL only for now (the driver trait is in place for SQLite/MySQL later). macOS only.
 
-Details in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Development happens phase-by-phase per [docs/ROADMAP.md](docs/ROADMAP.md) — read it first if you're contributing (or if you're an AI agent: especially you, the gotcha ledger is for you).
+## License
 
-## Status
-
-v0.2.0 — major visual overhaul on top of the full v1 + v0.1.5 feature set. v0.2 adds the floating-card shell, the colour/theme engine (curated palettes + custom dual-mode themes), the connection rail with customizable avatars, a home dashboard, in-app database switcher, per-tab results, connection liveness + edit-takes-effect re-pointing, and an inspector redesign (structured JSON/array view + edit). PostgreSQL only (driver trait is in place for SQLite/MySQL later). macOS only.
+TBD — license not yet chosen. <!-- maintainer: pick one before publishing (MIT / Apache-2.0 dual is the common Rust-ecosystem default) and replace this section -->

@@ -299,6 +299,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
 
   return (
     <Modal
+      label="Import CSV"
       onClose={() => {
         // a run in flight keeps the modal up — Cancel run stops the server work
         if (!running) onClose();

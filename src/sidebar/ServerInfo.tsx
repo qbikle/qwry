@@ -84,7 +84,7 @@ export function ServerInfo({ profileId }: { profileId: string }) {
         <Info size={13} />
       </button>
       {open && (
-        <Modal onClose={() => setOpen(false)}>
+        <Modal label="Server info" onClose={() => setOpen(false)}>
           <motion.div className="srvinfo-modal" {...popIn}>
             <div className="settings-title">Server info</div>
             {error ? (

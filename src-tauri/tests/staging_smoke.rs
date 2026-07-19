@@ -920,12 +920,12 @@ async fn staging_batched_and_hinted_paths() {
 
 // ---------------------------------------------------------------------------
 // v0.7.0-bedrock additions. Fixture-creating tests run against a SECOND
-// staging db (QWRY_TEST_DB2, default "squad") inside a dedicated qwry_test
+// staging db (QWRY_TEST_DB2, required) inside a dedicated qwry_test
 // schema — never public. Fixtures are dropped at each test's end.
 // ---------------------------------------------------------------------------
 
 fn db2() -> String {
-    std::env::var("QWRY_TEST_DB2").unwrap_or_else(|_| "squad".into())
+    std::env::var("QWRY_TEST_DB2").expect("set QWRY_TEST_DB2 to the fixture database")
 }
 
 fn test_profile(id: &str, dbname: String) -> Profile {

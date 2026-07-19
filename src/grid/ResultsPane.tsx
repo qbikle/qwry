@@ -42,7 +42,17 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
   if (statements.length === 0)
     return (
       <div className="grid-msg">
-        {running ? "Running…" : connecting ? "Connecting…" : "Run a query to see results"}
+        {running ? (
+          "Running…"
+        ) : connecting ? (
+          "Connecting…"
+        ) : browser ? (
+          "Loading table…"
+        ) : (
+          <span>
+            Run a query to see results · <kbd>⌘↵</kbd> runs the statement under the caret
+          </span>
+        )}
       </div>
     );
 
@@ -90,7 +100,10 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
           // the DATA under a mounted grid — selection/editor state carrying
           // over targeted phantom rows in the other result (wrong-row copy /
           // Set-NULL / delete class)
-          <Grid key={`${activeTab}:${stmt.index}`} statement={stmt} insertable={browser} />
+          <>
+            <Grid key={`${activeTab}:${stmt.index}`} statement={stmt} insertable={browser} />
+            <ZeroRows stmt={stmt} browser={browser} />
+          </>
         ) : (
           <div className="grid-msg">
             {stmt.done ? `OK · ${stmt.affected ?? 0} rows affected` : "Running…"}
@@ -185,6 +198,34 @@ function QuickFilter() {
         />
       )}
     </span>
+  );
+}
+
+/** zero-result statement: say "0 rows" with the statement timing under the
+ * column headers instead of a blank void; in browse mode point at add-row
+ * (hidden while the draft band is open — it sits in the same space) */
+function ZeroRows({
+  stmt,
+  browser,
+}: {
+  stmt: { rows: unknown[]; done: boolean; ms: number | null };
+  browser: boolean;
+}) {
+  const drafting = useBrowser((s) => !!s.draftRow);
+  if (!stmt.done || stmt.rows.length > 0 || (browser && drafting)) return null;
+  return (
+    <div className="grid-zero">
+      <div className="grid-zero-title">0 rows</div>
+      <div className="grid-zero-sub">
+        {stmt.ms != null && `completed in ${stmt.ms.toFixed(1)} ms`}
+        {browser && (
+          <>
+            {stmt.ms != null && " · "}
+            <kbd>⌘⇧I</kbd> adds a row
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 

@@ -36,7 +36,7 @@
 }
 .ctx-item.danger.hot {
   background: var(--danger);
-  color: white;
+  color: var(--danger-fg);
 }
 
 .ctx-item.disabled {
