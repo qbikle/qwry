@@ -24,12 +24,12 @@ Beyond those: FROM-scoped SQL completion with FK-aware `JOIN … ON` suggestions
 
 <!-- captured by the maintainer; files live in docs/screenshots/ -->
 
-![Home dashboard — connection cards with recent activity](docs/screenshots/dashboard.png)
-![SQL editor with scoped completion and a streaming result grid](docs/screenshots/editor.png)
-![Record view — transposed single-row inspector with prev/next](docs/screenshots/record-view.png)
-![Structure tab — constraints, indexes, triggers, table stats](docs/screenshots/structure.png)
-![Distinct-value histogram from a column header menu](docs/screenshots/histogram.png)
-![CSV import wizard — column mapping and dry-run validation](docs/screenshots/import.png)
+<!-- ![Home dashboard — connection cards with recent activity](docs/screenshots/dashboard.png) (capture pending) -->
+<!-- ![SQL editor with scoped completion and a streaming result grid](docs/screenshots/editor.png) (capture pending) -->
+<!-- ![Record view — transposed single-row inspector with prev/next](docs/screenshots/record-view.png) (capture pending) -->
+<!-- ![Structure tab — constraints, indexes, triggers, table stats](docs/screenshots/structure.png) (capture pending) -->
+<!-- ![Distinct-value histogram from a column header menu](docs/screenshots/histogram.png) (capture pending) -->
+<!-- ![CSV import wizard — column mapping and dry-run validation](docs/screenshots/import.png) (capture pending) -->
 
 ## Install
 
