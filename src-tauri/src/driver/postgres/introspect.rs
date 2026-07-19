@@ -1,5 +1,7 @@
-//! Schema introspection: one simple-protocol round trip of four statements,
-//! each returning a single json_agg cell. Powers sidebar tree + completion.
+//! Schema introspection: ONE simple-protocol round trip of batched
+//! statements, each returning a single json_agg cell. Powers sidebar tree +
+//! completion. The single round trip is an identity feature — additions ride
+//! the same batch, never a second trip.
 
 use serde::{Deserialize, Serialize};
 
@@ -21,6 +23,10 @@ pub struct ColumnInfo {
     /// pg_attribute.attidentity ('' = none, 'a' = always, 'd' = by default)
     #[serde(default)]
     pub identity: String,
+    /// COMMENT ON COLUMN (pg_description) — sidebar/structure tooltips.
+    /// None on pre-v0.8 caches.
+    #[serde(default)]
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +49,14 @@ pub struct TableInfo {
     /// the frontend's ctid keyset gate. None on pre-v0.7.1 caches.
     #[serde(default)]
     pub reltuples: Option<f64>,
+    /// COMMENT ON TABLE (pg_description). None on pre-v0.8 caches.
+    #[serde(default)]
+    pub comment: Option<String>,
+    /// pg_inherits parent (first parent for multiple inheritance) — lets the
+    /// sidebar nest partitions/children under their parent instead of
+    /// flooding the schema list. None = top-level relation or pre-v0.8 cache.
+    #[serde(default)]
+    pub parent_oid: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,6 +93,22 @@ pub struct EnumInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeqInfo {
+    pub schema: String,
+    pub name: String,
+    /// format_type of pg_sequence.seqtypid (bigint/integer/smallint)
+    pub data_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtInfo {
+    pub name: String,
+    pub version: String,
+    /// schema the extension's objects live in (extnamespace)
+    pub schema: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaSnapshot {
     pub tables: Vec<TableInfo>,
     pub foreign_keys: Vec<FkInfo>,
@@ -89,6 +119,12 @@ pub struct SchemaSnapshot {
     /// user-defined enum types — powers type-aware cell editors
     #[serde(default)]
     pub enums: Vec<EnumInfo>,
+    /// user-schema sequences — sidebar section. Empty on pre-v0.8 caches.
+    #[serde(default)]
+    pub sequences: Vec<SeqInfo>,
+    /// installed extensions — sidebar section. Empty on pre-v0.8 caches.
+    #[serde(default)]
+    pub extensions: Vec<ExtInfo>,
     /// current_setting('server_version_num') — the frontend gates ctid keyset
     /// pagination on it (tid btree ops are PG 14+). None on pre-v0.7.1 caches.
     #[serde(default)]
@@ -101,6 +137,9 @@ SELECT coalesce(json_agg(t), '[]') FROM (
          c.relkind::text AS kind,
          c.relhassubclass AS has_children,
          c.reltuples::float8 AS reltuples,
+         td.description AS comment,
+         (SELECT i.inhparent::int8 FROM pg_inherits i
+          WHERE i.inhrelid = c.oid ORDER BY i.inhseqno LIMIT 1) AS parent_oid,
          coalesce((
            SELECT json_agg(json_build_object(
                     'name', a.attname,
@@ -110,10 +149,13 @@ SELECT coalesce(json_agg(t), '[]') FROM (
                     'not_null', a.attnotnull,
                     'default', pg_get_expr(d.adbin, d.adrelid),
                     'generated', a.attgenerated,
-                    'identity', a.attidentity)
+                    'identity', a.attidentity,
+                    'comment', cd.description)
                   ORDER BY a.attnum)
            FROM pg_attribute a
            LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+           LEFT JOIN pg_description cd ON cd.objoid = a.attrelid
+             AND cd.classoid = 'pg_class'::regclass AND cd.objsubid = a.attnum
            WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
          ), '[]') AS columns,
          coalesce((
@@ -125,6 +167,8 @@ SELECT coalesce(json_agg(t), '[]') FROM (
          ), '[]') AS pk
   FROM pg_class c
   JOIN pg_namespace n ON n.oid = c.relnamespace
+  LEFT JOIN pg_description td ON td.objoid = c.oid
+    AND td.classoid = 'pg_class'::regclass AND td.objsubid = 0
   WHERE c.relkind IN ('r','v','m','p','f')
     AND n.nspname NOT IN ('pg_catalog','information_schema')
     AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp%'
@@ -214,6 +258,27 @@ SELECT coalesce(json_agg(t), '[]') FROM (
   ORDER BY schemaname, tablename, indexname
 ) t"#;
 
+const SEQS_SQL: &str = r#"
+SELECT coalesce(json_agg(t), '[]') FROM (
+  SELECT n.nspname AS schema, c.relname AS name,
+         format_type(s.seqtypid, NULL) AS data_type
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  LEFT JOIN pg_sequence s ON s.seqrelid = c.oid
+  WHERE c.relkind = 'S'
+    AND n.nspname NOT IN ('pg_catalog','information_schema')
+    AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp%'
+  ORDER BY n.nspname, c.relname
+) t"#;
+
+const EXTS_SQL: &str = r#"
+SELECT coalesce(json_agg(t), '[]') FROM (
+  SELECT e.extname AS name, e.extversion AS version, n.nspname AS schema
+  FROM pg_extension e
+  JOIN pg_namespace n ON n.oid = e.extnamespace
+  ORDER BY e.extname
+) t"#;
+
 impl PgSession {
     /// Introspect the session's database. `cached_catalog_funcs` = the
     /// caller's appdb-cached pg_catalog functions for THIS server version;
@@ -229,13 +294,13 @@ impl PgSession {
     ) -> Result<(SchemaSnapshot, Option<Vec<FuncInfo>>)> {
         let need_catalog = cached_catalog_funcs.is_none();
         let sql = format!(
-            "{TABLES_SQL};{FKS_SQL};{USER_FUNCS_SQL};{SCHEMAS_SQL};{INDEXES_SQL};{ENUMS_SQL};{}",
+            "{TABLES_SQL};{FKS_SQL};{USER_FUNCS_SQL};{SCHEMAS_SQL};{INDEXES_SQL};{ENUMS_SQL};{SEQS_SQL};{EXTS_SQL};{}",
             if need_catalog { CATALOG_FUNCS_SQL } else { CATALOG_COUNT_SQL }
         );
         let out = self.execute_simple(&sql).await?;
-        if out.statements.len() != 7 {
+        if out.statements.len() != 9 {
             return Err(DriverError::Internal(format!(
-                "introspection returned {} result sets, expected 7",
+                "introspection returned {} result sets, expected 9",
                 out.statements.len()
             )));
         }
@@ -255,13 +320,13 @@ impl PgSession {
         let (catalog, fresh_catalog): (Vec<FuncInfo>, Option<Vec<FuncInfo>>) =
             match cached_catalog_funcs {
                 None => {
-                    let cat: Vec<FuncInfo> = serde_json::from_str(&cell(6)?)
+                    let cat: Vec<FuncInfo> = serde_json::from_str(&cell(8)?)
                         .map_err(|e| parse_err("catalog functions", e))?;
                     (cat.clone(), Some(cat))
                 }
                 Some(cached) => {
                     // unparsable count → usize::MAX → forced refetch (fail safe)
-                    let live: usize = cell(6)?.trim().parse().unwrap_or(usize::MAX);
+                    let live: usize = cell(8)?.trim().parse().unwrap_or(usize::MAX);
                     if live == cached.len() {
                         (cached, None)
                     } else {
@@ -291,6 +356,8 @@ impl PgSession {
             schemas: serde_json::from_str(&cell(3)?).map_err(|e| parse_err("schemas", e))?,
             indexes: serde_json::from_str(&cell(4)?).map_err(|e| parse_err("indexes", e))?,
             enums: serde_json::from_str(&cell(5)?).map_err(|e| parse_err("enums", e))?,
+            sequences: serde_json::from_str(&cell(6)?).map_err(|e| parse_err("sequences", e))?,
+            extensions: serde_json::from_str(&cell(7)?).map_err(|e| parse_err("extensions", e))?,
             server_version_num: (vnum > 0).then_some(vnum),
         };
         Ok((snap, fresh_catalog))

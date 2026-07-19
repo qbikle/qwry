@@ -157,26 +157,36 @@
 
 ## v0.8.0-spelunk — data navigation power
 
-- [ ] Record view: transposed single-row inspector w/ prev/next (Postico's
+- [x] Record view: transposed single-row inspector w/ prev/next (Postico's
       most-loved; GAPS §3 grid).
-- [ ] Row diff: select 2 rows → highlight differing columns (leapfrog #10).
-- [ ] FK-cell picker: searchable referenced-row picker when editing an FK column
+- [x] Row diff: select 2 rows → highlight differing columns (leapfrog #10).
+- [x] FK-cell picker: searchable referenced-row picker when editing an FK column
       (Postico parity; GAPS §4).
-- [ ] Distinct-value histogram in header menu ("paid 78% · pending 12%") (leapfrog #6).
-- [ ] Multi-column sort: shift-click tiebreakers + NULLS control (GAPS §3 browser).
-- [ ] Filter power: NOT IN / NOT LIKE / BETWEEN / regex / jsonb `@>` / IS TRUE;
+- [x] Distinct-value histogram in header menu ("paid 78% · pending 12%") (leapfrog #6).
+- [x] Multi-column sort: shift-click tiebreakers + NULLS control (GAPS §3 browser).
+- [x] Filter power: NOT IN / NOT LIKE / BETWEEN / regex / jsonb `@>` / IS TRUE;
       type-aware value editors (bool/enum/date); raw-WHERE escape hatch; "show the
       SQL I built" (GAPS §3 browser).
-- [ ] Structure tab depth: constraints, indexes, triggers, comments, sizes, per-table
+- [x] Structure tab depth: constraints, indexes, triggers, comments, sizes, per-table
       stats (dead tuples, last vacuum, seq vs idx scans) (GAPS §3 + pgAdmin steal).
-- [ ] Jump-to-row + exact-count-on-demand footer (estimate → click → real count).
-- [ ] Sidebar depth: functions/sequences/enums/extensions nodes; matview/foreign/
+- [x] Jump-to-row + exact-count-on-demand footer (estimate → click → real count).
+- [x] Sidebar depth: functions/sequences/enums/extensions nodes; matview/foreign/
       partitioned glyphs; partitions nested under parent; comments in tooltips;
       pinned tables (GAPS §3 sidebar).
 
 ### Gate
-- [ ] Quality gates green; staging verification for every server-touching feature.
-- [ ] Adversarial audit round; confirmed findings fixed.
+- [x] Quality gates green: tsc ✓ vite ✓ clippy 0 ✓ unit 34/34 ✓ staging 20/20 ✓
+      (+staging_introspect_v2, +staging_table_stats — matview-safe stats proven);
+      keyset-proof.ts 20 cases / 220 assertions (NULLS-override ladders, mixed-dir
+      chains, raw-WHERE composition, jump re-anchor gapless).
+- [x] Audit round: 4 adversarial reviewers → ~25 confirmed findings, ALL fixed.
+      Ladder math independently re-derived: all 8 (dir,placement,seek) combos MATCH,
+      multi-key + jump re-anchor live-proven gapless — no S1/S2 in keyset. Fixes:
+      anchor truncation (O(n²) fallback shape), NULLS gates on NOT NULL (planner
+      cliff), RecordView hidden-column leak/dup, unique-index drop advice, live
+      Columns cell, session-scope for histogram/picker, newline-safe raw-WHERE
+      composition. Harness 20→28 cases w/ explicit no-fallback assertions.
+      Final: tsc ✓ vite ✓ clippy 0 ✓ unit 34/34 ✓ staging 20/20 ✓ harness 28/185 ✓.
 
 ---
 

@@ -2,17 +2,27 @@ import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { menuIn } from "../design/springs";
 import { Plus, RefreshCw, X } from "lucide-react";
-import { opNeedsValue, opsForType, useBrowser, type Filter } from "../stores/browser";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import {
+  compiledWhere,
+  opNeedsValue,
+  opsForType,
+  typeClassOf,
+  useBrowser,
+  type Filter,
+} from "../stores/browser";
 import { useConnections } from "../stores/connections";
+import { useSchema, type EnumInfo, type TableInfo } from "../stores/schema";
 import * as ipc from "../ipc/commands";
 import { useResults } from "../stores/results";
 import { useTabs } from "../stores/tabs";
 import { useCloseGuard } from "../stores/closeGuard";
 import { nearEndHook } from "../grid/Grid";
 import { ResultsPane } from "../grid/ResultsPane";
-import { StructureTab } from "./StructureTab";
-import { DdlTab } from "./DdlTab";
+import { StructureTab, structureRefresh } from "./StructureTab";
+import { DdlTab, ddlRefresh } from "./DdlTab";
 import "./browser.css";
+import "./browseControls.css";
 
 export function TableBrowser() {
   const table = useBrowser((s) => s.table);
@@ -31,6 +41,20 @@ export function TableBrowser() {
   const refresh = useBrowser((s) => s.refresh);
   const running = useResults((s) => s.running);
   const [estBump, setEstBump] = useState(0);
+  const [jumpOpen, setJumpOpen] = useState(false);
+
+  // ⌘L — jump to row (data tab only; the footer input takes it from there)
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.metaKey && !e.shiftKey && !e.altKey && !e.ctrlKey && e.key.toLowerCase() === "l") {
+        if (useBrowser.getState().tab !== "data") return;
+        e.preventDefault();
+        setJumpOpen(true);
+      }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, []);
 
   if (!table) return null;
 
@@ -41,7 +65,6 @@ export function TableBrowser() {
           {table.schema !== "public" && <span className="tb-schema">{table.schema}.</span>}
           {table.name}
         </span>
-        <RowEstimate table={table} bump={estBump} />
         <div className="tb-tabs">
           <button className={tab === "data" ? "active" : ""} onClick={() => setTab("data")}>
             Data
@@ -63,6 +86,17 @@ export function TableBrowser() {
           className="icon-btn"
           title="Refresh"
           onClick={() => {
+            // Structure shows table_stats, not the data query — refresh THAT
+            if (tab === "structure") {
+              structureRefresh.current?.();
+              return;
+            }
+            // DDL shows the deparsed DDL — refetch it, never the invisible
+            // data query behind the pane
+            if (tab === "ddl") {
+              ddlRefresh.current?.();
+              return;
+            }
             refresh();
             setEstBump((n) => n + 1);
           }}
@@ -85,6 +119,13 @@ export function TableBrowser() {
           <div className="tb-results">
             <ResultsPane browser />
           </div>
+          <BrowseFooter
+            table={table}
+            bump={estBump}
+            jumpOpen={jumpOpen}
+            onJumpOpen={() => setJumpOpen(true)}
+            onJumpClose={() => setJumpOpen(false)}
+          />
         </>
       ) : tab === "ddl" ? (
         <DdlTab table={table} />
@@ -128,9 +169,436 @@ function FilterValue({
   );
 }
 
-/** planner row estimate for the whole table (reltuples — no COUNT scan).
- * Honest tilde: it's statistics, refreshed by (auto)analyze. */
-function RowEstimate({ table, bump }: { table: { schema: string; name: string }; bump: number }) {
+/** enum labels for a column type, from the snapshot — defensively: `enums`
+ * is absent on pre-introspect-v2 cached snapshots → null → plain text input */
+function enumLabelsFor(colType: string, enums: EnumInfo[] | undefined): string[] | null {
+  if (!Array.isArray(enums)) return null;
+  const bare = colType.replace(/"/g, "");
+  for (const e of enums) {
+    if (!e || !Array.isArray(e.labels)) continue;
+    if (bare === e.name || bare === `${e.schema}.${e.name}`) return e.labels;
+  }
+  return null;
+}
+
+/** native picker kind for a datetime column, or null → raw text only */
+function dateInputKind(type: string): "date" | "datetime-local" | null {
+  const t = type.toLowerCase();
+  if (t === "date") return "date";
+  if (t.startsWith("timestamp")) return "datetime-local";
+  return null;
+}
+
+const nativeDateRe = /^\d{4}-\d{2}-\d{2}$/;
+const nativeDatetimeRe = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/;
+
+/** date/timestamp value editor: native picker with a raw-text fallback for
+ * anything the picker can't express (now(), interval math, tz suffixes…) */
+function DateValue({
+  kind,
+  value,
+  onCommit,
+}: {
+  kind: "date" | "datetime-local";
+  value: string;
+  onCommit: (v: string) => void;
+}) {
+  const parses = (v: string) =>
+    v === "" || (kind === "date" ? nativeDateRe : nativeDatetimeRe).test(v);
+  const [raw, setRaw] = useState(() => !parses(value));
+  if (raw) {
+    return (
+      <>
+        <FilterValue
+          value={value}
+          placeholder="2026-07-18 or now() - interval '1 day'"
+          onCommit={onCommit}
+        />
+        <button
+          className="tb-datemode"
+          title="Use the date picker"
+          onClick={() => {
+            if (!parses(value)) onCommit("");
+            setRaw(false);
+          }}
+        >
+          picker
+        </button>
+      </>
+    );
+  }
+  return (
+    <>
+      <input
+        className="tb-filter-value tb-dateval"
+        type={kind}
+        value={parses(value) ? value : ""}
+        onChange={(e) => onCommit(e.target.value)}
+      />
+      <button className="tb-datemode" title="Type a raw value" onClick={() => setRaw(true)}>
+        raw
+      </button>
+    </>
+  );
+}
+
+function Segmented({
+  options,
+  value,
+  onChange,
+}: {
+  options: string[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="tb-seg">
+      {options.map((o) => (
+        <button key={o} className={value === o ? "active" : ""} onClick={() => onChange(o)}>
+          {o}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function FilterRow({
+  f,
+  table,
+  enums,
+  onPatch,
+  onRemove,
+  first,
+}: {
+  f: Filter;
+  table: TableInfo;
+  enums: EnumInfo[] | undefined;
+  onPatch: (patch: Partial<Filter>) => void;
+  onRemove: () => void;
+  first: boolean;
+}) {
+  const colType = table.columns.find((c) => c.name === f.col)?.type ?? "";
+  const labels = enumLabelsFor(colType, enums);
+  const cls = typeClassOf(colType, labels !== null);
+  const ops = opsForType(colType, labels !== null);
+  const dateKind = cls === "datetime" ? dateInputKind(colType) : null;
+
+  const valueEditor = () => {
+    if (f.op === "IS" || f.op === "IS NOT")
+      return (
+        <Segmented
+          options={["TRUE", "FALSE", "NULL"]}
+          value={["TRUE", "FALSE", "NULL"].includes(f.value) ? f.value : "TRUE"}
+          onChange={(value) => onPatch({ value })}
+        />
+      );
+    if (!opNeedsValue(f.op)) return null;
+    if (f.op === "BETWEEN") {
+      const input = (value: string, commit: (v: string) => void) =>
+        dateKind ? (
+          <DateValue kind={dateKind} value={value} onCommit={commit} />
+        ) : (
+          <FilterValue value={value} placeholder="value" onCommit={commit} />
+        );
+      return (
+        <>
+          {input(f.value, (value) => onPatch({ value }))}
+          <span className="tb-between-and">and</span>
+          {input(f.value2 ?? "", (value2) => onPatch({ value2 }))}
+        </>
+      );
+    }
+    if (f.op === "IN" || f.op === "NOT IN")
+      return (
+        <FilterValue
+          value={f.value}
+          placeholder="a, b, 'c, with comma'"
+          onCommit={(value) => onPatch({ value })}
+        />
+      );
+    if (f.op === "raw SQL")
+      return (
+        <FilterValue
+          value={f.value}
+          placeholder="created_at > now() - interval '1 day'"
+          onCommit={(value) => onPatch({ value })}
+        />
+      );
+    if (f.op === "@>")
+      return (
+        <FilterValue
+          value={f.value}
+          placeholder='{"key": "value"}'
+          onCommit={(value) => onPatch({ value })}
+        />
+      );
+    if (labels && (f.op === "=" || f.op === "!="))
+      return (
+        <select
+          className="tb-filter-value tb-enumval"
+          value={f.value}
+          onChange={(e) => onPatch({ value: e.target.value })}
+        >
+          {!labels.includes(f.value) && (
+            <option value={f.value}>{f.value === "" ? "— pick —" : f.value}</option>
+          )}
+          {labels.map((l) => (
+            <option key={l} value={l}>
+              {l}
+            </option>
+          ))}
+        </select>
+      );
+    if (dateKind)
+      return <DateValue kind={dateKind} value={f.value} onCommit={(value) => onPatch({ value })} />;
+    return (
+      <FilterValue value={f.value} placeholder="value" onCommit={(value) => onPatch({ value })} />
+    );
+  };
+
+  return (
+    <div className="tb-filter">
+      <input
+        type="checkbox"
+        checked={f.enabled}
+        onChange={(e) => onPatch({ enabled: e.target.checked })}
+      />
+      {first ? (
+        <span className="tb-conj-label">WHERE</span>
+      ) : (
+        <select
+          className="tb-conj"
+          value={f.conj}
+          onChange={(e) => onPatch({ conj: e.target.value as "AND" | "OR" })}
+        >
+          <option value="AND">AND</option>
+          <option value="OR">OR</option>
+        </select>
+      )}
+      <select
+        value={f.col}
+        onChange={(e) => {
+          const col = e.target.value;
+          // the new column's type may not support the current operator —
+          // normalize so the row always renders a consistent control set
+          const type = table.columns.find((c) => c.name === col)?.type ?? "";
+          const isEnum = enumLabelsFor(type, enums) !== null;
+          const colOps = opsForType(type, isEnum);
+          let { op, value, value2 } = f;
+          if (!colOps.includes(op)) {
+            op = colOps[0];
+            value = op === "IS" || op === "IS NOT" ? "TRUE" : "";
+            value2 = undefined;
+          }
+          onPatch({ col, op, value, value2 });
+        }}
+      >
+        {table.columns.map((c) => (
+          <option key={c.name} value={c.name}>
+            {c.name}
+          </option>
+        ))}
+      </select>
+      <select
+        value={f.op}
+        onChange={(e) => {
+          const op = e.target.value as Filter["op"];
+          // bool ops carry a fixed-choice value — normalize on switch so
+          // the row never renders an inconsistent state
+          const boolOp = op === "IS" || op === "IS NOT";
+          onPatch({
+            op,
+            value: boolOp && !["TRUE", "FALSE", "NULL"].includes(f.value) ? "TRUE" : f.value,
+            ...(op === "BETWEEN" ? { value2: f.value2 ?? "" } : {}),
+          });
+        }}
+      >
+        {ops.map((op) => (
+          <option key={op} value={op}>
+            {op}
+          </option>
+        ))}
+      </select>
+      {valueEditor()}
+      <button className="icon-btn" onClick={onRemove}>
+        <X size={12} />
+      </button>
+    </div>
+  );
+}
+
+/** raw-WHERE escape hatch: the text becomes the browse WHERE as written —
+ * the user owns it; it's validated only by running */
+function RawWhere() {
+  const rawWhere = useBrowser((s) => s.rawWhere);
+  const setRawWhere = useBrowser((s) => s.setRawWhere);
+  const [draft, setDraft] = useState(rawWhere);
+  useEffect(() => setDraft(rawWhere), [rawWhere]);
+  return (
+    <div className="tb-rawwhere">
+      <span className="tb-conj-label">WHERE</span>
+      <textarea
+        rows={2}
+        spellCheck={false}
+        placeholder="status = 'paid' AND created_at > now() - interval '7 days'   (runs as written — ⌘↵ or blur applies)"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          if (draft !== rawWhere) setRawWhere(draft);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && e.metaKey) {
+            e.preventDefault();
+            setRawWhere(draft);
+          }
+        }}
+      />
+    </div>
+  );
+}
+
+/** the COMPILED WHERE clause for builder-mode filters — the exact SQL text
+ * the queries embed (trust feature); click copies it */
+function WherePreview({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1200);
+    return () => clearTimeout(t);
+  }, [copied]);
+  return (
+    <div
+      className="tb-wherepreview"
+      title={`${text}\n\nclick to copy`}
+      onClick={() => {
+        void writeText(text);
+        setCopied(true);
+      }}
+    >
+      <span className="tb-wherekw">WHERE</span>
+      <span className="tb-wheresql">{text}</span>
+      {copied && <span className="tb-wherecopied">copied</span>}
+    </div>
+  );
+}
+
+function FilterBar() {
+  const table = useBrowser((s) => s.table)!;
+  const filters = useBrowser((s) => s.filters);
+  const setFilters = useBrowser((s) => s.setFilters);
+  const whereMode = useBrowser((s) => s.whereMode);
+  const setWhereMode = useBrowser((s) => s.setWhereMode);
+  const draftRow = useBrowser((s) => s.draftRow);
+  const beginDraft = useBrowser((s) => s.beginDraft);
+  const cancelDraft = useBrowser((s) => s.cancelDraft);
+  const activeProfileId = useConnections((s) => s.activeProfileId);
+  const enums = useSchema((s) =>
+    activeProfileId ? s.snapshots[activeProfileId]?.enums : undefined,
+  );
+  const canInsert = table.kind === "r";
+
+  const update = (i: number, patch: Partial<Filter>) =>
+    setFilters(filters.map((f, j) => (j === i ? { ...f, ...patch } : f)));
+
+  const compiled = whereMode === "builder" ? compiledWhere(filters, null) : null;
+
+  return (
+    <div className="tb-filters">
+      {whereMode === "builder" ? (
+        filters.map((f, i) => (
+          <FilterRow
+            key={i}
+            f={f}
+            first={i === 0}
+            table={table}
+            enums={enums}
+            onPatch={(patch) => update(i, patch)}
+            onRemove={() => setFilters(filters.filter((_, j) => j !== i))}
+          />
+        ))
+      ) : (
+        <RawWhere />
+      )}
+      {compiled && <WherePreview text={compiled} />}
+      <div className="tb-filter-actions">
+        {canInsert && (
+          <button
+            className={`tb-addrow${draftRow ? " active" : ""}`}
+            title="Add row ⌘⇧I"
+            onClick={() => (draftRow ? cancelDraft() : beginDraft())}
+          >
+            <Plus size={12} /> Add row
+          </button>
+        )}
+        {whereMode === "builder" && (
+          <button
+            className="tb-addfilter"
+            onClick={() => {
+              // seed a type-valid operator — "=" isn't offered for booleans
+              const first = table.columns[0];
+              const isEnum = enumLabelsFor(first?.type ?? "", enums) !== null;
+              const op = opsForType(first?.type ?? "", isEnum)[0] ?? "=";
+              setFilters([
+                ...filters,
+                {
+                  col: first?.name ?? "",
+                  op,
+                  value: op === "IS" || op === "IS NOT" ? "TRUE" : "",
+                  enabled: true,
+                  conj: "AND",
+                },
+              ]);
+            }}
+          >
+            <Plus size={12} /> Filter
+          </button>
+        )}
+        <button
+          className={`tb-rawtoggle${whereMode === "raw" ? " active" : ""}${whereMode === "raw" ? " tb-rawtoggle-right" : ""}`}
+          title={
+            whereMode === "raw"
+              ? "Back to the filter builder"
+              : "Raw WHERE — write the predicate yourself"
+          }
+          onClick={() => setWhereMode(whereMode === "raw" ? "builder" : "raw")}
+        >
+          SQL
+        </button>
+        <SortSelect />
+      </div>
+    </div>
+  );
+}
+
+/** footer: honest row numbers (planner estimate → exact count on demand,
+ * cancellable via the session cancel path) + jump-to-row (⌘L) */
+function BrowseFooter({
+  table,
+  bump,
+  jumpOpen,
+  onJumpOpen,
+  onJumpClose,
+}: {
+  table: { schema: string; name: string };
+  bump: number;
+  jumpOpen: boolean;
+  onJumpOpen: () => void;
+  onJumpClose: () => void;
+}) {
+  const jumpOffset = useBrowser((s) => s.jumpOffset);
+  const exactCount = useBrowser((s) => s.exactCount);
+  const counting = useBrowser((s) => s.counting);
+  const countError = useBrowser((s) => s.countError);
+  const runExactCount = useBrowser((s) => s.runExactCount);
+  const cancelExactCount = useBrowser((s) => s.cancelExactCount);
+  const jumpToRow = useBrowser((s) => s.jumpToRow);
+  const clearJump = useBrowser((s) => s.clearJump);
+  const whereActive = useBrowser((s) =>
+    Boolean(compiledWhere(s.filters, s.whereMode === "raw" ? s.rawWhere : null)),
+  );
+
+  // planner row estimate for the whole table (reltuples — no COUNT scan).
+  // Honest tilde: it's statistics, refreshed by (auto)analyze.
   const activeProfileId = useConnections((s) => s.activeProfileId);
   const [est, setEst] = useState<string | null>(null);
   useEffect(() => {
@@ -161,152 +629,78 @@ function RowEstimate({ table, bump }: { table: { schema: string; name: string };
     };
     // bump = header Refresh clicks — stats move after (auto)analyze
   }, [table.schema, table.name, activeProfileId, bump]);
-  if (!est) return null;
-  return (
-    <span className="tb-rowest" title="Planner estimate (reltuples) — not an exact count">
-      ~{est} rows
-    </span>
-  );
-}
-
-function FilterBar() {
-  const table = useBrowser((s) => s.table)!;
-  const filters = useBrowser((s) => s.filters);
-  const setFilters = useBrowser((s) => s.setFilters);
-  const draftRow = useBrowser((s) => s.draftRow);
-  const beginDraft = useBrowser((s) => s.beginDraft);
-  const cancelDraft = useBrowser((s) => s.cancelDraft);
-  const canInsert = table.kind === "r";
-
-  const update = (i: number, patch: Partial<Filter>) =>
-    setFilters(filters.map((f, j) => (j === i ? { ...f, ...patch } : f)));
 
   return (
-    <div className="tb-filters">
-      {filters.map((f, i) => (
-        <div key={i} className="tb-filter">
-          <input
-            type="checkbox"
-            checked={f.enabled}
-            onChange={(e) => update(i, { enabled: e.target.checked })}
-          />
-          {i === 0 ? (
-            <span className="tb-conj-label">WHERE</span>
-          ) : (
-            <select
-              className="tb-conj"
-              value={f.conj}
-              onChange={(e) => update(i, { conj: e.target.value as "AND" | "OR" })}
-            >
-              <option value="AND">AND</option>
-              <option value="OR">OR</option>
-            </select>
-          )}
-          <select
-            value={f.col}
-            onChange={(e) => {
-              const col = e.target.value;
-              // the new column's type may not support the current operator —
-              // normalize so the row always renders a consistent control set
-              const type = table.columns.find((c) => c.name === col)?.type ?? "";
-              const ops = opsForType(type);
-              let { op, value } = f;
-              if (!ops.includes(op)) {
-                op = ops[0];
-                value = op === "IS" || op === "IS NOT" ? "TRUE" : "";
-              }
-              update(i, { col, op, value });
-            }}
-          >
-            {table.columns.map((c) => (
-              <option key={c.name} value={c.name}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-          <select
-            value={f.op}
-            onChange={(e) => {
-              const op = e.target.value as Filter["op"];
-              // bool ops carry a fixed-choice value — normalize on switch so
-              // the row never renders an inconsistent state
-              const boolOp = op === "IS" || op === "IS NOT";
-              update(i, {
-                op,
-                value: boolOp && !["TRUE", "FALSE", "NULL"].includes(f.value) ? "TRUE" : f.value,
-              });
-            }}
-          >
-            {opsForType(table.columns.find((c) => c.name === f.col)?.type ?? "").map((op) => (
-              <option key={op} value={op}>
-                {op}
-              </option>
-            ))}
-          </select>
-          {(f.op === "IS" || f.op === "IS NOT") && (
-            <select
-              className="tb-boolval"
-              value={["TRUE", "FALSE", "NULL"].includes(f.value) ? f.value : "TRUE"}
-              onChange={(e) => update(i, { value: e.target.value })}
-            >
-              <option value="TRUE">TRUE</option>
-              <option value="FALSE">FALSE</option>
-              <option value="NULL">NULL</option>
-            </select>
-          )}
-          {f.op !== "IS" && f.op !== "IS NOT" && opNeedsValue(f.op) && (
-            <FilterValue
-              value={f.value}
-              placeholder={
-                f.op === "IN" || f.op === "NOT IN"
-                  ? "a, b, c"
-                  : f.op === "raw SQL"
-                    ? "created_at > now() - interval '1 day'"
-                    : "value"
-              }
-              onCommit={(v) => update(i, { value: v })}
-            />
-          )}
-          <button
-            className="icon-btn"
-            onClick={() => setFilters(filters.filter((_, j) => j !== i))}
-          >
-            <X size={12} />
+    <div className="tb-footer">
+      {counting ? (
+        <span className="tbf-count tbf-counting">
+          counting…
+          <button className="tbf-x" title="Cancel count" onClick={cancelExactCount}>
+            <X size={10} />
           </button>
-        </div>
-      ))}
-      <div className="tb-filter-actions">
-        {canInsert && (
-          <button
-            className={`tb-addrow${draftRow ? " active" : ""}`}
-            title="Add row ⌘⇧I"
-            onClick={() => (draftRow ? cancelDraft() : beginDraft())}
-          >
-            <Plus size={12} /> Add row
-          </button>
-        )}
+        </span>
+      ) : exactCount != null ? (
         <button
-          className="tb-addfilter"
-          onClick={() => {
-            // seed a type-valid operator — "=" isn't offered for booleans
-            const first = table.columns[0];
-            const op = opsForType(first?.type ?? "")[0] ?? "=";
-            setFilters([
-              ...filters,
-              {
-                col: first?.name ?? "",
-                op,
-                value: op === "IS" || op === "IS NOT" ? "TRUE" : "",
-                enabled: true,
-                conj: "AND",
-              },
-            ]);
-          }}
+          className="tbf-count tbf-exact"
+          title="Exact count over the current WHERE — click to re-count"
+          onClick={() => void runExactCount()}
         >
-          <Plus size={12} /> Filter
+          {exactCount.toLocaleString()} rows{whereActive ? " (filtered)" : ""}
         </button>
-        <SortSelect />
-      </div>
+      ) : (
+        <button
+          className="tbf-count"
+          title={
+            (est
+              ? "Planner estimate (reltuples) for the whole table — not exact."
+              : "No estimate available.") +
+            " Click to run SELECT count(*)" +
+            (whereActive ? " over the current WHERE." : ".")
+          }
+          onClick={() => void runExactCount()}
+        >
+          {est ? `≈ ${est} rows${whereActive ? " in table" : ""}` : "count rows"}
+        </button>
+      )}
+      {countError && (
+        <span className="tbf-counterr" title={countError}>
+          count failed — {countError.length > 60 ? `${countError.slice(0, 60)}…` : countError}
+        </span>
+      )}
+      <span className="tbf-spacer" />
+      {jumpOffset > 0 && (
+        <span
+          className="tbf-jumpchip"
+          title="The result starts at this row (⌘L jump) — × returns to the top"
+        >
+          from row {(jumpOffset + 1).toLocaleString()}
+          <button className="tbf-x" onClick={clearJump}>
+            <X size={10} />
+          </button>
+        </span>
+      )}
+      {jumpOpen ? (
+        <input
+          className="tbf-jumpinput"
+          autoFocus
+          type="number"
+          min={1}
+          placeholder="row #"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              const n = parseInt((e.target as HTMLInputElement).value, 10);
+              if (Number.isFinite(n) && n >= 1) jumpToRow(n - 1);
+              onJumpClose();
+            }
+            if (e.key === "Escape") onJumpClose();
+          }}
+          onBlur={onJumpClose}
+        />
+      ) : (
+        <button className="tbf-jumpbtn" title="Jump to row ⌘L" onClick={onJumpOpen}>
+          Go to row
+        </button>
+      )}
     </div>
   );
 }
@@ -323,8 +717,8 @@ function fuzzy(needle: string, hay: string): boolean {
 
 function SortSelect() {
   const table = useBrowser((s) => s.table)!;
-  const sort = useBrowser((s) => s.sort);
-  const setSort = useBrowser((s) => s.setSort);
+  const sortChain = useBrowser((s) => s.sortChain);
+  const setSortChain = useBrowser((s) => s.setSortChain);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
 
@@ -344,30 +738,60 @@ function SortSelect() {
   const quickM = match(quick);
   const restM = match(rest);
 
-  // click = sort ASC; click the active column again = flip direction
-  const pick = (col: string) => {
-    if (sort?.col === col) {
-      setSort({ col, dir: sort.dir === "ASC" ? "DESC" : "ASC" });
+  // click = single-column sort (replace the chain; clicking the sole active
+  // column flips its direction — the pre-chain behavior); ⇧click = append
+  // the column as a tiebreaker (or flip it where it already sits)
+  const pick = (col: string, additive: boolean) => {
+    const idx = sortChain.findIndex((k) => k.column === col);
+    if (additive && sortChain.length > 0) {
+      if (idx >= 0) {
+        setSortChain(
+          sortChain.map((k, i) =>
+            i === idx ? { ...k, dir: k.dir === "asc" ? "desc" : "asc" } : k,
+          ),
+        );
+      } else {
+        setSortChain([...sortChain, { column: col, dir: "asc" }]);
+      }
+    } else if (idx === 0 && sortChain.length === 1) {
+      setSortChain([{ ...sortChain[0], dir: sortChain[0].dir === "asc" ? "desc" : "asc" }]);
     } else {
-      setSort({ col, dir: "ASC" });
+      setSortChain([{ column: col, dir: "asc" }]);
     }
   };
 
-  const row = (c: (typeof table.columns)[number]) => (
-    <div
-      key={c.name}
-      className={`tbs-row${sort?.col === c.name ? " active" : ""}`}
-      onClick={() => pick(c.name)}
-    >
-      <span className="tbs-name">{c.name}</span>
-      {sort?.col === c.name && <span>{sort.dir === "ASC" ? "↑" : "↓"}</span>}
-    </div>
-  );
+  const chainIdx = (name: string) => sortChain.findIndex((k) => k.column === name);
+
+  const row = (c: (typeof table.columns)[number]) => {
+    const ci = chainIdx(c.name);
+    return (
+      <div
+        key={c.name}
+        className={`tbs-row${ci >= 0 ? " active" : ""}`}
+        onClick={(e) => pick(c.name, e.shiftKey)}
+      >
+        <span className="tbs-name">{c.name}</span>
+        {ci >= 0 && (
+          <span>
+            {sortChain.length > 1 && <span className="tbs-pos">{ci + 1} </span>}
+            {sortChain[ci].dir === "asc" ? "↑" : "↓"}
+          </span>
+        )}
+      </div>
+    );
+  };
+
+  const label =
+    sortChain.length === 0
+      ? "Sort"
+      : `${sortChain[0].column} ${sortChain[0].dir === "asc" ? "↑" : "↓"}${
+          sortChain.length > 1 ? ` +${sortChain.length - 1}` : ""
+        }`;
 
   return (
     <div className="tbs-wrap">
       <button className="tb-sort-btn" onClick={() => setOpen(!open)}>
-        {sort ? `${sort.col} ${sort.dir === "ASC" ? "↑" : "↓"}` : "Sort"}
+        {label}
       </button>
       {open && <div className="tbs-backdrop" onMouseDown={() => setOpen(false)} />}
       {open && (
@@ -382,18 +806,90 @@ function SortSelect() {
                 if (e.key === "Enter") {
                   const first = quickM[0] ?? restM[0];
                   if (first) {
-                    pick(first.name);
-                    setOpen(false);
+                    pick(first.name, e.shiftKey);
+                    if (!e.shiftKey) setOpen(false);
                   }
                 }
               }}
             />
+            {sortChain.length > 0 && (
+              <div className="tbs-chain">
+                {sortChain.map((k, i) => {
+                  // a NULLS override on a catalog-NOT NULL key is semantically
+                  // inert but emits a non-default NULLS clause that demolishes
+                  // the plan (Index Scan → Seq Scan + full Sort per page) —
+                  // gate the affordance; a stale override (column altered
+                  // after it was set) stays clickable so it can be cleared
+                  const notNull =
+                    table.columns.find((c) => c.name === k.column)?.not_null === true;
+                  const gated = notNull && !k.nulls;
+                  return (
+                    <div key={k.column} className="tbs-chainrow">
+                      <span className="tbs-pos">{i + 1}</span>
+                      <span className="tbs-name">{k.column}</span>
+                      <button
+                        className="tbs-mini"
+                        title="Flip direction"
+                        onClick={() =>
+                          setSortChain(
+                            sortChain.map((x, j) =>
+                              j === i ? { ...x, dir: x.dir === "asc" ? "desc" : "asc" } : x,
+                            ),
+                          )
+                        }
+                      >
+                        {k.dir === "asc" ? "↑" : "↓"}
+                      </button>
+                      <button
+                        className={`tbs-mini tbs-nulls${gated ? " tbs-nulls-off" : ""}`}
+                        aria-disabled={gated}
+                        title={
+                          notNull
+                            ? k.nulls
+                              ? `${k.column} is NOT NULL — this NULLS override does nothing but wreck the query plan. Click to clear.`
+                              : `${k.column} is NOT NULL — there are no NULLs to place (an override would only wreck the query plan)`
+                            : "NULLS placement — auto follows the direction (ASC ⇒ last, DESC ⇒ first)"
+                        }
+                        onClick={() => {
+                          if (gated) return;
+                          setSortChain(
+                            sortChain.map((x, j) =>
+                              j === i
+                                ? {
+                                    ...x,
+                                    nulls: notNull
+                                      ? undefined
+                                      : x.nulls === "first"
+                                        ? ("last" as const)
+                                        : x.nulls === "last"
+                                          ? undefined
+                                          : ("first" as const),
+                                  }
+                                : x,
+                            ),
+                          );
+                        }}
+                      >
+                        {gated ? "∅ —" : k.nulls ? `∅ ${k.nulls}` : "∅ auto"}
+                      </button>
+                      <button
+                        className="tbs-mini"
+                        title="Remove sort key"
+                        onClick={() => setSortChain(sortChain.filter((_, j) => j !== i))}
+                      >
+                        <X size={10} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             <div className="tbs-list">
-              {sort && (
+              {sortChain.length > 0 && (
                 <div
                   className="tbs-row tbs-clear"
                   onClick={() => {
-                    setSort(null);
+                    setSortChain([]);
                     setOpen(false);
                   }}
                 >
@@ -406,6 +902,7 @@ function SortSelect() {
               {restM.length > 0 && <div className="tbs-group">All columns</div>}
               {restM.map(row)}
             </div>
+            <div className="tbs-hint">⇧ click adds a tiebreaker</div>
           </motion.div>
       )}
     </div>

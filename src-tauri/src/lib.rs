@@ -266,6 +266,7 @@ pub fn run() {
             commands::introspect,
             commands::schema_cache_get,
             commands::table_ddl,
+            commands::table_stats,
             commands::editability,
             commands::edits_preview,
             commands::edits_apply,

@@ -220,6 +220,8 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
     });
     await ipc.profileDelete(id);
     await get().loadProfiles();
+    // SchemaTree's persisted table pins die with the profile too
+    localStorage.removeItem(`qwry.pins.${id}`);
     // its workspace dies with it (pinned tabs survive as orphans)
     void import("./tabs").then(({ useTabs }) => useTabs.getState().purgeProfileTabs(id));
   },

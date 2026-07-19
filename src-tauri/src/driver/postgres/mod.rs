@@ -10,6 +10,7 @@ pub mod edit;
 mod execute;
 pub mod introspect;
 mod splitter;
+pub mod stats;
 mod tls;
 
 pub struct PgSession {

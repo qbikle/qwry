@@ -78,6 +78,126 @@
 .tree-icon.view {
   color: var(--accent);
 }
+/* distinct relkind glyphs — matview/partitioned/foreign read at a glance */
+.tree-icon.matview {
+  color: var(--syn-type);
+}
+.tree-icon.partitioned {
+  color: var(--syn-number);
+}
+.tree-icon.foreign {
+  color: var(--syn-prop);
+}
+
+/* partitions nested under their parent */
+.tree-table.nested {
+  padding-left: 34px;
+}
+.tree-parts {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: var(--row-y-dense) 4px var(--row-y-dense) 34px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.tree-parts:hover {
+  background: var(--bg-hover);
+  color: var(--fg-muted);
+}
+
+/* pinned strip at the top of the tree */
+.tree-pin-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.tree-pin-glyph {
+  color: var(--warn);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.tree-pin-header .tree-pin-glyph {
+  margin-left: 0;
+}
+.tree-pin-header .tree-count {
+  margin-left: auto;
+}
+
+/* per-schema object sections (Functions / Sequences / Enums / Extensions) */
+.tree-section {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: var(--row-y-dense) 4px var(--row-y-dense) 18px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+.tree-section:hover {
+  background: var(--bg-hover);
+  color: var(--fg-muted);
+}
+.tree-section.top {
+  padding-left: 4px;
+  color: var(--fg-muted);
+}
+
+/* leaf rows for functions/sequences/enums/extensions */
+.tree-obj {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--row-y-dense) 8px var(--row-y-dense) 34px;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.tree-obj:hover {
+  background: var(--bg-panel);
+}
+.tree-obj.ext {
+  padding-left: 18px;
+}
+.tree-obj-icon {
+  flex-shrink: 0;
+  color: var(--fg-faint);
+}
+.tree-obj-icon.func {
+  color: var(--syn-keyword);
+}
+.tree-obj-icon.seq {
+  color: var(--syn-number);
+}
+.tree-obj-icon.enum {
+  color: var(--syn-string);
+}
+.tree-obj-icon.ext {
+  color: var(--syn-operator);
+}
+.tree-obj-name {
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-obj-detail {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--fg-faint);
+  flex-shrink: 0;
+}
 
 .tree-name {
   overflow: hidden;

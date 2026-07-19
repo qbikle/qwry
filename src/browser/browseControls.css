@@ -1,0 +1,295 @@
+/* v0.8 browse controls: filter power (segmented bool, BETWEEN, date pickers),
+   raw-WHERE escape hatch + compiled-WHERE preview, footer (exact count +
+   jump-to-row), sort-chain popover. Kept out of browser.css deliberately. */
+
+/* -- type-aware value editors ------------------------------------------- */
+
+.tb-seg {
+  display: inline-flex;
+  gap: 2px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+}
+.tb-seg button {
+  padding: 1px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+}
+.tb-seg button.active {
+  background: var(--bg-active);
+  color: var(--fg);
+}
+
+.tb-between-and {
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+}
+
+.tb-dateval {
+  flex: 0 0 auto;
+  max-width: 200px;
+}
+
+.tb-datemode {
+  padding: 3px 6px;
+  background: none;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--fg-faint);
+  cursor: pointer;
+  font-size: var(--text-2xs);
+}
+.tb-datemode:hover {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+
+.tb-enumval {
+  max-width: 320px;
+}
+
+/* -- raw WHERE + compiled preview --------------------------------------- */
+
+.tb-rawwhere {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+}
+.tb-rawwhere .tb-conj-label {
+  padding-top: 5px;
+}
+.tb-rawwhere textarea {
+  flex: 1;
+  resize: vertical;
+  min-height: 40px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: var(--text-sm);
+  font-family: var(--font-mono);
+  color: var(--fg);
+  outline: none;
+  user-select: text;
+}
+.tb-rawwhere textarea:focus {
+  border-color: var(--accent);
+}
+
+.tb-rawtoggle {
+  padding: 3px 10px;
+  background: none;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+}
+.tb-rawtoggle:hover {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+.tb-rawtoggle.active {
+  background: var(--accent-soft);
+  border-style: solid;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.tb-rawtoggle-right {
+  margin-left: auto;
+}
+
+.tb-wherepreview {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  padding: 2px 6px 2px 34px;
+  cursor: copy;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.tb-wherepreview:hover .tb-wheresql {
+  color: var(--fg);
+}
+.tb-wherekw {
+  color: var(--fg-faint);
+  font-size: var(--text-2xs);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+.tb-wheresql {
+  color: var(--fg-muted);
+  font-size: var(--text-2xs);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: text;
+}
+.tb-wherecopied {
+  color: var(--accent);
+  font-size: var(--text-2xs);
+  flex: 0 0 auto;
+}
+
+/* -- footer: count + jump ------------------------------------------------ */
+
+.tb-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 3px var(--sp-3);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-2xs);
+  font-family: var(--font-mono);
+  color: var(--fg-faint);
+}
+.tbf-spacer {
+  flex: 1;
+}
+
+.tbf-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--fg-faint);
+  cursor: pointer;
+  font-size: var(--text-2xs);
+  font-family: var(--font-mono);
+}
+.tbf-count:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+.tbf-exact {
+  color: var(--fg-muted);
+}
+.tbf-counting {
+  cursor: default;
+}
+
+.tbf-counterr {
+  color: var(--danger);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tbf-x {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px;
+  background: none;
+  border: none;
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+.tbf-x:hover {
+  color: var(--danger);
+}
+
+.tbf-jumpchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+}
+
+.tbf-jumpbtn {
+  padding: 1px 8px;
+  background: none;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--fg-faint);
+  cursor: pointer;
+  font-size: var(--text-2xs);
+  font-family: var(--font-mono);
+}
+.tbf-jumpbtn:hover {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+
+.tbf-jumpinput {
+  width: 90px;
+  background: var(--bg-raised);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+  font-size: var(--text-2xs);
+  font-family: var(--font-mono);
+  outline: none;
+  user-select: text;
+}
+
+/* -- sort-chain popover --------------------------------------------------- */
+
+.tbs-chain {
+  border-bottom: 1px solid var(--border);
+  padding: var(--sp-1);
+}
+.tbs-chainrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+.tbs-chainrow .tbs-name {
+  flex: 1;
+}
+.tbs-pos {
+  color: var(--fg-faint);
+  font-size: var(--text-2xs);
+}
+.tbs-mini {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: var(--text-2xs);
+  font-family: var(--font-mono);
+}
+.tbs-mini:hover {
+  color: var(--fg);
+  border-color: var(--border-strong);
+}
+.tbs-nulls {
+  min-width: 56px;
+  justify-content: center;
+}
+.tbs-nulls-off {
+  opacity: 0.45;
+  cursor: default;
+}
+.tbs-nulls-off:hover {
+  color: var(--fg-muted);
+  border-color: var(--border);
+}
+.tbs-hint {
+  padding: 4px 10px 6px;
+  border-top: 1px solid var(--border);
+  color: var(--fg-faint);
+  font-size: var(--text-2xs);
+  user-select: none;
+}
