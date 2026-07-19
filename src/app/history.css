@@ -1,0 +1,105 @@
+/* ---- history panel v0.8.1 additions (base styles live in app.css) ---- */
+
+/* filter chips: per-connection + status */
+.history-chips {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.history-chips::-webkit-scrollbar {
+  display: none;
+}
+.history-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--text-2xs);
+  cursor: pointer;
+  max-width: 140px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.history-chip.on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.history-chip-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.history-chips-sep {
+  flex-shrink: 0;
+  width: 1px;
+  height: 14px;
+  background: var(--border-strong);
+  margin: 0 3px;
+}
+
+/* day dividers */
+.history-day {
+  padding: 8px 8px 3px;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  color: var(--fg-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+/* grouped consecutive runs */
+.history-sqlline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.history-sqlline .history-sql {
+  flex: 1;
+  min-width: 0;
+}
+.history-xn {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--radius-pill);
+  padding: 0 7px;
+  line-height: 1.6;
+  cursor: pointer;
+}
+.history-xn.open {
+  background: var(--bg-active);
+  color: var(--fg-muted);
+}
+.history-xn.has-err {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+/* expanded members: indented under their group head, meta only */
+.history-row.member {
+  width: calc(100% - 16px);
+  margin-left: 16px;
+  border-left: 2px solid var(--border);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.history-when {
+  cursor: help;
+}

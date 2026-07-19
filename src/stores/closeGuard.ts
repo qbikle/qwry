@@ -1,12 +1,13 @@
 import { create } from "zustand";
-import { useTabs } from "./tabs";
+import { fileDrifted, useTabs } from "./tabs";
 import { useEdits } from "./edits";
 import { useBrowser } from "./browser";
 
 interface CloseGuardState {
   /** tab id awaiting a discard/commit decision; null = no prompt showing */
   pending: string | null;
-  /** close a tab — prompts first if it has uncommitted cell edits */
+  /** close a tab — prompts first if it has uncommitted cell edits or unsaved
+   * drift against its backing .sql file */
   request: (tabId: string) => void;
   cancel: () => void;
   discard: () => void;
@@ -20,11 +21,18 @@ const pendingCount = (tabId: string) => {
   return edits + (draft && Object.keys(draft).length > 0 ? 1 : 0);
 };
 
+/** buffer differs from the tab's file on disk — the prompt is about DISK
+ * drift only (the text itself persists in the app db) */
+export const tabFileDrifted = (tabId: string): boolean => {
+  const t = useTabs.getState().tabs.find((x) => x.id === tabId);
+  return !!t && fileDrifted(t);
+};
+
 export const useCloseGuard = create<CloseGuardState>((set) => ({
   pending: null,
 
   request: (tabId) => {
-    if (pendingCount(tabId) > 0) set({ pending: tabId });
+    if (pendingCount(tabId) > 0 || tabFileDrifted(tabId)) set({ pending: tabId });
     else useTabs.getState().closeTab(tabId);
   },
 

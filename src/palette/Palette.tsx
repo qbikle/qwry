@@ -21,6 +21,7 @@ import {
   Wand2,
   X,
 } from "lucide-react";
+import { editorTimeTraveling } from "../editor/SqlEditor";
 import { confirmTxRollback, useConnections } from "../stores/connections";
 import { useResults } from "../stores/results";
 import { useSchema } from "../stores/schema";
@@ -123,7 +124,15 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
           <Command.Empty>No results</Command.Empty>
 
           <Command.Group heading="Actions">
-            <Command.Item onSelect={() => { void useResults.getState().run(); close(); }}>
+            <Command.Item
+              onSelect={() => {
+                // while the editor shows a time-machine snapshot the store sql
+                // is the INVISIBLE parked draft — running it here would bypass
+                // the editor's own gate
+                if (!editorTimeTraveling.current) void useResults.getState().run();
+                close();
+              }}
+            >
               <Play size={13} /> Run query <kbd>⌘↵</kbd>
             </Command.Item>
             <Command.Item onSelect={() => { useTabs.getState().newTab(); close(); }}>

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { bufferSnapshotsClear, fileStat, readTextFile, writeTextFile } from "../ipc/commands";
 import { useConnections } from "./connections";
 import type { TableInfo } from "./schema";
 
@@ -18,6 +19,15 @@ export interface Tab {
    * workspaces — visible under every connection until first edited under one
    * (adopt-on-touch), so no pre-existing tab ever silently disappears. */
   profile_id: string | null;
+  /** backing .sql file on disk — SESSION-ONLY: the appdb tabs table has no
+   * column for it (tabs_save strips to the appdb fields), so a restart drops
+   * the link but never the text */
+  file_path?: string;
+  /** exact text last read from / written to file_path — dirty dot = drift */
+  file_saved_sql?: string;
+  /** file mtime at open/last save — ⌘⇧S compares before overwriting so an
+   * external edit is never silently clobbered (session-only, like file_path) */
+  file_mtime_ms?: number;
 }
 
 interface ClosedTab {
@@ -27,6 +37,9 @@ interface ClosedTab {
   kind: Tab["kind"];
   table: TableInfo | null;
   profile_id: string | null;
+  file_path?: string;
+  file_saved_sql?: string;
+  file_mtime_ms?: number;
 }
 
 interface TabsState {
@@ -42,6 +55,9 @@ interface TabsState {
   newTab: (sql?: string, name?: string, savedId?: string | null) => void;
   /** open (or focus) a data-browser tab for a table; returns the tab id */
   openTableTab: (table: TableInfo) => string;
+  /** open (or focus) a query tab backed by a .sql file on disk; mtimeMs
+   * stamps the save-conflict baseline (undefined = stat unavailable) */
+  openFileTab: (path: string, contents: string, mtimeMs?: number) => string;
   closeTab: (id: string) => void;
   select: (id: string) => void;
   /** drag-reorder: move VISIBLE index `from` to sit at VISIBLE boundary `to` */
@@ -178,19 +194,53 @@ const asClosed = (t: Tab): ClosedTab => ({
   kind: t.kind,
   table: t.table,
   profile_id: t.profile_id,
+  file_path: t.file_path,
+  file_saved_sql: t.file_saved_sql,
+  file_mtime_ms: t.file_mtime_ms,
 });
 
-/** one aggregate prompt when bulk-closing tabs that hold uncommitted edits */
+/** a file-backed tab whose buffer drifted from its on-disk copy — closing it
+ * is honest about DISK only (the text itself persists in the app db) */
+export function fileDrifted(t: Tab): boolean {
+  return t.file_path != null && t.sql !== t.file_saved_sql;
+}
+
+/** one aggregate prompt when bulk-closing tabs that hold uncommitted cell
+ * edits or unsaved file drift */
 async function confirmBulkClose(ids: string[]): Promise<boolean> {
   const { useEdits } = await import("./edits");
   const byTab = useEdits.getState().byTab;
   const dirty = ids.filter((id) => Object.keys(byTab[id]?.pending ?? {}).length > 0).length;
-  if (dirty === 0) return true;
+  const tabs = useTabs.getState().tabs;
+  const drifted = ids.filter((id) => {
+    const t = tabs.find((x) => x.id === id);
+    return !!t && fileDrifted(t);
+  }).length;
+  if (dirty === 0 && drifted === 0) return true;
   const { confirmDanger } = await import("./danger");
+  const detail = [
+    dirty > 0
+      ? `Staged cell edits in ${dirty} tab${dirty === 1 ? "" : "s"} will be discarded.`
+      : null,
+    drifted > 0
+      ? `${drifted} file-backed tab${drifted === 1 ? " has" : "s have"} changes not written to ${
+          drifted === 1 ? "its" : "their"
+        } .sql file on disk (the text stays in qwry, the file keeps its old version).`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const n = new Set([
+    ...ids.filter((id) => Object.keys(byTab[id]?.pending ?? {}).length > 0),
+    ...ids.filter((id) => {
+      const t = tabs.find((x) => x.id === id);
+      return !!t && fileDrifted(t);
+    }),
+  ]).size;
   return confirmDanger(
-    `Close ${dirty} tab${dirty === 1 ? "" : "s"} with uncommitted edits?`,
-    "Staged cell edits in the closing tabs will be discarded.",
-    "Discard & close",
+    `Close ${n} tab${n === 1 ? "" : "s"} with unsaved changes?`,
+    detail,
+    dirty > 0 ? "Discard & close" : "Close anyway",
   );
 }
 
@@ -257,6 +307,66 @@ export const useTabs = create<TabsState>((set, get) => ({
     persist();
   },
 
+  openFileTab: (path, contents, mtimeMs) => {
+    const { tabs, pinned } = get();
+    // the same file twice focuses the existing tab — never a duplicate.
+    // Scoped to the VISIBLE strip: a foreign workspace's tab must not be
+    // focused invisibly (reopening there gets its own tab instead).
+    const existing = visibleTabs(tabs, pinned, activePid()).find((t) => t.file_path === path);
+    if (existing) {
+      const clean = existing.sql === existing.file_saved_sql;
+      const diskChanged = contents !== existing.file_saved_sql;
+      if (clean && diskChanged) {
+        // the tab tracks its file faithfully — adopt the fresh disk contents
+        // instead of silently discarding the re-read
+        set((s) => ({
+          tabs: s.tabs.map((t) =>
+            t.id === existing.id
+              ? { ...t, sql: contents, file_saved_sql: contents, file_mtime_ms: mtimeMs }
+              : t,
+          ),
+        }));
+        persist();
+      } else if (clean) {
+        // contents unchanged — just refresh the save-conflict baseline
+        set((s) => ({
+          tabs: s.tabs.map((t) =>
+            t.id === existing.id ? { ...t, file_mtime_ms: mtimeMs ?? t.file_mtime_ms } : t,
+          ),
+        }));
+      }
+      get().select(existing.id);
+      editorFocusSignal.current = true;
+      if (!clean && diskChanged) {
+        // dirty tab + changed file: keep the buffer AND the old baseline (so
+        // ⌘⇧S still prompts before clobbering the newer disk version) — but
+        // say so instead of silently discarding the read
+        void import("./danger").then(({ confirmDanger }) =>
+          confirmDanger(
+            "File changed on disk",
+            `${path}\n\nThe tab keeps your unsaved version — the newer disk contents were not loaded. ⌘⇧S will ask before overwriting them.`,
+            "OK",
+          ),
+        );
+      }
+      return existing.id;
+    }
+    const t: Tab = {
+      ...blank(tabs.length + 1, activePid()),
+      sql: contents,
+      name: path.split("/").pop() || "file.sql",
+      file_path: path,
+      file_saved_sql: contents,
+      file_mtime_ms: mtimeMs,
+    };
+    set({ tabs: [...tabs, t], activeId: t.id });
+    rememberActive(activePid(), t.id);
+    useConnections.getState().setSql(contents);
+    editorFocusSignal.current = true;
+    persist();
+    return t.id;
+  },
+
   openTableTab: (table) => {
     const { tabs } = get();
     const id = crypto.randomUUID();
@@ -280,6 +390,8 @@ export const useTabs = create<TabsState>((set, get) => ({
     const { tabs, activeId, closedStack, pinned } = get();
     // drop the closed tab's dedicated DB session(s)
     useConnections.getState().closeTabSessions(id);
+    // the tab's buffer time-machine dies with it (a ⌘⇧T restore gets a NEW id)
+    void bufferSnapshotsClear(id).catch(() => {});
     const closing = tabs.find((t) => t.id === id);
     const remember =
       closing && (closing.sql.trim() !== "" || closing.kind === "table")
@@ -389,7 +501,10 @@ export const useTabs = create<TabsState>((set, get) => ({
       const closing = visibleTabs(tabs, pinned, pid).filter((t) => !pinned.has(t.id));
       if (closing.length === 0) return;
       if (!(await confirmBulkClose(closing.map((t) => t.id)))) return;
-      closing.forEach((t) => useConnections.getState().closeTabSessions(t.id));
+      closing.forEach((t) => {
+        useConnections.getState().closeTabSessions(t.id);
+        void bufferSnapshotsClear(t.id).catch(() => {});
+      });
       const closingIds = new Set(closing.map((t) => t.id));
       const remember = [
         ...closing.filter((t) => t.sql.trim() !== "" || t.kind === "table").map(asClosed),
@@ -463,6 +578,22 @@ export const useTabs = create<TabsState>((set, get) => ({
       // ⌘⇧T means "bring it back HERE" — newTab stamps the current profile;
       // the saved-query link survives so the restored tab still syncs
       get().newTab(top.sql, top.name, top.saved_id);
+      // a file-backed tab keeps its disk link (and dirty state) through ⌘⇧T
+      if (top.file_path) {
+        const id = get().activeId;
+        set((s) => ({
+          tabs: s.tabs.map((t) =>
+            t.id === id
+              ? {
+                  ...t,
+                  file_path: top.file_path,
+                  file_saved_sql: top.file_saved_sql,
+                  file_mtime_ms: top.file_mtime_ms,
+                }
+              : t,
+          ),
+        }));
+      }
     }
   },
 
@@ -532,6 +663,119 @@ useConnections.subscribe((s, prev) => {
   if (s.activeProfileId === prev.activeProfileId) return;
   ensureActiveVisible();
 });
+
+// ---------------------------------------------------------------------------
+// .sql files on disk — File ▸ Open… ⌘O / File ▸ Save ⌘⇧S / window drops
+
+const MB = 1024 * 1024;
+const OPEN_CONFIRM_BYTES = 8 * MB;
+const OPEN_REFUSE_BYTES = 64 * MB;
+const fmtMb = (bytes: number) => `${(bytes / MB).toFixed(1)} MB`;
+
+export async function openFilePaths(paths: string[]): Promise<void> {
+  for (const path of paths) {
+    try {
+      // stat before read: gate huge files instead of freezing the editor
+      // (stat failure falls through — the read itself reports real errors)
+      const stat = await fileStat(path).catch(() => null);
+      if (stat && stat.size > OPEN_REFUSE_BYTES) {
+        const { confirmDanger } = await import("./danger");
+        await confirmDanger(
+          "File too large",
+          `${path}\nis ${fmtMb(stat.size)} — qwry can't open files over 64 MB.`,
+          "OK",
+        );
+        continue;
+      }
+      if (stat && stat.size > OPEN_CONFIRM_BYTES) {
+        const { confirmDanger } = await import("./danger");
+        const ok = await confirmDanger(
+          "Large file",
+          `${path}\nis ${fmtMb(stat.size)} — the editor may be slow. Open anyway?`,
+          "Open",
+        );
+        if (!ok) continue;
+      }
+      const contents = await readTextFile(path);
+      useTabs.getState().openFileTab(path, contents, stat?.mtime_ms);
+    } catch (e) {
+      console.error("open file failed", path, e);
+      const { confirmDanger } = await import("./danger");
+      await confirmDanger("Couldn't open file", `${path}\n${String(e)}`, "OK");
+    }
+  }
+}
+
+export async function openSqlFileDialog(): Promise<void> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const sel = await open({
+    multiple: true,
+    filters: [{ name: "SQL", extensions: ["sql", "txt"] }],
+  });
+  if (!sel) return;
+  await openFilePaths(Array.isArray(sel) ? sel : [sel]);
+}
+
+/** write the active query tab to its remembered path, or ask for one. The
+ * first save adopts the chosen filename as the tab name. */
+export async function saveActiveToFile(): Promise<void> {
+  const { tabs, activeId } = useTabs.getState();
+  const tab = tabs.find((t) => t.id === activeId);
+  if (!tab || tab.kind !== "query") return;
+  let path = tab.file_path ?? null;
+  const firstSave = !path;
+  if (!path) {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    path = await save({
+      defaultPath: /\.sql$/i.test(tab.name) ? tab.name : `${tab.name}.sql`,
+      filters: [{ name: "SQL", extensions: ["sql"] }],
+    });
+    if (!path) return;
+  }
+  const dest = path; // settled (closure below must see `string`, not `string|null`)
+  // the store text is kept in sync with the editor per keystroke, so this IS
+  // the buffer (no editor round trip needed)
+  const sql = tab.sql;
+  // conflict check: the file moved on disk since we opened/last saved it —
+  // never silently clobber an external edit (no baseline stamp = no check)
+  if (!firstSave && tab.file_mtime_ms != null) {
+    const stat = await fileStat(dest).catch(() => null);
+    if (stat && stat.mtime_ms !== tab.file_mtime_ms) {
+      const { confirmDanger } = await import("./danger");
+      const ok = await confirmDanger(
+        "File changed on disk",
+        `${dest}\nchanged on disk since you opened it — overwrite the newer version?`,
+        "Overwrite",
+      );
+      if (!ok) return;
+    }
+  }
+  try {
+    await writeTextFile(dest, sql);
+  } catch (e) {
+    console.error("save file failed", dest, e);
+    const { confirmDanger } = await import("./danger");
+    await confirmDanger("Couldn't save file", `${dest}\n${String(e)}`, "OK");
+    return;
+  }
+  // re-stat AFTER the write — the fresh mtime is the new conflict baseline
+  const written = await fileStat(dest).catch(() => null);
+  const name = firstSave ? dest.split("/").pop() || tab.name : tab.name;
+  useTabs.setState((s) => ({
+    tabs: s.tabs.map((t) =>
+      t.id === tab.id
+        ? {
+            ...t,
+            file_path: dest,
+            file_saved_sql: sql,
+            file_mtime_ms: written?.mtime_ms,
+            name,
+          }
+        : t,
+    ),
+  }));
+  if (firstSave) persist(); // the rename is appdb-visible; file fields aren't
+}
 
 // editor text changes flow into the active tab (and debounce to disk).
 // This is also the ADOPTION point: a legacy tab (profile_id null) edited

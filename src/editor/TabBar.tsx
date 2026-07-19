@@ -43,8 +43,17 @@ export function TabBar() {
   };
   const savedQueries = useSaved((s) => s.queries);
   // bookmarked tab whose buffer drifted from the saved copy → dirty dot
-  const isDirty = (t: { saved_id: string | null; sql: string }) =>
+  const savedDirty = (t: { saved_id: string | null; sql: string }) =>
     !!t.saved_id && savedQueries.some((q) => q.id === t.saved_id && q.sql !== t.sql);
+  // file-backed tab whose buffer drifted from the on-disk copy → same dot
+  const fileDirty = (t: { file_path?: string; file_saved_sql?: string; sql: string }) =>
+    t.file_path != null && t.sql !== t.file_saved_sql;
+  const isDirty = (t: {
+    saved_id: string | null;
+    sql: string;
+    file_path?: string;
+    file_saved_sql?: string;
+  }) => savedDirty(t) || fileDirty(t);
   const activeProfileId = useConnections((s) => s.activeProfileId);
   const txTabs = useConnections((s) => s.txTabs);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -233,9 +242,11 @@ export function TabBar() {
           <button
             className={`tab-close${isDirty(t) ? " dirty" : ""}`}
             title={
-              isDirty(t)
-                ? "Buffer differs from the saved query — ⌘S updates it · click to close"
-                : "Close ⌘W"
+              fileDirty(t)
+                ? "Buffer differs from the file on disk — ⌘⇧S saves it · click to close"
+                : savedDirty(t)
+                  ? "Buffer differs from the saved query — ⌘S updates it · click to close"
+                  : "Close ⌘W"
             }
             onClick={(e) => {
               e.stopPropagation();

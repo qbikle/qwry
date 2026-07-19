@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { menuIn } from "../design/springs";
-import { Plus, RefreshCw, X } from "lucide-react";
+import { FileUp, Plus, RefreshCw, X } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import {
   compiledWhere,
@@ -19,6 +19,7 @@ import { useTabs } from "../stores/tabs";
 import { useCloseGuard } from "../stores/closeGuard";
 import { nearEndHook } from "../grid/Grid";
 import { ResultsPane } from "../grid/ResultsPane";
+import { ImportWizard } from "../import/ImportWizard";
 import { StructureTab, structureRefresh } from "./StructureTab";
 import { DdlTab, ddlRefresh } from "./DdlTab";
 import "./browser.css";
@@ -42,6 +43,7 @@ export function TableBrowser() {
   const running = useResults((s) => s.running);
   const [estBump, setEstBump] = useState(0);
   const [jumpOpen, setJumpOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   // ⌘L — jump to row (data tab only; the footer input takes it from there)
   useEffect(() => {
@@ -82,6 +84,15 @@ export function TableBrowser() {
             Structure
           </button>
         </div>
+        {(table.kind === "r" || table.kind === "p") && (
+          <button
+            className="icon-btn"
+            title="Import CSV…"
+            onClick={() => setImportOpen(true)}
+          >
+            <FileUp size={13} />
+          </button>
+        )}
         <button
           className="icon-btn"
           title="Refresh"
@@ -132,6 +143,7 @@ export function TableBrowser() {
       ) : (
         <StructureTab table={table} />
       )}
+      {importOpen && <ImportWizard table={table} onClose={() => setImportOpen(false)} />}
     </div>
   );
 }

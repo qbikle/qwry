@@ -192,22 +192,28 @@
 
 ## v0.8.1-timeline — never lose work, applied to data
 
-- [ ] Inverse-SQL undo after commit: capture OLD values in the commit tx, persist
+- [x] Inverse-SQL undo after commit: capture OLD values in the commit tx, persist
       revert script, toast offers Undo (leapfrog #3 — no client has it). Undo
       re-enters the verified-batch pipeline (a stale undo rolls back honestly).
-- [ ] Buffer time-machine: step the editor back through executed versions of THIS
+- [x] Buffer time-machine: step the editor back through executed versions of THIS
       tab (leapfrog #11).
-- [ ] History panel upgrade: dedupe/grouping, timestamps visible, per-connection
+- [x] History panel upgrade: dedupe/grouping, timestamps visible, per-connection
       filter chips (GAPS §3 persistence).
-- [ ] .sql file open/save/drop onto window (GAPS §3 editor).
-- [ ] In-editor history stepping ⌥↑/⌥↓ (psql muscle memory) (GAPS §3 editor).
-- [ ] CSV/TSV import wizard: file → column mapping → typed batches → dry-run
+- [x] .sql file open/save/drop onto window (GAPS §3 editor).
+- [x] In-editor history stepping ⌥↑/⌥↓ (psql muscle memory) (GAPS §3 editor).
+- [x] CSV/TSV import wizard: file → column mapping → typed batches → dry-run
       validation → commit with per-row error report. Never silently drops rows.
 
 ### Gate
-- [ ] Quality gates green; staging tests for inverse-undo round-trip and CSV import
-      (including bad-row report).
-- [ ] Adversarial audit round; confirmed findings fixed.
+- [x] Quality gates green: tsc ✓ vite ✓ clippy 0 ✓ unit 50/50 ✓ staging 22/22 smoke
+      + 5/5 csv_import ✓ (inverse-undo round-trips, savepoint no-log, re-insert +
+      rename gates, prod-locked undo, TOCTOU refusal, exact bad-row naming — all live).
+- [x] Audit round: 4 adversarial reviewers → ~30 confirmed findings, ALL fixed
+      (S1s: insert-revert had no existence/identity pin — user-tx rollback + undo
+      duplicated rows; savepoint-mode commits logged as durable; ⌥-walk/restore lost
+      never-run drafts across quit; import indeterminate-COMMIT claimed rollback;
+      import session fallback could target the rail-active profile). Capture grammar
+      itself survived independent EPQ analysis — no wrong-write constructible.
 
 ---
 

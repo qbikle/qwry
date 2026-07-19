@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, State};
@@ -6,6 +7,38 @@ use tauri::{AppHandle, Emitter, State};
 use crate::driver::{self, ExecOutcome, Profile, QueryEvent, Result, SessionId};
 use crate::secrets;
 use crate::state::AppState;
+
+/// session → owning profile, stamped at `connect` and dropped at `disconnect`.
+/// Lets the commit path write undo-log rows keyed by profile WITHOUT the
+/// frontend having to thread a profile id through every edit call — grid
+/// deletes and ⌘S commits both get undo rows for free.
+fn session_profiles() -> &'static Mutex<HashMap<String, String>> {
+    static MAP: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Persist a committed batch's revert plan (best-effort: a failed undo-log
+/// write must never fail the commit that produced it).
+fn log_undo(state: &AppState, session_id: &str, outcome: &crate::driver::postgres::edit::EditOutcome) {
+    if !outcome.committed {
+        return;
+    }
+    let Some(plan) = &outcome.revert else { return };
+    let profile_id = session_profiles().lock().unwrap().get(session_id).cloned();
+    let Some(profile_id) = profile_id else { return };
+    match serde_json::to_string(plan) {
+        Ok(json) => {
+            if let Err(e) =
+                state
+                    .appdb
+                    .undo_log_add(&profile_id, session_id, &plan.description, &json)
+            {
+                eprintln!("appdb: undo-log write failed: {e}");
+            }
+        }
+        Err(e) => eprintln!("undo plan serialize failed: {e}"),
+    }
+}
 
 /// emitted to the frontend when a connection's socket dies, so the UI can flip
 /// the status dot and auto-reconnect on next use
@@ -245,6 +278,10 @@ pub async fn connect(
         .lock()
         .unwrap()
         .insert(session_id.clone(), Arc::new(session));
+    session_profiles()
+        .lock()
+        .unwrap()
+        .insert(session_id.clone(), profile_id);
     Ok(session_id)
 }
 
@@ -319,6 +356,24 @@ pub async fn write_text_file(path: String, contents: String) -> Result<()> {
         .map_err(|e| driver::DriverError::Internal(format!("write {path}: {e}")))
 }
 
+/// read a .sql file from disk — path comes from the native open dialog or a
+/// drag-drop onto the window
+#[tauri::command]
+pub async fn read_text_file(path: String) -> Result<String> {
+    tokio::fs::read_to_string(&path)
+        .await
+        .map_err(|e| driver::DriverError::Internal(format!("read {path}: {e}")))
+}
+
+/// mtime + size identity for a file on disk — the frontend's cheap probe for
+/// on-disk .sql conflict detection and import size gating
+#[tauri::command]
+pub async fn file_stat(path: String) -> Result<crate::import::FileStat> {
+    tauri::async_runtime::spawn_blocking(move || crate::import::stat_file(&path))
+        .await
+        .map_err(|e| driver::DriverError::Internal(format!("stat task failed: {e}")))?
+}
+
 #[tauri::command]
 pub async fn table_ddl(
     state: State<'_, AppState>,
@@ -354,6 +409,7 @@ pub async fn disconnect(state: State<'_, AppState>, session_id: String) -> Resul
     // best-effort so the server stops burning through it (cancel itself is
     // deadline-bounded, so a dead tunnel can't hang the disconnect)
     let session = state.sessions.lock().unwrap().remove(&session_id);
+    session_profiles().lock().unwrap().remove(&session_id);
     if let Some(s) = session {
         let _ = s.cancel().await;
     }
@@ -491,9 +547,11 @@ pub async fn edits_apply(
     let session = state
         .session(&session_id)
         .ok_or(driver::DriverError::NoSession)?;
-    session
+    let outcome = session
         .apply_edits(&sql, statement_index, edits, map_hint)
-        .await
+        .await?;
+    log_undo(&state, &session_id, &outcome);
+    Ok(outcome)
 }
 
 #[tauri::command]
@@ -509,9 +567,97 @@ pub async fn delete_rows(
     let session = state
         .session(&session_id)
         .ok_or(driver::DriverError::NoSession)?;
-    session
+    let outcome = session
         .delete_rows(&sql, statement_index, table_oid, rows, map_hint)
-        .await
+        .await?;
+    log_undo(&state, &session_id, &outcome);
+    Ok(outcome)
+}
+
+/// newest unexpired undo-log row for a profile — the frontend's undo offer
+#[tauri::command]
+pub async fn undo_log_latest(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> Result<Option<crate::appdb::UndoLogRow>> {
+    state.appdb.undo_log_latest(&profile_id)
+}
+
+/// Apply a persisted revert plan on the session that committed it. Session
+/// identity is verified on a PEEK first — a refused undo must not consume the
+/// offer — and only a passing row is taken (an undo is single-shot — NEVER
+/// auto-retried); the plan re-enters the verified-batch pipeline, so a stale
+/// undo rolls back honestly. A session mismatch refuses: undo is never
+/// offered across reconnects, and the server-side check backs the frontend's
+/// session stamp.
+#[tauri::command]
+pub async fn undo_apply(
+    state: State<'_, AppState>,
+    session_id: String,
+    undo_id: i64,
+) -> Result<crate::driver::postgres::edit::UndoOutcome> {
+    let session = state
+        .session(&session_id)
+        .ok_or(driver::DriverError::NoSession)?;
+    let peeked = state
+        .appdb
+        .undo_log_peek(undo_id)?
+        .ok_or_else(|| driver::DriverError::Internal("undo offer expired — nothing to undo".into()))?;
+    if peeked.session_key != session_id {
+        return Err(driver::DriverError::Internal(
+            "undo offer is stale — it belongs to a previous connection".into(),
+        ));
+    }
+    let row = state
+        .appdb
+        .undo_log_take(undo_id)?
+        .ok_or_else(|| driver::DriverError::Internal("undo offer expired — nothing to undo".into()))?;
+    let plan: crate::driver::postgres::edit::UndoPlan = serde_json::from_str(&row.revert_sql)
+        .map_err(|e| driver::DriverError::Internal(format!("undo record unreadable: {e}")))?;
+    let (outcome, redo) = session.apply_revert(&plan).await?;
+    if outcome.committed {
+        if let Some(redo) = redo {
+            // the undo commit writes its own undo row — redo emerges naturally
+            if let Ok(json) = serde_json::to_string(&redo) {
+                if let Err(e) = state.appdb.undo_log_add(
+                    &row.profile_id,
+                    &session_id,
+                    &redo.description,
+                    &json,
+                ) {
+                    eprintln!("appdb: redo-log write failed: {e}");
+                }
+            }
+        }
+    }
+    Ok(outcome)
+}
+
+// ---- buffer time-machine (executed buffer versions per tab) ----------------
+
+#[tauri::command]
+pub async fn buffer_snapshot_add(
+    state: State<'_, AppState>,
+    tab_id: String,
+    sql: String,
+) -> Result<()> {
+    state.appdb.buffer_snapshot_add(&tab_id, &sql)
+}
+
+#[tauri::command]
+pub async fn buffer_snapshots_list(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    tab_id: String,
+) -> Result<Vec<crate::appdb::BufferSnapshot>> {
+    let (rows, skipped) = state.appdb.buffer_snapshots_list(&tab_id)?;
+    warn_skipped(&app, "buffer_snapshots", skipped);
+    Ok(rows)
+}
+
+#[tauri::command]
+pub async fn buffer_snapshots_clear(state: State<'_, AppState>, tab_id: String) -> Result<()> {
+    state.appdb.buffer_snapshots_clear(&tab_id)
 }
 
 /// one full (untruncated) cell by table identity + row locator — replaces the

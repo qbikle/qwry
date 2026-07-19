@@ -172,6 +172,43 @@
   flex-direction: column;
 }
 
+/* buffer time-machine — ghost banner floated over the editor while a past
+   run is shown read-only (⌃⌘←/→ step · Enter restores · Esc returns) */
+.tt-banner {
+  position: absolute;
+  top: var(--sp-2);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 4px 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  color: var(--fg);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  pointer-events: none; /* purely informational — keys drive the mode */
+}
+.tt-banner .tt-glyph {
+  display: flex;
+  color: var(--accent);
+}
+.tt-banner .tt-pos {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.tt-banner .tt-hint {
+  color: var(--fg-muted);
+}
+/* the viewed snapshot reads slightly ghosted — it isn't the live buffer */
+.tt-viewing .cm-editor {
+  opacity: 0.92;
+}
+
 /* editor context menu */
 .ed-menu-backdrop {
   position: fixed;

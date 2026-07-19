@@ -1,10 +1,13 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { useSettings } from "../stores/settings";
 import type {
+  BufferSnapshot,
+  CsvPreview,
   EditabilityMap,
   EditMapHint,
   EditOutcome,
   ExecOutcome,
+  FileStat,
   HistoryRow,
   HistoryStatus,
   Profile,
@@ -12,7 +15,10 @@ import type {
   RowEdit,
   TableIdentityHint,
   TableStats,
+  UndoLogRow,
+  UndoOutcome,
 } from "./types";
+import type { ImportProgress, ImportReport, ImportSpec } from "./types";
 
 /** (result-column index, text value) pairs locating one row by PK or ctid */
 export type RowLocator = [number, string | null][];
@@ -207,6 +213,44 @@ export const insertRow = (
   values: (string | null)[],
 ) => invoke<ExecOutcome>("insert_row", { sessionId, schema, table, cols, values });
 
+/** newest unexpired undo-log row for a profile — the post-commit undo offer;
+ * offer it only when session_key matches the tab's live session */
+export const undoLogLatest = (profileId: string) =>
+  invoke<UndoLogRow | null>("undo_log_latest", { profileId });
+
+/** apply a persisted revert plan on the session that committed it. Single-shot
+ * (the row is consumed either way); a stale undo rolls back honestly. On
+ * success the backend writes a redo row — re-query undoLogLatest for it. */
+export const undoApply = (sessionId: string, undoId: number) =>
+  invoke<UndoOutcome>("undo_apply", { sessionId, undoId });
+
+/** one executed-buffer version (buffer time-machine) — defined in types.ts,
+ * re-exported for `ipc.BufferSnapshot` consumers */
+export type { BufferSnapshot } from "./types";
+
+/** record a tab's full buffer at run time — the appdb layer dedupes
+ * consecutive identical snapshots and caps 50/tab, 200k chars */
+export const bufferSnapshotAdd = (tabId: string, sql: string) =>
+  invoke<void>("buffer_snapshot_add", { tabId, sql });
+
+/** this tab's executed-buffer trail, newest-first */
+export const bufferSnapshotsList = (tabId: string) =>
+  invoke<BufferSnapshot[]>("buffer_snapshots_list", { tabId });
+
+export const bufferSnapshotsClear = (tabId: string) =>
+  invoke<void>("buffer_snapshots_clear", { tabId });
+
+/** stat a file without reading it — size gates before open, mtime stamps for
+ * the save-conflict check (FileStat lives in types.ts) */
+export const fileStat = (path: string) => invoke<FileStat>("file_stat", { path });
+
+/** read a .sql/.txt file for File ▸ Open… / window drops */
+export const readTextFile = (path: string) => invoke<string>("read_text_file", { path });
+
+/** write a buffer to disk (File ▸ Save) — path from the save dialog */
+export const writeTextFile = (path: string, contents: string) =>
+  invoke<void>("write_text_file", { path, contents });
+
 /** Streaming execution. Resolves when the whole batch finishes (or errors). */
 export const executeStream = (
   sessionId: string,
@@ -216,4 +260,29 @@ export const executeStream = (
   const channel = new Channel<QueryEvent>();
   channel.onmessage = onEvent;
   return invoke<void>("execute_stream", { sessionId, sql, onEvent: channel });
+};
+
+/** sniff + preview a CSV/TSV file; delimiter/header overrides re-parse */
+export const csvPreview = (
+  path: string,
+  delimiter?: string | null,
+  hasHeader?: boolean | null,
+) =>
+  invoke<CsvPreview>("csv_preview", {
+    path,
+    delimiter: delimiter ?? null,
+    hasHeader: hasHeader ?? null,
+  });
+
+/** Run a CSV import on a session. validate = full rehearsal that ALWAYS
+ * rolls back (per-row error report); commit = one all-or-nothing
+ * transaction. Progress (rows processed / total) streams per batch. */
+export const csvImport = (
+  sessionId: string,
+  spec: ImportSpec,
+  onProgress: (p: ImportProgress) => void,
+) => {
+  const channel = new Channel<ImportProgress>();
+  channel.onmessage = onProgress;
+  return invoke<ImportReport>("csv_import", { sessionId, spec, onProgress: channel });
 };

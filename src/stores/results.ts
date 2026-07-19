@@ -189,6 +189,10 @@ export const useResults = create<ResultsState>((set, get) => ({
     const conn = useConnections.getState();
     const { activeProfileId } = conn;
     const sql = sqlOverride ?? conn.sql;
+    // captured AT ENTRY, next to the executed sql — the snapshot block below
+    // sits after awaits (session connect, confirms), and a mid-connect tab
+    // switch would otherwise record tab B's buffer under this tab's id
+    const buffer = conn.sql;
     const tabId = get().active;
     if (!tabId) return;
     const cur = get().byTab[tabId] ?? blankTab();
@@ -286,6 +290,15 @@ export const useResults = create<ResultsState>((set, get) => ({
         runInflight.delete(tabId);
         return;
       }
+    }
+
+    // never-lose-work: every committed run parks the tab's FULL buffer in the
+    // time-machine (query tabs only — table-browse runs land here too);
+    // dedupe + the 50/tab cap live in the appdb layer
+    if (buffer.trim() && useTabs.getState().tabs.find((t) => t.id === tabId)?.kind === "query") {
+      void ipc
+        .bufferSnapshotAdd(tabId, buffer)
+        .catch((e) => console.error("buffer_snapshot_add failed", e));
     }
 
     if (pendingRows) pendingRows.delete(tabId);

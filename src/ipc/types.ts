@@ -154,6 +154,34 @@ export interface EditOutcome {
   committed: boolean;
 }
 
+// ---- inverse-SQL undo (mirrors appdb::UndoLogRow / edit::UndoOutcome) ------
+
+/** one persisted undo offer; revert_sql holds the structured revert plan
+ * (JSON) the backend regenerates SQL from — the frontend never reads it */
+export interface UndoLogRow {
+  id: number;
+  profile_id: string;
+  session_key: string;
+  created_at: string;
+  description: string;
+  revert_sql: string;
+  expires_at: string;
+}
+
+/** outcome of applying an undo: committed, or rolled back with an honest
+ * message ("undo no longer matches — data changed since") */
+export interface UndoOutcome {
+  committed: boolean;
+  message: string | null;
+}
+
+/** one buffer time-machine snapshot (mirrors appdb::BufferSnapshot) */
+export interface BufferSnapshot {
+  id: number;
+  taken_at: string;
+  sql: string;
+}
+
 // ---- table_stats (Structure tab depth; mirrors postgres/stats.rs) ----------
 
 export interface ConstraintInfo {
@@ -237,6 +265,83 @@ export interface TableStats {
   column_comments: ColumnComment[];
   /** live column list — supersedes the snapshot while the tab is open */
   columns: ColumnStatInfo[];
+}
+
+// ---- CSV import (mirrors src-tauri/src/import.rs) --------------------------
+
+export interface CsvPreview {
+  /** delimiter in effect (sniffed or overridden), 1-char string */
+  delimiter: string;
+  has_header: boolean;
+  /** source column labels: file header names, or "#1".."#N" when headerless */
+  source_columns: string[];
+  /** first ~20 data rows (post header decision), display only */
+  rows: string[][];
+  /** data-row count for the whole file (header excluded) */
+  total_rows: number;
+  field_count: number;
+}
+
+/** file identity snapshot (mtime + size) — mirrors import.rs FileStat.
+ * Returned by `file_stat` and by validate-run ImportReports; feed it back as
+ * `expected_stat` on the commit run to catch the file changing in between. */
+export interface FileStat {
+  mtime_ms: number;
+  size: number;
+}
+
+export interface ImportColumnSpec {
+  /** 0-based source field index */
+  src: number;
+  target: string;
+}
+
+export type ImportNullMode = "empty" | "literal" | "custom" | "none";
+
+export interface ImportSpec {
+  path: string;
+  delimiter: string;
+  has_header: boolean;
+  schema: string;
+  table: string;
+  columns: ImportColumnSpec[];
+  null_mode: ImportNullMode;
+  null_token: string | null;
+  /** validate = always rolls back; commit = one all-or-nothing transaction */
+  mode: "validate" | "commit";
+  /** commit only: the FileStat the validate run reported — the backend
+   * refuses with "file changed since validation" on any mismatch */
+  expected_stat?: FileStat | null;
+}
+
+export interface ImportProgress {
+  processed: number;
+  total: number;
+}
+
+export interface ImportRowIssue {
+  /** 1-based data row number; 0 = not row-attributable */
+  row: number;
+  /** 1-based file line of the record start; 0 = unknown */
+  line: number;
+  message: string;
+}
+
+export interface ImportReport {
+  total_rows: number;
+  /** validate: rows that passed; commit: rows persisted (0 unless committed) */
+  ok_rows: number;
+  errors: ImportRowIssue[];
+  /** error collection stopped at the cap — "…and possibly more" */
+  more_errors: boolean;
+  committed: boolean;
+  /** commit resolution: "unknown" = the connection was lost during COMMIT —
+   * the import may or may not have been applied (never claim a rollback).
+   * Absent/other values mean `committed` is authoritative. */
+  outcome?: "committed" | "rolled_back" | "unknown" | null;
+  /** file identity at validate time (validate runs only) — feed back as
+   * `expected_stat` on the commit run */
+  file_stat?: FileStat | null;
 }
 
 export type QueryEvent =

@@ -1,9 +1,10 @@
 import { create } from "zustand";
+import { listen } from "@tauri-apps/api/event";
 import * as ipc from "../ipc/commands";
 import type { EditabilityMap, EditMapHint, EditOutcome, RowEdit } from "../ipc/types";
 import { buildEditMapHint, tableIdentityHints } from "../lib/editHints";
 import { useResults } from "./results";
-import { useConnections } from "./connections";
+import { skey, useConnections } from "./connections";
 import { useSchema, type SchemaSnapshot } from "./schema";
 
 export interface PendingEdit {
@@ -45,12 +46,28 @@ const blankEdits = (): TabEdits => ({
 });
 const UNDO_CAP = 100;
 
+/** the post-commit inverse-SQL undo offer ("Committed … — Undo"). Stamped
+ * with the tab AND the exact session that committed: it dies with that
+ * session (never offered across reconnects), on DDL, on TTL expiry, and a
+ * newer commit on the profile supersedes it (only the latest is offered). */
+export interface UndoOffer {
+  id: number;
+  description: string;
+  tabId: string;
+  sessionId: string;
+  profileId: string;
+}
+
 // like results: top-level mirrors the active tab, byTab is the source of truth.
 // committing / preview / lastError are global (one commit/preview at a time).
 interface EditsState extends TabEdits {
   byTab: Record<string, TabEdits>;
   active: string;
   committing: boolean;
+  /** inverse-SQL undo offer for the latest committed batch (global — one
+   * commit at a time, mirrors `committing`) */
+  undoOffer: UndoOffer | null;
+  undoing: boolean;
   preview: {
     statements: string[];
     error: string | null;
@@ -77,6 +94,9 @@ interface EditsState extends TabEdits {
   openPreview: () => Promise<void>;
   closePreview: () => void;
   commit: () => Promise<void>;
+  /** apply the offered revert through the verified pipeline (⌘⇧Z / click) */
+  undoLastCommit: () => Promise<void>;
+  clearUndoOffer: () => void;
 }
 
 function sessionAndSql(): { sessionId: string; sql: string } | null {
@@ -306,11 +326,54 @@ function buildEntries(
   return { entries, skipped, truncatedLocators };
 }
 
+/** frontend TTL for the undo toast — slightly under the backend's 15-minute
+ * row TTL (which stays the source of truth at undo_log_take time) */
+const UNDO_OFFER_TTL_MS = 14.5 * 60 * 1000;
+let undoOfferTimer: number | null = null;
+
+/** monotonic guard over offer resolutions: every set/clear AND every refresh
+ * fetch bumps it, so a stale in-flight fetch can never override a newer
+ * resolution (e.g. a resetTab clear, or a later commit's fresher offer) */
+let offerSeq = 0;
+
+function setUndoOffer(offer: UndoOffer | null) {
+  offerSeq++;
+  if (undoOfferTimer !== null) {
+    window.clearTimeout(undoOfferTimer);
+    undoOfferTimer = null;
+  }
+  useEdits.setState({ undoOffer: offer });
+  if (offer) {
+    undoOfferTimer = window.setTimeout(() => {
+      if (useEdits.getState().undoOffer?.id === offer.id) {
+        useEdits.setState({ undoOffer: null });
+      }
+    }, UNDO_OFFER_TTL_MS);
+  }
+}
+
+/** fetch the newest undo row for the profile and surface it — only when it
+ * was written by the EXACT session this tab committed on (session-stamped) */
+export async function refreshUndoOffer(tabId: string, sessionId: string, profileId: string) {
+  const seq = ++offerSeq;
+  try {
+    const row = await ipc.undoLogLatest(profileId);
+    if (seq !== offerSeq) return; // superseded while in flight — stay stale-silent
+    if (row && row.session_key === sessionId) {
+      setUndoOffer({ id: row.id, description: row.description, tabId, sessionId, profileId });
+    }
+  } catch {
+    /* no offer — never let the undo surface break the commit path */
+  }
+}
+
 export const useEdits = create<EditsState>((set, get) => ({
   ...blankEdits(),
   byTab: {},
   active: "",
   committing: false,
+  undoOffer: null,
+  undoing: false,
   preview: null,
   lastError: null,
 
@@ -319,6 +382,8 @@ export const useEdits = create<EditsState>((set, get) => ({
   resetTab: (tabId) => {
     writeEdits(set, tabId, blankEdits());
     if (tabId === get().active) set({ preview: null, lastError: null });
+    // the tab's result context is gone — its undo offer goes with it
+    if (get().undoOffer?.tabId === tabId) setUndoOffer(null);
   },
 
   ensureMap: (stmtIndex) => {
@@ -340,6 +405,10 @@ export const useEdits = create<EditsState>((set, get) => ({
   },
 
   refreshMapsAfterDdl: () => {
+    // schema drift invalidates the undo offer (same DDL-sniff signal that
+    // refreshes the editability maps) — a revert against a shifted schema
+    // would only roll back honestly, but don't even offer it
+    if (get().undoOffer) setUndoOffer(null);
     const res = useResults.getState();
     for (const [tabId, t] of Object.entries(get().byTab)) {
       for (const k of Object.keys(t.maps)) {
@@ -626,6 +695,13 @@ export const useEdits = create<EditsState>((set, get) => ({
     });
     previewPayload = null;
 
+    // something committed → the backend persisted a revert plan; offer Undo
+    // (session-stamped: only when the newest row came from THIS session)
+    if (committedKeys.length > 0) {
+      const profileId = useResults.getState().byTab[tabId]?.executedProfileId;
+      if (profileId) void refreshUndoOffer(tabId, sessionId, profileId);
+    }
+
     if (schemaChanged) {
       // refetch the maps (server truth), regenerate the preview SQL from the
       // still-pending edits and put it back in front of the user for review
@@ -670,6 +746,44 @@ export const useEdits = create<EditsState>((set, get) => ({
       lastError: errs.length > 0 ? errs.join(" · ") : null,
     });
   },
+
+  undoLastCommit: async () => {
+    const offer = get().undoOffer;
+    if (!offer || get().undoing || get().committing) return;
+    // NEVER across reconnects: the tab's live session must still be the exact
+    // session that committed (the backend re-checks the same stamp)
+    const live = useConnections.getState().tabSessions[skey(offer.profileId, offer.tabId)];
+    if (live !== offer.sessionId) {
+      setUndoOffer(null);
+      set({ lastError: "undo unavailable — connection changed since the commit" });
+      return;
+    }
+    set({ undoing: true });
+    try {
+      const out = await ipc.undoApply(offer.sessionId, offer.id);
+      setUndoOffer(null); // single-shot: the row is consumed either way
+      if (out.committed) {
+        set({ undoing: false, lastError: null });
+        // refresh the grid with the exact SQL this result came from — AWAITED
+        // so its resetTab has already fired before the redo offer is fetched
+        // (the old fire-and-forget order let resetTab wipe the fresh offer)
+        const rt = useResults.getState().byTab[offer.tabId];
+        if (rt?.executedSql && useResults.getState().active === offer.tabId) {
+          await useResults.getState().run(rt.executedSql, rt.executedOffset);
+        }
+        // the undo commit wrote its own undo row — redo emerges as the next offer
+        void refreshUndoOffer(offer.tabId, offer.sessionId, offer.profileId);
+      } else {
+        // stale undo: the verified batch rolled back fully — say so honestly
+        set({ undoing: false, lastError: out.message ?? "undo rolled back" });
+      }
+    } catch (e) {
+      setUndoOffer(null);
+      set({ undoing: false, lastError: errMsg(e) });
+    }
+  },
+
+  clearUndoOffer: () => setUndoOffer(null),
 }));
 
 export const editKey = keyOf;
@@ -678,4 +792,11 @@ export const editKey = keyOf;
 if (useResults.getState().active) useEdits.getState().syncActive(useResults.getState().active);
 useResults.subscribe((s, p) => {
   if (s.active !== p.active) useEdits.getState().syncActive(s.active);
+});
+
+// the session that committed died → its undo offer dies with it (a revert on
+// a rebuilt session is exactly the "across reconnects" case we never allow)
+void listen<{ session_id: string }>("session-closed", (e) => {
+  const o = useEdits.getState().undoOffer;
+  if (o && o.sessionId === e.payload.session_id) useEdits.getState().clearUndoOffer();
 });

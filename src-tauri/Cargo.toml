@@ -1,6 +1,6 @@
 [package]
 name = "qwry"
-version = "0.8.0"
+version = "0.8.1"
 description = "Fast, keyboard-first PostgreSQL client for macOS"
 authors = ["Manish Gudewar"]
 edition = "2021"
@@ -38,4 +38,5 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-dialog = "2"
 objc2 = "0.6.4"
+csv = "1.3"
 
