@@ -192,15 +192,15 @@
 
 ## v0.8.1-timeline — never lose work, applied to data
 
-- [ ] Inverse-SQL undo after commit: capture OLD values in the commit tx, persist
+- [x] Inverse-SQL undo after commit: capture OLD values in the commit tx, persist
       revert script, toast offers Undo (leapfrog #3 — no client has it). Undo
       re-enters the verified-batch pipeline (a stale undo rolls back honestly).
-- [ ] Buffer time-machine: step the editor back through executed versions of THIS
+- [x] Buffer time-machine: step the editor back through executed versions of THIS
       tab (leapfrog #11).
 - [x] History panel upgrade: dedupe/grouping, timestamps visible, per-connection
       filter chips (GAPS §3 persistence).
-- [ ] .sql file open/save/drop onto window (GAPS §3 editor).
-- [ ] In-editor history stepping ⌥↑/⌥↓ (psql muscle memory) (GAPS §3 editor).
+- [x] .sql file open/save/drop onto window (GAPS §3 editor).
+- [x] In-editor history stepping ⌥↑/⌥↓ (psql muscle memory) (GAPS §3 editor).
 - [x] CSV/TSV import wizard: file → column mapping → typed batches → dry-run
       validation → commit with per-row error report. Never silently drops rows.
 
