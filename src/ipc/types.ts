@@ -166,6 +166,8 @@ export interface ConstraintInfo {
 export interface IndexStatInfo {
   name: string;
   definition: string;
+  /** a bare CREATE UNIQUE INDEX has no pg_constraint row yet still enforces
+   * uniqueness — drop-candidacy must exclude unique indexes too */
   is_unique: boolean;
   is_primary: boolean;
   /** a constraint owns this index — never-used badge must skip it */
@@ -208,6 +210,22 @@ export interface ColumnComment {
   comment: string;
 }
 
+/** live pg_attribute row — the Columns section renders these instead of the
+ * (possibly stale) snapshot copy the tab carries */
+export interface ColumnStatInfo {
+  name: string;
+  attnum: number;
+  /** format_type(atttypid, atttypmod) */
+  data_type: string;
+  not_null: boolean;
+  /** pg_get_expr(adbin) — the generation expression for generated columns */
+  default: string | null;
+  /** attidentity: '' none, 'a' always, 'd' by default */
+  identity: string;
+  /** attgenerated: '' none, 's' stored */
+  generated: string;
+}
+
 export interface TableStats {
   constraints: ConstraintInfo[];
   indexes: IndexStatInfo[];
@@ -217,6 +235,8 @@ export interface TableStats {
   activity: RelActivity | null;
   comment: string | null;
   column_comments: ColumnComment[];
+  /** live column list — supersedes the snapshot while the tab is open */
+  columns: ColumnStatInfo[];
 }
 
 export type QueryEvent =

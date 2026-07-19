@@ -1895,8 +1895,8 @@ async fn staging_introspect_v2() {
         .expect("cleanup");
 }
 
-/// table_stats: constraints/indexes/triggers/sizes/activity/comments in one
-/// round trip; the never-used-index inputs are shaped right; and the
+/// table_stats: constraints/indexes/triggers/sizes/activity/comments/columns
+/// in one round trip; the never-used-index inputs are shaped right; and the
 /// pg_stat_ALL_tables source returns an activity row for a MATVIEW (the
 /// pg_stat_user_tables variant drops them).
 #[tokio::test]
@@ -1991,6 +1991,20 @@ async fn staging_table_stats() {
         stats.column_comments
     );
 
+    // live columns cell: the Structure tab renders THESE, not the snapshot
+    assert_eq!(
+        stats.columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+        vec!["id", "v", "n"],
+        "columns must arrive in attnum order"
+    );
+    let id_col = &stats.columns[0];
+    assert_eq!(id_col.data_type, "integer");
+    assert!(id_col.not_null, "pk column must be not null");
+    let v_col = &stats.columns[1];
+    assert_eq!(v_col.data_type, "text");
+    assert!(!v_col.not_null);
+    assert!(v_col.default.is_none() && v_col.identity.is_empty() && v_col.generated.is_empty());
+
     // THE reason for pg_stat_all_tables: a matview still gets an activity row
     let mv = session
         .table_stats("qwry_test", "qwry_stats_mv")
@@ -2002,6 +2016,11 @@ async fn staging_table_stats() {
     );
     assert!(mv.sizes.table_bytes > 0, "matview heap has a size");
     assert!(mv.triggers.is_empty() && mv.constraints.is_empty());
+    assert_eq!(
+        mv.columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+        vec!["id", "v"],
+        "matview must return live columns too"
+    );
 
     session
         .execute_simple(

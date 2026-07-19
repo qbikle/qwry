@@ -341,7 +341,22 @@ export function keysetKeys(
       nulls: k.nulls === "first" ? "FIRST" : k.nulls === "last" ? "LAST" : defaultNulls(kd),
     });
   }
-  return [...head, ...tiebreak];
+  const keys = [...head, ...tiebreak];
+  // Anchor truncation: when the absorbed SINGLE-column PK sits in the chain,
+  // it already totally orders every row at its position (catalog NOT NULL +
+  // unique-alone) — the chain suffix after it is ordering-irrelevant. Keeping
+  // the suffix is worse than useless: a page ending on a trailing key's NULL
+  // makes seekPredicate refuse (NULL terminal) and the browse silently falls
+  // back to O(n²) offset paging. Truncate after the anchor, so
+  // [id asc(PK), s asc] seeks on id alone — byte-identical to a bare [id asc]
+  // chain. Only a genuinely unique-alone anchor qualifies: a single column of
+  // a composite PK is not, so composite absorption keeps its full key list
+  // (and the ctid tiebreaker is always terminal — nothing to truncate).
+  if (table.pk.length === 1) {
+    const a = keys.findIndex((k) => k.col === table.pk[0]);
+    if (a >= 0 && colInfo(table.pk[0])?.not_null === true) return keys.slice(0, a + 1);
+  }
+  return keys;
 }
 
 /** NULLS clause is emitted only when it differs from the PG default for the
@@ -488,6 +503,9 @@ export function browsePageSql(s: {
   if (!seek) return null;
   const t = `${qi(s.table.schema)}.${qi(s.table.name)}`;
   const f = compiledWhere(s.filters, s.rawWhere);
-  const where = f ? `\nWHERE (${f}) AND (${seek})` : `\nWHERE ${seek}`;
+  // the closing paren and the seek live on their OWN line: a raw WHERE ending
+  // in a line comment (`… --`) must not eat the wrap and the seek (page 1 and
+  // count survive that text — page 2 must too)
+  const where = f ? `\nWHERE (${f}\n) AND (${seek})` : `\nWHERE ${seek}`;
   return `SELECT ${selectCols(s.table)} FROM ${t}${where}${orderBy(s.keys)}\nLIMIT ${s.limit}`;
 }

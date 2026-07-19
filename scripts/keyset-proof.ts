@@ -26,6 +26,15 @@
 // absorbed into the chain), raw-WHERE composition with the seek, BETWEEN /
 // quoted-IN filters through the paging pipeline, and ⌘L jump re-anchoring
 // (offset page → keyset continuation, gapless).
+//
+// v0.8.1 additions: NULLS override on a deeper (non-head) chain key,
+// overrides on BOTH keys at once, mixed directions over data with NULLs in
+// both columns, sort chain + ctid tiebreak, jump re-anchor landing INSIDE a
+// NULL partition under a chain+override, single-col-PK anchor truncation
+// (chain [pk, nullable] must stay keyset when pages end on NULL — never the
+// silent offset fallback; provePaging now asserts keyset-vs-fallback
+// explicitly), and raw WHERE ending in a `--` line comment paged through
+// the newline-safe seek composition.
 
 import { spawnSync } from "bun";
 import {
@@ -167,17 +176,26 @@ function provePaging(
   const collected: (string | null)[][] = [];
   let page = query(browseSql({ table, filters, sort: chain, limit: PAGE, keys, rawWhere }));
   let pages = 1;
+  let fallbackPages = 0;
   collected.push(...page);
   while (page.length === PAGE && pages < 100) {
     const lastRow = page[page.length - 1];
     const last = keyIdx.map((i: number) => lastRow[i]);
     const sql = browsePageSql({ table, filters, keys, last, limit: PAGE, rawWhere });
-    check(sql !== null, `${name}: seek predicate must build (page ${pages + 1})`);
-    if (!sql) break;
+    if (!sql) {
+      fallbackPages++;
+      break;
+    }
     page = query(sql);
     pages++;
     collected.push(...page);
   }
+  // keyset must STAY keyset: a null page SQL is the silent offset fallback —
+  // an O(n²) regression even when the fallback would return the right rows
+  check(
+    fallbackPages === 0,
+    `${name}: every continuation page used a keyset seek (no offset fallback)`,
+  );
 
   const reference = query(browseSql({ table, filters, sort: chain, limit: 100000, keys, rawWhere }));
   check(reference.length === expectRows, `${name}: reference row count ${reference.length} ≠ expected ${expectRows}`);
@@ -203,6 +221,8 @@ DROP TABLE IF EXISTS ${T("qwry_kp_comp")};
 DROP TABLE IF EXISTS ${T("qwry_kp_nulls")};
 DROP TABLE IF EXISTS ${T("qwry_kp_ctid")};
 DROP TABLE IF EXISTS ${T("qwry_kp_typed")};
+DROP TABLE IF EXISTS ${T("qwry_kp_multi")};
+DROP TABLE IF EXISTS ${T("qwry_kp_ctid2")};
 DROP TABLE IF EXISTS ${T("qwry_kp_child")};
 DROP TABLE IF EXISTS ${T("qwry_kp_parent")} CASCADE;
 
@@ -223,6 +243,16 @@ ANALYZE ${T("qwry_kp_ctid")};
 CREATE TABLE ${T("qwry_kp_typed")} (id int PRIMARY KEY, t timestamptz, n numeric);
 INSERT INTO ${T("qwry_kp_typed")} SELECT i, '2026-07-01 00:00:00+00'::timestamptz + make_interval(hours => i / 4), i * 1.5 FROM generate_series(1, 48) i;
 
+CREATE TABLE ${T("qwry_kp_multi")} (id int PRIMARY KEY, g int, s int);
+INSERT INTO ${T("qwry_kp_multi")} SELECT i,
+  CASE WHEN i % 7 = 0 THEN NULL ELSE i % 4 END,
+  CASE WHEN i % 5 = 0 THEN NULL ELSE i % 3 END
+FROM generate_series(1, 60) i;
+
+CREATE TABLE ${T("qwry_kp_ctid2")} (x int, v text);
+INSERT INTO ${T("qwry_kp_ctid2")} SELECT CASE WHEN i % 6 = 0 THEN NULL ELSE i % 5 END, 'd' || i FROM generate_series(1, 45) i;
+ANALYZE ${T("qwry_kp_ctid2")};
+
 CREATE TABLE ${T("qwry_kp_parent")} (id int, v text);
 CREATE TABLE ${T("qwry_kp_child")} () INHERITS (${T("qwry_kp_parent")});
 INSERT INTO ${T("qwry_kp_parent")} SELECT i, 'p' || i FROM generate_series(1, 12) i;
@@ -240,6 +270,8 @@ try {
   const nulls = introspectTable(S, "qwry_kp_nulls");
   const ctid = introspectTable(S, "qwry_kp_ctid");
   const typed = introspectTable(S, "qwry_kp_typed");
+  const multi = introspectTable(S, "qwry_kp_multi");
+  const ctid2 = introspectTable(S, "qwry_kp_ctid2");
   const parent = introspectTable(S, "qwry_kp_parent");
   const child = introspectTable(S, "qwry_kp_child");
 
@@ -437,14 +469,101 @@ try {
         `SELECT count(*) FROM "qwry_test"."qwry_kp_pk"\nWHERE id < 5`,
       "K6: count(*) composes the same WHERE",
     );
-    // page SQL ANDs the raw text with the seek, parenthesized
+    // page SQL ANDs the raw text with the seek, parenthesized — the closing
+    // paren + seek on their OWN line so a trailing `--` can't eat them
     const pkeys = keysetKeys(pk, [], vnum)!;
     const psql = browsePageSql({ table: pk, filters: [], keys: pkeys, last: ["10"], limit: 5, rawWhere: "id < 40 OR v = 'x'" });
-    check(psql !== null && psql.includes(`WHERE (id < 40 OR v = 'x') AND (`), "K6: raw WHERE ANDs with the keyset seek");
+    check(psql !== null && psql.includes(`WHERE (id < 40 OR v = 'x'\n) AND (`), "K6: raw WHERE ANDs with the keyset seek");
     // live: the raw predicate + jsonb-free ops actually execute
     const live = query(browseSql({ table: pk, filters: [flt("v", "IN", "'beta-1', beta-2")], sort: [], limit: 10, keys: pkeys }));
     check(live.length === 2, "K6: live quoted-IN query returns exactly the named rows");
     caseDone("20 K6 SQL shapes", before);
+  }
+
+  // -- v0.8.1: deeper/multi NULLS overrides + mixed dirs over 2-NULL data ----
+  // 21. override on a DEEPER (non-head) chain key: g pages by default, the
+  //     override sits on s — the ladder's inner branches carry it
+  provePaging("21 deeper-key override", multi, [], [{ column: "g", dir: "asc" }, { column: "s", dir: "asc", nulls: "first" }], vnum, 60);
+  // 22. overrides on BOTH keys simultaneously (both non-default placements)
+  provePaging("22 overrides on both keys", multi, [], [{ column: "g", dir: "asc", nulls: "first" }, { column: "s", dir: "desc", nulls: "last" }], vnum, 60);
+  // 23. mixed directions, default placements, NULLs present in BOTH columns
+  provePaging("23 mixed dirs, NULLs in both", multi, [], [{ column: "g", dir: "asc" }, { column: "s", dir: "desc" }], vnum, 60);
+
+  // -- v0.8.1: sort chain over a PK-less table → ctid tiebreak ---------------
+  // 24. chain key with dups AND a NULL partition, tiebroken by ctid (pages
+  //     inside dup runs and inside the NULL partition on physical order)
+  provePaging("24 chain + ctid tiebreak", ctid2, [], [{ column: "x", dir: "asc" }], vnum, 45);
+
+  // -- v0.8.1: ⌘L jump landing INSIDE a NULL partition, chain + override -----
+  // 25. NULLS FIRST override puts the 25-row NULL partition up front; the
+  //     jump lands inside it, so the re-anchor seeks from a NULL sort value
+  //     (after-NULL under FIRST ⇒ IS NOT NULL branch + tiebreak descent)
+  {
+    const before = failures;
+    const chain: SortChain = [{ column: "s", dir: "asc", nulls: "first" }];
+    const keys = keysetKeys(nulls, chain, vnum)!;
+    const reference = query(browseSql({ table: nulls, filters: [], sort: chain, limit: 100000, keys }));
+    const jump = query(browseSql({ table: nulls, filters: [], sort: chain, limit: PAGE, keys, offset: 5 }));
+    check(
+      JSON.stringify(jump) === JSON.stringify(reference.slice(5, 5 + PAGE)),
+      "25: offset jump page inside the NULL partition equals the reference slice",
+    );
+    const colNames = nulls.columns.map((c) => c.name);
+    const keyIdx = keys.map((k) => colNames.indexOf(k.col));
+    const last = keyIdx.map((i) => jump[jump.length - 1][i]);
+    check(last[0] === null, "25: landed page's sort anchor is a NULL (proves we're inside the partition)");
+    const nextSql = browsePageSql({ table: nulls, filters: [], keys, last, limit: PAGE });
+    check(nextSql !== null && !nextSql.includes("OFFSET"), "25: continuation is a pure keyset seek");
+    const next = query(nextSql!);
+    check(
+      JSON.stringify(next) === JSON.stringify(reference.slice(5 + PAGE, 5 + 2 * PAGE)),
+      "25: keyset continuation from a NULL anchor stays gapless",
+    );
+    caseDone("25 jump re-anchor in NULL partition (chain+override)", before);
+  }
+
+  // -- v0.8.1: single-col-PK anchor truncation (finding: NULL terminal key) --
+  // 26. chain [pk, nullable]: the absorbed single-col PK anchor already
+  //     totally orders, so the keys truncate to [id] and pages ending on
+  //     s IS NULL (ids 31+) keep seeking — the pre-fix code returned null
+  //     from seekPredicate there and silently fell back to offset paging
+  provePaging("26 anchor truncation [pk, nullable]", nulls, [], [{ column: "id", dir: "asc" }, { column: "s", dir: "asc" }], vnum, 55);
+
+  // -- v0.8.1: raw WHERE ending in a line comment pages safely ---------------
+  // 27. page 1 and count always survived a trailing `--` (nothing follows the
+  //     WHERE body on its line); page 2 used to be a syntax error because the
+  //     one-line wrap let the comment eat the seek — prove full paging now,
+  //     with a nullable sort chain so the seek is the OR-ladder form
+  provePaging("27 raw WHERE trailing --", pk, [], [{ column: "v", dir: "asc" }], vnum, 48, "id > 5 -- tail comment");
+
+  // -- K7: anchor-truncation + comment-composition SQL shapes ----------------
+  {
+    const before = failures;
+    const chainPkS: SortChain = [{ column: "id", dir: "asc" }, { column: "s", dir: "asc" }];
+    const kTrunc = keysetKeys(nulls, chainPkS, vnum)!;
+    check(kTrunc.length === 1 && kTrunc[0].col === "id", "K7: [pk, nullable] truncates to the anchor alone");
+    check(
+      browseSql({ table: nulls, filters: [], sort: chainPkS, limit: 5, keys: kTrunc }) ===
+        browseSql({ table: nulls, filters: [], sort: [{ column: "id", dir: "asc" }], limit: 5, keys: keysetKeys(nulls, [{ column: "id", dir: "asc" }], vnum) }),
+      "K7: truncated chain is byte-identical to the bare [pk] chain",
+    );
+    const kDeep = keysetKeys(nulls, [{ column: "s", dir: "asc" }, { column: "id", dir: "asc" }], vnum)!;
+    check(kDeep.length === 2, "K7: keys BEFORE a terminal anchor are kept (no over-truncation)");
+    const kCompPart = keysetKeys(comp, [{ column: "a", dir: "asc" }], vnum)!;
+    check(kCompPart.length === 2, "K7: one column of a composite PK is NOT unique-alone — no truncation");
+    const kCompFull = keysetKeys(comp, [{ column: "a", dir: "asc" }, { column: "b", dir: "desc" }], vnum)!;
+    check(kCompFull.length === 2, "K7: fully absorbed composite PK keeps today's behavior");
+    const kMidAnchor = keysetKeys(nulls, [{ column: "id", dir: "desc" }, { column: "s", dir: "desc", nulls: "last" }], vnum)!;
+    check(kMidAnchor.length === 1 && kMidAnchor[0].dir === "DESC", "K7: truncation holds under DESC + suffix override");
+    const kCtidChain = keysetKeys(ctid2, [{ column: "x", dir: "asc" }], vnum)!;
+    check(kCtidChain[kCtidChain.length - 1]?.col === "ctid", "K7: chain over a PK-less table tiebreaks on ctid");
+    // trailing line comment cannot eat the wrap: paren + seek on their own line
+    const pkeys = keysetKeys(pk, [], vnum)!;
+    const pComment = browsePageSql({ table: pk, filters: [], keys: pkeys, last: ["10"], limit: 5, rawWhere: "id < 40 -- note" });
+    check(pComment !== null && pComment.includes(`WHERE (id < 40 -- note\n) AND (`), "K7: seek survives a trailing line comment");
+    const [cRow] = query(browseCountSql({ table: pk, filters: [], rawWhere: "id > 5 -- tail comment" }));
+    check(Number(cRow?.[0]) === 48, "K7: count(*) with a trailing line comment executes live");
+    caseDone("28 K7 truncation + comment shapes", before);
   }
 } finally {
   exec(`
@@ -453,6 +572,8 @@ DROP TABLE IF EXISTS ${T("qwry_kp_comp")};
 DROP TABLE IF EXISTS ${T("qwry_kp_nulls")};
 DROP TABLE IF EXISTS ${T("qwry_kp_ctid")};
 DROP TABLE IF EXISTS ${T("qwry_kp_typed")};
+DROP TABLE IF EXISTS ${T("qwry_kp_multi")};
+DROP TABLE IF EXISTS ${T("qwry_kp_ctid2")};
 DROP TABLE IF EXISTS ${T("qwry_kp_child")};
 DROP TABLE IF EXISTS ${T("qwry_kp_parent")} CASCADE;
 `);

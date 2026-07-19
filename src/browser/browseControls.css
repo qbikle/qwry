@@ -278,6 +278,14 @@
   min-width: 56px;
   justify-content: center;
 }
+.tbs-nulls-off {
+  opacity: 0.45;
+  cursor: default;
+}
+.tbs-nulls-off:hover {
+  color: var(--fg-muted);
+  border-color: var(--border);
+}
 .tbs-hint {
   padding: 4px 10px 6px;
   border-top: 1px solid var(--border);

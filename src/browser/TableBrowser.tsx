@@ -20,7 +20,7 @@ import { useCloseGuard } from "../stores/closeGuard";
 import { nearEndHook } from "../grid/Grid";
 import { ResultsPane } from "../grid/ResultsPane";
 import { StructureTab, structureRefresh } from "./StructureTab";
-import { DdlTab } from "./DdlTab";
+import { DdlTab, ddlRefresh } from "./DdlTab";
 import "./browser.css";
 import "./browseControls.css";
 
@@ -89,6 +89,12 @@ export function TableBrowser() {
             // Structure shows table_stats, not the data query — refresh THAT
             if (tab === "structure") {
               structureRefresh.current?.();
+              return;
+            }
+            // DDL shows the deparsed DDL — refetch it, never the invisible
+            // data query behind the pane
+            if (tab === "ddl") {
+              ddlRefresh.current?.();
               return;
             }
             refresh();
@@ -808,55 +814,74 @@ function SortSelect() {
             />
             {sortChain.length > 0 && (
               <div className="tbs-chain">
-                {sortChain.map((k, i) => (
-                  <div key={k.column} className="tbs-chainrow">
-                    <span className="tbs-pos">{i + 1}</span>
-                    <span className="tbs-name">{k.column}</span>
-                    <button
-                      className="tbs-mini"
-                      title="Flip direction"
-                      onClick={() =>
-                        setSortChain(
-                          sortChain.map((x, j) =>
-                            j === i ? { ...x, dir: x.dir === "asc" ? "desc" : "asc" } : x,
-                          ),
-                        )
-                      }
-                    >
-                      {k.dir === "asc" ? "↑" : "↓"}
-                    </button>
-                    <button
-                      className="tbs-mini tbs-nulls"
-                      title="NULLS placement — auto follows the direction (ASC ⇒ last, DESC ⇒ first)"
-                      onClick={() =>
-                        setSortChain(
-                          sortChain.map((x, j) =>
-                            j === i
-                              ? {
-                                  ...x,
-                                  nulls:
-                                    x.nulls === "first"
-                                      ? ("last" as const)
-                                      : x.nulls === "last"
-                                        ? undefined
-                                        : ("first" as const),
-                                }
-                              : x,
-                          ),
-                        )
-                      }
-                    >
-                      {k.nulls ? `∅ ${k.nulls}` : "∅ auto"}
-                    </button>
-                    <button
-                      className="tbs-mini"
-                      title="Remove sort key"
-                      onClick={() => setSortChain(sortChain.filter((_, j) => j !== i))}
-                    >
-                      <X size={10} />
-                    </button>
-                  </div>
-                ))}
+                {sortChain.map((k, i) => {
+                  // a NULLS override on a catalog-NOT NULL key is semantically
+                  // inert but emits a non-default NULLS clause that demolishes
+                  // the plan (Index Scan → Seq Scan + full Sort per page) —
+                  // gate the affordance; a stale override (column altered
+                  // after it was set) stays clickable so it can be cleared
+                  const notNull =
+                    table.columns.find((c) => c.name === k.column)?.not_null === true;
+                  const gated = notNull && !k.nulls;
+                  return (
+                    <div key={k.column} className="tbs-chainrow">
+                      <span className="tbs-pos">{i + 1}</span>
+                      <span className="tbs-name">{k.column}</span>
+                      <button
+                        className="tbs-mini"
+                        title="Flip direction"
+                        onClick={() =>
+                          setSortChain(
+                            sortChain.map((x, j) =>
+                              j === i ? { ...x, dir: x.dir === "asc" ? "desc" : "asc" } : x,
+                            ),
+                          )
+                        }
+                      >
+                        {k.dir === "asc" ? "↑" : "↓"}
+                      </button>
+                      <button
+                        className={`tbs-mini tbs-nulls${gated ? " tbs-nulls-off" : ""}`}
+                        aria-disabled={gated}
+                        title={
+                          notNull
+                            ? k.nulls
+                              ? `${k.column} is NOT NULL — this NULLS override does nothing but wreck the query plan. Click to clear.`
+                              : `${k.column} is NOT NULL — there are no NULLs to place (an override would only wreck the query plan)`
+                            : "NULLS placement — auto follows the direction (ASC ⇒ last, DESC ⇒ first)"
+                        }
+                        onClick={() => {
+                          if (gated) return;
+                          setSortChain(
+                            sortChain.map((x, j) =>
+                              j === i
+                                ? {
+                                    ...x,
+                                    nulls: notNull
+                                      ? undefined
+                                      : x.nulls === "first"
+                                        ? ("last" as const)
+                                        : x.nulls === "last"
+                                          ? undefined
+                                          : ("first" as const),
+                                  }
+                                : x,
+                            ),
+                          );
+                        }}
+                      >
+                        {gated ? "∅ —" : k.nulls ? `∅ ${k.nulls}` : "∅ auto"}
+                      </button>
+                      <button
+                        className="tbs-mini"
+                        title="Remove sort key"
+                        onClick={() => setSortChain(sortChain.filter((_, j) => j !== i))}
+                      >
+                        <X size={10} />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             )}
             <div className="tbs-list">

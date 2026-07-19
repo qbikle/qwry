@@ -96,11 +96,37 @@ export function StructureTab({ table }: { table: TableInfo }) {
   const anyColComment =
     stats?.column_comments.length ?? table.columns.filter((c) => c.comment).length;
 
-  const neverUsed = (ix: TableStats["indexes"][number]) =>
+  // "never scanned" is a neutral fact; "candidate for dropping" is advice —
+  // enforcement-only unique indexes (CREATE UNIQUE INDEX, no pg_constraint
+  // row) get the fact but never the advice: dropping one loses uniqueness
+  const neverScanned = (ix: TableStats["indexes"][number]) =>
     ix.scans === 0 && !ix.is_primary && !ix.backs_constraint;
+  const dropCandidate = (ix: TableStats["indexes"][number]) =>
+    neverScanned(ix) && !ix.is_unique;
 
   const act = stats?.activity ?? null;
   const num = (n: number | null | undefined) => (n == null ? "—" : n.toLocaleString());
+
+  // live columns win over the (possibly stale) snapshot the tab carries
+  const cols = stats
+    ? stats.columns.map((c) => ({
+        attnum: c.attnum,
+        name: c.name,
+        type: c.data_type,
+        not_null: c.not_null,
+        default: c.default,
+        identity: c.identity,
+        generated: c.generated,
+      }))
+    : table.columns.map((c) => ({
+        attnum: c.attnum,
+        name: c.name,
+        type: c.type,
+        not_null: c.not_null,
+        default: c.default,
+        identity: c.identity ?? "",
+        generated: c.generated ?? "",
+      }));
 
   return (
     <div className="tb-structure">
@@ -117,12 +143,25 @@ export function StructureTab({ table }: { table: TableInfo }) {
           </tr>
         </thead>
         <tbody>
-          {table.columns.map((c) => (
+          {cols.map((c) => (
             <tr key={c.name}>
               <td className="st-num">{c.attnum}</td>
               <td className="st-name">
                 {c.name}
                 {table.pk.includes(c.name) && <span className="badge badge-accent">PK</span>}
+                {c.identity !== "" && (
+                  <span
+                    className="badge badge-dim"
+                    title={`GENERATED ${c.identity === "a" ? "ALWAYS" : "BY DEFAULT"} AS IDENTITY`}
+                  >
+                    identity
+                  </span>
+                )}
+                {c.generated === "s" && (
+                  <span className="badge badge-dim" title="generated stored column">
+                    generated
+                  </span>
+                )}
               </td>
               <td className="st-type">{c.type}</td>
               <td>{c.not_null ? "not null" : "null"}</td>
@@ -195,14 +234,21 @@ export function StructureTab({ table }: { table: TableInfo }) {
                       {ix.is_unique && !ix.is_primary && (
                         <span className="badge badge-accent">UNIQUE</span>
                       )}
-                      {neverUsed(ix) && (
+                      {dropCandidate(ix) ? (
                         <span
                           className="badge badge-warn"
-                          title="idx_scan = 0 and no constraint depends on it — a candidate for dropping (stats since last reset)"
+                          title="idx_scan = 0 and nothing depends on it — a candidate for dropping (stats since last reset)"
                         >
-                          never used
+                          never scanned
                         </span>
-                      )}
+                      ) : neverScanned(ix) ? (
+                        <span
+                          className="badge badge-dim"
+                          title="idx_scan = 0 (stats since last reset) — but this index enforces uniqueness, so scan count is irrelevant to its role"
+                        >
+                          never scanned
+                        </span>
+                      ) : null}
                     </td>
                     <td className="st-def">{ix.definition.replace(/^CREATE\s+/i, "")}</td>
                     <td>

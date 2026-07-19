@@ -204,8 +204,27 @@ const ROW_HARD_CAP = 50_000;
 /** exact-count staleness guards: an epoch bump (re-run, newer count request)
  * orphans any in-flight count so its result can never land on a fresh browse */
 const countEpoch = new Map<string, number>();
-/** session the tab's in-flight count runs on — cancel target */
-const countSessions = new Map<string, string>();
+/** the tab's in-flight count: its session (cancel target) plus the epoch it
+ * belongs to — a cancel must only fire while that epoch is still the
+ * in-flight one, because the shared primary session may already be running
+ * an unrelated query (editor, estimate probe) by the time a stale cancel
+ * button is clicked */
+const countSessions = new Map<string, { sid: string; epoch: number }>();
+
+/** the page-1 browse SQL a state would execute (limit-normalized) — the
+ * no-op guard the setters diff against: when the effective SQL is unchanged,
+ * resetting limit/jump or re-running would only desync the loaded rows */
+const effectiveSql = (st: BrowserState): string =>
+  st.table
+    ? browseSql({
+        table: st.table,
+        filters: st.filters,
+        sort: st.sortChain,
+        limit: PAGE,
+        keys: keysFor(st.table, st.sortChain),
+        rawWhere: rawWhereArg(st),
+      })
+    : "";
 
 /** the next-page SQL seeded from the last loaded row's key values, or null
  * when it can't be built honestly: a key column missing from the result, or
@@ -396,37 +415,28 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     // edits are inert by construction). The limit/jump reset lives under the
     // same check: resetting on a no-op change would desync limit from the
     // loaded rows (dead scroll / wasted end-of-data queries).
-    const sqlOf = (st: BrowserState) =>
-      st.table
-        ? browseSql({
-            table: st.table,
-            filters: st.filters,
-            sort: st.sortChain,
-            limit: PAGE,
-            keys: keysFor(st.table, st.sortChain),
-            rawWhere: rawWhereArg(st),
-          })
-        : "";
     const s = get();
-    const before = sqlOf(s);
+    const before = effectiveSql(s);
     writeBrowse(set, s.active, { filters });
-    const after = get();
-    if (sqlOf(after) !== before) {
+    if (effectiveSql(get()) !== before) {
       writeBrowse(set, s.active, { limit: PAGE, jumpOffset: 0 });
       run(set, get());
     }
   },
 
   setSortChain: (chain) => {
-    // a new ordering makes both the loaded window and any jump offset
-    // meaningless — reset to page 1 of the new order
-    writeBrowse(set, get().active, {
-      sortChain: chain,
-      sort: sortMirror(chain),
-      limit: PAGE,
-      jumpOffset: 0,
-    });
-    run(set, get());
+    // same no-op guard as the sibling setters: an SQL-inert chain change
+    // (∅ override set to the direction's default, the PK added as an explicit
+    // key where it already served as the tiebreaker) must not reset the
+    // loaded window / jump or re-run. A REAL ordering change makes both
+    // meaningless — reset to page 1 of the new order.
+    const s = get();
+    const before = effectiveSql(s);
+    writeBrowse(set, s.active, { sortChain: chain, sort: sortMirror(chain) });
+    if (effectiveSql(get()) !== before) {
+      writeBrowse(set, s.active, { limit: PAGE, jumpOffset: 0 });
+      run(set, get());
+    }
   },
 
   setSort: (s) =>
@@ -493,7 +503,7 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     }
     const epoch = (countEpoch.get(tabId) ?? 0) + 1;
     countEpoch.set(tabId, epoch);
-    countSessions.set(tabId, sid);
+    countSessions.set(tabId, { sid, epoch });
     const sql = browseCountSql({ table: s.table, filters: s.filters, rawWhere: rawWhereArg(s) });
     writeBrowse(set, tabId, { counting: true, countError: null, exactCount: null });
     try {
@@ -519,14 +529,19 @@ export const useBrowser = create<BrowserState>((set, get) => ({
           : { counting: false, countError: (e as { message?: string }).message ?? String(e) },
       );
     } finally {
-      if (countEpoch.get(tabId) === epoch) countSessions.delete(tabId);
+      if (countSessions.get(tabId)?.epoch === epoch) countSessions.delete(tabId);
     }
   },
 
   cancelExactCount: () => {
-    const sid = countSessions.get(get().active);
+    const tabId = get().active;
+    const entry = countSessions.get(tabId);
+    // only cancel while this count's own epoch is still the in-flight one —
+    // once the count finished or was superseded, the shared primary session
+    // may be running an unrelated query a stale click must not kill
+    if (!entry || countEpoch.get(tabId) !== entry.epoch) return;
     // existing escalating cancel path (CancelToken → pg_cancel_backend)
-    if (sid) void ipc.cancel(sid).catch(() => {});
+    void ipc.cancel(entry.sid).catch(() => {});
   },
 
   loadMore: () => {

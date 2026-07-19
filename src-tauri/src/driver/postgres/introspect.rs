@@ -96,7 +96,7 @@ pub struct EnumInfo {
 pub struct SeqInfo {
     pub schema: String,
     pub name: String,
-    /// format_type of pg_sequence.seqtypid (int8/int4/int2)
+    /// format_type of pg_sequence.seqtypid (bigint/integer/smallint)
     pub data_type: Option<String>,
 }
 

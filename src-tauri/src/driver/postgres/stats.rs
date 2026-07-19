@@ -21,6 +21,9 @@ pub struct IndexStatInfo {
     pub name: String,
     /// server deparse (pg_get_indexdef)
     pub definition: String,
+    /// NB: a bare CREATE UNIQUE INDEX has no pg_constraint row
+    /// (backs_constraint=false) yet still enforces uniqueness — drop-candidacy
+    /// must exclude unique indexes too, not just constraint-backed ones
     pub is_unique: bool,
     pub is_primary: bool,
     /// a constraint (PK/UNIQUE/EXCLUDE) owns this index — the never-used
@@ -72,6 +75,23 @@ pub struct ColumnComment {
     pub comment: String,
 }
 
+/// Live pg_attribute row — the Columns section renders these instead of the
+/// (possibly stale) snapshot copy the tab carries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColumnStatInfo {
+    pub name: String,
+    pub attnum: i16,
+    /// format_type(atttypid, atttypmod)
+    pub data_type: String,
+    pub not_null: bool,
+    /// pg_get_expr(adbin) — the generation expression for generated columns
+    pub default: Option<String>,
+    /// pg_attribute.attidentity ('' = none, 'a' = always, 'd' = by default)
+    pub identity: String,
+    /// pg_attribute.attgenerated ('' = none, 's' = stored)
+    pub generated: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableStats {
     pub constraints: Vec<ConstraintInfo>,
@@ -83,6 +103,8 @@ pub struct TableStats {
     /// COMMENT ON TABLE
     pub comment: Option<String>,
     pub column_comments: Vec<ColumnComment>,
+    /// live column list — supersedes the snapshot while the tab is open
+    pub columns: Vec<ColumnStatInfo>,
 }
 
 impl PgSession {
@@ -143,12 +165,24 @@ SELECT json_build_object(
     JOIN pg_description d ON d.objoid = a.attrelid
       AND d.classoid = 'pg_class'::regclass AND d.objsubid = a.attnum
     WHERE a.attrelid = {reg}::regclass AND a.attnum > 0 AND NOT a.attisdropped
-  ), '[]'))"#
+  ), '[]'));
+SELECT coalesce(json_agg(t), '[]') FROM (
+  SELECT a.attname AS name, a.attnum AS attnum,
+         format_type(a.atttypid, a.atttypmod) AS data_type,
+         a.attnotnull AS not_null,
+         pg_get_expr(d.adbin, d.adrelid) AS "default",
+         a.attidentity::text AS identity,
+         a.attgenerated::text AS generated
+  FROM pg_attribute a
+  LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+  WHERE a.attrelid = {reg}::regclass AND a.attnum > 0 AND NOT a.attisdropped
+  ORDER BY a.attnum
+) t"#
         );
         let out = self.execute_simple(&sql).await?;
-        if out.statements.len() != 6 {
+        if out.statements.len() != 7 {
             return Err(DriverError::Internal(format!(
-                "table_stats returned {} result sets, expected 6",
+                "table_stats returned {} result sets, expected 7",
                 out.statements.len()
             )));
         }
@@ -180,6 +214,7 @@ SELECT json_build_object(
             activity: serde_json::from_str(&cell(4)?).map_err(|e| parse_err("activity", e))?,
             comment: comments.table,
             column_comments: comments.columns,
+            columns: serde_json::from_str(&cell(6)?).map_err(|e| parse_err("columns", e))?,
         })
     }
 }
