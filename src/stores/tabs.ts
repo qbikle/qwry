@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import { bufferSnapshotsClear, readTextFile, writeTextFile } from "../ipc/commands";
+import { bufferSnapshotsClear, fileStat, readTextFile, writeTextFile } from "../ipc/commands";
 import { useConnections } from "./connections";
 import type { TableInfo } from "./schema";
 
@@ -25,6 +25,9 @@ export interface Tab {
   file_path?: string;
   /** exact text last read from / written to file_path — dirty dot = drift */
   file_saved_sql?: string;
+  /** file mtime at open/last save — ⌘⇧S compares before overwriting so an
+   * external edit is never silently clobbered (session-only, like file_path) */
+  file_mtime_ms?: number;
 }
 
 interface ClosedTab {
@@ -36,6 +39,7 @@ interface ClosedTab {
   profile_id: string | null;
   file_path?: string;
   file_saved_sql?: string;
+  file_mtime_ms?: number;
 }
 
 interface TabsState {
@@ -51,8 +55,9 @@ interface TabsState {
   newTab: (sql?: string, name?: string, savedId?: string | null) => void;
   /** open (or focus) a data-browser tab for a table; returns the tab id */
   openTableTab: (table: TableInfo) => string;
-  /** open (or focus) a query tab backed by a .sql file on disk */
-  openFileTab: (path: string, contents: string) => string;
+  /** open (or focus) a query tab backed by a .sql file on disk; mtimeMs
+   * stamps the save-conflict baseline (undefined = stat unavailable) */
+  openFileTab: (path: string, contents: string, mtimeMs?: number) => string;
   closeTab: (id: string) => void;
   select: (id: string) => void;
   /** drag-reorder: move VISIBLE index `from` to sit at VISIBLE boundary `to` */
@@ -191,19 +196,51 @@ const asClosed = (t: Tab): ClosedTab => ({
   profile_id: t.profile_id,
   file_path: t.file_path,
   file_saved_sql: t.file_saved_sql,
+  file_mtime_ms: t.file_mtime_ms,
 });
 
-/** one aggregate prompt when bulk-closing tabs that hold uncommitted edits */
+/** a file-backed tab whose buffer drifted from its on-disk copy — closing it
+ * is honest about DISK only (the text itself persists in the app db) */
+export function fileDrifted(t: Tab): boolean {
+  return t.file_path != null && t.sql !== t.file_saved_sql;
+}
+
+/** one aggregate prompt when bulk-closing tabs that hold uncommitted cell
+ * edits or unsaved file drift */
 async function confirmBulkClose(ids: string[]): Promise<boolean> {
   const { useEdits } = await import("./edits");
   const byTab = useEdits.getState().byTab;
   const dirty = ids.filter((id) => Object.keys(byTab[id]?.pending ?? {}).length > 0).length;
-  if (dirty === 0) return true;
+  const tabs = useTabs.getState().tabs;
+  const drifted = ids.filter((id) => {
+    const t = tabs.find((x) => x.id === id);
+    return !!t && fileDrifted(t);
+  }).length;
+  if (dirty === 0 && drifted === 0) return true;
   const { confirmDanger } = await import("./danger");
+  const detail = [
+    dirty > 0
+      ? `Staged cell edits in ${dirty} tab${dirty === 1 ? "" : "s"} will be discarded.`
+      : null,
+    drifted > 0
+      ? `${drifted} file-backed tab${drifted === 1 ? " has" : "s have"} changes not written to ${
+          drifted === 1 ? "its" : "their"
+        } .sql file on disk (the text stays in qwry, the file keeps its old version).`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const n = new Set([
+    ...ids.filter((id) => Object.keys(byTab[id]?.pending ?? {}).length > 0),
+    ...ids.filter((id) => {
+      const t = tabs.find((x) => x.id === id);
+      return !!t && fileDrifted(t);
+    }),
+  ]).size;
   return confirmDanger(
-    `Close ${dirty} tab${dirty === 1 ? "" : "s"} with uncommitted edits?`,
-    "Staged cell edits in the closing tabs will be discarded.",
-    "Discard & close",
+    `Close ${n} tab${n === 1 ? "" : "s"} with unsaved changes?`,
+    detail,
+    dirty > 0 ? "Discard & close" : "Close anyway",
   );
 }
 
@@ -270,15 +307,48 @@ export const useTabs = create<TabsState>((set, get) => ({
     persist();
   },
 
-  openFileTab: (path, contents) => {
+  openFileTab: (path, contents, mtimeMs) => {
     const { tabs, pinned } = get();
     // the same file twice focuses the existing tab — never a duplicate.
     // Scoped to the VISIBLE strip: a foreign workspace's tab must not be
     // focused invisibly (reopening there gets its own tab instead).
     const existing = visibleTabs(tabs, pinned, activePid()).find((t) => t.file_path === path);
     if (existing) {
+      const clean = existing.sql === existing.file_saved_sql;
+      const diskChanged = contents !== existing.file_saved_sql;
+      if (clean && diskChanged) {
+        // the tab tracks its file faithfully — adopt the fresh disk contents
+        // instead of silently discarding the re-read
+        set((s) => ({
+          tabs: s.tabs.map((t) =>
+            t.id === existing.id
+              ? { ...t, sql: contents, file_saved_sql: contents, file_mtime_ms: mtimeMs }
+              : t,
+          ),
+        }));
+        persist();
+      } else if (clean) {
+        // contents unchanged — just refresh the save-conflict baseline
+        set((s) => ({
+          tabs: s.tabs.map((t) =>
+            t.id === existing.id ? { ...t, file_mtime_ms: mtimeMs ?? t.file_mtime_ms } : t,
+          ),
+        }));
+      }
       get().select(existing.id);
       editorFocusSignal.current = true;
+      if (!clean && diskChanged) {
+        // dirty tab + changed file: keep the buffer AND the old baseline (so
+        // ⌘⇧S still prompts before clobbering the newer disk version) — but
+        // say so instead of silently discarding the read
+        void import("./danger").then(({ confirmDanger }) =>
+          confirmDanger(
+            "File changed on disk",
+            `${path}\n\nThe tab keeps your unsaved version — the newer disk contents were not loaded. ⌘⇧S will ask before overwriting them.`,
+            "OK",
+          ),
+        );
+      }
       return existing.id;
     }
     const t: Tab = {
@@ -287,6 +357,7 @@ export const useTabs = create<TabsState>((set, get) => ({
       name: path.split("/").pop() || "file.sql",
       file_path: path,
       file_saved_sql: contents,
+      file_mtime_ms: mtimeMs,
     };
     set({ tabs: [...tabs, t], activeId: t.id });
     rememberActive(activePid(), t.id);
@@ -513,7 +584,12 @@ export const useTabs = create<TabsState>((set, get) => ({
         set((s) => ({
           tabs: s.tabs.map((t) =>
             t.id === id
-              ? { ...t, file_path: top.file_path, file_saved_sql: top.file_saved_sql }
+              ? {
+                  ...t,
+                  file_path: top.file_path,
+                  file_saved_sql: top.file_saved_sql,
+                  file_mtime_ms: top.file_mtime_ms,
+                }
               : t,
           ),
         }));
@@ -591,11 +667,37 @@ useConnections.subscribe((s, prev) => {
 // ---------------------------------------------------------------------------
 // .sql files on disk — File ▸ Open… ⌘O / File ▸ Save ⌘⇧S / window drops
 
+const MB = 1024 * 1024;
+const OPEN_CONFIRM_BYTES = 8 * MB;
+const OPEN_REFUSE_BYTES = 64 * MB;
+const fmtMb = (bytes: number) => `${(bytes / MB).toFixed(1)} MB`;
+
 export async function openFilePaths(paths: string[]): Promise<void> {
   for (const path of paths) {
     try {
+      // stat before read: gate huge files instead of freezing the editor
+      // (stat failure falls through — the read itself reports real errors)
+      const stat = await fileStat(path).catch(() => null);
+      if (stat && stat.size > OPEN_REFUSE_BYTES) {
+        const { confirmDanger } = await import("./danger");
+        await confirmDanger(
+          "File too large",
+          `${path}\nis ${fmtMb(stat.size)} — qwry can't open files over 64 MB.`,
+          "OK",
+        );
+        continue;
+      }
+      if (stat && stat.size > OPEN_CONFIRM_BYTES) {
+        const { confirmDanger } = await import("./danger");
+        const ok = await confirmDanger(
+          "Large file",
+          `${path}\nis ${fmtMb(stat.size)} — the editor may be slow. Open anyway?`,
+          "Open",
+        );
+        if (!ok) continue;
+      }
       const contents = await readTextFile(path);
-      useTabs.getState().openFileTab(path, contents);
+      useTabs.getState().openFileTab(path, contents, stat?.mtime_ms);
     } catch (e) {
       console.error("open file failed", path, e);
       const { confirmDanger } = await import("./danger");
@@ -634,6 +736,20 @@ export async function saveActiveToFile(): Promise<void> {
   // the store text is kept in sync with the editor per keystroke, so this IS
   // the buffer (no editor round trip needed)
   const sql = tab.sql;
+  // conflict check: the file moved on disk since we opened/last saved it —
+  // never silently clobber an external edit (no baseline stamp = no check)
+  if (!firstSave && tab.file_mtime_ms != null) {
+    const stat = await fileStat(dest).catch(() => null);
+    if (stat && stat.mtime_ms !== tab.file_mtime_ms) {
+      const { confirmDanger } = await import("./danger");
+      const ok = await confirmDanger(
+        "File changed on disk",
+        `${dest}\nchanged on disk since you opened it — overwrite the newer version?`,
+        "Overwrite",
+      );
+      if (!ok) return;
+    }
+  }
   try {
     await writeTextFile(dest, sql);
   } catch (e) {
@@ -642,10 +758,20 @@ export async function saveActiveToFile(): Promise<void> {
     await confirmDanger("Couldn't save file", `${dest}\n${String(e)}`, "OK");
     return;
   }
+  // re-stat AFTER the write — the fresh mtime is the new conflict baseline
+  const written = await fileStat(dest).catch(() => null);
   const name = firstSave ? dest.split("/").pop() || tab.name : tab.name;
   useTabs.setState((s) => ({
     tabs: s.tabs.map((t) =>
-      t.id === tab.id ? { ...t, file_path: dest, file_saved_sql: sql, name } : t,
+      t.id === tab.id
+        ? {
+            ...t,
+            file_path: dest,
+            file_saved_sql: sql,
+            file_mtime_ms: written?.mtime_ms,
+            name,
+          }
+        : t,
     ),
   }));
   if (firstSave) persist(); // the rename is appdb-visible; file fields aren't

@@ -21,6 +21,7 @@ import type { TableInfo } from "../stores/schema";
 import { useBrowser } from "../stores/browser";
 import { useConnections } from "../stores/connections";
 import { useResults } from "../stores/results";
+import { useTabs } from "../stores/tabs";
 import "./import.css";
 
 const DELIMS: { d: string; label: string }[] = [
@@ -32,25 +33,32 @@ const DELIMS: { d: string; label: string }[] = [
 
 const NULL_SENTENCE: Record<ImportNullMode, string> = {
   empty: "empty fields import as NULL (the CSV convention) — a quoted \"\" is empty too",
-  literal: "fields spelled NULL (any case) import as NULL; empty fields stay ''",
+  literal:
+    "fields spelled NULL (any case) import as NULL — quoted \"NULL\" is also treated as NULL; quoting cannot be honored. Empty fields stay ''",
   custom: "fields equal to the token import as NULL; empty fields stay ''",
   none: "nothing becomes NULL — empty fields import as ''",
 };
 
-/** the session imports run on: the tab's own session (shares its context),
- * falling back to the profile's primary */
-function sessionFor(): string | null {
-  const rs = useResults.getState();
-  if (rs.executedSessionId) return rs.executedSessionId;
-  const conn = useConnections.getState();
-  const pid = conn.activeProfileId;
-  if (!pid) return null;
-  return (
-    conn.sessions[pid] ??
-    Object.entries(conn.tabSessions).find(([k]) => k.startsWith(`${pid}::`))?.[1] ??
-    null
+/** the import binds to the BROWSE TAB's own session and the profile its rows
+ * came from — NEVER the rail-active profile or any fallback session: a rail
+ * click mid-wizard must not redirect the import to a different database.
+ * Absent or dead session → the caller refuses honestly. */
+function browseSession(): { sessionId: string; profileId: string } | null {
+  const tabId = useTabs.getState().activeId;
+  if (!tabId) return null;
+  const rt = useResults.getState().byTab[tabId];
+  if (!rt?.executedSessionId || !rt.executedProfileId) return null;
+  // the session must still be live — a reaped session id would just error late
+  const alive = Object.values(useConnections.getState().tabSessions).includes(
+    rt.executedSessionId,
   );
+  return alive ? { sessionId: rt.executedSessionId, profileId: rt.executedProfileId } : null;
 }
+
+/** the commit-phase refusal when the file's stat no longer matches the
+ * validate-time `expected_stat` (backend: "file changed since validation —
+ * validate again before committing") — routed into a forced re-validate */
+const STAT_MISMATCH_RE = /changed since validation|file .*changed|stat.*mismatch/i;
 
 function errText(e: unknown): { message: string; code: string | null } {
   const err = e as { message?: string; code?: string | null } | null;
@@ -79,10 +87,28 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
   const [report, setReport] = useState<ImportReport | null>(null);
   const [commitReport, setCommitReport] = useState<ImportReport | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
+  // the backend refused the commit because the file changed after validate —
+  // shown while the forced re-validate runs (and after it lands)
+  const [statNotice, setStatNotice] = useState<string | null>(null);
   // explicit user overrides survive re-sniffs (delimiter change re-sniffs the
   // header only while the user hasn't decided it)
   const headerOverride = useRef<boolean | null>(null);
+  // the user touched the mapping by hand — preview reloads must only FILL
+  // unmapped slots, never discard the hand-tuned ones
+  const handTuned = useRef(false);
   const sessionRef = useRef<string | null>(null);
+
+  // the import's bound target, always visible in the header: the browse tab's
+  // result profile (never the rail-active selection)
+  const browseTabId = useTabs((s) => s.activeId);
+  const boundProfileId = useResults((s) =>
+    browseTabId ? (s.byTab[browseTabId]?.executedProfileId ?? null) : null,
+  );
+  const connName = useConnections((s) => {
+    if (!boundProfileId) return null;
+    const p = s.profiles.find((x) => x.id === boundProfileId);
+    return p ? p.name || p.host : null;
+  });
 
   // GENERATED ALWAYS columns can't be inserted into — not offered as targets
   const insertable = useMemo(
@@ -94,6 +120,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
     setReport(null);
     setCommitReport(null);
     setRunError(null);
+    setStatNotice(null);
   };
 
   const loadPreview = async (p: string, delim: string | null) => {
@@ -117,34 +144,47 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
     });
     if (typeof sel !== "string") return;
     headerOverride.current = null;
+    handTuned.current = false; // a NEW file starts from a fresh auto-map
     setPath(sel);
     invalidateRuns();
     void loadPreview(sel, null);
   };
 
   // auto-map whenever a fresh preview lands: by name when the file has a
-  // header, by position when it doesn't
+  // header, by position when it doesn't. A reload after hand-tuning only
+  // FILLS unmapped slots — it never discards what the user set.
   useEffect(() => {
     if (!preview) {
       setMapping([]);
       return;
     }
-    const next: (string | null)[] = new Array<string | null>(preview.field_count).fill(null);
-    if (preview.has_header) {
-      for (let i = 0; i < preview.field_count; i++) {
-        const src = preview.source_columns[i]?.trim().toLowerCase();
-        const hit = insertable.find((c) => c.name.toLowerCase() === src);
-        if (hit && !next.includes(hit.name)) next[i] = hit.name;
+    setMapping((prev) => {
+      const next: (string | null)[] = new Array<string | null>(preview.field_count).fill(null);
+      if (handTuned.current) {
+        for (let i = 0; i < Math.min(prev.length, next.length); i++) {
+          const t = prev[i];
+          if (t && insertable.some((c) => c.name === t)) next[i] = t;
+        }
       }
-    } else {
-      for (let i = 0; i < Math.min(preview.field_count, insertable.length); i++) {
-        next[i] = insertable[i].name;
+      if (preview.has_header) {
+        for (let i = 0; i < preview.field_count; i++) {
+          if (next[i]) continue;
+          const src = preview.source_columns[i]?.trim().toLowerCase();
+          const hit = insertable.find((c) => c.name.toLowerCase() === src);
+          if (hit && !next.includes(hit.name)) next[i] = hit.name;
+        }
+      } else {
+        for (let i = 0; i < Math.min(preview.field_count, insertable.length); i++) {
+          if (next[i]) continue;
+          if (!next.includes(insertable[i].name)) next[i] = insertable[i].name;
+        }
       }
-    }
-    setMapping(next);
+      return next;
+    });
   }, [preview, insertable]);
 
   const setMap = (i: number, target: string | null) => {
+    handTuned.current = true;
     // stealing a target already mapped elsewhere unmaps the other source —
     // one target column can only be fed by one source
     setMapping((m) => m.map((t, j) => (j === i ? target : t === target ? null : t)));
@@ -153,9 +193,22 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
 
   const mappedCount = mapping.filter(Boolean).length;
   const unmappedDefaulted = table.columns.filter((c) => !mapping.includes(c.name));
+  // identity BY DEFAULT ('d') columns self-fill from their sequence — an
+  // unmapped one is fine, not a "rows will fail" case
   const unmappedRequired = insertable.filter(
-    (c) => c.not_null && c.default == null && !mapping.includes(c.name),
+    (c) => c.not_null && c.default == null && c.identity !== "d" && !mapping.includes(c.name),
   );
+
+  // header=off but row 1 reads like one: every non-empty field matches a
+  // target column name case-insensitively
+  const headerish = useMemo(() => {
+    if (!preview || preview.has_header) return false;
+    const row0 = preview.rows[0];
+    if (!row0 || row0.length === 0) return false;
+    const names = new Set(table.columns.map((c) => c.name.toLowerCase()));
+    const fields = row0.filter((f) => (f ?? "").trim() !== "");
+    return fields.length > 0 && fields.every((f) => names.has((f ?? "").trim().toLowerCase()));
+  }, [preview, table]);
 
   const buildSpec = (mode: "validate" | "commit"): ImportSpec => ({
     path: path!,
@@ -167,20 +220,23 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
     null_mode: nullMode,
     null_token: nullMode === "custom" ? nullToken : null,
     mode,
+    // commit proves it writes the exact bytes validate rehearsed — the
+    // backend refuses on any stat drift ("file changed since validation")
+    expected_stat: mode === "commit" ? (report?.file_stat ?? null) : null,
   });
 
   const runPhase = async (mode: "validate" | "commit") => {
-    const sid = sessionFor();
-    if (!sid) {
-      setRunError("not connected");
+    const ctx = browseSession();
+    if (!ctx) {
+      setRunError("browse session unavailable — refresh the table first");
       return;
     }
-    sessionRef.current = sid;
+    sessionRef.current = ctx.sessionId;
     setPhase(mode === "validate" ? "validating" : "committing");
     setProgress(null);
     setRunError(null);
     try {
-      const rep = await ipc.csvImport(sid, buildSpec(mode), setProgress);
+      const rep = await ipc.csvImport(ctx.sessionId, buildSpec(mode), setProgress);
       if (mode === "validate") {
         setReport(rep);
       } else {
@@ -188,7 +244,20 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
         if (rep.committed) useBrowser.getState().refresh();
       }
     } catch (e) {
-      setRunError(errText(e).message);
+      const msg = errText(e).message;
+      if (mode === "commit" && STAT_MISMATCH_RE.test(msg)) {
+        // the backend refused: the file changed after validate. The old
+        // rehearsal proved nothing — force a fresh validate (the step-3
+        // effect re-runs it once report is cleared) and say why.
+        setReport(null);
+        setCommitReport(null);
+        setRunError(null);
+        setStatNotice(
+          "the file changed on disk after validate — re-validated against the current file",
+        );
+        return;
+      }
+      setRunError(msg);
     } finally {
       setPhase("idle");
     }
@@ -206,9 +275,13 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
 
   const running = phase !== "idle";
   const done = commitReport?.committed === true;
+  // the connection died during COMMIT — the server may or may not have
+  // applied it; never claim a rollback, never offer a blind retry
+  const indeterminate = commitReport != null && !commitReport.committed && commitReport.outcome === "unknown";
   const canCommit =
     !running &&
     !done &&
+    !indeterminate &&
     report !== null &&
     report.errors.length === 0 &&
     !report.more_errors &&
@@ -237,6 +310,12 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
           <span className="imp-title">
             Import CSV — {table.schema !== "public" ? `${table.schema}.` : ""}
             {table.name}
+          </span>
+          <span
+            className="imp-conn"
+            title="the connection this import writes to — the browse tab's session, never the rail selection"
+          >
+            {connName ?? "no session"}
           </span>
           <div className="imp-steps">
             {["File", "Columns", "Import"].map((label, i) => (
@@ -332,6 +411,12 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                     </table>
                   </div>
                 )}
+                {headerish && (
+                  <div className="imp-warn">
+                    <AlertTriangle size={11} /> row 1 looks like a header — its fields match{" "}
+                    {table.name} column names. Did you mean to enable “first row is a header”?
+                  </div>
+                )}
                 <div className="imp-note">
                   Encoding: UTF-8 only — a non-UTF-8 byte is a per-row error, never silently
                   re-encoded.
@@ -418,10 +503,34 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
 
         {step === 3 && (
           <div className="imp-body">
+            {statNotice && (
+              <div className="imp-warn">
+                <AlertTriangle size={11} /> {statNotice}
+              </div>
+            )}
+            {indeterminate && !running && (
+              <div className="imp-warn">
+                <AlertTriangle size={11} />{" "}
+                {commitReport?.errors[0]?.message ??
+                  "connection lost during COMMIT — the import may or may not have been applied; verify the row count before retrying"}
+                <button
+                  className="imp-link"
+                  onClick={() => invalidateRuns() /* forces a fresh validate */}
+                >
+                  re-validate
+                </button>
+              </div>
+            )}
             {running && (
               <>
                 <div className="imp-runline">
-                  {phase === "validating" ? "Validating (dry run — always rolls back)…" : "Importing…"}
+                  {phase === "validating"
+                    ? // once every row streamed, validate is bisecting the failed
+                      // batch — say so instead of freezing the bar at 100%
+                      progress && progress.total > 0 && progress.processed >= progress.total
+                      ? "locating failed rows…"
+                      : "Validating (dry run — always rolls back)…"
+                    : "Importing…"}
                   {progress && (
                     <span className="imp-total">
                       {progress.processed.toLocaleString()} / {progress.total.toLocaleString()} rows
@@ -456,7 +565,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                 {table.name}.
               </div>
             )}
-            {!running && !done && !runError && issues && (
+            {!running && !done && !runError && !indeterminate && issues && (
               <>
                 <div className="imp-summary">
                   {commitReport && !commitReport.committed ? (

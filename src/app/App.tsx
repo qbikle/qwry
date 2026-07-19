@@ -8,7 +8,7 @@ import { useConnections } from "../stores/connections";
 import { useInspector } from "../stores/inspector";
 import { openFilePaths, openSqlFileDialog, saveActiveToFile, useTabs } from "../stores/tabs";
 import { blankProfile, ConnectionRail } from "../sidebar/ConnectionRail";
-import { editorFormat, editorRunText } from "../editor/SqlEditor";
+import { editorFormat, editorRunText, editorTimeTraveling } from "../editor/SqlEditor";
 import { openTxCount, skey } from "../stores/connections";
 import { overlayOpen } from "./overlay/escStack";
 import { useSettings } from "../stores/settings";
@@ -340,7 +340,10 @@ export function App() {
             void openSqlFileDialog();
             break;
           case "save-file":
-            void saveActiveToFile();
+            // while a time-machine snapshot is shown the parked draft is
+            // invisible — writing it to disk would save text the user isn't
+            // looking at (same swallow as run/format)
+            if (!editorTimeTraveling.current) void saveActiveToFile();
             break;
           case "restore-tab":
             useTabs.getState().restoreClosed();
@@ -351,6 +354,10 @@ export function App() {
             break;
           }
           case "run-all":
+            // the store sql holds the PARKED draft while time-traveling —
+            // running it would execute invisible text (⌘⇧↵ in the editor is
+            // swallowed there; the menu path must match)
+            if (editorTimeTraveling.current) break;
             void useResults.getState().run(useConnections.getState().sql, 0);
             break;
           case "cancel":
@@ -471,9 +478,11 @@ export function App() {
         e.preventDefault();
         void openSqlFileDialog();
       }
-      if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "s") {
+      if (e.metaKey && e.shiftKey && !e.altKey && e.key.toLowerCase() === "s") {
         e.preventDefault();
-        void saveActiveToFile();
+        // swallowed while a snapshot is shown — saving would write the parked
+        // draft while the user looks at different text
+        if (!editorTimeTraveling.current) void saveActiveToFile();
       }
       if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "t") {
         e.preventDefault();

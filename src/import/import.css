@@ -26,6 +26,15 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.imp-conn {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
 .imp-steps {
   display: flex;
   gap: 4px;

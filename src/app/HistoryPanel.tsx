@@ -61,6 +61,7 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
   const profiles = useConnections((s) => s.profiles);
   const [query, setQuery] = useState("");
   const [rows, setRows] = useState<HistoryRow[]>([]);
+  const [fetchError, setFetchError] = useState(false);
   const [profileFilter, setProfileFilter] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<HistoryStatus | "all">("all");
   /** expanded group head row ids */
@@ -72,16 +73,29 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
   // pushed into history_search (its API already filters by profile); the
   // status chips filter client-side (grouping is client-side anyway).
   useEffect(() => {
+    // stale guard: a slow older response resolving after a newer one must not
+    // overwrite it (the timeout debounces the CALL, not the response)
+    let stale = false;
     const t = setTimeout(() => {
       void ipc
         .historySearch(query, profileFilter, 100)
         .then((r) => {
+          if (stale) return;
           setRows(r);
+          setFetchError(false);
           setActive(0);
         })
-        .catch(() => setRows([]));
+        .catch(() => {
+          if (stale) return;
+          // an empty list would lie — say the fetch failed
+          setRows([]);
+          setFetchError(true);
+        });
     }, query ? 120 : 0);
-    return () => clearTimeout(t);
+    return () => {
+      stale = true;
+      clearTimeout(t);
+    };
   }, [query, profileFilter]);
 
   const filtered = useMemo(
@@ -89,12 +103,14 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
     [rows, statusFilter],
   );
 
-  // group CONSECUTIVE runs of the same normalized SQL on the same connection
+  // group adjacent runs of the same RAW SQL on the same connection — raw
+  // equality, never normalized: whitespace inside string literals is data,
+  // and two queries differing only there must not collapse into one entry
   const groups = useMemo(() => {
     const gs: HistoryRow[][] = [];
     for (const r of filtered) {
       const last = gs[gs.length - 1];
-      if (last && norm(last[0].sql) === norm(r.sql) && last[0].profile_id === r.profile_id) {
+      if (last && last[0].sql === r.sql && last[0].profile_id === r.profile_id) {
         last.push(r);
       } else {
         gs.push([r]);
@@ -104,21 +120,24 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
   }, [filtered]);
 
   // flatten (respecting expansion) and interleave day dividers; `runs` is the
-  // keyboard-navigable list, `items` the render list
+  // keyboard-navigable list, `items` the render list. Dividers are computed
+  // per RENDERED row (head and expanded members alike) so a group whose
+  // members cross midnight gets a divider at the boundary instead of filing
+  // older runs under the head's day.
   const { items, runs } = useMemo(() => {
     const items: ({ divider: string } | { run: Run; runIdx: number })[] = [];
     const runs: Run[] = [];
-    const push = (run: Run) => {
-      items.push({ run, runIdx: runs.length });
-      runs.push(run);
-    };
     let day = "";
-    for (const g of groups) {
-      const label = dayLabel(parseTs(g[0].ran_at));
+    const push = (run: Run) => {
+      const label = dayLabel(parseTs(run.row.ran_at));
       if (label !== day) {
         items.push({ divider: label });
         day = label;
       }
+      items.push({ run, runIdx: runs.length });
+      runs.push(run);
+    };
+    for (const g of groups) {
       const open = expanded.has(g[0].id);
       push({
         row: g[0],
@@ -180,7 +199,13 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
               <span
                 role="button"
                 className={`history-xn${expanded.has(run.headId) ? " open" : ""}${run.hiddenErrs > 0 ? " has-err" : ""}`}
-                title={`${run.size} consecutive identical runs — click to ${
+                title={`${run.size} ${
+                  // a status-chip filter can glue runs that were NOT adjacent
+                  // in real history — don't claim "consecutive" there
+                  statusFilter === "all"
+                    ? "consecutive identical runs"
+                    : "identical runs (may be non-consecutive — the list is filtered)"
+                } — click to ${
                   expanded.has(run.headId) ? "collapse" : "expand"
                 }${run.hiddenErrs > 0 ? ` · ${run.hiddenErrs} not ok` : ""}`}
                 onClick={(e) => {
@@ -287,9 +312,11 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
         <div className="history-list" ref={listRef}>
           {runs.length === 0 && (
             <div className="history-empty">
-              {query || statusFilter !== "all" || profileFilter
-                ? "No matches."
-                : "No queries yet."}
+              {fetchError
+                ? "couldn't load history"
+                : query || statusFilter !== "all" || profileFilter
+                  ? "No matches."
+                  : "No queries yet."}
             </div>
           )}
           {items.map((it, i) =>

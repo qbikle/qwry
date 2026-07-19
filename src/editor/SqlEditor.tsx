@@ -210,13 +210,31 @@ function runTarget(view: EditorView): { text: string; offset: number } {
 }
 
 /** appdb timestamps are UTC "YYYY-MM-DD HH:MM:SS" (datetime('now')) — render
- * as a local wall-clock time for the time-machine banner */
+ * as a local wall-clock time for the time-machine banner; snapshots from
+ * another day carry the date (a bare "14:03" would read as today's) */
 function snapTime(ts: string): string {
   const d = new Date(ts.endsWith("Z") ? ts : ts.replace(" ", "T") + "Z");
-  return isNaN(d.getTime())
-    ? ts
-    : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (isNaN(d.getTime())) return ts;
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  if (sameDay) return time;
+  const date = d.toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+    ...(d.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {}),
+  });
+  return `${date}, ${time}`;
 }
+
+/** true while the mounted editor shows a read-only time-machine snapshot —
+ * the live draft is parked then, and anything that would execute or persist
+ * "the buffer" (menu Run All, palette Run, ⌘⇧S) must no-op instead of acting
+ * on the INVISIBLE parked text. Kept accurate through every enter/exit path. */
+export const editorTimeTraveling = { current: false };
 
 /** Query ▸ Format SQL (menu) reaches the mounted editor through this */
 export const editorFormat: { current: (() => void) | null } = { current: null };
@@ -282,8 +300,20 @@ export function SqlEditor() {
       // setState bypasses the update listener — same discipline as tab switch
       lastSyncedSql = null;
       hasDiags = true;
+      editorTimeTraveling.current = true;
       setTt({ time: snapTime(snap.taken_at), pos: t.idx + 1, count: t.snaps.length });
       view.focus();
+    };
+
+    /** never-lose-work: a live draft about to be replaced by history text
+     * (⏎-restore, ⌥-walk leaving slot 0, a walk killed mid-cycle) joins the
+     * snapshot trail first — same trail the feature exists to provide. The
+     * appdb layer dedupes, so a draft equal to the newest snapshot no-ops. */
+    const parkDraft = (tabId: string | null, draft: string, newestSnap: string | undefined) => {
+      if (!tabId || draft.trim() === "" || draft === newestSnap) return;
+      void ipc
+        .bufferSnapshotAdd(tabId, draft)
+        .catch((e) => console.error("buffer_snapshot_add failed", e));
     };
 
     /** leave time-travel, restoring the parked live state. `apply` then lays
@@ -292,11 +322,19 @@ export function SqlEditor() {
       const t = ttState;
       if (!t) return;
       ttState = null;
+      editorTimeTraveling.current = false;
       setTt(null);
       view.setState(t.draftState);
       lastSyncedSql = null;
       hasDiags = true;
       if (apply) {
+        // the live draft is about to be overwritten through the store — park
+        // it in the trail FIRST so ⏎-restore can never lose a never-run draft
+        parkDraft(
+          useTabs.getState().activeId,
+          t.draftState.doc.toString(),
+          t.snaps[0]?.sql,
+        );
         const sql = t.snaps[t.idx].sql;
         view.dispatch({
           changes: { from: 0, to: view.state.doc.length, insert: sql },
@@ -403,10 +441,17 @@ export function SqlEditor() {
           if (editorGone || walk || ttState || view.state !== startState) return;
           if (useTabs.getState().activeId !== tabId) return;
           if (snaps.length === 0) return;
-          const w = { snaps: snaps.map((s) => s.sql), idx: 0, draft: startState.doc.toString() };
+          const draft = startState.doc.toString();
+          const w = { snaps: snaps.map((s) => s.sql), idx: 0, draft };
           walk = w;
           walkStep(view, 1);
-          if (w.idx === 0) walk = null; // nothing older that differs
+          if (w.idx === 0) {
+            walk = null; // nothing older that differs
+          } else {
+            // slot 0 was left: the draft now lives only in walk RAM and each
+            // step REPLACES the buffer through the store — park it first
+            parkDraft(tabId, draft, w.snaps[0]);
+          }
         })
         .catch((e) => console.error("buffer_snapshots_list failed", e));
     };
@@ -515,8 +560,23 @@ export function SqlEditor() {
           key: "Alt-ArrowDown",
           run: (view) => {
             if (ttState) return true;
-            if (!walk || !walkGateOk(view)) return false;
-            walkStep(view, -1);
+            if (!walkGateOk(view)) return false;
+            if (walk) {
+              walkStep(view, -1);
+              return true;
+            }
+            // dead walk: it leaves the caret at the doc END, where another ⌥↓
+            // used to fall through to moveLineDown — a silent line reorder
+            // where the user expected history nav. At the end edge (where
+            // moveLineDown is a no-op anyway) restart the walk instead; the
+            // start edge stays with moveLineDown, which is real editing there.
+            if (view.state.selection.main.head !== view.state.doc.length) return false;
+            if (
+              view.state.doc.lines > 10 &&
+              splitStatementSpans(view.state.doc.toString()).length > 1
+            )
+              return false;
+            walkStart(view); // no-ops when no snapshots exist
             return true;
           },
         },
@@ -629,8 +689,12 @@ export function SqlEditor() {
       const parked = ttState ? ttState.draftState : view.state;
       if (ttState) {
         ttState = null;
+        editorTimeTraveling.current = false;
         setTt(null);
       }
+      // a walk killed away from slot 0 holds its draft ONLY in RAM (the
+      // buffer + store show a snapshot) — park it before it dies
+      if (walk && walk.idx !== 0) parkDraft(currentTab, walk.draft, walk.snaps[0]);
       walk = null;
       if (currentTab) tabStates.set(currentTab, parked);
       currentTab = s.activeId;
@@ -744,6 +808,9 @@ export function SqlEditor() {
       // theme/wrap remount starts outside time-travel (the live buffer is in
       // the tab store; the fresh mount rebuilds from it)
       ttState = null;
+      editorTimeTraveling.current = false;
+      // a walk killed by the remount away from slot 0: same RAM-only draft
+      if (walk && walk.idx !== 0) parkDraft(currentTab, walk.draft, walk.snaps[0]);
       walk = null;
       setTt(null);
       editorRunText.current = null;

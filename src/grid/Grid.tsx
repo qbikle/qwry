@@ -1637,6 +1637,16 @@ export function Grid({
       locators.push(loc);
     }
     if (locators.length === 0) return;
+    // capture the result's OWN context BEFORE any await — a tab switch during
+    // the confirm modal / delete round trip must not aim the re-run or the
+    // undo offer at another tab (same capture discipline as edits.ts commit())
+    const {
+      active: tabId,
+      executedSql,
+      executedSessionId: sessionId,
+      executedProfileId,
+    } = useResults.getState();
+    if (!sessionId || !executedSql) return;
     const tableName = map.tables[deletableTableOid] ?? "table";
     const n = locators.length;
     const preview = locators
@@ -1658,8 +1668,6 @@ export function Grid({
     );
     if (!ok) return;
 
-    const { executedSql, executedSessionId: sessionId, executedProfileId } = useResults.getState();
-    if (!sessionId || !executedSql) return;
     try {
       // cached-mapping feed: the backend plans the DELETEs with zero catalog
       // round trips; a stale hint errors or mismatches → whole batch rolls
@@ -1677,13 +1685,16 @@ export function Grid({
         useEdits.setState({ lastError: `delete rolled back — ${msgs.join("; ")}` });
         return;
       }
-      // re-run the exact query so the grid reflects the delete
+      // re-run the exact query FIRST so the grid reflects the delete — run()'s
+      // resetTab clears the tab's undo offer, so the fresh offer must only be
+      // fetched after it (the old order let resetTab wipe it)
+      if (useResults.getState().active === tabId) {
+        await useResults.getState().run(executedSql);
+      }
       if (executedProfileId) {
         const { refreshUndoOffer } = await import("../stores/edits");
-        const tabId = useTabs.getState().activeId;
-        if (tabId) void refreshUndoOffer(tabId, sessionId, executedProfileId);
+        void refreshUndoOffer(tabId, sessionId, executedProfileId);
       }
-      void useResults.getState().run(executedSql);
     } catch (e) {
       useResults.setState({
         globalError: { message: (e as { message?: string }).message ?? String(e), position: null, code: null },

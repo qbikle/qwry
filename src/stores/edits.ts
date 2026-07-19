@@ -331,7 +331,13 @@ function buildEntries(
 const UNDO_OFFER_TTL_MS = 14.5 * 60 * 1000;
 let undoOfferTimer: number | null = null;
 
+/** monotonic guard over offer resolutions: every set/clear AND every refresh
+ * fetch bumps it, so a stale in-flight fetch can never override a newer
+ * resolution (e.g. a resetTab clear, or a later commit's fresher offer) */
+let offerSeq = 0;
+
 function setUndoOffer(offer: UndoOffer | null) {
+  offerSeq++;
   if (undoOfferTimer !== null) {
     window.clearTimeout(undoOfferTimer);
     undoOfferTimer = null;
@@ -349,8 +355,10 @@ function setUndoOffer(offer: UndoOffer | null) {
 /** fetch the newest undo row for the profile and surface it — only when it
  * was written by the EXACT session this tab committed on (session-stamped) */
 export async function refreshUndoOffer(tabId: string, sessionId: string, profileId: string) {
+  const seq = ++offerSeq;
   try {
     const row = await ipc.undoLogLatest(profileId);
+    if (seq !== offerSeq) return; // superseded while in flight — stay stale-silent
     if (row && row.session_key === sessionId) {
       setUndoOffer({ id: row.id, description: row.description, tabId, sessionId, profileId });
     }
@@ -756,10 +764,12 @@ export const useEdits = create<EditsState>((set, get) => ({
       setUndoOffer(null); // single-shot: the row is consumed either way
       if (out.committed) {
         set({ undoing: false, lastError: null });
-        // refresh the grid with the exact SQL this result came from
+        // refresh the grid with the exact SQL this result came from — AWAITED
+        // so its resetTab has already fired before the redo offer is fetched
+        // (the old fire-and-forget order let resetTab wipe the fresh offer)
         const rt = useResults.getState().byTab[offer.tabId];
         if (rt?.executedSql && useResults.getState().active === offer.tabId) {
-          void useResults.getState().run(rt.executedSql, rt.executedOffset);
+          await useResults.getState().run(rt.executedSql, rt.executedOffset);
         }
         // the undo commit wrote its own undo row — redo emerges as the next offer
         void refreshUndoOffer(offer.tabId, offer.sessionId, offer.profileId);
