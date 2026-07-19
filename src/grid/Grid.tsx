@@ -1511,6 +1511,9 @@ export function Grid({
         return;
       }
       if (meta && e.shiftKey && e.key.toLowerCase() === "z") {
+        // empty staged-redo stack yields the chord to the window-level
+        // commit-undo listener instead of eating it
+        if (useEdits.getState().redoStack.length === 0) return;
         e.preventDefault();
         useEdits.getState().redo();
         return;
@@ -1675,6 +1678,11 @@ export function Grid({
         return;
       }
       // re-run the exact query so the grid reflects the delete
+      if (executedProfileId) {
+        const { refreshUndoOffer } = await import("../stores/edits");
+        const tabId = useTabs.getState().activeId;
+        if (tabId) void refreshUndoOffer(tabId, sessionId, executedProfileId);
+      }
       void useResults.getState().run(executedSql);
     } catch (e) {
       useResults.setState({

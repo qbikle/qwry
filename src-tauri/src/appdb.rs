@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::driver::{DriverError, Profile, Result};
 
 /// bump when appending a migration in `migrate`
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 5;
 /// per-row stored SQL cap (bytes, cut at a char boundary) — a pasted multi-MB
 /// INSERT must not bloat the appdb forever
 const HISTORY_SQL_CAP: usize = 20_000;
@@ -29,6 +29,12 @@ const HISTORY_ROW_CAP: i64 = 20_000;
 const HISTORY_SEARCH_WINDOW: i64 = 5_000;
 /// distinct server builds whose pg_catalog function lists we keep cached
 const PG_CATALOG_CACHE_CAP: i64 = 8;
+/// undo-log rows kept per profile (newest); expired rows pruned on every write
+const UNDO_KEEP_PER_PROFILE: i64 = 20;
+/// buffer snapshots kept per tab (newest)
+const SNAPSHOT_KEEP_PER_TAB: i64 = 50;
+/// per-snapshot stored SQL cap (bytes, cut at a char boundary)
+const SNAPSHOT_SQL_CAP: usize = 200_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TabRow {
@@ -212,6 +218,8 @@ fn migrate(conn: &mut Connection) -> Result<()> {
             1 => baseline_v1(&tx)?,
             2 => history_status_v2(&tx)?,
             3 => pg_catalog_cache_v3(&tx)?,
+            4 => undo_log_v4(&tx)?,
+            5 => buffer_snapshots_v5(&tx)?,
             n => return Err(DriverError::Internal(format!("appdb: no migration to v{n}"))),
         }
         tx.pragma_update(None, "user_version", next).map_err(internal)?;
@@ -282,6 +290,40 @@ fn pg_catalog_cache_v3(conn: &Connection) -> Result<()> {
     .map_err(internal)
 }
 
+/// inverse-SQL undo after commit: one row per committed edit/delete batch.
+/// `revert_sql` holds the structured revert plan (JSON — regenerated into SQL
+/// by the driver's own generator at undo time, never parsed). `session_key`
+/// stamps the committing session; undo is refused across reconnects.
+fn undo_log_v4(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS undo_log (
+             id          INTEGER PRIMARY KEY AUTOINCREMENT,
+             profile_id  TEXT NOT NULL,
+             session_key TEXT NOT NULL,
+             created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+             description TEXT NOT NULL,
+             revert_sql  TEXT NOT NULL,
+             expires_at  TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS undo_log_profile ON undo_log (profile_id, id DESC);",
+    )
+    .map_err(internal)
+}
+
+/// buffer time-machine: executed versions of each tab's editor buffer
+fn buffer_snapshots_v5(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS buffer_snapshots (
+             id       INTEGER PRIMARY KEY AUTOINCREMENT,
+             tab_id   TEXT NOT NULL,
+             taken_at TEXT NOT NULL DEFAULT (datetime('now')),
+             sql      TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS buffer_snapshots_tab ON buffer_snapshots (tab_id, id DESC);",
+    )
+    .map_err(internal)
+}
+
 fn has_column(conn: &Connection, table: &str, col: &str) -> Result<bool> {
     let n: i64 = conn
         .query_row(
@@ -323,15 +365,19 @@ fn collect_ok<T>(
     (out, skipped)
 }
 
-fn cap_sql(sql: &str) -> Cow<'_, str> {
-    if sql.len() <= HISTORY_SQL_CAP {
+fn cap_text(sql: &str, cap: usize) -> Cow<'_, str> {
+    if sql.len() <= cap {
         return Cow::Borrowed(sql);
     }
-    let mut end = HISTORY_SQL_CAP;
+    let mut end = cap;
     while end > 0 && !sql.is_char_boundary(end) {
         end -= 1;
     }
     Cow::Owned(format!("{}{HISTORY_TRUNC_MARKER}", &sql[..end]))
+}
+
+fn cap_sql(sql: &str) -> Cow<'_, str> {
+    cap_text(sql, HISTORY_SQL_CAP)
 }
 
 /// Persisted stale-while-revalidate schema snapshots: the last introspection
@@ -605,6 +651,178 @@ impl AppDb {
                 .map(|_| ())
                 .map_err(internal),
         }
+    }
+}
+
+/// mirrored in src/ipc/types.ts
+#[derive(Debug, Clone, Serialize)]
+pub struct UndoLogRow {
+    pub id: i64,
+    pub profile_id: String,
+    pub session_key: String,
+    pub created_at: String,
+    pub description: String,
+    /// structured revert plan (JSON) — see driver::postgres::edit::UndoPlan
+    pub revert_sql: String,
+    pub expires_at: String,
+}
+
+/// Inverse-SQL undo log: one row per committed edit/delete batch, aggressively
+/// pruned (15-minute TTL + newest UNDO_KEEP_PER_PROFILE per profile). Only the
+/// LATEST row per profile is ever offered — a newer commit supersedes.
+impl AppDb {
+    pub fn undo_log_add(
+        &self,
+        profile_id: &str,
+        session_key: &str,
+        description: &str,
+        revert_sql: &str,
+    ) -> Result<i64> {
+        let conn = self.0.lock().unwrap();
+        conn.execute(
+            "INSERT INTO undo_log (profile_id, session_key, description, revert_sql, expires_at)
+             VALUES (?1, ?2, ?3, ?4, datetime('now', '+15 minutes'))",
+            rusqlite::params![profile_id, session_key, description, revert_sql],
+        )
+        .map_err(internal)?;
+        let id = conn.last_insert_rowid();
+        conn.execute("DELETE FROM undo_log WHERE expires_at <= datetime('now')", [])
+            .map_err(internal)?;
+        conn.execute(
+            "DELETE FROM undo_log WHERE profile_id = ?1 AND id NOT IN (
+                 SELECT id FROM undo_log WHERE profile_id = ?1 ORDER BY id DESC LIMIT ?2
+             )",
+            rusqlite::params![profile_id, UNDO_KEEP_PER_PROFILE],
+        )
+        .map_err(internal)?;
+        Ok(id)
+    }
+
+    /// newest unexpired row for a profile — the only offer ever surfaced
+    pub fn undo_log_latest(&self, profile_id: &str) -> Result<Option<UndoLogRow>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, profile_id, session_key, created_at, description, revert_sql, expires_at
+                 FROM undo_log
+                 WHERE profile_id = ?1 AND expires_at > datetime('now')
+                 ORDER BY id DESC LIMIT 1",
+            )
+            .map_err(internal)?;
+        let mut rows = stmt.query([profile_id]).map_err(internal)?;
+        match rows.next().map_err(internal)? {
+            Some(r) => Ok(Some(map_undo_row(r).map_err(internal)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// atomically consume one undo row (select + delete in a transaction) —
+    /// an undo is single-shot whether it succeeds or rolls back; expired rows
+    /// consume to None
+    pub fn undo_log_take(&self, id: i64) -> Result<Option<UndoLogRow>> {
+        let mut conn = self.0.lock().unwrap();
+        let tx = conn.transaction().map_err(internal)?;
+        let row = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT id, profile_id, session_key, created_at, description, revert_sql, expires_at
+                     FROM undo_log WHERE id = ?1 AND expires_at > datetime('now')",
+                )
+                .map_err(internal)?;
+            let mut rows = stmt.query([id]).map_err(internal)?;
+            match rows.next().map_err(internal)? {
+                Some(r) => Some(map_undo_row(r).map_err(internal)?),
+                None => None,
+            }
+        };
+        tx.execute("DELETE FROM undo_log WHERE id = ?1", [id])
+            .map_err(internal)?;
+        tx.commit().map_err(internal)?;
+        Ok(row)
+    }
+}
+
+fn map_undo_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<UndoLogRow> {
+    Ok(UndoLogRow {
+        id: r.get(0)?,
+        profile_id: r.get(1)?,
+        session_key: r.get(2)?,
+        created_at: r.get(3)?,
+        description: r.get(4)?,
+        revert_sql: r.get(5)?,
+        expires_at: r.get(6)?,
+    })
+}
+
+/// mirrored in src/ipc/types.ts
+#[derive(Debug, Clone, Serialize)]
+pub struct BufferSnapshot {
+    pub id: i64,
+    pub taken_at: String,
+    pub sql: String,
+}
+
+/// Buffer time-machine storage: executed versions of a tab's editor buffer.
+/// Consecutive identical snapshots dedupe; each tab keeps its newest
+/// SNAPSHOT_KEEP_PER_TAB; per-row SQL capped at SNAPSHOT_SQL_CAP bytes.
+impl AppDb {
+    pub fn buffer_snapshot_add(&self, tab_id: &str, sql: &str) -> Result<()> {
+        let sql = cap_text(sql, SNAPSHOT_SQL_CAP);
+        let conn = self.0.lock().unwrap();
+        let newest: Option<String> = conn
+            .query_row(
+                "SELECT sql FROM buffer_snapshots WHERE tab_id = ?1 ORDER BY id DESC LIMIT 1",
+                [tab_id],
+                |r| r.get(0),
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(other),
+            })
+            .map_err(internal)?;
+        if newest.as_deref() == Some(sql.as_ref()) {
+            return Ok(());
+        }
+        conn.execute(
+            "INSERT INTO buffer_snapshots (tab_id, sql) VALUES (?1, ?2)",
+            rusqlite::params![tab_id, sql.as_ref()],
+        )
+        .map_err(internal)?;
+        conn.execute(
+            "DELETE FROM buffer_snapshots WHERE tab_id = ?1 AND id NOT IN (
+                 SELECT id FROM buffer_snapshots WHERE tab_id = ?1 ORDER BY id DESC LIMIT ?2
+             )",
+            rusqlite::params![tab_id, SNAPSHOT_KEEP_PER_TAB],
+        )
+        .map_err(internal)?;
+        Ok(())
+    }
+
+    /// newest first
+    pub fn buffer_snapshots_list(&self, tab_id: &str) -> Result<(Vec<BufferSnapshot>, usize)> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, taken_at, sql FROM buffer_snapshots
+                 WHERE tab_id = ?1 ORDER BY id DESC",
+            )
+            .map_err(internal)?;
+        let rows = stmt
+            .query_map([tab_id], |r| {
+                Ok(BufferSnapshot { id: r.get(0)?, taken_at: r.get(1)?, sql: r.get(2)? })
+            })
+            .map_err(internal)?;
+        Ok(collect_ok(rows, "buffer snapshot"))
+    }
+
+    pub fn buffer_snapshots_clear(&self, tab_id: &str) -> Result<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM buffer_snapshots WHERE tab_id = ?1", [tab_id])
+            .map_err(internal)?;
+        Ok(())
     }
 }
 
@@ -972,6 +1190,99 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM pg_catalog_cache", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, PG_CATALOG_CACHE_CAP);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_log_roundtrip_take_and_prune() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+        assert!(db.undo_log_latest("p").unwrap().is_none());
+
+        let id1 = db.undo_log_add("p", "sess-1", "1 edit on public.t", "{\"a\":1}").unwrap();
+        let id2 = db.undo_log_add("p", "sess-1", "2 edits on public.t", "{\"a\":2}").unwrap();
+        db.undo_log_add("other", "sess-9", "noise", "{}").unwrap();
+        assert!(id2 > id1);
+
+        // only the NEWEST row per profile is offered
+        let latest = db.undo_log_latest("p").unwrap().expect("latest");
+        assert_eq!(latest.id, id2);
+        assert_eq!(latest.session_key, "sess-1");
+        assert_eq!(latest.revert_sql, "{\"a\":2}");
+        assert!(!latest.expires_at.is_empty() && !latest.created_at.is_empty());
+
+        // take is single-shot: first call returns, second is None
+        let taken = db.undo_log_take(id2).unwrap().expect("take");
+        assert_eq!(taken.id, id2);
+        assert!(db.undo_log_take(id2).unwrap().is_none());
+        // the older row surfaces next
+        assert_eq!(db.undo_log_latest("p").unwrap().unwrap().id, id1);
+
+        // expired rows are never offered and take to None
+        db.0.lock()
+            .unwrap()
+            .execute(
+                "UPDATE undo_log SET expires_at = datetime('now', '-1 minute') WHERE id = ?1",
+                [id1],
+            )
+            .unwrap();
+        assert!(db.undo_log_latest("p").unwrap().is_none());
+        assert!(db.undo_log_take(id1).unwrap().is_none());
+
+        // per-profile cap: newest UNDO_KEEP_PER_PROFILE survive, sibling untouched
+        for i in 0..(UNDO_KEEP_PER_PROFILE + 5) {
+            db.undo_log_add("p", "s", &format!("edit {i}"), "{}").unwrap();
+        }
+        let n: i64 = db
+            .0
+            .lock()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM undo_log WHERE profile_id = 'p'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, UNDO_KEEP_PER_PROFILE);
+        assert!(db.undo_log_latest("other").unwrap().is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn buffer_snapshots_dedupe_cap_and_clear() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+
+        db.buffer_snapshot_add("t1", "SELECT 1").unwrap();
+        db.buffer_snapshot_add("t1", "SELECT 1").unwrap(); // consecutive dupe skipped
+        db.buffer_snapshot_add("t1", "SELECT 2").unwrap();
+        db.buffer_snapshot_add("t1", "SELECT 1").unwrap(); // non-consecutive repeat kept
+        db.buffer_snapshot_add("t2", "OTHER TAB").unwrap();
+
+        let (snaps, skipped) = db.buffer_snapshots_list("t1").unwrap();
+        assert_eq!(skipped, 0);
+        assert_eq!(
+            snaps.iter().map(|s| s.sql.as_str()).collect::<Vec<_>>(),
+            vec!["SELECT 1", "SELECT 2", "SELECT 1"],
+            "newest first, consecutive dupe dropped"
+        );
+        assert!(snaps[0].id > snaps[1].id && snaps[1].id > snaps[2].id);
+        assert!(!snaps[0].taken_at.is_empty());
+
+        // per-tab cap prunes the oldest
+        for i in 0..(SNAPSHOT_KEEP_PER_TAB + 10) {
+            db.buffer_snapshot_add("t1", &format!("SELECT {i}")).unwrap();
+        }
+        let (snaps, _) = db.buffer_snapshots_list("t1").unwrap();
+        assert_eq!(snaps.len(), SNAPSHOT_KEEP_PER_TAB as usize);
+
+        // oversized SQL is capped with the marker
+        let long = "y".repeat(SNAPSHOT_SQL_CAP + 100);
+        db.buffer_snapshot_add("t3", &long).unwrap();
+        let (snaps, _) = db.buffer_snapshots_list("t3").unwrap();
+        assert!(snaps[0].sql.ends_with(HISTORY_TRUNC_MARKER));
+        assert_eq!(snaps[0].sql.len(), SNAPSHOT_SQL_CAP + HISTORY_TRUNC_MARKER.len());
+
+        // clear is per-tab
+        db.buffer_snapshots_clear("t1").unwrap();
+        assert!(db.buffer_snapshots_list("t1").unwrap().0.is_empty());
+        assert_eq!(db.buffer_snapshots_list("t2").unwrap().0.len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

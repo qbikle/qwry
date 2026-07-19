@@ -309,7 +309,29 @@ function PendingEditsStatus() {
   const lastError = useEdits((s) => s.lastError);
   const discardAll = useEdits((s) => s.discardAll);
   const openPreview = useEdits((s) => s.openPreview);
-  if (count === 0 && !lastError) return null;
+  const undoOffer = useEdits((s) => s.undoOffer);
+  const undoing = useEdits((s) => s.undoing);
+  const activeTab = useEdits((s) => s.active);
+  // inverse-SQL undo offer belongs to the tab (and session) that committed
+  const offer = undoOffer && undoOffer.tabId === activeTab ? undoOffer : null;
+
+  // ⌘⇧Z while the offer is visible. defaultPrevented yields to the grid's
+  // staged-edit redo and the editor's text redo — the toast only claims the
+  // chord when nothing focused wanted it.
+  useEffect(() => {
+    if (!offer) return;
+    const h = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        void useEdits.getState().undoLastCommit();
+      }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [offer]);
+
+  if (count === 0 && !lastError && !offer) return null;
   return (
     <span className="status-edits">
       {lastError && (
@@ -322,6 +344,21 @@ function PendingEditsStatus() {
         >
           {lastError}
         </span>
+      )}
+      {offer && (
+        <>
+          <span className="status-edit-count" title={`Committed: ${offer.description}`}>
+            ✓ {offer.description}
+          </span>
+          <button
+            className="status-link"
+            disabled={undoing}
+            title="Revert this commit through the verified pipeline — a stale undo rolls back"
+            onClick={() => void useEdits.getState().undoLastCommit()}
+          >
+            {undoing ? "Undoing…" : "Undo ⌘⇧Z"}
+          </button>
+        </>
       )}
       {count > 0 && (
         <>

@@ -1,6 +1,7 @@
 mod appdb;
 mod commands;
 pub mod driver;
+pub mod import;
 mod secrets;
 mod state;
 mod tunnel;
@@ -115,6 +116,9 @@ fn build_menu(app: &tauri::App) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> 
     let file = SubmenuBuilder::new(app, "File")
         .item(&item("new-tab", "New Tab", Some("Cmd+T"))?)
         .item(&item("new-connection", "New Connection…", None)?)
+        .separator()
+        .item(&item("open-file", "Open…", Some("Cmd+O"))?)
+        .item(&item("save-file", "Save to File", Some("Cmd+Shift+S"))?)
         .separator()
         .item(&item("close-tab", "Close Tab", Some("Cmd+W"))?)
         .item(&item("restore-tab", "Reopen Closed Tab", Some("Cmd+Shift+T"))?)
@@ -260,6 +264,7 @@ pub fn run() {
             commands::connect,
             commands::test_connection,
             commands::write_text_file,
+            commands::read_text_file,
             commands::disconnect,
             commands::execute,
             commands::execute_stream,
@@ -271,10 +276,17 @@ pub fn run() {
             commands::edits_preview,
             commands::edits_apply,
             commands::delete_rows,
+            commands::undo_log_latest,
+            commands::undo_apply,
+            commands::buffer_snapshot_add,
+            commands::buffer_snapshots_list,
+            commands::buffer_snapshots_clear,
             commands::fetch_cell,
             commands::session_info,
             commands::terminate_backend,
             commands::insert_row,
+            import::csv_preview,
+            import::csv_import,
             commands::tabs_list,
             commands::tabs_save,
             commands::history_add,

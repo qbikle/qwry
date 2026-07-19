@@ -188,7 +188,10 @@ async fn staging_edit_pipeline() {
         .await
         .expect("preview");
     assert_eq!(preview.len(), 2);
-    assert!(preview[0].contains(r#"SET "name" = 'edited'::text WHERE "id" = '2'::int4"#), "{}", preview[0]);
+    // capture grammar: SET, old-row FOR UPDATE subselect, qualified outer WHERE
+    assert!(preview[0].contains(r#"SET "name" = 'edited'::text"#), "{}", preview[0]);
+    assert!(preview[0].contains(r#"WHERE "id" = '2'::int4 FOR UPDATE) AS __old"#), "{}", preview[0]);
+    assert!(preview[0].contains(r#"WHERE __t."id" = '2'::int4"#), "{}", preview[0]);
     assert!(preview[1].contains(r#"SET "val" = NULL"#), "{}", preview[1]);
 
     // apply in one tx, RETURNING refreshes
@@ -671,18 +674,19 @@ async fn staging_table_ddl() {
 /// and rolls back EVERYTHING — no partial writes; (5) a stale PK locator
 /// under a hint → matched≠1 → full rollback; (6) delete_rows batched path
 /// (mixed stale → rollback; valid → commit).
-/// hinted plans append attname-verification guards to the end of the WHERE —
-/// strip that contiguous block to compare the shared core against a derived
-/// (guard-free) plan
+/// hinted plans AND attname-verification guards into the inner (FOR UPDATE)
+/// WHERE — strip each guard predicate to compare the shared core against a
+/// derived (guard-free) plan. Guard shape:
+/// ` AND (SELECT attname FROM pg_attribute WHERE …) = 'name'`
 fn strip_name_guards(s: &str) -> String {
-    match s.find(" AND (SELECT attname FROM pg_attribute") {
-        Some(i) => {
-            let tail = &s[i..];
-            let rest = tail.find(" RETURNING").map(|j| &tail[j..]).unwrap_or("");
-            format!("{}{}", &s[..i], rest)
-        }
-        None => s.to_string(),
+    let mut out = s.to_string();
+    while let Some(i) = out.find(" AND (SELECT attname FROM pg_attribute") {
+        let rest = &out[i..];
+        let eq = rest.find(") = '").expect("guard predicate shape");
+        let close = rest[eq + 5..].find('\'').expect("guard closing quote");
+        out.replace_range(i..i + eq + 5 + close + 1, "");
     }
+    out
 }
 
 #[tokio::test]
@@ -1335,7 +1339,12 @@ async fn staging_dotted_names() {
         .await
         .expect("preview");
     assert!(
-        preview[0].starts_with(r#"UPDATE "qwry.dotted"."ta.ble" SET"#),
+        preview[0].starts_with(r#"UPDATE "qwry.dotted"."ta.ble" AS __t SET"#),
+        "{}",
+        preview[0]
+    );
+    assert!(
+        preview[0].contains(r#"FROM (SELECT "v" FROM "qwry.dotted"."ta.ble" WHERE"#),
         "{}",
         preview[0]
     );
@@ -2028,6 +2037,366 @@ async fn staging_table_stats() {
              DROP TABLE qwry_test.qwry_stats_t;
              DROP FUNCTION qwry_test.qwry_stats_trg_fn()",
         )
+        .await
+        .expect("cleanup");
+}
+
+// ---------------------------------------------------------------------------
+// v0.8.1-timeline additions
+// ---------------------------------------------------------------------------
+
+/// Inverse-SQL undo after commit, end to end:
+/// (1) a committed edit batch captures OLD values in-statement and yields a
+///     revert plan; (2) undo restores through the verified pipeline and yields
+///     a redo plan (undo-of-undo); (3) a STALE undo (another session touched
+///     the row) rolls back fully with an honest message and never clobbers;
+/// (4) capture-grammar accounting: a locator matching 2 rows reports
+///     "2 rows matched" (the FOR UPDATE join multiplies nothing) and rolls
+///     back; (5) delete → undo re-inserts (GENERATED column excluded and
+///     recomputed) and re-deletes on redo; (6) a ctid-table update's revert
+///     locates by the NEW ctid (the update moved the row) + value guards.
+#[tokio::test]
+#[ignore]
+async fn staging_inverse_undo() {
+    use qwry_lib::driver::postgres::edit::{ColumnMapHint, EditMapHint, RowEdit, UndoStmt};
+
+    let session = connect_db2("test-undo").await;
+    let intruder = connect_db2("test-undo-intruder").await;
+
+    session
+        .execute_simple(
+            "CREATE SCHEMA IF NOT EXISTS qwry_test;
+             DROP TABLE IF EXISTS qwry_test.qwry_undo_t;
+             CREATE TABLE qwry_test.qwry_undo_t (id int PRIMARY KEY, v text, n int);
+             INSERT INTO qwry_test.qwry_undo_t VALUES (1, 'one', 10), (2, 'two', 20), (3, 'three', 30)",
+        )
+        .await
+        .expect("setup");
+
+    let sql = "SELECT id, v, n FROM qwry_test.qwry_undo_t ORDER BY id";
+    let map = session.editability(sql, 0, None).await.expect("map");
+    let oid = map.columns[0].table_oid;
+
+    // (1) commit a 2-row batch — OLD values must land in the revert plan
+    let edits = vec![
+        RowEdit { table_oid: oid, col: 1, value: Some("uno".into()), use_default: false, pk: vec![(0, Some("1".into()))], guard: vec![] },
+        RowEdit { table_oid: oid, col: 2, value: Some("99".into()), use_default: false, pk: vec![(0, Some("2".into()))], guard: vec![] },
+    ];
+    let outcome = session.apply_edits(sql, 0, edits, None).await.expect("apply");
+    assert!(outcome.committed);
+    assert_eq!(outcome.results[0].new_value.as_deref(), Some("uno"), "grid refresh value intact");
+    let plan = outcome.revert.expect("committed batch must carry a revert plan");
+    assert_eq!(plan.stmts.len(), 2);
+    let UndoStmt::Update(m0) = &plan.stmts[0] else { panic!("expected update stmt") };
+    assert_eq!(m0.sets[0].name, "v");
+    assert_eq!(m0.sets[0].value.as_deref(), Some("one"), "revert must hold the OLD value");
+    assert!(
+        m0.guards.iter().any(|g| g.name == "v" && g.value.as_deref() == Some("uno")),
+        "revert must pin the value we wrote: {:?}",
+        m0.guards
+    );
+    assert!(plan.description.contains("2 edit"), "{}", plan.description);
+
+    // (2) undo restores both rows and yields a redo plan
+    let (undo_out, redo) = session.apply_revert(&plan).await.expect("undo");
+    assert!(undo_out.committed, "{:?}", undo_out.message);
+    let check = session
+        .execute_simple("SELECT v, n FROM qwry_test.qwry_undo_t ORDER BY id")
+        .await
+        .expect("check undo");
+    assert_eq!(check.statements[0].rows[0][0].as_deref(), Some("one"));
+    assert_eq!(check.statements[0].rows[1][1].as_deref(), Some("20"));
+
+    // undo-of-undo: the redo plan re-applies the commit, and is itself undoable
+    let redo = redo.expect("undo must yield a redo plan");
+    assert!(redo.description.starts_with("undo of"), "{}", redo.description);
+    let (redo_out, undo_again) = session.apply_revert(&redo).await.expect("redo");
+    assert!(redo_out.committed);
+    let check = session
+        .execute_simple("SELECT v, n FROM qwry_test.qwry_undo_t ORDER BY id")
+        .await
+        .expect("check redo");
+    assert_eq!(check.statements[0].rows[0][0].as_deref(), Some("uno"));
+    assert_eq!(check.statements[0].rows[1][1].as_deref(), Some("99"));
+    let undo_again = undo_again.expect("redo must itself be undoable");
+    let (back, _) = session.apply_revert(&undo_again).await.expect("back to baseline");
+    assert!(back.committed);
+
+    // (3) stale undo: intruder edits the row between commit and undo → the
+    // whole revert rolls back honestly; the intruder's write survives
+    let edits = vec![RowEdit {
+        table_oid: oid,
+        col: 1,
+        value: Some("mine".into()),
+        use_default: false,
+        pk: vec![(0, Some("1".into()))],
+        guard: vec![],
+    }];
+    let outcome = session.apply_edits(sql, 0, edits, None).await.expect("apply3");
+    assert!(outcome.committed);
+    let plan = outcome.revert.expect("plan3");
+    intruder
+        .execute_simple("UPDATE qwry_test.qwry_undo_t SET v = 'intruded' WHERE id = 1")
+        .await
+        .expect("intrude");
+    let (out, redo) = session.apply_revert(&plan).await.expect("stale undo");
+    assert!(!out.committed, "stale undo must roll back");
+    assert!(
+        out.message.as_deref().unwrap_or("").contains("data changed"),
+        "honest message expected: {:?}",
+        out.message
+    );
+    assert!(redo.is_none(), "a rolled-back undo must not mint a redo");
+    let check = session
+        .execute_simple("SELECT v FROM qwry_test.qwry_undo_t WHERE id = 1")
+        .await
+        .expect("check stale");
+    assert_eq!(
+        check.statements[0].rows[0][0].as_deref(),
+        Some("intruded"),
+        "the concurrent write must survive untouched"
+    );
+    // session stays usable after the rolled-back undo
+    session.execute_simple("SELECT 1").await.expect("session alive");
+
+    // (4) accounting proof: a hint faking the PK on a NON-unique column makes
+    // the locator match 2 rows — the capture join must report exactly
+    // "2 rows matched" (a cross-join artifact would double it) and roll back
+    session
+        .execute_simple("INSERT INTO qwry_test.qwry_undo_t VALUES (5, 'dup', 1), (6, 'dup', 1)")
+        .await
+        .expect("dup rows");
+    let dup_hint = EditMapHint {
+        columns: map
+            .columns
+            .iter()
+            .map(|c| ColumnMapHint {
+                col: c.col,
+                table_oid: c.table_oid,
+                attnum: c.attnum,
+                editable: c.editable,
+                type_name: c.type_name.clone(),
+                cast: Some(c.cast.clone()),
+                is_ctid: c.is_ctid,
+                name: match c.attnum {
+                    1 => Some("id".into()),
+                    2 => Some("v".into()),
+                    3 => Some("n".into()),
+                    _ => None,
+                },
+            })
+            .collect(),
+        pk_cols: std::iter::once((oid, vec![1u32])).collect(),
+        table_refs: map.table_refs.clone(),
+    };
+    let edits = vec![RowEdit {
+        table_oid: oid,
+        col: 2,
+        value: Some("7".into()),
+        use_default: false,
+        pk: vec![(1, Some("dup".into()))],
+        guard: vec![],
+    }];
+    let outcome = session
+        .apply_edits(sql, 0, edits, Some(dup_hint))
+        .await
+        .expect("dup apply");
+    assert!(!outcome.committed, "2-row locator must roll back");
+    assert!(
+        outcome.results[0].message.as_deref().unwrap_or("").contains("2 rows matched"),
+        "count must be exact (join multiplied nothing): {:?}",
+        outcome.results[0].message
+    );
+    let check = session
+        .execute_simple("SELECT count(*) FROM qwry_test.qwry_undo_t WHERE v = 'dup' AND n = 1")
+        .await
+        .expect("dup check");
+    assert_eq!(check.statements[0].rows[0][0].as_deref(), Some("2"), "neither dup row changed");
+
+    // (5) delete → undo re-inserts; GENERATED column excluded + recomputed
+    session
+        .execute_simple(
+            "DROP TABLE IF EXISTS qwry_test.qwry_undo_del;
+             CREATE TABLE qwry_test.qwry_undo_del (
+               id int PRIMARY KEY, v text,
+               dbl int GENERATED ALWAYS AS (id * 2) STORED);
+             INSERT INTO qwry_test.qwry_undo_del (id, v) VALUES (1, 'a'), (2, 'b')",
+        )
+        .await
+        .expect("del setup");
+    let dsql = "SELECT id, v FROM qwry_test.qwry_undo_del ORDER BY id";
+    let dmap = session.editability(dsql, 0, None).await.expect("del map");
+    let doid = dmap.columns[0].table_oid;
+    let outcome = session
+        .delete_rows(dsql, 0, doid, vec![vec![(0, Some("1".into()))]], None)
+        .await
+        .expect("delete");
+    assert!(outcome.committed);
+    let plan = outcome.revert.expect("delete revert plan");
+    let UndoStmt::Insert { skip, cols, .. } = &plan.stmts[0] else { panic!("expected insert stmt") };
+    assert!(skip.contains(&"dbl".to_string()), "generated column must be excluded: {skip:?}");
+    assert!(cols.iter().any(|c| c.name == "v" && c.value.as_deref() == Some("a")));
+    let (out, redo) = session.apply_revert(&plan).await.expect("undelete");
+    assert!(out.committed, "{:?}", out.message);
+    let check = session
+        .execute_simple("SELECT id, v, dbl FROM qwry_test.qwry_undo_del WHERE id = 1")
+        .await
+        .expect("undelete check");
+    assert_eq!(check.statements[0].rows[0][1].as_deref(), Some("a"), "row restored");
+    assert_eq!(
+        check.statements[0].rows[0][2].as_deref(),
+        Some("2"),
+        "generated column recomputed by the database"
+    );
+    // redo re-deletes the restored row
+    let redo = redo.expect("re-delete plan");
+    let (out2, _) = session.apply_revert(&redo).await.expect("redelete");
+    assert!(out2.committed);
+    let check = session
+        .execute_simple("SELECT count(*) FROM qwry_test.qwry_undo_del")
+        .await
+        .expect("redelete check");
+    assert_eq!(check.statements[0].rows[0][0].as_deref(), Some("1"));
+
+    // (6) ctid-table update: the revert must locate by the NEW ctid (the
+    // update moved the row — the original ctid is stale) + value guards
+    session
+        .execute_simple(
+            "DROP TABLE IF EXISTS qwry_test.qwry_undo_ctid;
+             CREATE TABLE qwry_test.qwry_undo_ctid (a int, b text);
+             INSERT INTO qwry_test.qwry_undo_ctid VALUES (1, 'one'), (2, 'two')",
+        )
+        .await
+        .expect("ctid setup");
+    let csql = "SELECT ctid, a, b FROM qwry_test.qwry_undo_ctid ORDER BY a";
+    let cmap = session.editability(csql, 0, None).await.expect("ctid map");
+    let coid = cmap.columns[1].table_oid;
+    let rows = session
+        .execute_simple(csql)
+        .await
+        .expect("ctid read")
+        .statements
+        .remove(0)
+        .rows;
+    let ctid1 = rows[0][0].clone();
+    let edits = vec![RowEdit {
+        table_oid: coid,
+        col: 2,
+        value: Some("uno".into()),
+        use_default: false,
+        pk: vec![(0, ctid1.clone())],
+        guard: vec![(1, Some("1".into())), (2, Some("one".into()))],
+    }];
+    let outcome = session.apply_edits(csql, 0, edits, None).await.expect("ctid apply");
+    assert!(outcome.committed, "{:?}", outcome.results);
+    let plan = outcome.revert.expect("ctid revert plan");
+    let UndoStmt::Update(cm) = &plan.stmts[0] else { panic!("expected update stmt") };
+    assert_eq!(cm.locator[0].name, "ctid");
+    assert_ne!(
+        cm.locator[0].value, ctid1,
+        "revert must locate by the post-update ctid, not the stale one"
+    );
+    assert!(
+        cm.guards.iter().any(|g| g.name == "a" && g.value.as_deref() == Some("1")),
+        "untouched guard column keeps its original pin: {:?}",
+        cm.guards
+    );
+    assert!(
+        cm.guards.iter().any(|g| g.name == "b" && g.value.as_deref() == Some("uno")),
+        "changed column pins the written value: {:?}",
+        cm.guards
+    );
+    let (out, _) = session.apply_revert(&plan).await.expect("ctid undo");
+    assert!(out.committed, "undo via new ctid + guards must apply: {:?}", out.message);
+    let check = session
+        .execute_simple("SELECT b FROM qwry_test.qwry_undo_ctid WHERE a = 1")
+        .await
+        .expect("ctid check");
+    assert_eq!(check.statements[0].rows[0][0].as_deref(), Some("one"), "value restored");
+
+    session
+        .execute_simple(
+            "DROP TABLE qwry_test.qwry_undo_t;
+             DROP TABLE qwry_test.qwry_undo_del;
+             DROP TABLE qwry_test.qwry_undo_ctid",
+        )
+        .await
+        .expect("cleanup");
+}
+
+/// Prod safe-mode composes with undo for free: the revert runs on the tab's
+/// session, and an is_prod session is server-side read-only — the undo batch
+/// is refused BY THE SERVER, nothing special in the undo path.
+#[tokio::test]
+#[ignore]
+async fn staging_undo_prod_locked() {
+    use qwry_lib::driver::postgres::edit::RowEdit;
+
+    let writer = connect_db2("test-undo-prod-w").await;
+    writer
+        .execute_simple(
+            "CREATE SCHEMA IF NOT EXISTS qwry_test;
+             DROP TABLE IF EXISTS qwry_test.qwry_undo_prod;
+             CREATE TABLE qwry_test.qwry_undo_prod (id int PRIMARY KEY, v text);
+             INSERT INTO qwry_test.qwry_undo_prod VALUES (1, 'one')",
+        )
+        .await
+        .expect("setup");
+    let sql = "SELECT id, v FROM qwry_test.qwry_undo_prod ORDER BY id";
+    let map = writer.editability(sql, 0, None).await.expect("map");
+    let oid = map.columns[0].table_oid;
+    let outcome = writer
+        .apply_edits(
+            sql,
+            0,
+            vec![RowEdit {
+                table_oid: oid,
+                col: 1,
+                value: Some("uno".into()),
+                use_default: false,
+                pk: vec![(0, Some("1".into()))],
+                guard: vec![],
+            }],
+            None,
+        )
+        .await
+        .expect("apply");
+    assert!(outcome.committed);
+    let plan = outcome.revert.expect("plan");
+
+    // undo attempted on a prod-locked session (server-side read-only)
+    let mut profile = test_profile("test-undo-prod-ro", db2());
+    profile.is_prod = true;
+    let locked = postgres::connect(
+        &profile,
+        &env("QWRY_TEST_PASSWORD"),
+        None,
+        None,
+        Box::new(|_, _| {}),
+        Box::new(|_| {}),
+    )
+    .await
+    .expect("connect locked");
+    let err = locked
+        .apply_revert(&plan)
+        .await
+        .expect_err("undo is a write — a read-only session must refuse it");
+    let msg = format!("{err:?}").to_lowercase();
+    assert!(msg.contains("read-only"), "expected server-side read-only refusal: {msg}");
+    let check = writer
+        .execute_simple("SELECT v FROM qwry_test.qwry_undo_prod WHERE id = 1")
+        .await
+        .expect("check");
+    assert_eq!(
+        check.statements[0].rows[0][0].as_deref(),
+        Some("uno"),
+        "nothing may change through a locked session"
+    );
+    // the locked session survives its refused batch
+    locked.execute_simple("SELECT 1").await.expect("locked session alive");
+
+    writer
+        .execute_simple("DROP TABLE qwry_test.qwry_undo_prod")
         .await
         .expect("cleanup");
 }

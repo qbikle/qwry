@@ -20,6 +20,19 @@
 //! transaction, the batch is wrapped in SAVEPOINT/RELEASE instead of
 //! BEGIN/COMMIT — the user's transaction is never committed or rolled back by
 //! an edit. The verified-batch contract is identical in both modes.
+//!
+//! Inverse-SQL undo: every UPDATE captures the row's OLD values inside the
+//! same statement (`UPDATE t AS __t SET … FROM (SELECT <changed cols> FROM t
+//! WHERE <locator+guards> FOR UPDATE) AS __old WHERE <locator+guards on __t>
+//! RETURNING __old.<changed>, __t.<changed>, __t.<locator>`), and every DELETE
+//! captures the whole row via `RETURNING *` — zero extra round trips. The
+//! FOR UPDATE lock makes the captured old values the exact pre-update tuple
+//! (a concurrent writer can't slip between capture and write). A committed
+//! batch yields a structured `UndoPlan` (never parsed SQL) that regenerates
+//! its revert statements through THIS generator and re-enters the same
+//! verified pipeline: a stale undo (data changed since) matches ≠ 1 and rolls
+//! back honestly. Applying an undo captures again, so redo emerges naturally.
+//! PG 14-17 grammar only — PG 18's OLD/NEW RETURNING is deliberately unused.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -156,13 +169,20 @@ pub struct EditResult {
 pub struct EditOutcome {
     pub results: Vec<EditResult>,
     pub committed: bool,
+    /// revert plan for a committed batch — consumed by the undo-log write in
+    /// commands.rs, never serialized to the frontend
+    #[serde(skip)]
+    pub revert: Option<UndoPlan>,
 }
 
 /// One planned UPDATE (one edited row) plus the original edit indices in the
-/// same order as its RETURNING columns.
+/// same order as its SET columns, plus the capture metadata the revert plan
+/// is built from. RETURNING layout (see `build_capture_update`): old values
+/// at 0..n, new values at n..2n, post-update locator after that.
 struct PlannedUpdate {
     sql: String,
     edit_indices: Vec<usize>,
+    meta: CaptureMeta,
 }
 
 /// Fully resolved mapping the planners run on — either converted from a
@@ -217,19 +237,22 @@ fn safe_type_ident(name: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
 
-/// cast target for a prepared column's type: pg_catalog types by bare name,
+/// cast target for a type by schema+name: pg_catalog types by bare name,
 /// everything else quoted + schema-qualified
-fn cast_of_type(ty: &Type) -> String {
-    let name = ty.name();
-    if ty.schema() == "pg_catalog" {
+fn cast_of_parts(schema: &str, name: &str) -> String {
+    if schema == "pg_catalog" {
         if safe_type_ident(name) {
             name.to_string()
         } else {
             qi(name)
         }
     } else {
-        format!("{}.{}", qi(ty.schema()), qi(name))
+        format!("{}.{}", qi(schema), qi(name))
     }
+}
+
+fn cast_of_type(ty: &Type) -> String {
+    cast_of_parts(ty.schema(), ty.name())
 }
 
 /// conservative cast for a hint that predates the `cast` field
@@ -251,14 +274,399 @@ fn stable_equality(type_name: &str) -> bool {
 }
 
 /// NULL-safe equality predicate on one column: `IS NULL` for a NULL old value,
-/// indexable `=` otherwise; ::text comparison for types without equality
-fn eq_pred(name: &str, m: &ColumnEditMeta, v: &Option<String>) -> String {
+/// indexable `=` otherwise; ::text comparison for types without equality.
+/// `qual` prefixes the column with a table alias (the capture grammar's outer
+/// WHERE must qualify — the FROM subselect exposes the same column names).
+fn eq_pred_parts(
+    qual: Option<&str>,
+    name: &str,
+    type_name: &str,
+    cast: &str,
+    v: &Option<String>,
+) -> String {
+    let col = match qual {
+        Some(q) => format!("{q}.{}", qi(name)),
+        None => qi(name),
+    };
     match v {
-        None => format!("{} IS NULL", qi(name)),
-        Some(s) if stable_equality(&m.type_name) => {
-            format!("{} = {}::{}", qi(name), ql(s), m.cast)
+        None => format!("{col} IS NULL"),
+        Some(s) if stable_equality(type_name) => format!("{col} = {}::{}", ql(s), cast),
+        Some(s) => format!("{col}::text = {}", ql(s)),
+    }
+}
+
+fn eq_pred(name: &str, m: &ColumnEditMeta, v: &Option<String>) -> String {
+    eq_pred_parts(None, name, &m.type_name, &m.cast, v)
+}
+
+// ---- inverse-SQL undo plan ------------------------------------------------
+
+/// One column's identity (+ value) as carried in revert plans and the shared
+/// SQL builders. `use_default` is meaningful only in SET lists (commit path);
+/// revert SETs always restore explicit captured values.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UndoCol {
+    pub name: String,
+    pub type_name: String,
+    pub cast: String,
+    pub value: Option<String>,
+    #[serde(default)]
+    pub use_default: bool,
+}
+
+/// Everything one capture-form UPDATE needs: what it sets, how it locates the
+/// row, which current values pin the row's identity, and the attname identity
+/// guards. `plan_edits` builds one per planned UPDATE; `UndoStmt::Update`
+/// persists the same shape, so commit and undo share one generator.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureMeta {
+    pub table: TableRef,
+    pub sets: Vec<UndoCol>,
+    pub locator: Vec<UndoCol>,
+    pub guards: Vec<UndoCol>,
+    /// (table_oid, attnum, expected attname) — ANDed into the WHERE so an
+    /// external RENAME+ADD between commit and undo matches 0, never hijacks
+    pub name_guards: Vec<(u32, i16, String)>,
+}
+
+/// One statement of a persisted revert plan. Update ↔ Update and
+/// Insert ↔ Delete are inverse pairs: applying a statement captures enough to
+/// build its own inverse, which is how undo-of-undo (redo) emerges.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum UndoStmt {
+    Update(CaptureMeta),
+    /// re-create a deleted row. `skip` = GENERATED / identity-ALWAYS column
+    /// names excluded from the INSERT (OVERRIDING SYSTEM VALUE deliberately
+    /// not used — an identity-ALWAYS column gets a fresh value; honesty over
+    /// magic). `cols` carries EVERY captured column with type identity.
+    Insert {
+        table: TableRef,
+        cols: Vec<UndoCol>,
+        skip: Vec<String>,
+    },
+    /// re-delete a re-inserted row (redo of a delete): located by the ctid
+    /// captured from the INSERT, pinned by every non-skip column value.
+    Delete {
+        table: TableRef,
+        locator: Vec<UndoCol>,
+        guards: Vec<UndoCol>,
+        /// full column identity list — the next inverse INSERT rebuilds from
+        /// this (values refreshed from the DELETE's RETURNING *)
+        cols: Vec<UndoCol>,
+        skip: Vec<String>,
+    },
+}
+
+/// A committed batch's revert plan — the persisted undo artifact (stored as
+/// JSON in appdb `undo_log.revert_sql`; SQL is regenerated from it at undo
+/// time by the same generator that built the commit).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UndoPlan {
+    pub stmts: Vec<UndoStmt>,
+    pub description: String,
+}
+
+/// outcome of applying a revert plan (mirrored in src/ipc/types.ts)
+#[derive(Debug, Clone, Serialize)]
+pub struct UndoOutcome {
+    pub committed: bool,
+    pub message: Option<String>,
+}
+
+const UPD_TARGET_ALIAS: &str = "__t";
+const UPD_OLD_ALIAS: &str = "__old";
+
+/// WHERE predicates for locator + guards, deduped by column name (a guard
+/// repeating a locator column must not appear twice)
+fn where_preds(locator: &[UndoCol], guards: &[UndoCol], qual: Option<&str>) -> Vec<String> {
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut parts = Vec::new();
+    for c in locator.iter().chain(guards.iter()) {
+        if !seen.insert(c.name.as_str()) {
+            continue;
         }
-        Some(s) => format!("{}::text = {}", qi(name), ql(s)),
+        parts.push(eq_pred_parts(qual, &c.name, &c.type_name, &c.cast, &c.value));
+    }
+    parts
+}
+
+fn name_guard_preds(name_guards: &[(u32, i16, String)]) -> impl Iterator<Item = String> + '_ {
+    name_guards.iter().map(|(oid, att, name)| {
+        format!(
+            "(SELECT attname FROM pg_attribute WHERE attrelid = {oid} AND attnum = {att}) = {}",
+            ql(name)
+        )
+    })
+}
+
+/// The capture-form UPDATE. One result set, RETURNING one row per updated
+/// target row — matched==1 verification is unchanged from the plain grammar:
+/// the FROM subselect and the outer WHERE carry the IDENTICAL predicate set,
+/// so for the only committing case (locator matches exactly one row) both
+/// sides are the same single row and the join multiplies nothing; an empty
+/// subselect (guards failed) updates zero rows. RETURNING layout:
+/// `__old.<sets>` (old values) · `__t.<sets>` (new values) · `__t.<locator>`
+/// (post-update locator — the NEW ctid after row movement).
+/// `include_name_guards`: attname identity probes ride the inner WHERE only
+/// (they are row-independent gates; doubling them adds nothing to counting).
+fn build_capture_update(meta: &CaptureMeta, include_name_guards: bool) -> String {
+    let t = table_path(&meta.table);
+    let set_parts: Vec<String> = meta
+        .sets
+        .iter()
+        .map(|c| {
+            let v = if c.use_default {
+                "DEFAULT".to_string()
+            } else {
+                match &c.value {
+                    None => "NULL".to_string(),
+                    Some(s) => format!("{}::{}", ql(s), c.cast),
+                }
+            };
+            format!("{} = {}", qi(&c.name), v)
+        })
+        .collect();
+    let mut seen: HashSet<&str> = HashSet::new();
+    let sel_cols: Vec<String> = meta
+        .sets
+        .iter()
+        .filter(|c| seen.insert(c.name.as_str()))
+        .map(|c| qi(&c.name))
+        .collect();
+    let mut inner_where = where_preds(&meta.locator, &meta.guards, None);
+    if include_name_guards {
+        inner_where.extend(name_guard_preds(&meta.name_guards));
+    }
+    let outer_where = where_preds(&meta.locator, &meta.guards, Some(UPD_TARGET_ALIAS));
+    let mut returning: Vec<String> = Vec::new();
+    for c in &meta.sets {
+        returning.push(format!("{UPD_OLD_ALIAS}.{}::text", qi(&c.name)));
+    }
+    for c in &meta.sets {
+        returning.push(format!("{UPD_TARGET_ALIAS}.{}::text", qi(&c.name)));
+    }
+    for c in &meta.locator {
+        returning.push(format!("{UPD_TARGET_ALIAS}.{}::text", qi(&c.name)));
+    }
+    format!(
+        "UPDATE {t} AS {UPD_TARGET_ALIAS} SET {} FROM (SELECT {} FROM {t} WHERE {} FOR UPDATE) AS {UPD_OLD_ALIAS} WHERE {} RETURNING {}",
+        set_parts.join(", "),
+        sel_cols.join(", "),
+        inner_where.join(" AND "),
+        outer_where.join(" AND "),
+        returning.join(", "),
+    )
+}
+
+/// Build the inverse of an applied capture-form UPDATE from its RETURNING
+/// row. Used at commit time (revert = restore old values) AND at undo time
+/// (redo = restore the undone values) — perfectly symmetric. Returns None if
+/// the row doesn't hold the expected capture layout (accounting drift —
+/// refuse a revert rather than persist a wrong one).
+fn inverse_of_update(meta: &CaptureMeta, row: &[Option<String>]) -> Option<UndoStmt> {
+    let n = meta.sets.len();
+    if row.len() < 2 * n + meta.locator.len() {
+        return None;
+    }
+    let old_vals = &row[0..n];
+    let new_vals = &row[n..2 * n];
+    let loc_vals = &row[2 * n..2 * n + meta.locator.len()];
+    let with_value = |c: &UndoCol, v: &Option<String>| UndoCol {
+        name: c.name.clone(),
+        type_name: c.type_name.clone(),
+        cast: c.cast.clone(),
+        value: v.clone(),
+        use_default: false,
+    };
+    let sets: Vec<UndoCol> = meta.sets.iter().zip(old_vals).map(|(c, v)| with_value(c, v)).collect();
+    let locator: Vec<UndoCol> = meta
+        .locator
+        .iter()
+        .zip(loc_vals)
+        .map(|(c, v)| with_value(c, v))
+        .collect();
+    let set_names: HashSet<&str> = meta.sets.iter().map(|c| c.name.as_str()).collect();
+    let loc_names: HashSet<&str> = meta.locator.iter().map(|c| c.name.as_str()).collect();
+    // pins for the revert: the values we just wrote (server-normalized wire
+    // text from RETURNING, not our input literals — '1.50'::numeric etc.)
+    // plus every original guard column we did NOT touch, at its old value
+    let mut guards: Vec<UndoCol> = meta
+        .sets
+        .iter()
+        .zip(new_vals)
+        .filter(|(c, _)| !loc_names.contains(c.name.as_str()))
+        .map(|(c, v)| with_value(c, v))
+        .collect();
+    guards.extend(
+        meta.guards
+            .iter()
+            .filter(|c| !set_names.contains(c.name.as_str()) && !loc_names.contains(c.name.as_str()))
+            .cloned(),
+    );
+    Some(UndoStmt::Update(CaptureMeta {
+        table: meta.table.clone(),
+        sets,
+        locator,
+        guards,
+        name_guards: meta.name_guards.clone(),
+    }))
+}
+
+/// SQL for one revert-plan statement (regenerated, never parsed). Every
+/// statement carries a RETURNING and must match exactly 1 row.
+fn revert_stmt_sql(stmt: &UndoStmt) -> String {
+    match stmt {
+        // persisted name guards are deliberate — always include them
+        UndoStmt::Update(meta) => build_capture_update(meta, true),
+        UndoStmt::Insert { table, cols, skip } => {
+            let insertable: Vec<&UndoCol> =
+                cols.iter().filter(|c| !skip.contains(&c.name)).collect();
+            if insertable.is_empty() {
+                format!("INSERT INTO {} DEFAULT VALUES RETURNING ctid::text", table_path(table))
+            } else {
+                let names = insertable.iter().map(|c| qi(&c.name)).collect::<Vec<_>>().join(", ");
+                let vals = insertable
+                    .iter()
+                    .map(|c| match &c.value {
+                        None => "NULL".to_string(),
+                        Some(s) => ql(s),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "INSERT INTO {} ({names}) VALUES ({vals}) RETURNING ctid::text",
+                    table_path(table)
+                )
+            }
+        }
+        UndoStmt::Delete { table, locator, guards, .. } => format!(
+            "DELETE FROM {} WHERE {} RETURNING *",
+            table_path(table),
+            where_preds(locator, guards, None).join(" AND "),
+        ),
+    }
+}
+
+/// toggle-stable description flip for redo rows
+fn flip_description(desc: &str) -> String {
+    match desc.strip_prefix("undo of ") {
+        Some(rest) => rest.to_string(),
+        None => format!("undo of {desc}"),
+    }
+}
+
+/// Revert plan for a committed DELETE batch: one INSERT per deleted row,
+/// columns + values from each DELETE's `RETURNING *`, type identity + skip
+/// flags (GENERATED / identity-ALWAYS) from the catalog probe that rode the
+/// batch. Any name the probe can't identify → refuse the revert (None) rather
+/// than persist a wrong one.
+fn build_delete_revert(
+    table: &TableRef,
+    delete_results: &[StatementResult],
+    probe: Option<&StatementResult>,
+) -> Option<UndoPlan> {
+    let probe = probe?;
+    // attname → (skip, type_name, cast)
+    let mut meta: HashMap<&str, (bool, String, String)> = HashMap::new();
+    let mut skip: Vec<String> = Vec::new();
+    for row in &probe.rows {
+        let name = row.first()?.as_deref()?;
+        let is_skip = row.get(1)?.as_deref()? == "true";
+        let type_name = row.get(2)?.as_deref()?;
+        let type_schema = row.get(3)?.as_deref()?;
+        if is_skip {
+            skip.push(name.to_string());
+        }
+        meta.insert(
+            name,
+            (
+                is_skip,
+                type_name.to_string(),
+                cast_of_parts(type_schema, type_name),
+            ),
+        );
+    }
+    let mut stmts = Vec::with_capacity(delete_results.len());
+    for res in delete_results {
+        let row = res.rows.first()?;
+        if res.columns.len() != row.len() {
+            return None;
+        }
+        let mut cols = Vec::with_capacity(row.len());
+        for (c, v) in res.columns.iter().zip(row.iter()) {
+            let (_, type_name, cast) = meta.get(c.name.as_str())?;
+            cols.push(UndoCol {
+                name: c.name.clone(),
+                type_name: type_name.clone(),
+                cast: cast.clone(),
+                value: v.clone(),
+                use_default: false,
+            });
+        }
+        stmts.push(UndoStmt::Insert {
+            table: table.clone(),
+            cols,
+            skip: skip.clone(),
+        });
+    }
+    let n = stmts.len();
+    let mut tables = HashSet::new();
+    tables.insert(format!("{}.{}", table.schema, table.name));
+    Some(UndoPlan {
+        stmts,
+        description: describe_batch("deleted row", n, &tables),
+    })
+}
+
+/// Inverse of one just-applied revert statement, from its verified result
+/// (exactly 1 RETURNING row — the caller checked). Update ↔ Update via the
+/// shared capture layout; Insert → Delete via the returned ctid + value pins;
+/// Delete → Insert via its RETURNING * matched back by column name.
+fn build_inverse(stmt: &UndoStmt, res: &StatementResult) -> Option<UndoStmt> {
+    match stmt {
+        UndoStmt::Update(meta) => inverse_of_update(meta, res.rows.first()?),
+        UndoStmt::Insert { table, cols, skip } => {
+            let ctid = res.rows.first()?.first()?.clone();
+            ctid.as_ref()?;
+            Some(UndoStmt::Delete {
+                table: table.clone(),
+                locator: vec![UndoCol {
+                    name: "ctid".into(),
+                    type_name: "tid".into(),
+                    cast: "tid".into(),
+                    value: ctid,
+                    use_default: false,
+                }],
+                guards: cols
+                    .iter()
+                    .filter(|c| !skip.contains(&c.name))
+                    .cloned()
+                    .collect(),
+                cols: cols.clone(),
+                skip: skip.clone(),
+            })
+        }
+        UndoStmt::Delete { table, cols, skip, .. } => {
+            let row = res.rows.first()?;
+            if res.columns.len() != row.len() {
+                return None;
+            }
+            let mut by_name: HashMap<&str, &Option<String>> = HashMap::new();
+            for (c, v) in res.columns.iter().zip(row.iter()) {
+                by_name.insert(c.name.as_str(), v);
+            }
+            let mut refreshed = Vec::with_capacity(cols.len());
+            for c in cols {
+                let v = by_name.get(c.name.as_str())?;
+                refreshed.push(UndoCol { value: (*v).clone(), ..c.clone() });
+            }
+            Some(UndoStmt::Insert {
+                table: table.clone(),
+                cols: refreshed,
+                skip: skip.clone(),
+            })
+        }
     }
 }
 
@@ -707,7 +1115,7 @@ impl PgSession {
         let map = self.resolve_map(sql, statement_index, map_hint).await?;
         let planned = plan_edits(&map, &edits)?;
         if planned.is_empty() {
-            return Ok(EditOutcome { results: vec![], committed: false });
+            return Ok(EditOutcome { results: vec![], committed: false, revert: None });
         }
 
         let (out, mode) = self
@@ -725,12 +1133,15 @@ impl PgSession {
         for (p, stmt) in planned.iter().zip(out.iter()) {
             let matched = stmt.rows.len();
             let row = stmt.rows.first();
+            // capture layout: old values 0..n, NEW values n..2n (the grid
+            // refresh), post-update locator after that
+            let n_sets = p.meta.sets.len();
             if matched == 1 {
                 for (ret_pos, &ei) in p.edit_indices.iter().enumerate() {
                     results[ei] = EditResult {
                         ok: true,
                         message: None,
-                        new_value: row.and_then(|r| r.get(ret_pos).cloned()).flatten(),
+                        new_value: row.and_then(|r| r.get(n_sets + ret_pos).cloned()).flatten(),
                     };
                 }
             } else {
@@ -762,10 +1173,35 @@ impl PgSession {
                     };
                 }
             }
-            return Ok(EditOutcome { results, committed: false });
+            return Ok(EditOutcome { results, committed: false, revert: None });
         }
+        // revert plan from the captured old values — refused (None) rather
+        // than persisted wrong if any row misses the capture layout
+        let revert = {
+            let mut stmts = Vec::with_capacity(planned.len());
+            let mut tables: HashSet<String> = HashSet::new();
+            let mut complete = true;
+            for (p, stmt) in planned.iter().zip(out.iter()) {
+                tables.insert(format!("{}.{}", p.meta.table.schema, p.meta.table.name));
+                match stmt.rows.first().and_then(|row| inverse_of_update(&p.meta, row)) {
+                    Some(s) => stmts.push(s),
+                    None => {
+                        complete = false;
+                        break;
+                    }
+                }
+            }
+            if complete {
+                Some(UndoPlan {
+                    stmts,
+                    description: describe_batch("edit", edits.len(), &tables),
+                })
+            } else {
+                None
+            }
+        };
         match self.finish_batch(&mode).await {
-            Ok(()) => Ok(EditOutcome { results, committed: true }),
+            Ok(()) => Ok(EditOutcome { results, committed: true, revert }),
             Err(e) => {
                 self.undo_batch(&mode).await;
                 Err(e)
@@ -776,7 +1212,10 @@ impl PgSession {
     /// Delete rows of a single table by locator (PK or ctid, plus any extra
     /// old-value guard pairs). Same batched verify-then-commit contract as
     /// `apply_edits`: one wrapped batch, every DELETE must match exactly one
-    /// row or the whole batch rolls back.
+    /// row or the whole batch rolls back. Each DELETE captures the full row
+    /// via `RETURNING *`; a catalog probe (column names, types, generated/
+    /// identity-ALWAYS flags) rides the same batch — its result set is
+    /// accounted for explicitly, so the n+1 verification stays exact.
     pub async fn delete_rows(
         &self,
         sql: &str,
@@ -815,18 +1254,32 @@ impl PgSession {
                 where_parts.extend(guards.predicates());
             }
             deletes.push(format!(
-                "DELETE FROM {} WHERE {} RETURNING ctid::text",
+                "DELETE FROM {} WHERE {} RETURNING *",
                 table_path(table),
                 where_parts.join(" AND "),
             ));
         }
         if deletes.is_empty() {
-            return Ok(EditOutcome { results: vec![], committed: false });
+            return Ok(EditOutcome { results: vec![], committed: false, revert: None });
         }
+        // rides the batch (zero extra round trips): column identity + skip
+        // flags for the revert INSERTs. DDL can't shift it mid-batch — the
+        // DELETEs' ROW EXCLUSIVE lock blocks ALTER TABLE until we finish.
+        let probe = format!(
+            "SELECT a.attname, (a.attgenerated <> '' OR a.attidentity = 'a')::text, \
+                    t.typname, n.nspname \
+             FROM pg_attribute a \
+             JOIN pg_type t ON t.oid = a.atttypid \
+             JOIN pg_namespace n ON n.oid = t.typnamespace \
+             WHERE a.attrelid = {table_oid} AND a.attnum > 0 AND NOT a.attisdropped \
+             ORDER BY a.attnum"
+        );
 
-        let (out, mode) = self
-            .run_verified_batch(deletes.iter().map(|d| d.as_str()))
+        let (mut out, mode) = self
+            .run_verified_batch(deletes.iter().map(|d| d.as_str()).chain(std::iter::once(probe.as_str())))
             .await?;
+        // n deletes + the probe — run_verified_batch verified the total count
+        let probe_out = out.pop();
 
         let mut results = Vec::with_capacity(rows.len());
         let mut mismatch = false;
@@ -859,10 +1312,68 @@ impl PgSession {
                     };
                 }
             }
-            return Ok(EditOutcome { results, committed: false });
+            return Ok(EditOutcome { results, committed: false, revert: None });
+        }
+        let revert = build_delete_revert(table, &out, probe_out.as_ref());
+        match self.finish_batch(&mode).await {
+            Ok(()) => Ok(EditOutcome { results, committed: true, revert }),
+            Err(e) => {
+                self.undo_batch(&mode).await;
+                Err(e)
+            }
+        }
+    }
+
+    /// Apply a persisted revert plan as one verified batch on this session —
+    /// the same pipeline as commits: SAVEPOINT-wrapped inside a user tx,
+    /// per-statement RETURNING counts, full rollback on any mismatch with an
+    /// honest message. On success the captured values yield the inverse plan
+    /// (redo). Runs on the tab's session, so prod safe-mode's server-side
+    /// read-only guard applies to undo exactly as to any write.
+    pub async fn apply_revert(&self, plan: &UndoPlan) -> Result<(UndoOutcome, Option<UndoPlan>)> {
+        if plan.stmts.is_empty() {
+            return Ok((
+                UndoOutcome { committed: false, message: Some("empty undo plan".into()) },
+                None,
+            ));
+        }
+        let sqls: Vec<String> = plan.stmts.iter().map(revert_stmt_sql).collect();
+        let (out, mode) = self
+            .run_verified_batch(sqls.iter().map(|s| s.as_str()))
+            .await?;
+
+        let mut redo: Vec<UndoStmt> = Vec::new();
+        let mut redo_complete = true;
+        for (stmt, res) in plan.stmts.iter().zip(out.iter()) {
+            if res.rows.len() != 1 {
+                self.undo_batch(&mode).await;
+                return Ok((
+                    UndoOutcome {
+                        committed: false,
+                        message: Some(
+                            "undo no longer matches — data changed since; rolled back".into(),
+                        ),
+                    },
+                    None,
+                ));
+            }
+            match build_inverse(stmt, res) {
+                Some(s) => redo.push(s),
+                None => redo_complete = false, // undo still valid; just no redo
+            }
         }
         match self.finish_batch(&mode).await {
-            Ok(()) => Ok(EditOutcome { results, committed: true }),
+            Ok(()) => {
+                let redo_plan = if redo_complete {
+                    Some(UndoPlan {
+                        stmts: redo,
+                        description: flip_description(&plan.description),
+                    })
+                } else {
+                    None
+                };
+                Ok((UndoOutcome { committed: true, message: None }, redo_plan))
+            }
             Err(e) => {
                 self.undo_batch(&mode).await;
                 Err(e)
@@ -1141,10 +1652,9 @@ fn plan_edits(map: &ResolvedMap, edits: &[RowEdit]) -> Result<Vec<PlannedUpdate>
             .get(&g.table_oid)
             .ok_or_else(|| DriverError::Internal("unknown table in edit".into()))?;
 
-        let mut set_parts = Vec::new();
-        let mut returning = Vec::new();
+        let mut sets: Vec<UndoCol> = Vec::new();
         let mut edit_indices = Vec::new();
-        let mut guards = NameGuards::default();
+        let mut ng = NameGuards::default();
         for (ei, c, v, use_default) in &g.sets {
             let m = map
                 .col_meta(*c)
@@ -1152,23 +1662,26 @@ fn plan_edits(map: &ResolvedMap, edits: &[RowEdit]) -> Result<Vec<PlannedUpdate>
             let n = map
                 .name_of(m)
                 .ok_or_else(|| DriverError::Internal("column name lookup failed".into()))?;
-            guards.note(m, &n);
-            let value_sql = if *use_default {
-                "DEFAULT".to_string()
-            } else {
-                match v {
-                    None => "NULL".to_string(),
-                    Some(s) => format!("{}::{}", ql(s), m.cast),
-                }
-            };
-            set_parts.push(format!("{} = {}", qi(&n), value_sql));
-            returning.push(format!("{}::text", qi(&n)));
+            ng.note(m, &n);
+            sets.push(UndoCol {
+                name: n,
+                type_name: m.type_name.clone(),
+                cast: m.cast.clone(),
+                value: v.clone(),
+                use_default: *use_default,
+            });
             edit_indices.push(*ei);
         }
 
-        let mut where_parts = Vec::new();
+        let mut locator: Vec<UndoCol> = Vec::new();
+        let mut guard_cols: Vec<UndoCol> = Vec::new();
         let mut seen_where: HashSet<u32> = HashSet::new();
-        for (c, v) in g.pk.iter().chain(g.guard.iter()) {
+        for (is_pk, (c, v)) in g
+            .pk
+            .iter()
+            .map(|p| (true, p))
+            .chain(g.guard.iter().map(|p| (false, p)))
+        {
             if !seen_where.insert(*c) {
                 continue;
             }
@@ -1178,30 +1691,52 @@ fn plan_edits(map: &ResolvedMap, edits: &[RowEdit]) -> Result<Vec<PlannedUpdate>
             let n = map
                 .name_of(m)
                 .ok_or_else(|| DriverError::Internal("locator name lookup failed".into()))?;
-            where_parts.push(eq_pred(&n, m, v));
-            guards.note(m, &n);
+            ng.note(m, &n);
+            let col = UndoCol {
+                name: n,
+                type_name: m.type_name.clone(),
+                cast: m.cast.clone(),
+                value: v.clone(),
+                use_default: false,
+            };
+            if is_pk {
+                locator.push(col);
+            } else {
+                guard_cols.push(col);
+            }
         }
-        if g.pk.is_empty() || where_parts.is_empty() {
+        if g.pk.is_empty() || locator.is_empty() {
             return Err(DriverError::Internal(
                 "refusing to update with an empty row locator".into(),
             ));
         }
-        if map.hinted {
-            where_parts.extend(guards.predicates());
-        }
 
+        let meta = CaptureMeta {
+            table: table.clone(),
+            sets,
+            locator,
+            guards: guard_cols,
+            // captured for the revert plan on BOTH paths; only hinted commit
+            // SQL includes them (derived names are server truth at commit)
+            name_guards: ng.0.iter().map(|((o, a), n)| (*o, *a, n.clone())).collect(),
+        };
         planned.push(PlannedUpdate {
-            sql: format!(
-                "UPDATE {} SET {} WHERE {} RETURNING {}",
-                table_path(table),
-                set_parts.join(", "),
-                where_parts.join(" AND "),
-                returning.join(", "),
-            ),
+            sql: build_capture_update(&meta, map.hinted),
             edit_indices,
+            meta,
         });
     }
     Ok(planned)
+}
+
+/// human description for an undo-log row ("2 edits on public.t")
+fn describe_batch(action: &str, n: usize, tables: &HashSet<String>) -> String {
+    let what = if tables.len() == 1 {
+        tables.iter().next().cloned().unwrap_or_default()
+    } else {
+        format!("{} tables", tables.len())
+    };
+    format!("{n} {action}{} on {what}", if n == 1 { "" } else { "s" })
 }
 
 #[cfg(test)]
@@ -1258,7 +1793,12 @@ mod tests {
         }];
         let planned = plan_edits(&map, &edits).unwrap();
         assert!(
-            planned[0].sql.starts_with(r#"UPDATE "sch.dot"."ta.ble" SET"#),
+            planned[0].sql.starts_with(r#"UPDATE "sch.dot"."ta.ble" AS __t SET"#),
+            "{}",
+            planned[0].sql
+        );
+        assert!(
+            planned[0].sql.contains(r#"FROM (SELECT "id" FROM "sch.dot"."ta.ble" WHERE"#),
             "{}",
             planned[0].sql
         );
@@ -1320,7 +1860,10 @@ mod tests {
         }];
         let planned = plan_edits(&map, &edits).unwrap();
         let sql = &planned[0].sql;
-        assert_eq!(sql.matches(r#""id" ="#).count(), 1, "{sql}");
+        // capture grammar carries the full WHERE twice (inner FOR UPDATE
+        // subselect + outer) — the locator must appear exactly once in EACH,
+        // never duplicated by the guard repeating it
+        assert_eq!(sql.matches(r#""id" ="#).count(), 2, "{sql}");
     }
 
     #[test]
@@ -1445,5 +1988,195 @@ mod tests {
         assert_ne!(a, b);
         assert!(a.starts_with("qwry_edit_sp_"), "{a}");
         assert!(b.starts_with("qwry_edit_sp_"), "{b}");
+    }
+
+    // ---- inverse-SQL undo -------------------------------------------------
+
+    #[test]
+    fn capture_grammar_shape() {
+        let map = test_map();
+        let edits = vec![RowEdit {
+            table_oid: 7,
+            col: 1,
+            value: Some("x".into()),
+            use_default: false,
+            pk: vec![(0, Some("1".into()))],
+            guard: vec![],
+        }];
+        let planned = plan_edits(&map, &edits).unwrap();
+        let sql = &planned[0].sql;
+        assert!(sql.contains("FOR UPDATE) AS __old"), "{sql}");
+        assert!(sql.contains(r#"WHERE __t."id" = '1'::int4"#), "{sql}");
+        // RETURNING layout: old set values, new set values, post-update locator
+        assert!(
+            sql.ends_with(r#"RETURNING __old."Name"::text, __t."Name"::text, __t."id"::text"#),
+            "{sql}"
+        );
+        // inner captures ONLY the changed columns
+        assert!(sql.contains(r#"(SELECT "Name" FROM "#), "{sql}");
+    }
+
+    #[test]
+    fn inverse_of_update_roundtrips() {
+        let col = |name: &str, val: Option<&str>| UndoCol {
+            name: name.into(),
+            type_name: "text".into(),
+            cast: "text".into(),
+            value: val.map(String::from),
+            use_default: false,
+        };
+        let meta = CaptureMeta {
+            table: TableRef { schema: "public".into(), name: "t".into() },
+            sets: vec![col("v", Some("new"))],
+            locator: vec![col("id", Some("1"))],
+            guards: vec![col("other", Some("o"))],
+            name_guards: vec![(7, 2, "v".into())],
+        };
+        // captured row: old value, new value, post-update locator
+        let row = vec![Some("old".to_string()), Some("new-norm".to_string()), Some("1".to_string())];
+        let inv = inverse_of_update(&meta, &row).unwrap();
+        let UndoStmt::Update(rev) = &inv else { panic!("expected update") };
+        assert_eq!(rev.sets[0].value.as_deref(), Some("old"), "revert restores the OLD value");
+        assert_eq!(rev.locator[0].value.as_deref(), Some("1"));
+        // guards: the value we wrote (server-normalized) + untouched original guard
+        assert_eq!(rev.guards.len(), 2);
+        assert_eq!(rev.guards[0].name, "v");
+        assert_eq!(rev.guards[0].value.as_deref(), Some("new-norm"));
+        assert_eq!(rev.guards[1].name, "other");
+        assert_eq!(rev.guards[1].value.as_deref(), Some("o"));
+        assert_eq!(rev.name_guards, meta.name_guards);
+
+        // applying the revert captures (old="new-norm" side now) → redo
+        let row2 = vec![Some("new-norm".to_string()), Some("old".to_string()), Some("1".to_string())];
+        let redo = inverse_of_update(rev, &row2).unwrap();
+        let UndoStmt::Update(redo) = &redo else { panic!("expected update") };
+        assert_eq!(redo.sets[0].value.as_deref(), Some("new-norm"), "redo re-applies the commit");
+        assert_eq!(redo.guards[0].value.as_deref(), Some("old"));
+
+        // short row = accounting drift → refuse, never a wrong revert
+        assert!(inverse_of_update(&meta, &[Some("x".into())]).is_none());
+    }
+
+    #[test]
+    fn revert_sql_shapes() {
+        let col = |name: &str, val: Option<&str>| UndoCol {
+            name: name.into(),
+            type_name: "text".into(),
+            cast: "text".into(),
+            value: val.map(String::from),
+            use_default: false,
+        };
+        let table = TableRef { schema: "public".into(), name: "t".into() };
+        // INSERT excludes skip (generated / identity-ALWAYS) columns
+        let ins = UndoStmt::Insert {
+            table: table.clone(),
+            cols: vec![col("id", Some("1")), col("gen", Some("2")), col("v", None)],
+            skip: vec!["gen".into()],
+        };
+        assert_eq!(
+            revert_stmt_sql(&ins),
+            r#"INSERT INTO "public"."t" ("id", "v") VALUES ('1', NULL) RETURNING ctid::text"#
+        );
+        // all columns generated → DEFAULT VALUES
+        let ins2 = UndoStmt::Insert {
+            table: table.clone(),
+            cols: vec![col("gen", Some("2"))],
+            skip: vec!["gen".into()],
+        };
+        assert!(revert_stmt_sql(&ins2).contains("DEFAULT VALUES"));
+        // DELETE: ctid locator + value pins, RETURNING * for the next inverse
+        let del = UndoStmt::Delete {
+            table,
+            locator: vec![UndoCol {
+                name: "ctid".into(),
+                type_name: "tid".into(),
+                cast: "tid".into(),
+                value: Some("(0,3)".into()),
+                use_default: false,
+            }],
+            guards: vec![col("v", Some("x"))],
+            cols: vec![],
+            skip: vec![],
+        };
+        assert_eq!(
+            revert_stmt_sql(&del),
+            r#"DELETE FROM "public"."t" WHERE "ctid" = '(0,3)'::tid AND "v" = 'x'::text RETURNING *"#
+        );
+    }
+
+    fn stmt_result(cols: &[&str], rows: Vec<Vec<Option<String>>>) -> StatementResult {
+        StatementResult {
+            index: 0,
+            sql: String::new(),
+            columns: cols
+                .iter()
+                .map(|n| crate::driver::ColumnMeta {
+                    name: (*n).to_string(),
+                    type_oid: 0,
+                    table_oid: 0,
+                    attnum: 0,
+                })
+                .collect(),
+            rows,
+            affected: None,
+            ms: 0.0,
+        }
+    }
+
+    #[test]
+    fn delete_revert_and_insert_inverse() {
+        let table = TableRef { schema: "public".into(), name: "t".into() };
+        // probe: attname, skip, typname, nspname (attnum order)
+        let probe = stmt_result(
+            &["attname", "skip", "typname", "nspname"],
+            vec![
+                vec![Some("id".into()), Some("false".into()), Some("int4".into()), Some("pg_catalog".into())],
+                vec![Some("v".into()), Some("false".into()), Some("text".into()), Some("pg_catalog".into())],
+                vec![Some("dbl".into()), Some("true".into()), Some("int4".into()), Some("pg_catalog".into())],
+            ],
+        );
+        let deleted = stmt_result(
+            &["id", "v", "dbl"],
+            vec![vec![Some("1".into()), None, Some("2".into())]],
+        );
+        let plan = build_delete_revert(&table, &[deleted], Some(&probe)).unwrap();
+        assert_eq!(plan.stmts.len(), 1);
+        let UndoStmt::Insert { cols, skip, .. } = &plan.stmts[0] else { panic!("expected insert") };
+        assert_eq!(skip, &vec!["dbl".to_string()]);
+        assert_eq!(cols.len(), 3, "ALL columns captured, skip filtered at SQL time");
+        assert_eq!(
+            revert_stmt_sql(&plan.stmts[0]),
+            r#"INSERT INTO "public"."t" ("id", "v") VALUES ('1', NULL) RETURNING ctid::text"#
+        );
+
+        // applying the INSERT yields a Delete inverse via the returned ctid
+        let ins_res = stmt_result(&["ctid"], vec![vec![Some("(0,9)".into())]]);
+        let inv = build_inverse(&plan.stmts[0], &ins_res).unwrap();
+        let UndoStmt::Delete { locator, guards, .. } = &inv else { panic!("expected delete") };
+        assert_eq!(locator[0].name, "ctid");
+        assert_eq!(locator[0].value.as_deref(), Some("(0,9)"));
+        assert!(guards.iter().all(|g| g.name != "dbl"), "skip cols never pin identity");
+
+        // applying the DELETE yields the Insert back, values refreshed by NAME
+        let del_res = stmt_result(
+            &["id", "v", "dbl"],
+            vec![vec![Some("1".into()), None, Some("2".into())]],
+        );
+        let back = build_inverse(&inv, &del_res).unwrap();
+        assert!(matches!(back, UndoStmt::Insert { .. }));
+
+        // a probe row with a NULL name refuses the plan
+        let bad_probe = stmt_result(
+            &["attname", "skip", "typname", "nspname"],
+            vec![vec![None, Some("false".into()), Some("int4".into()), Some("pg_catalog".into())]],
+        );
+        let deleted2 = stmt_result(&["id"], vec![vec![Some("1".into())]]);
+        assert!(build_delete_revert(&table, &[deleted2], Some(&bad_probe)).is_none());
+    }
+
+    #[test]
+    fn description_flip_toggles() {
+        assert_eq!(flip_description("2 edits on public.t"), "undo of 2 edits on public.t");
+        assert_eq!(flip_description("undo of 2 edits on public.t"), "2 edits on public.t");
     }
 }
