@@ -8,7 +8,7 @@ import { useResults, type StatementState } from "../stores/results";
 import { ctidGuardPairs, editKey, useEdits } from "../stores/edits";
 import * as ipc from "../ipc/commands";
 import type { EditabilityMap } from "../ipc/types";
-import { formatCells, type CopyFormat } from "./clipboard";
+import { formatCells, parseTsv, type CopyFormat } from "./clipboard";
 import { useSelection, type DragMode, type SelRect } from "./useSelection";
 import { typeIcon } from "./typeIcon";
 import { useBrowser } from "../stores/browser";
@@ -1082,9 +1082,15 @@ export function Grid({
         selRows.push(dataCs.map((dc) => row[dc]));
       }
       // a SINGLE cell copies raw — TSV quoting ("" doubling, wrapping) is for
-      // multi-cell spreadsheet paste and reads as garbage in an input field
+      // multi-cell spreadsheet paste and reads as garbage in an input field.
+      // Exception (Excel's own rule): a cell holding tab/newline MUST quote,
+      // or the paste side reads it as several cells/rows; the 1x1 parse on
+      // our paste paths unwraps it, so qwry→qwry stays an exact round trip
       if (format === "tsv" && selRows.length === 1 && selRows[0].length === 1) {
-        void copyCue(selRows[0][0] ?? "").then((ok) => ok && truncFlash());
+        const v = selRows[0][0] ?? "";
+        void copyCue(/[\t\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v).then(
+          (ok) => ok && truncFlash(),
+        );
         return;
       }
       void copyCue(formatCells(selCols, selRows, format, { table, ctidCols })).then(
@@ -1424,13 +1430,19 @@ export function Grid({
     const rect = sel.rect;
     if (!rect || !text) return;
     const batch = [];
-    const isBlock = text.includes("\t") || text.includes("\n");
+    const isBlock = /[\t\r\n]/.test(text);
     if (isBlock) {
-      const grid = text
-        .replace(/\r/g, "")
-        .split("\n")
-        .filter((l, i, a) => !(i === a.length - 1 && l === ""))
-        .map((l) => l.split("\t"));
+      // our ⌘C (and Excel/Sheets) quote fields containing tab/newline/quote —
+      // parse the convention back or a copied json cell pastes as "[""x""]"
+      // and a quoted newline splits one cell into two rows. Malformed
+      // (non-TSV) text falls back to the naive split.
+      const grid =
+        parseTsv(text) ??
+        text
+          .replace(/\r/g, "")
+          .split("\n")
+          .filter((l, i, a) => !(i === a.length - 1 && l === ""))
+          .map((l) => l.split("\t"));
       for (let dr = 0; dr < grid.length; dr++) {
         const viewR = rect.r0 + dr;
         if (viewR >= viewLen) break;
@@ -2479,22 +2491,22 @@ export function Grid({
                           value={
                             cell.isNull
                               ? ""
-                              : cell.text.includes("\n")
-                                ? cell.text.replace(/\n/g, "⏎")
+                              : /[\r\n]/.test(cell.text)
+                                ? cell.text.replace(/\r\n?|\n/g, "⏎")
                                 : cell.text
                           }
                           // untouched = DEFAULT; a touched-but-empty field is a
                           // real '' and must not read as DEFAULT anymore
                           placeholder={cell.isNull ? "NULL" : cell.touched ? "" : "DEFAULT"}
                           disabled={cell.isNull}
-                          readOnly={!cell.isNull && cell.text.includes("\n")}
+                          readOnly={!cell.isNull && /[\r\n]/.test(cell.text)}
                           title={
-                            !cell.isNull && cell.text.includes("\n")
+                            !cell.isNull && /[\r\n]/.test(cell.text)
                               ? "Multiline value — click to edit"
                               : undefined
                           }
                           onMouseDown={
-                            !cell.isNull && cell.text.includes("\n")
+                            !cell.isNull && /[\r\n]/.test(cell.text)
                               ? (ev) => {
                                   ev.preventDefault();
                                   setDraftPop({ col: name, dataC: colAt(vc.index), text: cell.text });
@@ -2539,7 +2551,7 @@ export function Grid({
                           onPaste={(e) => {
                             // read-only multiline draft: the DOM holds the ⏎
                             // preview, not the real text — edit in the pop-out
-                            if (!cell.isNull && cell.text.includes("\n")) {
+                            if (!cell.isNull && /[\r\n]/.test(cell.text)) {
                               e.preventDefault();
                               setDraftPop({ col: name, dataC: colAt(vc.index), text: cell.text });
                               return;
@@ -2548,17 +2560,27 @@ export function Grid({
                             // a lone trailing newline rides along with most
                             // single-line copies — strip it so those stay a
                             // native one-line paste (WebKit drops it anyway)
-                            const text = raw.replace(/\r?\n$/, "");
+                            const text = raw.replace(/(?:\r\n?|\n)$/, "");
                             // single-line text → native single-input paste
-                            if (!text.includes("\t") && !text.includes("\n")) return;
+                            if (!/[\t\r\n]/.test(text)) return;
                             e.preventDefault();
-                            // tabs → a copied grid/spreadsheet ROW: spread
-                            // across the draft cells from this column on.
-                            // Empty fields stay untouched (= DEFAULT) — the
-                            // spreadsheet convention; a deliberate '' is still
-                            // reachable by typing in the cell
-                            if (text.includes("\t")) {
-                              const values = text.replace(/\n+$/, "").split(/\r?\n/)[0].split("\t");
+                            // our ⌘C (and Excel/Sheets) quote fields holding
+                            // tab/newline/quote — parse the convention back,
+                            // or a copied json cell lands as "[""x""]"; the
+                            // naive split also broke a quoted newline into
+                            // two fields. Non-TSV text → parsed is null.
+                            const parsed = parseTsv(text);
+                            // >1 field → a copied ROW: spread across the
+                            // draft cells from this column on. Empty fields
+                            // stay untouched (= DEFAULT) — the spreadsheet
+                            // convention; a deliberate '' is still reachable
+                            // by typing in the cell. Malformed TSV falls back
+                            // to the naive first-line split — same as the
+                            // grid ⌘V path, tabbed text always spreads
+                            const row0 =
+                              parsed?.[0] ?? text.replace(/\r/g, "").split("\n")[0].split("\t");
+                            if (row0.length > 1) {
+                              const values = row0;
                               let vi = 0;
                               for (let view = vc.index; view < viewColLen && vi < values.length; view++) {
                                 const cn = cols[colAt(view)].name;
@@ -2574,7 +2596,8 @@ export function Grid({
                               }
                               return;
                             }
-                            // multiline, no tabs = ONE value, inserted at the
+                            // ONE value (a single quoted field unwraps; raw
+                            // multiline text stays verbatim), inserted at the
                             // CARET into the existing text (replacing any
                             // selection) — never over the whole cell. For
                             // json/jsonb columns, merged valid JSON compacts
@@ -2584,10 +2607,21 @@ export function Grid({
                             // guard as the inspector). Everything else opens
                             // the pop-out with the merged text, staged
                             // VERBATIM — a text column's whitespace is data
+                            const value0 =
+                              parsed && parsed.length === 1 && parsed[0].length === 1
+                                ? parsed[0][0]
+                                : text;
                             const el = e.currentTarget;
                             const start = el.selectionStart ?? el.value.length;
                             const end = el.selectionEnd ?? start;
-                            const merged = el.value.slice(0, start) + text + el.value.slice(end);
+                            const merged = el.value.slice(0, start) + value0 + el.value.slice(end);
+                            // unquoting can leave a plain one-liner (field was
+                            // quoted only for an inner quote char) — that
+                            // belongs in the input, not the pop-out
+                            if (!/[\r\n]/.test(merged)) {
+                              setDraftCell(name, { text: merged, isNull: false, touched: true });
+                              return;
+                            }
                             const trimmed = merged.trim();
                             const t = colType(colAt(vc.index));
                             if (

@@ -17,6 +17,73 @@ const tsvEscape = (v: string) =>
 const sqlLiteral = (v: Cell) =>
   v === null ? "NULL" : `'${v.replace(/'/g, "''")}'`;
 
+/** exact inverse of the TSV writer (Excel convention): a field that STARTS
+ * with a quote is quoted — it may contain tabs/newlines, `""` is a literal
+ * quote; any other field is verbatim. Line endings (\n, \r\n, \r) are record
+ * separators ONLY outside quotes — a quoted field's bytes are never touched
+ * (a global \r normalization silently corrupted Windows-origin cell data).
+ * Returns null on malformed input (unterminated quote / garbage after a
+ * closing quote) so callers can fall back to a naive split instead of
+ * silently mangling non-TSV text. */
+export function parseTsv(text: string): string[][] | null {
+  const n = text.length;
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let i = 0;
+  // width of a record break at j (0 = not a break)
+  const brk = (j: number) =>
+    text[j] === "\n" ? 1 : text[j] === "\r" ? (text[j + 1] === "\n" ? 2 : 1) : 0;
+  let endedOnBreak = false;
+  while (i < n) {
+    if (text[i] === '"') {
+      // quoted field — the loop is always at field start here
+      i++;
+      let closed = false;
+      while (i < n) {
+        if (text[i] === '"') {
+          if (text[i + 1] === '"') {
+            field += '"';
+            i += 2;
+            continue;
+          }
+          i++;
+          closed = true;
+          break;
+        }
+        field += text[i++];
+      }
+      if (!closed) return null;
+      if (i < n && text[i] !== "\t" && brk(i) === 0) return null;
+    } else {
+      while (i < n && text[i] !== "\t" && brk(i) === 0) field += text[i++];
+    }
+    if (i >= n) {
+      endedOnBreak = false;
+      break;
+    }
+    if (text[i] === "\t") {
+      row.push(field);
+      field = "";
+      i++;
+      endedOnBreak = false;
+      continue;
+    }
+    i += brk(i);
+    row.push(field);
+    rows.push(row);
+    row = [];
+    field = "";
+    endedOnBreak = true;
+  }
+  // a trailing line ending is a record terminator, not a phantom empty row
+  if (!(endedOnBreak && field === "" && row.length === 0)) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+
 export function formatCells(
   columns: ColumnMeta[],
   rows: Cell[][],
