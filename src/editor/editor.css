@@ -72,9 +72,17 @@
 
 .tab-name {
   overflow: hidden;
-  text-overflow: ellipsis;
   display: inline-flex;
   align-items: center;
+  min-width: 0;
+}
+/* ellipsis needs a block-level text box — inline-flex never applies it */
+.tab-name-text {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tab-icon {

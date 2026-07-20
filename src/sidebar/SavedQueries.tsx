@@ -1,12 +1,23 @@
 import { useEffect, useState } from "react";
 import { Bookmark, ChevronDown, ChevronRight, Pencil, Search, Trash2 } from "lucide-react";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { copyCue } from "../lib/copyCue";
 import { useSaved, visibleSaved, type SavedQuery } from "../stores/saved";
 import { useConnections } from "../stores/connections";
 import { useTabs } from "../stores/tabs";
 import { ContextMenu, type MenuNode } from "../app/overlay/ContextMenu";
 import "./sidebar.css";
 import "./sidebar-tree.css";
+
+/** open a saved query the sidebar way: focus its linked tab if one is open,
+ *  else a new tab linked to it — shared with the palette's Saved group */
+export function openSavedQuery(q: { id: string; sql: string; name: string }) {
+  // selecting/creating a query tab makes the active tab a query tab, so any
+  // open table view is left automatically
+  const { tabs, select } = useTabs.getState();
+  const existing = tabs.find((t) => t.saved_id === q.id);
+  if (existing) select(existing.id);
+  else useTabs.getState().newTab(q.sql, q.name, q.id);
+}
 
 export function SavedQueries() {
   const allQueries = useSaved((s) => s.queries);
@@ -20,8 +31,6 @@ export function SavedQueries() {
   const rename = useSaved((s) => s.rename);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-  // window.confirm is a stub in WKWebView — two-click arm instead
-  const [armed, setArmed] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; q: SavedQuery } | null>(null);
   const [filter, setFilter] = useState("");
 
@@ -29,13 +38,19 @@ export function SavedQueries() {
     void load();
   }, [load]);
 
-  const open = (q: { id: string; sql: string; name: string }) => {
-    // selecting/creating a query tab makes the active tab a query tab, so any
-    // open table view is left automatically
-    const { tabs, select } = useTabs.getState();
-    const existing = tabs.find((t) => t.saved_id === q.id);
-    if (existing) select(existing.id);
-    else useTabs.getState().newTab(q.sql, q.name, q.id);
+  const open = openSavedQuery;
+
+  // deletes have no undo (saved_delete is permanent) — one ceremony for both
+  // the menu and the inline trash: the DangerModal (window.confirm is a stub
+  // in WKWebView, never gate on it)
+  const confirmDelete = async (q: SavedQuery) => {
+    const { confirmDanger } = await import("../stores/danger");
+    const ok = await confirmDanger(
+      `Delete saved query “${q.name}”?`,
+      "This cannot be undone.",
+      "Delete",
+    );
+    if (ok) await remove(q.id);
   };
 
   const savedMenu = (q: SavedQuery): MenuNode[] => [
@@ -56,22 +71,13 @@ export function SavedQueries() {
           .getState()
           .upsert({ id: crypto.randomUUID(), name: `${q.name} copy`, sql: q.sql }),
     },
-    { kind: "item", label: "Copy SQL", onSelect: () => void writeText(q.sql) },
+    { kind: "item", label: "Copy SQL", onSelect: () => void copyCue(q.sql) },
     { kind: "sep" },
     {
       kind: "item",
       label: "Delete",
       danger: true,
-      onSelect: () =>
-        void (async () => {
-          const { confirmDanger } = await import("../stores/danger");
-          const ok = await confirmDanger(
-            `Delete saved query “${q.name}”?`,
-            "This cannot be undone.",
-            "Delete",
-          );
-          if (ok) await remove(q.id);
-        })(),
+      onSelect: () => void confirmDelete(q),
     },
   ];
 
@@ -111,7 +117,18 @@ export function SavedQueries() {
           <div
             key={q.id}
             className="pl-item saved-item"
+            role="button"
+            tabIndex={0}
             onClick={() => open(q)}
+            onKeyDown={(e) => {
+              // row-only: Enter on the inner action buttons fires their click,
+              // which bubbles here as keydown too — don't double-activate
+              if (e.target !== e.currentTarget) return;
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                open(q);
+              }
+            }}
             onContextMenu={(e) => {
               e.preventDefault();
               setMenu({ x: e.clientX, y: e.clientY, q });
@@ -132,7 +149,11 @@ export function SavedQueries() {
                     setRenaming(null);
                   } else if (e.key === "Escape") setRenaming(null);
                 }}
-                onBlur={() => setRenaming(null)}
+                // blur commits, matching tab rename + the cell-editor grammar
+                onBlur={() => {
+                  void rename(q.id, draft.trim() || q.name);
+                  setRenaming(null);
+                }}
               />
             ) : (
               <span className="pl-name" title={q.sql}>
@@ -152,17 +173,11 @@ export function SavedQueries() {
                 <Pencil size={12} />
               </button>
               <button
-                className={`icon-btn${armed === q.id ? " armed" : ""}`}
-                title={armed === q.id ? "Click again to delete" : "Delete"}
+                className="icon-btn"
+                title="Delete"
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (armed === q.id) {
-                    void remove(q.id);
-                    setArmed(null);
-                  } else {
-                    setArmed(q.id);
-                    setTimeout(() => setArmed((a) => (a === q.id ? null : a)), 2000);
-                  }
+                  void confirmDelete(q);
                 }}
               >
                 <Trash2 size={12} />

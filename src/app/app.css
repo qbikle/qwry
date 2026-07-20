@@ -46,7 +46,7 @@
   position: fixed;
   inset: 0;
   z-index: 50;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--backdrop);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -97,10 +97,19 @@
   transition: background 120ms, border-color 120ms, color 120ms;
 }
 
+.danger-actions button:hover {
+  border-color: var(--accent);
+}
+
 .danger-actions .danger-go {
   background: var(--danger);
   border-color: var(--danger);
   color: var(--danger-fg);
+}
+
+.danger-actions .danger-go:hover {
+  border-color: var(--danger);
+  filter: brightness(1.08);
 }
 
 /* connect-failure toast (global) */
@@ -206,15 +215,25 @@
   font-size: var(--text-xs);
   transition: background 120ms, border-color 120ms, color 120ms;
 }
+.cg-actions button:hover {
+  border-color: var(--accent);
+}
 .cg-actions .cg-commit {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-fg);
 }
+.cg-actions .cg-commit:hover {
+  filter: brightness(1.08);
+}
 .cg-actions .cg-discard {
   background: var(--danger);
   border-color: var(--danger);
   color: var(--danger-fg);
+}
+.cg-actions .cg-discard:hover {
+  border-color: var(--danger);
+  filter: brightness(1.08);
 }
 .cg-key {
   font-family: var(--font-mono);
@@ -226,10 +245,10 @@
   margin-left: 6px;
   padding: 1px 5px;
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--bg-hover);
   color: var(--fg-muted);
   font-size: var(--text-2xs);
-  font-family: var(--font-ui);
+  font-family: var(--font-mono);
 }
 
 /* ---- settings modal (⌘,) ---- */
@@ -284,6 +303,10 @@
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
+.settings-seg button:hover:not(.on) {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
 .settings-seg button.on {
   background: var(--accent-soft);
   color: var(--fg);
@@ -298,7 +321,7 @@
   cursor: pointer;
   transition: background 120ms, border-color 120ms, color 120ms;
 }
-.settings-btn:hover { border-color: var(--border-strong); }
+.settings-btn:hover { border-color: var(--accent); }
 .settings-stepper {
   display: flex;
   align-items: center;
@@ -415,7 +438,7 @@
   padding: 7px 14px;
   border-top: 1px solid var(--border);
   font-size: var(--text-2xs);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* ---- prod safe-mode chip (titlebar) ---- */

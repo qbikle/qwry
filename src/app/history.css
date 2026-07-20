@@ -30,6 +30,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.history-chip:hover:not(.on) {
+  color: var(--fg);
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
 .history-chip.on {
   background: var(--accent-soft);
   border-color: var(--accent);

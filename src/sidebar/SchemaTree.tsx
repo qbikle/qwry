@@ -15,7 +15,7 @@ import {
   Puzzle,
   Table2,
 } from "lucide-react";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { copyCue } from "../lib/copyCue";
 import { useResults } from "../stores/results";
 import { useTabs } from "../stores/tabs";
 import { useConnections } from "../stores/connections";
@@ -539,11 +539,18 @@ export function SchemaTree({ profileId }: { profileId: string }) {
       el = el.parentElement;
     }
     setScrollEl(el);
-    if (el) {
+    if (!el) return;
+    const scroll = el;
+    const measure = () =>
       setListOffset(
-        list.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop,
+        list.getBoundingClientRect().top - scroll.getBoundingClientRect().top + scroll.scrollTop,
       );
-    }
+    measure();
+    // zoom resizes the filter input above the list — a one-shot offset goes
+    // stale and every virtual row lands shifted; re-measure when it resizes
+    const ro = new ResizeObserver(measure);
+    if (list.previousElementSibling) ro.observe(list.previousElementSibling);
+    return () => ro.disconnect();
   }, [hasTree]);
 
   const rowVirt = useVirtualizer({
@@ -602,7 +609,7 @@ export function SchemaTree({ profileId }: { profileId: string }) {
     [filter],
   );
 
-  const copyName = useCallback((name: string) => void writeText(name), []);
+  const copyName = useCallback((name: string) => void copyCue(name), []);
 
   const insertText = useCallback((text: string) => {
     void import("../editor/SqlEditor").then(({ editorInsert }) => {
@@ -670,12 +677,16 @@ export function SchemaTree({ profileId }: { profileId: string }) {
         onSelect: () => togglePin(t),
       },
       { kind: "sep" },
-      { kind: "item", label: "Copy name", onSelect: () => void writeText(t.name) },
-      { kind: "item", label: "Copy qualified name", onSelect: () => void writeText(ref) },
+      { kind: "item", label: "Copy name", onSelect: () => void copyCue(t.name, "Copied table name") },
+      {
+        kind: "item",
+        label: "Copy qualified name",
+        onSelect: () => void copyCue(ref, "Copied qualified name"),
+      },
       {
         kind: "item",
         label: "Copy SELECT",
-        onSelect: () => void writeText(`SELECT * FROM ${ref} LIMIT 100`),
+        onSelect: () => void copyCue(`SELECT * FROM ${ref} LIMIT 100`, "Copied SELECT"),
       },
       { kind: "sep" },
       {
@@ -693,7 +704,7 @@ export function SchemaTree({ profileId }: { profileId: string }) {
     <div className="schema-tree">
       <input
         className="tree-filter"
-        placeholder="Filter tables…  ⌘⇧F"
+        placeholder="Filter tables…  ⌥⌘F"
         value={filterInput}
         onChange={(e) => setFilterInput(e.target.value)}
         id="schema-filter"

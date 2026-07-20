@@ -152,7 +152,14 @@ export function ContextMenu({
     >
       {(layerZ) => (
         <>
-          <motion.div className="ctx-menu" role="menu" {...menuIn}>
+          <motion.div
+            className="ctx-menu"
+            role="menu"
+            {...menuIn}
+            // the submenu anchor is a one-shot rect — scrolling the parent
+            // would leave it floating detached, so close it instead
+            onScroll={() => setOpenSub(null)}
+          >
             {items.map((it, i) => {
               if (it.kind === "sep") return <div key={i} className="ctx-sep" />;
               const isSub = it.kind === "submenu";
@@ -254,10 +261,18 @@ function SubPanel({
   }, [point, items.length]);
   const rowEls = useRef<(HTMLDivElement | null)[]>([]);
   const [query, setQuery] = useState("");
+  const searchEl = useRef<HTMLInputElement>(null);
+  // scrollIntoView must clear the sticky search input or keyboard nav hides
+  // the active row under it — measured (zoom-safe), ~34px incl. margins
+  const [stickyH, setStickyH] = useState(34);
 
   // a "Referenced by" on user_id can list dozens of tables — filter + scroll
   const itemCount = items.filter((it) => it.kind === "item").length;
   const searchable = itemCount > 12;
+
+  useLayoutEffect(() => {
+    if (searchEl.current) setStickyH(searchEl.current.offsetHeight + 6);
+  }, [searchable]);
   const q = query.trim().toLowerCase();
   const visible: [MenuNode, number][] = items
     .map((it, i): [MenuNode, number] => [it, i])
@@ -285,6 +300,7 @@ function SubPanel({
       <motion.div className="ctx-menu" role="menu" {...menuIn}>
         {searchable && (
           <input
+            ref={searchEl}
             className="ctx-search"
             placeholder={`Filter ${itemCount}…`}
             value={query}
@@ -315,6 +331,7 @@ function SubPanel({
                 rowEls.current[i] = el;
               }}
               className={`ctx-item${i === active ? " hot" : ""}${it.danger ? " danger" : ""}${it.disabled ? " disabled" : ""}`}
+              style={searchable ? { scrollMarginTop: stickyH } : undefined}
               role="menuitem"
               aria-disabled={it.disabled || undefined}
               onMouseEnter={() => !it.disabled && onHover(i)}

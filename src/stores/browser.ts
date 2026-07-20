@@ -149,10 +149,15 @@ interface BrowserState extends BrowseTab {
    * the tab stale so the next loadMore re-runs instead of appending — a seek
    * from the patched value would silently skip/dup rows */
   noteCommittedPatch: (tabId: string, cols: string[]) => void;
-  /** insert a row; cols/values cover only the columns the user set */
+  /** insert a row; cols/values cover only the columns the user set. tabId and
+   * table default to the active tab's — commitDraft passes both captured at
+   * its entry, since a mid-insert tab switch must never retarget the writes
+   * (reading the active-tab mirror after an await = wrong-table insert) */
   insertRow: (
     cols: string[],
     values: (string | null)[],
+    tabId?: string,
+    table?: TableInfo,
   ) => Promise<{ ok: boolean; error?: string }>;
   /** inline add-row: open a blank draft, edit cells, commit/cancel */
   /** inline add-row; optional prefill (duplicate-row minus PK) */
@@ -377,6 +382,17 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     const tab = useTabs.getState().tabs.find((t) => t.id === tabId);
     const table = tab && tab.kind === "table" ? tab.table : null;
     set((s) => ({ active: tabId, table, ...(s.byTab[tabId] ?? blankBrowse()) }));
+    // a row committed while this tab was backgrounded left its page stale
+    // (insertRow can't re-run a non-active tab) — refresh on return, parked
+    // while edits are staged or a draft is open (same rule as loadMore:
+    // their row coordinates must hold)
+    const t = get().byTab[tabId];
+    if (table && t?.pageStale && !t.draftRow) {
+      void import("./edits").then(({ useEdits }) => {
+        if (Object.keys(useEdits.getState().byTab[tabId]?.pending ?? {}).length > 0) return;
+        if (get().active === tabId) run(set, get());
+      });
+    }
   },
 
   openTable: (t, initialFilters) => {
@@ -654,15 +670,19 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     writeBrowse(set, tabId, { pageStale: true });
   },
 
-  insertRow: async (cols, values) => {
-    const s = get();
-    if (!s.table) return { ok: false, error: "no table open" };
+  insertRow: async (cols, values, tabId = get().active, table = get().table ?? undefined) => {
+    if (!table) return { ok: false, error: "no table open" };
     // insert on the same session the browse query ran on (shares the tab txn)
-    const sessionId = useResults.getState().executedSessionId;
+    const sessionId = useResults.getState().byTab[tabId]?.executedSessionId ?? null;
     if (!sessionId) return { ok: false, error: "not connected" };
     try {
-      await ipc.insertRow(sessionId, s.table.schema, s.table.name, cols, values);
-      run(set, get()); // reload so the new row shows
+      await ipc.insertRow(sessionId, table.schema, table.name, cols, values);
+      // reload so the new row shows — run() targets the ACTIVE tab; when
+      // focus moved mid-insert, mark the page stale instead so the return
+      // to this tab (syncActive) refreshes it — the committed row must never
+      // be silently invisible
+      if (get().active === tabId) run(set, get());
+      else writeBrowse(set, tabId, { pageStale: true });
       return { ok: true };
     } catch (e) {
       return { ok: false, error: (e as { message?: string }).message ?? String(e) };
@@ -679,19 +699,23 @@ export const useBrowser = create<BrowserState>((set, get) => ({
 
   commitDraft: async () => {
     const s = get();
+    // active tab captured AT ENTRY — the insert round trip outlives a tab
+    // switch, and the draft-clear/re-run must target the tab that committed
+    const tabId = s.active;
     if (!s.table || !s.draftRow) return;
-    if (draftCommitting.has(s.active)) return;
-    draftCommitting.add(s.active);
+    if (draftCommitting.has(tabId)) return;
+    draftCommitting.add(tabId);
     try {
-      await commitDraftInner(s, set, get);
+      await commitDraftInner(s, tabId, set, get);
     } finally {
-      draftCommitting.delete(s.active);
+      draftCommitting.delete(tabId);
     }
   },
 }));
 
 async function commitDraftInner(
   s: BrowserState,
+  tabId: string,
   set: SetFn,
   get: () => BrowserState,
 ): Promise<void> {
@@ -713,9 +737,9 @@ async function commitDraftInner(
         values.push(cell.text);
       }
     }
-    const res = await get().insertRow(cols, values);
-    if (res.ok) writeBrowse(set, get().active, { draftRow: null, draftError: null });
-    else writeBrowse(set, get().active, { draftError: res.error ?? "insert failed" });
+    const res = await get().insertRow(cols, values, tabId, s.table!);
+    if (res.ok) writeBrowse(set, tabId, { draftRow: null, draftError: null });
+    else writeBrowse(set, tabId, { draftError: res.error ?? "insert failed" });
   }
 }
 
