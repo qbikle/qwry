@@ -30,13 +30,19 @@ export {
 } from "./browseSql";
 export type { Filter, FilterOp, SortChain, SortKey, BrowseSort, TypeClass } from "./browseSql";
 
-/** one cell of the inline draft (new) row. Untouched columns (absent, or
- * present but never typed into) take their DB DEFAULT; `isNull` inserts NULL;
- * `touched` with empty text inserts a real '' — all three are expressible */
+/** one cell of the inline draft (new) row. The rule: NO TEXT = DEFAULT —
+ * typing into a column and clearing it again resets it (a pasted serial PK
+ * that gets ⌫'d must take its default, never insert ''). Explicit NULL and
+ * empty-string are deliberate acts (cell menu / ⌥⌫), carried in `state`. */
 export interface DraftCell {
   text: string;
-  isNull: boolean;
-  touched?: boolean;
+  /** explicit non-text value; absent → the text (or DEFAULT when empty) */
+  state?: "null" | "empty";
+}
+
+/** anything worth guarding (quit / Esc-arm): explicit state or typed text */
+export function draftHasContent(row: Record<string, DraftCell> | null | undefined): boolean {
+  return !!row && Object.values(row).some((c) => c.state || c.text !== "");
 }
 
 const PAGE = 1000;
@@ -723,19 +729,47 @@ async function commitDraftInner(
     const draft = s.draftRow!;
     const cols: string[] = [];
     const values: (string | null)[] = [];
-    // iterate real table columns: NULL → explicit null, touched → text (a
-    // touched-but-empty field is a real ''), untouched → omit so the column
-    // DEFAULT applies
-    for (const c of s.table!.columns) {
+    // column truth for the pre-check: prefer the LIVE schema snapshot — the
+    // tab's TableInfo froze at open time, and refusing a legal write off a
+    // stale "no default" would block the user with a false message (dynamic
+    // import: static one would cycle at module eval)
+    const { useSchema } = await import("./schema");
+    const pid = useResults.getState().byTab[tabId]?.executedProfileId;
+    const live = pid
+      ? useSchema
+          .getState()
+          .snapshots[pid]?.tables.find(
+            (t) => t.schema === s.table!.schema && t.name === s.table!.name,
+          )
+      : undefined;
+    // iterate real table columns: explicit state → NULL/'', text → text,
+    // empty → omit so the column DEFAULT applies. Columns Postgres fills
+    // itself are never staged (dup-row prefill must not smuggle a value into
+    // a cell the band renders as "auto"). Columns that CAN'T default
+    // (NOT NULL, no default, not identity/generated) fail here with names,
+    // not as a server error after the round trip
+    const missing: string[] = [];
+    for (const c of (live ?? s.table!).columns) {
+      if (c.identity === "a" || c.generated === "s") continue;
       const cell = draft[c.name];
-      if (!cell) continue;
-      if (cell.isNull) {
+      if (cell?.state === "null") {
         cols.push(c.name);
         values.push(null);
-      } else if (cell.touched || cell.text !== "") {
+      } else if (cell?.state === "empty") {
+        cols.push(c.name);
+        values.push("");
+      } else if (cell && cell.text !== "") {
         cols.push(c.name);
         values.push(cell.text);
+      } else if (c.not_null && c.default === null && !c.identity && !c.generated) {
+        missing.push(c.name);
       }
+    }
+    if (missing.length > 0) {
+      writeBrowse(set, tabId, {
+        draftError: `required (NOT NULL, no default): ${missing.join(", ")}`,
+      });
+      return;
     }
     const res = await get().insertRow(cols, values, tabId, s.table!);
     if (res.ok) writeBrowse(set, tabId, { draftRow: null, draftError: null });
