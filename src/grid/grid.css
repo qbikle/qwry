@@ -210,7 +210,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--accent-soft);
+  /* --accent-soft is translucent (all themes) — layer it over the opaque band
+     bg or the draft cells sliding beneath the sticky corner show through it */
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--bg-app);
   color: var(--accent);
   border-right: 1px solid var(--border-strong);
 }
