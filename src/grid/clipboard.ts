@@ -19,25 +19,30 @@ const sqlLiteral = (v: Cell) =>
 
 /** exact inverse of the TSV writer (Excel convention): a field that STARTS
  * with a quote is quoted — it may contain tabs/newlines, `""` is a literal
- * quote; any other field is verbatim. Returns null on malformed input
- * (unterminated quote / garbage after a closing quote) so callers can fall
- * back to a naive split instead of silently mangling non-TSV text. */
+ * quote; any other field is verbatim. Line endings (\n, \r\n, \r) are record
+ * separators ONLY outside quotes — a quoted field's bytes are never touched
+ * (a global \r normalization silently corrupted Windows-origin cell data).
+ * Returns null on malformed input (unterminated quote / garbage after a
+ * closing quote) so callers can fall back to a naive split instead of
+ * silently mangling non-TSV text. */
 export function parseTsv(text: string): string[][] | null {
-  const src = text.replace(/\r\n?/g, "\n");
-  const n = src.length;
+  const n = text.length;
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
   let i = 0;
+  // width of a record break at j (0 = not a break)
+  const brk = (j: number) =>
+    text[j] === "\n" ? 1 : text[j] === "\r" ? (text[j + 1] === "\n" ? 2 : 1) : 0;
+  let endedOnBreak = false;
   while (i < n) {
-    if (src[i] === '"') {
-      // quoted field — only valid at field start (we're always at field
-      // start here after the inner loop below consumes to the delimiter)
+    if (text[i] === '"') {
+      // quoted field — the loop is always at field start here
       i++;
       let closed = false;
       while (i < n) {
-        if (src[i] === '"') {
-          if (src[i + 1] === '"') {
+        if (text[i] === '"') {
+          if (text[i + 1] === '"') {
             field += '"';
             i += 2;
             continue;
@@ -46,28 +51,33 @@ export function parseTsv(text: string): string[][] | null {
           closed = true;
           break;
         }
-        field += src[i++];
+        field += text[i++];
       }
       if (!closed) return null;
-      if (i < n && src[i] !== "\t" && src[i] !== "\n") return null;
+      if (i < n && text[i] !== "\t" && brk(i) === 0) return null;
     } else {
-      while (i < n && src[i] !== "\t" && src[i] !== "\n") field += src[i++];
+      while (i < n && text[i] !== "\t" && brk(i) === 0) field += text[i++];
     }
-    if (i >= n) break;
-    if (src[i] === "\t") {
+    if (i >= n) {
+      endedOnBreak = false;
+      break;
+    }
+    if (text[i] === "\t") {
       row.push(field);
       field = "";
       i++;
+      endedOnBreak = false;
       continue;
     }
+    i += brk(i);
     row.push(field);
     rows.push(row);
     row = [];
     field = "";
-    i++;
+    endedOnBreak = true;
   }
-  // a trailing newline is a record terminator, not a phantom empty row
-  if (!(field === "" && row.length === 0 && src.endsWith("\n"))) {
+  // a trailing line ending is a record terminator, not a phantom empty row
+  if (!(endedOnBreak && field === "" && row.length === 0)) {
     row.push(field);
     rows.push(row);
   }
