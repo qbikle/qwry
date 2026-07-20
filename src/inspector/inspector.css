@@ -94,6 +94,7 @@
 /* icon toolbar */
 .insp-tools {
   display: flex;
+  flex-wrap: wrap; /* narrow inspector: Stage/Discard wrap under the icons */
   gap: 4px;
   padding: var(--sp-2) var(--sp-3) 0;
 }
@@ -120,6 +121,22 @@
   min-height: 0;
   overflow: auto;
   padding: var(--sp-3);
+}
+/* raw JSON mode: the editor grows to its content, caps at the panel, and
+ * scrolls INSIDE itself — no dead space under a max-height box */
+.insp-body.raw-fill {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.insp-body.raw-fill .insp-edit {
+  flex: 1;
+  min-height: 0;
+}
+.insp-body.raw-fill .jsonfield {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: none;
 }
 
 .insp-null {
@@ -192,6 +209,11 @@
   display: flex;
   justify-content: flex-end;
   gap: var(--sp-2);
+}
+/* raw-mode Stage/Discard live in the tools row, top right */
+.insp-tools-actions {
+  margin-left: auto;
+  align-items: center;
 }
 .insp-editactions button {
   padding: 5px 12px;

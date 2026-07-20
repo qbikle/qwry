@@ -79,12 +79,16 @@ export function ValuePop({
   colName,
   typeName,
   initial,
+  startDirty,
   onStage,
   onClose,
 }: {
   colName: string;
   typeName: string | undefined;
   initial: string;
+  /** the initial text is already an edit (paste-opened pop) — Stage must
+   * stage it even untouched, never treat it as a no-change close */
+  startDirty?: boolean;
   onStage: (draft: string) => string | null;
   onClose: () => void;
 }) {
@@ -93,7 +97,7 @@ export function ValuePop({
   // the pop opens on the PRETTY-PRINTED value — staging an untouched draft
   // would silently rewrite `json` (byte-preserving) cells with pretty bytes.
   // dirty = the user deliberately changed the text (typing, or Format).
-  const dirty = useRef(false);
+  const dirty = useRef(!!startDirty);
   const taRef = useRef<HTMLTextAreaElement>(null);
   // json/jsonb/arrays edit in a syntax-highlighted CodeMirror; free text
   // stays a plain textarea (no JSON tokens to color)

@@ -21,7 +21,7 @@ import {
   Wand2,
   X,
 } from "lucide-react";
-import { editorTimeTraveling } from "../editor/SqlEditor";
+import { editorFormat, editorTimeTraveling } from "../editor/editorBus";
 import { confirmTxRollback, useConnections } from "../stores/connections";
 import { useResults } from "../stores/results";
 import { useSchema } from "../stores/schema";
@@ -180,9 +180,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
             <Command.Item
               value="format sql beautify"
               onSelect={() => {
-                void import("../editor/SqlEditor").then(({ editorFormat }) =>
-                  editorFormat.current?.(),
-                );
+                editorFormat.current?.();
                 close();
               }}
             >

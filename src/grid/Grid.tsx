@@ -19,6 +19,7 @@ import { useInspector } from "../stores/inspector";
 import { useSchema } from "../stores/schema";
 import { RowPeek } from "./RowPeek";
 import { RecordView } from "./RecordView";
+import { LOSSY_NUMS, ValuePop } from "./ValuePop";
 import { FkPicker, preferredSessionId } from "./FkPicker";
 import { Histogram, type HistogramMode } from "./Histogram";
 import { flashReadOnlyReason } from "./flashReason";
@@ -793,6 +794,11 @@ export function Grid({
   } | null>(null);
   /** transposed single-row viewer (Space) */
   const [peekRow, setPeekRow] = useState<number | null>(null);
+  // pop-out editor for a DRAFT cell — multiline pastes and duplicated rows
+  // with multiline values can't live honestly in a one-line input
+  const [draftPop, setDraftPop] = useState<{ col: string; dataC: number; text: string } | null>(
+    null,
+  );
   /** record view (⇧Space): one view row = record mode, two = row diff */
   const [record, setRecord] = useState<{ rows: [number] | [number, number] } | null>(null);
   /** value-distribution panel (header context menu) */
@@ -2376,11 +2382,35 @@ export function Grid({
                       <>
                         <input
                           className="vgrid-draft-input"
-                          value={cell.isNull ? "" : cell.text}
+                          // a one-line input can't display newlines (WebKit
+                          // strips them from .value, silently desyncing state)
+                          // — multiline drafts render a ⏎ preview, read-only,
+                          // and edit through the pop-out instead
+                          value={
+                            cell.isNull
+                              ? ""
+                              : cell.text.includes("\n")
+                                ? cell.text.replace(/\n/g, "⏎")
+                                : cell.text
+                          }
                           // untouched = DEFAULT; a touched-but-empty field is a
                           // real '' and must not read as DEFAULT anymore
                           placeholder={cell.isNull ? "NULL" : cell.touched ? "" : "DEFAULT"}
                           disabled={cell.isNull}
+                          readOnly={!cell.isNull && cell.text.includes("\n")}
+                          title={
+                            !cell.isNull && cell.text.includes("\n")
+                              ? "Multiline value — click to edit"
+                              : undefined
+                          }
+                          onMouseDown={
+                            !cell.isNull && cell.text.includes("\n")
+                              ? (ev) => {
+                                  ev.preventDefault();
+                                  setDraftPop({ col: name, dataC: colAt(vc.index), text: cell.text });
+                                }
+                              : undefined
+                          }
                           // eslint-disable-next-line jsx-a11y/no-autofocus
                           autoFocus={colAt(vc.index) === firstDraftCol}
                           spellCheck={false}
@@ -2392,7 +2422,18 @@ export function Grid({
                             })
                           }
                           onPaste={(e) => {
-                            const text = e.clipboardData.getData("text/plain");
+                            // read-only multiline draft: the DOM holds the ⏎
+                            // preview, not the real text — edit in the pop-out
+                            if (!cell.isNull && cell.text.includes("\n")) {
+                              e.preventDefault();
+                              setDraftPop({ col: name, dataC: colAt(vc.index), text: cell.text });
+                              return;
+                            }
+                            const raw = e.clipboardData.getData("text/plain");
+                            // a lone trailing newline rides along with most
+                            // single-line copies — strip it so those stay a
+                            // native one-line paste (WebKit drops it anyway)
+                            const text = raw.replace(/\r?\n$/, "");
                             // single-line text → native single-input paste
                             if (!text.includes("\t") && !text.includes("\n")) return;
                             e.preventDefault();
@@ -2418,21 +2459,39 @@ export function Grid({
                               }
                               return;
                             }
-                            // multiline, no tabs = ONE value. The input would
-                            // keep only the first line (WebKit drops the rest);
-                            // pretty JSON compacts to a single line — identical
-                            // jsonb semantics; anything else lands in the draft
-                            // state verbatim, newlines intact
-                            const trimmed = text.trim();
-                            let value = text;
-                            if (/^[[{]/.test(trimmed)) {
+                            // multiline, no tabs = ONE value, inserted at the
+                            // CARET into the existing text (replacing any
+                            // selection) — never over the whole cell. For
+                            // json/jsonb columns, merged valid JSON compacts
+                            // to one line (server-identical bytes) — unless it
+                            // carries >2^53 ints, where the JS round-trip
+                            // would silently rewrite digits (LOSSY_NUMS, same
+                            // guard as the inspector). Everything else opens
+                            // the pop-out with the merged text, staged
+                            // VERBATIM — a text column's whitespace is data
+                            const el = e.currentTarget;
+                            const start = el.selectionStart ?? el.value.length;
+                            const end = el.selectionEnd ?? start;
+                            const merged = el.value.slice(0, start) + text + el.value.slice(end);
+                            const trimmed = merged.trim();
+                            const t = colType(colAt(vc.index));
+                            if (
+                              (t === "json" || t === "jsonb") &&
+                              /^[[{]/.test(trimmed) &&
+                              !LOSSY_NUMS.test(trimmed)
+                            ) {
                               try {
-                                value = JSON.stringify(JSON.parse(trimmed));
+                                setDraftCell(name, {
+                                  text: JSON.stringify(JSON.parse(trimmed)),
+                                  isNull: false,
+                                  touched: true,
+                                });
+                                return;
                               } catch {
-                                /* not JSON — verbatim */
+                                /* not (yet) valid JSON — pop-out editor */
                               }
                             }
-                            setDraftCell(name, { text: value, isNull: false, touched: true });
+                            setDraftPop({ col: name, dataC: colAt(vc.index), text: merged });
                           }}
                         />
                         <button
@@ -2766,6 +2825,37 @@ export function Grid({
             setRecord(null);
             containerRef.current?.focus();
           }}
+        />
+      )}
+
+      {draftPop !== null && (
+        <ValuePop
+          colName={draftPop.col}
+          typeName={colType(draftPop.dataC)}
+          initial={draftPop.text}
+          // opened from a paste/duplicate — the content IS the edit, so Stage
+          // must never read as a no-change close
+          startDirty
+          onStage={(d) => {
+            const t = colType(draftPop.dataC);
+            let value = d;
+            if (t === "json" || t === "jsonb") {
+              // parse = validation (invalid JSON fails HERE, not at commit);
+              // compaction is display-only and skipped when the text carries
+              // >2^53 ints — the JS round-trip would rewrite their digits, so
+              // the exact typed bytes stage instead (⏎ preview handles it)
+              try {
+                const compact = JSON.stringify(JSON.parse(d));
+                if (!LOSSY_NUMS.test(d)) value = compact;
+              } catch (ex) {
+                return (ex as Error).message;
+              }
+            }
+            setDraftCell(draftPop.col, { text: value, isNull: false, touched: true });
+            setDraftPop(null);
+            return null;
+          }}
+          onClose={() => setDraftPop(null)}
         />
       )}
 
