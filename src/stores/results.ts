@@ -212,6 +212,15 @@ export const useResults = create<ResultsState>((set, get) => ({
     const sessionId = await conn.ensureTabSession(activeProfileId, tabId);
     writeTab(set, tabId, { connecting: false });
     if (!sessionId) {
+      // no statements will ever arrive — without an error the pane sits on
+      // "Loading table…" forever once the connect toast expires
+      writeTab(set, tabId, {
+        globalError: {
+          message: "couldn't establish a session — check the connection",
+          position: null,
+          code: null,
+        },
+      });
       runInflight.delete(tabId);
       return;
     }

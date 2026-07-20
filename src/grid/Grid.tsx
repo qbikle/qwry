@@ -1,8 +1,8 @@
 // Virtualized results grid — rows and columns both windowed (DOM cells, P2).
 // Perf checkpoint vs Glide Data Grid happens at the end of P2 (see ROADMAP).
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { copyCue } from "../lib/copyCue";
 import { invoke } from "@tauri-apps/api/core";
 import { useResults, type StatementState } from "../stores/results";
 import { ctidGuardPairs, editKey, useEdits } from "../stores/edits";
@@ -647,11 +647,21 @@ export function Grid({
   /** VIEW row count — differs from rows.length while the quick-filter is on */
   const viewLen = rowOrder ? rowOrder.length : rows.length;
 
+  // inline new-row draft (table browser only) — declared before the
+  // virtualizers because the band's height feeds their scroll padding
+  const draftRow = useBrowser((s) => s.draftRow);
+  const showDraft = insertable && draftRow !== null;
+  const draftH = showDraft ? DRAFT_H : 0;
+
   const rowVirt = useVirtualizer({
     count: viewLen,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ROW_H,
     overscan: 12,
+    // rows paint HEADER_H + draftH below their virtual offsets (sticky
+    // chrome overlays the top of the viewport) — end-aligned scrollToIndex
+    // must aim past it or downward nav parks the focused row out of view
+    scrollPaddingEnd: HEADER_H + draftH,
   });
   useLayoutEffect(() => {
     rowVirt.measure(); // density change resizes every row — same frame
@@ -663,6 +673,8 @@ export function Grid({
     getScrollElement: () => scrollRef.current,
     estimateSize: (i) => colWidths[colAtRef.current(i)],
     overscan: 4,
+    // cells paint ROWNUM_W right of their virtual offsets (sticky gutter)
+    scrollPaddingEnd: ROWNUM_W,
   });
   useEffect(() => {
     colVirt.measure();
@@ -746,8 +758,6 @@ export function Grid({
   }, [findCur, rowViewOf, colViewOf]);
   // ------------------------------------------------------------------------
 
-  // inline new-row draft (table browser only)
-  const draftRow = useBrowser((s) => s.draftRow);
   /** the browsed relation (browse tabs only) — gates row mutations on kind
    * 'r' and feeds catalog NOT NULL into the sort-arrow NULLS affordance */
   const browseTable = useBrowser((s) => s.table);
@@ -759,8 +769,6 @@ export function Grid({
   const snapshot = useSchema((s) =>
     activeProfileId ? s.snapshots[activeProfileId] : undefined,
   );
-  const showDraft = insertable && draftRow !== null;
-  const draftH = showDraft ? DRAFT_H : 0;
   // trackpad-scroll a long value inside a draft input: wheel must pan the
   // INPUT's overflow, not the grid behind it. preventDefault needs a
   // non-passive listener, so it's attached natively via callback ref.
@@ -781,6 +789,30 @@ export function Grid({
   // first VISIBLE non-ctid column — data order broke autofocus when the
   // first data column was hidden (no rendered draft cell matched)
   const firstDraftCol = viewCols.find((d) => cols[d]?.name !== "ctid") ?? -1;
+  // focus once per draft-open, never per MOUNT: autoFocus re-fired whenever
+  // the first draft cell REMOUNTED after a horizontal scroll, and WKWebView's
+  // focus-reveal yanked the scroller back to the origin
+  const draftFocusedOnce = useRef(false);
+  /** last-focused draft view column — refocus target when a manual scroll
+   * unmounts the focused input (focus falls to body, Esc stops reaching the
+   * band) */
+  const lastDraftFocus = useRef<number | null>(null);
+  /** Tab target still unmounted after the rAF — consumed by the input's ref
+   * callback when the virtualizer finally mounts it */
+  const pendingDraftFocus = useRef<number | null>(null);
+  /** two-step Esc arm: a filled band warns before discarding */
+  const draftEscArmed = useRef(0);
+  useEffect(() => {
+    if (showDraft) {
+      colVirt.scrollToIndex(0); // mount the first column before focusing it
+    } else {
+      draftFocusedOnce.current = false;
+      lastDraftFocus.current = null;
+      pendingDraftFocus.current = null;
+      draftEscArmed.current = 0;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showDraft]);
 
   const [editing, setEditing] = useState<{
     r: number;
@@ -1028,15 +1060,16 @@ export function Grid({
             nextCopyTick(step);
             return;
           }
-          writeText(parts.join("\n"))
-            .catch(console.error)
-            .finally(() => {
-              if (copyBuildRun.current === runId) copyBuildRun.current = null;
-              if (copyRun.current !== runId) return;
-              const cur = useEdits.getState().lastError;
-              if (cur?.startsWith("building copy…")) useEdits.setState({ lastError: null });
-              truncFlash();
-            });
+          // build is finished — clear the cancel target BEFORE dispatching the
+          // write, or an Escape landing mid-write flashes "copy cancelled"
+          // while the clipboard still gets replaced
+          copyBuildRun.current = null;
+          void copyCue(parts.join("\n")).then((ok) => {
+            if (copyRun.current !== runId) return;
+            const cur = useEdits.getState().lastError;
+            if (cur?.startsWith("building copy…")) useEdits.setState({ lastError: null });
+            if (ok) truncFlash();
+          });
         };
         step();
         return;
@@ -1051,13 +1084,12 @@ export function Grid({
       // a SINGLE cell copies raw — TSV quoting ("" doubling, wrapping) is for
       // multi-cell spreadsheet paste and reads as garbage in an input field
       if (format === "tsv" && selRows.length === 1 && selRows[0].length === 1) {
-        writeText(selRows[0][0] ?? "").catch(console.error);
-        truncFlash();
+        void copyCue(selRows[0][0] ?? "").then((ok) => ok && truncFlash());
         return;
       }
-      // tauri plugin, not navigator.clipboard — dev origin is insecure-context
-      writeText(formatCells(selCols, selRows, format, { table, ctidCols })).catch(console.error);
-      truncFlash();
+      void copyCue(formatCells(selCols, selRows, format, { table, ctidCols })).then(
+        (ok) => ok && truncFlash(),
+      );
     },
     [sel.rect, cols, rows, editMap, rowAt, colAt, statement.truncated, rowViewOf, colViewOf],
   );
@@ -1466,11 +1498,12 @@ export function Grid({
       };
       if (e.key === "Escape" && copyBuildRun.current != null) {
         // cancel an in-flight chunked ⌘C — the clipboard still holds the OLD
-        // content, same honesty flash as the remount-abandon path
+        // content; the user asked for this one, so say so plainly (the
+        // "result changed" wording belongs to the remount-abandon path only)
         e.preventDefault();
         copyRun.current++;
         copyBuildRun.current = null;
-        flashReadOnlyReason("copy cancelled — result changed before it finished");
+        flashReadOnlyReason("copy cancelled");
         return;
       }
       if (e.key === "Escape" && showDraft) {
@@ -1482,13 +1515,18 @@ export function Grid({
         );
         e.preventDefault();
         if (hasContent) {
-          // all columns NULL-toggled → every input is disabled; fall back to a
-          // ∅ button so the keyboard path still lands inside the band
-          const el =
-            containerRef.current?.querySelector<HTMLElement>(
-              ".vgrid-draft-input:not(:disabled)",
-            ) ?? containerRef.current?.querySelector<HTMLElement>(".vgrid-draft-null");
-          el?.focus();
+          // scroll first: the leading inputs may be virtualized out — focus
+          // needs a mounted target (rAF lands after the remount render).
+          // All columns NULL-toggled → every input is disabled; fall back to
+          // a ∅ button so the keyboard path still lands inside the band
+          colVirt.scrollToIndex(0);
+          requestAnimationFrame(() => {
+            const el =
+              containerRef.current?.querySelector<HTMLElement>(
+                ".vgrid-draft-input:not(:disabled)",
+              ) ?? containerRef.current?.querySelector<HTMLElement>(".vgrid-draft-null");
+            el?.focus({ preventScroll: true });
+          });
         } else {
           cancelDraft();
         }
@@ -2212,14 +2250,21 @@ export function Grid({
             if (p) startEdit(p.r, p.c);
           }}
         >
-          {/* column-drop insertion guide while reordering */}
-          {dropLine != null && (
+          {/* column-drop insertion guide while reordering — hidden while its
+              x sits under the sticky rownum gutter (the line is content-
+              positioned, the gutter viewport-pinned); the beacon dot tracks
+              the visible top via --dropline-top (scroll re-renders keep both
+              fresh through the virtualizer) */}
+          {dropLine != null && dropLine >= (scrollRef.current?.scrollLeft ?? 0) && (
             <div
               className="vgrid-dropline"
-              style={{
-                transform: `translateX(${dropLine + ROWNUM_W}px)`,
-                height: rowVirt.getTotalSize() + HEADER_H + draftH,
-              }}
+              style={
+                {
+                  transform: `translateX(${dropLine + ROWNUM_W}px)`,
+                  height: rowVirt.getTotalSize() + HEADER_H + draftH,
+                  "--dropline-top": `${scrollRef.current?.scrollTop ?? 0}px`,
+                } as CSSProperties
+              }
             />
           )}
 
@@ -2348,10 +2393,55 @@ export function Grid({
                 if (e.key === "Escape") {
                   e.preventDefault();
                   e.stopPropagation(); // one layer only — the grid handler would re-fire
+                  // a filled band arms: first Esc warns, second within 2s
+                  // discards — one stray Esc must never eat typed row data
+                  // (the app's two-click arm grammar)
+                  const hasContent = Object.values(useBrowser.getState().draftRow ?? {}).some(
+                    (c) => c.isNull || c.touched || c.text !== "",
+                  );
+                  if (hasContent && Date.now() - draftEscArmed.current > 2000) {
+                    draftEscArmed.current = Date.now();
+                    flashReadOnlyReason("press Esc again to discard the draft row");
+                    return;
+                  }
                   cancelDraft();
                 } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                   e.preventDefault();
                   void commitDraft();
+                } else if (e.key === "Tab") {
+                  // native Tab order breaks at the virtualization boundary
+                  // (the next input may not be mounted) — step through view
+                  // columns explicitly, skipping ctid and NULL-disabled cells
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const dir = e.shiftKey ? -1 : 1;
+                  const raw = (e.target as HTMLElement).dataset?.draftCol;
+                  const cur =
+                    raw != null
+                      ? Number(raw)
+                      : (lastDraftFocus.current ?? (dir === 1 ? -1 : viewColLen));
+                  let target = -1;
+                  for (let v = cur + dir; v >= 0 && v < viewColLen; v += dir) {
+                    const cn = cols[colAt(v)]?.name;
+                    if (!cn || cn === "ctid" || draftRow?.[cn]?.isNull) continue;
+                    target = v;
+                    break;
+                  }
+                  if (target < 0) return;
+                  // pending ref survives the rAF missing (target still
+                  // unmounted after one frame) — the input's ref callback
+                  // consumes it on mount, whenever that lands
+                  pendingDraftFocus.current = target;
+                  colVirt.scrollToIndex(target);
+                  requestAnimationFrame(() => {
+                    const el = containerRef.current?.querySelector<HTMLElement>(
+                      `[data-draft-col="${target}"]`,
+                    );
+                    if (el) {
+                      pendingDraftFocus.current = null;
+                      el.focus({ preventScroll: true });
+                    }
+                  });
                 }
               }}
             >
@@ -2411,8 +2501,33 @@ export function Grid({
                                 }
                               : undefined
                           }
-                          // eslint-disable-next-line jsx-a11y/no-autofocus
-                          autoFocus={colAt(vc.index) === firstDraftCol}
+                          data-draft-col={vc.index}
+                          ref={(el) => {
+                            if (!el || el.disabled) return;
+                            if (pendingDraftFocus.current === vc.index) {
+                              pendingDraftFocus.current = null;
+                              el.focus({ preventScroll: true });
+                              return;
+                            }
+                            if (!draftFocusedOnce.current) {
+                              if (colAt(vc.index) !== firstDraftCol) return;
+                              draftFocusedOnce.current = true;
+                              el.focus({ preventScroll: true });
+                              return;
+                            }
+                            // remount after a manual scroll unmounted the
+                            // focused input — refocus only when focus really
+                            // fell to body, never off a deliberate click
+                            if (
+                              lastDraftFocus.current === vc.index &&
+                              document.activeElement === document.body
+                            ) {
+                              el.focus({ preventScroll: true });
+                            }
+                          }}
+                          onFocus={() => {
+                            lastDraftFocus.current = vc.index;
+                          }}
                           spellCheck={false}
                           onChange={(e) =>
                             setDraftCell(name, {
@@ -2564,11 +2679,14 @@ export function Grid({
             }),
           )}
 
-          {/* in-place cell editor */}
+          {/* in-place cell editor — positioned from the view maps, NOT the
+              virtual items: the cell can scroll out of the virtual window
+              while the editor is open, and a find()-miss fell back to 0,
+              teleporting the editor to the grid origin */}
           {editing && (
             <CellEditor
-              x={colVirt.getVirtualItems().find((v) => v.index === editing.c)?.start ?? 0}
-              y={(rowVirt.getVirtualItems().find((v) => v.index === editing.r)?.start ?? 0) + draftH}
+              x={viewOffsets[editing.c] ?? 0}
+              y={editing.r * ROW_H + draftH}
               width={colWidths[colAt(editing.c)] ?? 160}
               draft={editing.draft}
               placeholder={editing.startedNull ? "NULL" : undefined}
@@ -2597,7 +2715,7 @@ export function Grid({
             {
               kind: "item",
               label: `Copy name  ${cols[headerMenu.dataC]?.name ?? ""}`,
-              onSelect: () => void writeText(cols[headerMenu.dataC]?.name ?? ""),
+              onSelect: () => void copyCue(cols[headerMenu.dataC]?.name ?? ""),
             },
             { kind: "sep" },
             {

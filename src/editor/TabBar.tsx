@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Pin, Plus, SquareTerminal, Table, X } from "lucide-react";
 import { useSaved } from "../stores/saved";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { copyCue } from "../lib/copyCue";
 import { useTabs, visibleTabs } from "../stores/tabs";
 import { useCloseGuard } from "../stores/closeGuard";
 import { skey, useConnections } from "../stores/connections";
@@ -66,40 +66,65 @@ export function TabBar() {
   const moveTab = useTabs((s) => s.moveTab);
   // drag-reorder: threshold keeps plain clicks as select; dropIdx is the
   // INSERTION boundary (0..tabs.length); a line marks it while dragging
-  const dragState = useRef<{ fromIdx: number; started: boolean; startX: number } | null>(null);
+  const dragState = useRef<{
+    fromIdx: number;
+    started: boolean;
+    startX: number;
+    mids: number[];
+  } | null>(null);
+  const dragRaf = useRef<number | null>(null);
   const [dropIdx, setDropIdx] = useState<number | null>(null);
 
-  const boundaryFromX = (clientX: number): number => {
-    const strip = stripRef.current;
-    if (!strip) return 0;
-    const els = [...strip.querySelectorAll<HTMLElement>(".tab")];
-    for (let i = 0; i < els.length; i++) {
-      const r = els[i].getBoundingClientRect();
-      if (clientX < r.left + r.width / 2) return i;
+  const boundaryFromX = (clientX: number, mids: number[]): number => {
+    for (let i = 0; i < mids.length; i++) {
+      if (clientX < mids[i]) return i;
     }
-    return els.length;
+    return mids.length;
   };
 
   const beginTabDrag = (idx: number, e: React.MouseEvent) => {
     if (e.button !== 0) return;
     const t = e.target as HTMLElement;
     if (t.closest(".tab-close") || t.tagName === "INPUT") return;
-    dragState.current = { fromIdx: idx, started: false, startX: e.clientX };
+    // tab midpoints measured ONCE — tabs don't move until drop, and per-move
+    // getBoundingClientRect sweeps were a layout read on every mousemove.
+    // Midpoints are viewport-space: if the strip scrolls mid-drag (momentum
+    // still in flight), offset the pointer by the scroll delta to compare in
+    // the same space the cache was captured in
+    const mids = [...(stripRef.current?.querySelectorAll<HTMLElement>(".tab") ?? [])].map(
+      (el) => {
+        const r = el.getBoundingClientRect();
+        return r.left + r.width / 2;
+      },
+    );
+    const scroll0 = stripRef.current?.scrollLeft ?? 0;
+    const dragX = (clientX: number) =>
+      clientX + ((stripRef.current?.scrollLeft ?? scroll0) - scroll0);
+    dragState.current = { fromIdx: idx, started: false, startX: e.clientX, mids };
     const onMove = (me: MouseEvent) => {
       const d = dragState.current;
       if (!d) return;
       if (!d.started && Math.abs(me.clientX - d.startX) < 5) return;
       d.started = true;
-      setDropIdx(boundaryFromX(me.clientX));
+      if (dragRaf.current != null) return;
+      dragRaf.current = requestAnimationFrame(() => {
+        dragRaf.current = null;
+        const cur = dragState.current;
+        if (cur?.started) setDropIdx(boundaryFromX(dragX(me.clientX), cur.mids));
+      });
     };
     const onUp = (me: MouseEvent) => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      if (dragRaf.current != null) {
+        cancelAnimationFrame(dragRaf.current);
+        dragRaf.current = null;
+      }
       const d = dragState.current;
       dragState.current = null;
       setDropIdx(null);
       if (d?.started) {
-        const to = boundaryFromX(me.clientX);
+        const to = boundaryFromX(dragX(me.clientX), d.mids);
         if (to !== d.fromIdx && to !== d.fromIdx + 1) moveTab(d.fromIdx, to);
       }
     };
@@ -141,7 +166,7 @@ export function TabBar() {
         kind: "item",
         label: "Copy SQL",
         disabled: !t.sql.trim(),
-        onSelect: () => void writeText(t.sql),
+        onSelect: () => void copyCue(t.sql),
       });
     }
     items.push({ kind: "sep" });
@@ -174,6 +199,7 @@ export function TabBar() {
               ? ({ "--tab-conn": pinMeta(t).color } as React.CSSProperties)
               : undefined
           }
+          title={t.name}
           onMouseDown={(e) => beginTabDrag(i, e)}
           onAuxClick={(e) => {
             // middle-click closes — browser muscle memory (pinned excluded)
@@ -236,7 +262,7 @@ export function TabBar() {
               {activeProfileId && txTabs[skey(activeProfileId, t.id)] && (
                 <span className="tab-tx" title="Open transaction on this tab" />
               )}
-              {t.name}
+              <span className="tab-name-text">{t.name}</span>
             </span>
           )}
           <button

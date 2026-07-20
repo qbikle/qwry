@@ -48,6 +48,12 @@
   font-family: var(--font-mono);
   cursor: pointer;
 }
+/* before .active/.error (equal specificity) — their state look wins on hover */
+.stmt-chip:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
 .stmt-chip.active {
   background: var(--accent-soft);
   border-color: var(--accent);
@@ -127,10 +133,13 @@
   position: relative;
 }
 
+/* sticky-chrome z ladder: celledit 5 < rownums 6 < header 7 < draft band 8 <
+   dropline/draft-corner 9 < draft-error 10 — an open cell editor must slide
+   UNDER the chrome while scrolling, never paint over it */
 .vgrid-header {
   position: sticky;
   top: 0;
-  z-index: 3;
+  z-index: 7;
   background: var(--bg-raised);
   border-bottom: 1px solid var(--border-strong);
 }
@@ -162,7 +171,10 @@
   align-items: center;
   padding: 0 10px;
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  /* grid chrome is zoom-excluded but the --text-* tokens are zoom-scaled —
+     divide the factor back out so the font never outgrows the fixed-px
+     geometry (same pattern on rownums + draft inputs) */
+  font-size: calc(var(--text-sm) / var(--zoom, 1));
   font-weight: 600;
   border-right: 1px solid var(--border);
   background: var(--bg-raised);
@@ -199,14 +211,14 @@
 /* inline draft (new) row band */
 .vgrid-draft {
   position: sticky;
-  z-index: 3;
+  z-index: 8;
   background: var(--bg-app);
   border-bottom: 1px solid var(--accent);
 }
 .vgrid-draft-corner {
   position: sticky;
   left: 0;
-  z-index: 4;
+  z-index: 9;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -227,6 +239,17 @@
   border-right: 1px solid var(--border);
   background: var(--bg-app);
 }
+/* narrow columns (64px min) leave the input unusable — the focused cell
+   expands over its right-hand siblings (above them, still below the sticky
+   band corner at 9), same visual language as the floating cell editor */
+.vgrid-draftcell:focus-within {
+  min-width: 140px;
+  z-index: 1;
+  background: var(--bg-raised);
+  border: 1.5px solid var(--accent);
+  border-radius: var(--radius-xs);
+  box-shadow: var(--shadow-pop);
+}
 .vgrid-draft-input {
   flex: 1;
   min-width: 0;
@@ -236,7 +259,7 @@
   border-radius: var(--radius-sm);
   padding: 0 6px;
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  font-size: calc(var(--text-sm) / var(--zoom, 1));
   color: var(--fg);
   outline: none;
 }
@@ -245,6 +268,12 @@
 }
 .vgrid-draft-input:disabled {
   background: transparent;
+}
+/* multiline ⏎ preview — not editable in place, click opens the pop-out */
+.vgrid-draft-input[readonly] {
+  color: var(--fg-muted);
+  background: var(--bg-hover);
+  cursor: pointer;
 }
 .vgrid-draft-null {
   flex-shrink: 0;
@@ -256,6 +285,11 @@
   color: var(--fg-faint);
   cursor: pointer;
   font-size: var(--text-xs);
+}
+.vgrid-draft-null:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
 }
 .vgrid-draft-null.on {
   background: var(--accent);
@@ -273,18 +307,19 @@
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 6;
+  z-index: 10;
   padding: 5px 10px;
   background: var(--danger-soft);
   color: var(--danger);
   font-size: var(--text-xs);
   font-family: var(--font-mono);
+  pointer-events: none; /* overlays the bottom row + scrollbar — display only */
 }
 
 .vgrid-rownums {
   position: sticky;
   left: 0;
-  z-index: 2;
+  z-index: 6;
   height: 0;
 }
 
@@ -296,7 +331,7 @@
   justify-content: flex-end;
   padding-right: 8px;
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: calc(var(--text-xs) / var(--zoom, 1));
   font-variant-numeric: tabular-nums;
   color: var(--fg-faint);
   background: var(--bg-panel);
@@ -347,16 +382,24 @@
 }
 @keyframes cell-flash {
   0% {
-    background: rgba(62, 207, 142, 0.45);
+    background: color-mix(in srgb, var(--ok) 45%, transparent);
   }
   100% {
     background: transparent;
   }
 }
+/* the flash is the commit-success cue — reduced motion gets a static
+   highlight for the class's 900ms lifetime instead of losing the signal */
+@media (prefers-reduced-motion: reduce) {
+  .vgrid-cell.flash {
+    animation: none;
+    background: color-mix(in srgb, var(--ok) 30%, transparent);
+  }
+}
 
 /* editing */
 .vgrid-cell.dirty {
-  background: rgba(245, 166, 35, 0.12);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
   outline: 1px dashed var(--warn);
   outline-offset: -1px;
 }
@@ -369,19 +412,19 @@
 
 /* editable only via ctid (no PK in result) — subtle amber underline */
 .vgrid-cell.ctid-warn {
-  box-shadow: inset 0 -2px 0 rgba(245, 166, 35, 0.45);
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--warn) 45%, transparent);
 }
 
 .vgrid-celledit {
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 5;
+  z-index: 5; /* below the sticky chrome (rownums 6 / header 7 / draft 8) */
   display: flex;
   background: var(--bg-raised);
   border: 1.5px solid var(--accent);
   border-radius: var(--radius-xs);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-sm);
 }
 
 .vgrid-celledit input {
@@ -499,7 +542,7 @@
 
 /* commit hit a schema change — the SQL was regenerated and needs re-review */
 .ep-notice {
-  color: var(--warn, #d9a13c);
+  color: var(--warn);
   font-size: var(--text-sm);
   padding: 2px 0 6px;
 }
@@ -522,6 +565,12 @@
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-fg);
+}
+.ep-actions button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.ep-actions button.primary:hover:not(:disabled) {
+  filter: brightness(1.08);
 }
 .ep-actions button:disabled {
   opacity: 0.5;
@@ -623,7 +672,7 @@
   background: var(--warn-soft);
 }
 .vgrid-cell.find-cur {
-  background: rgba(245, 166, 35, 0.32);
+  background: color-mix(in srgb, var(--warn) 32%, transparent);
   outline: 1.5px solid var(--warn);
   outline-offset: -1.5px;
 }
@@ -768,8 +817,9 @@
 }
 
 /* column-reorder insertion guide: accent line the full grid height with a
-   beacon dot at the top — sits above the sticky header so the drop point
-   reads even while the columns scroll */
+   beacon dot at the top — sits above the sticky header + draft band so the
+   drop point reads even while the columns scroll (the render hides it while
+   its x falls under the rownum gutter) */
 .vgrid-dropline {
   position: absolute;
   top: 0;
@@ -784,12 +834,14 @@
   );
   box-shadow: 0 0 8px var(--accent-soft);
   pointer-events: none;
-  z-index: 4;
+  z-index: 9;
 }
 .vgrid-dropline::before {
   content: "";
   position: absolute;
-  top: 0;
+  /* the line is content-height — pin the dot to the VISIBLE top (render
+     sets --dropline-top to the container's scrollTop) */
+  top: var(--dropline-top, 0px);
   left: 50%;
   translate: -50% -45%;
   width: 7px;
@@ -1112,7 +1164,7 @@
   font-weight: 700;
   font-size: var(--text-2xs);
   letter-spacing: 0.05em;
-  color: var(--warn, #eab308);
+  color: var(--warn);
 }
 
 /* re-run affordance */
@@ -1438,7 +1490,8 @@
 }
 .rv-reason {
   flex-basis: 100%;
-  padding: 2px 0 0 192px;
+  /* .rowpeek-col basis 180px + .rowpeek-row gap 12px — aligns under the value */
+  padding: 2px 0 0 calc(180px + 12px);
   color: var(--warn);
   font-size: var(--text-2xs);
 }

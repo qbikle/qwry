@@ -143,17 +143,31 @@ export function useClampedPosition(
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const width = el.offsetWidth;
-    const height = el.offsetHeight;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    let left = point.x;
-    if (left + width + margin > vw) left = point.x - width; // flip left of anchor
-    left = Math.min(Math.max(margin, left), Math.max(margin, vw - width - margin));
-    let top = point.y;
-    if (top + height + margin > vh) top = point.y - height; // flip above anchor
-    top = Math.min(Math.max(margin, top), Math.max(margin, vh - height - margin));
-    setPos({ left, top });
+    const clamp = () => {
+      const width = el.offsetWidth;
+      const height = el.offsetHeight;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      let left = point.x;
+      if (left + width + margin > vw) left = point.x - width; // flip left of anchor
+      left = Math.min(Math.max(margin, left), Math.max(margin, vw - width - margin));
+      let top = point.y;
+      if (top + height + margin > vh) top = point.y - height; // flip above anchor
+      top = Math.min(Math.max(margin, top), Math.max(margin, vh - height - margin));
+      // identity-guard: the ResizeObserver fires on observe — same clamp must
+      // not re-render
+      setPos((p) => (p && p.left === left && p.top === top ? p : { left, top }));
+    };
+    clamp();
+    // content that loads after mount (Histogram fetch, FkPicker rows) grows the
+    // box past the first measurement — re-clamp on size and viewport changes
+    const ro = new ResizeObserver(clamp);
+    ro.observe(el);
+    window.addEventListener("resize", clamp);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", clamp);
+    };
     // ref is stable; point identity intentionally excluded (x/y are the inputs)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [point.x, point.y, margin]);

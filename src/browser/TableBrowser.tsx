@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { menuIn } from "../design/springs";
 import { FileUp, Plus, RefreshCw, X } from "lucide-react";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { copyCue } from "../lib/copyCue";
 import {
   compiledWhere,
   opNeedsValue,
@@ -483,7 +483,7 @@ function WherePreview({ text }: { text: string }) {
       className="tb-wherepreview"
       title={`${text}\n\nclick to copy`}
       onClick={() => {
-        void writeText(text);
+        void copyCue(text, "Copied WHERE clause");
         setCopied(true);
       }}
     >
@@ -913,6 +913,11 @@ function SortSelect() {
               {quickM.map(row)}
               {restM.length > 0 && <div className="tbs-group">All columns</div>}
               {restM.map(row)}
+              {quickM.length === 0 && restM.length === 0 && (
+                <div style={{ padding: "5px 10px", color: "var(--fg-muted)" }}>
+                  No columns match
+                </div>
+              )}
             </div>
             <div className="tbs-hint">⇧ click adds a tiebreaker</div>
           </motion.div>

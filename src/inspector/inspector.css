@@ -96,6 +96,7 @@
   display: flex;
   flex-wrap: wrap; /* narrow inspector: Stage/Discard wrap under the icons */
   gap: 4px;
+  row-gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3) 0;
 }
 .insp-tool {
@@ -150,7 +151,7 @@
   margin: 0;
   font-family: var(--font-mono);
   font-size: var(--text-sm);
-  line-height: 1.5;
+  line-height: var(--lh-data);
   white-space: pre-wrap;
   word-break: break-word;
   user-select: text;
@@ -184,7 +185,7 @@
   padding: var(--sp-2);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
-  line-height: 1.5;
+  line-height: var(--lh-data);
   outline: none;
   user-select: text;
 }
@@ -215,6 +216,9 @@
   margin-left: auto;
   align-items: center;
 }
+.insp-tools-actions button {
+  height: 28px;
+}
 .insp-editactions button {
   padding: 5px 12px;
   border-radius: var(--radius-sm);
@@ -224,10 +228,16 @@
   font-size: var(--text-xs);
   transition: background 120ms, border-color 120ms, color 120ms;
 }
+.insp-editactions button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
 .insp-editactions button.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-fg);
+}
+.insp-editactions button.primary:hover:not(:disabled) {
+  filter: brightness(1.08);
 }
 .insp-editactions button:disabled {
   opacity: 0.5;
@@ -288,7 +298,7 @@
   background: var(--bg-raised);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-pop);
+  box-shadow: var(--shadow-sm);
 }
 .insp-copy-menu button {
   display: block;

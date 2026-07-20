@@ -53,6 +53,11 @@
   --shadow-sm: 0 8px 24px rgba(0, 0, 0, 0.45);
   --shadow-md: 0 16px 48px rgba(0, 0, 0, 0.5);
   --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.45);
+  --backdrop: rgba(0, 0, 0, 0.45);
+
+  /* motion */
+  --ease-spring: cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  --dur-quick: 150ms;
 
   /* search-match highlight */
   --hl-bg: #f5a623;
@@ -66,6 +71,7 @@
   --text-sm: 12px;
   --text-md: 13px;
   --text-lg: 15px;
+  --lh-data: 1.55;
 
   /* spacing (4px grid) */
   --sp-1: 4px;
@@ -103,7 +109,7 @@
   /* text */
   --fg: #1c2128;
   --fg-muted: #586173;
-  --fg-faint: #9aa3b2;
+  --fg-faint: #7d8798;
 
   /* accent */
   --accent: #2f6bff;
@@ -131,6 +137,10 @@
 
   --cm-active-line: rgba(0, 0, 0, 0.04);
   --shadow-pop: 0 8px 24px rgba(20, 30, 60, 0.18);
+  --shadow-sm: 0 8px 24px rgba(20, 30, 60, 0.14);
+  --shadow-md: 0 16px 48px rgba(20, 30, 60, 0.16);
+  --shadow-lg: 0 24px 64px rgba(20, 30, 60, 0.14);
+  --backdrop: rgba(0, 0, 0, 0.3);
 
   --hl-bg: #ffd866;
   --hl-fg: #1c2128;
@@ -175,8 +185,25 @@ button {
   color: inherit;
 }
 
+input::placeholder,
+textarea::placeholder {
+  color: var(--fg-faint);
+}
+
 ::selection {
   background: var(--accent-soft);
+}
+
+/* OS reduced-motion: collapse all CSS motion; spinners and the copy cue are
+   progress/feedback indicators and must keep animating */
+@media (prefers-reduced-motion: reduce) {
+  /* spinners keep animating (progress indication, not flourish); surfaces
+     whose animation carries STATE (cell-flash commit cue) define their own
+     static replacement under this query */
+  *:not(.spin), *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }
 
 
@@ -231,3 +258,4 @@ button:disabled {
   transition: background 120ms, border-color 120ms, color 120ms;
 }
 .btnish:hover, .btn:hover { border-color: var(--accent); }
+.btnish:active, .btn:active { transform: scale(0.97); }

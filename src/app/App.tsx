@@ -23,6 +23,7 @@ import { Palette } from "../palette/Palette";
 import { DangerModal } from "./DangerModal";
 import { CloseGuardModal } from "./CloseGuardModal";
 import { ConnToast } from "./ConnToast";
+import { CopyToast } from "./CopyToast";
 import { useExplain } from "../stores/explain";
 import { useCloseGuard } from "../stores/closeGuard";
 import { useFind } from "../stores/find";
@@ -367,8 +368,9 @@ export function App() {
         // an open overlay owns the interaction — the menu path used to act
         // BEHIND modals (Close Tab under an open CloseGuard etc.), mirroring
         // the keyboard guard below. Help, Quit and the (view-level, harmless)
-        // zoom items stay reachable, like ⌘?.
-        const overlayExempt = ["shortcuts", "quit", "zoom-in", "zoom-out", "zoom-reset"];
+        // zoom items stay reachable, like ⌘?; Cancel too — a runaway query
+        // must be killable with a modal open.
+        const overlayExempt = ["shortcuts", "quit", "zoom-in", "zoom-out", "zoom-reset", "cancel"];
         if (overlayOpen() && !overlayExempt.includes(e.payload)) return;
         switch (e.payload) {
           case "zoom-in":
@@ -585,7 +587,15 @@ export function App() {
         e.preventDefault();
         useTabs.getState().selectByIndex(Number(e.key) - 1);
       }
-      if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "f") {
+      // ⌘⇧F = Format SQL everywhere, as the palette advertises — inside the
+      // editor CodeMirror's own Prec.highest binding claims it first
+      if (e.metaKey && e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        editorFormat.current?.();
+      }
+      // ⌥⌘F focuses the schema filter — with ⌥ held mac reports key "ƒ", so
+      // match the physical key (e.code) instead of either key spelling
+      if (e.metaKey && e.altKey && !e.shiftKey && e.code === "KeyF") {
         e.preventDefault();
         document.getElementById("schema-filter")?.focus();
       }
@@ -810,6 +820,7 @@ export function App() {
       <DangerModal />
       <CloseGuardModal />
       <ConnToast />
+      <CopyToast />
     </div>
   );
 }

@@ -234,10 +234,18 @@
   transition: background 120ms, border-color 120ms, color 120ms;
 }
 
+.pf-actions button:hover {
+  border-color: var(--accent);
+}
+
 .pf-actions button.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-fg);
+}
+
+.pf-actions button.primary:hover {
+  filter: brightness(1.08);
 }
 
 .dbsw-err {

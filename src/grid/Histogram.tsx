@@ -47,6 +47,12 @@ interface HistResult {
   hasNull: boolean;
 }
 
+/** per-session epoch for the server GROUP BY — the unmount cancel is only
+ * valid while its own epoch is still the latest (same guard as
+ * cancelExactCount: the shared primary session may already be running a
+ * NEWER query a stale cancel must not kill) */
+const histEpoch = new Map<string, number>();
+
 const fmtPct = (share: number): string => {
   const pct = share * 100;
   if (pct > 0 && pct < 1) return "<1%";
@@ -75,9 +81,13 @@ export function Histogram({
       setRes(bucketize(mode.values));
       return;
     }
+    const sid = mode.sessionId;
+    const epoch = (histEpoch.get(sid) ?? 0) + 1;
+    histEpoch.set(sid, epoch);
+    let inflight = true;
     ipc
       .execute(
-        mode.sessionId,
+        sid,
         histogramSql({ schema: mode.schema, table: mode.table, column, where: mode.where }),
       )
       .then((out) => {
@@ -109,9 +119,22 @@ export function Histogram({
           return;
         }
         setErr((e as { message?: string }).message ?? String(e));
+      })
+      .finally(() => {
+        inflight = false;
       });
     return () => {
       stale = true;
+      // closing the popup must kill the GROUP BY, not just mute its writes —
+      // existing escalating cancel path (CancelToken → pg_cancel_backend).
+      // Deferred a tick + epoch re-checked: StrictMode's dev double-mount
+      // runs this cleanup while mount #2's query is launching, and a
+      // same-tick cancel would land on the NEW query on the shared session
+      if (inflight && histEpoch.get(sid) === epoch) {
+        queueMicrotask(() => {
+          if (histEpoch.get(sid) === epoch) void ipc.cancel(sid).catch(() => {});
+        });
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

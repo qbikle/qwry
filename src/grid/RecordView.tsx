@@ -230,7 +230,7 @@ export function RecordView({
               <span className="rowpeek-keys">viewing only · esc close</span>
             ) : (
               <span className="rv-nav">
-                <span className="rowpeek-keys">click value to edit · ⌘↑ ⌘↓ walk</span>
+                <span className="rowpeek-keys">double-click value to edit · ⌘↑ ⌘↓ walk</span>
                 <button
                   className="rv-navbtn"
                   disabled={viewRows[0] <= 0}
@@ -331,12 +331,16 @@ export function RecordView({
                       className={`rowpeek-val${v === null ? " null" : ""}${pretty !== v ? " structured" : ""}${editable ? " editable" : ""}`}
                       title={
                         editable
-                          ? "Click to edit"
+                          ? "Double-click to edit"
                           : meta && !meta.editable
                             ? (meta.reason ?? undefined)
                             : undefined
                       }
-                      onClick={() => openEdit(i)}
+                      // double-click opens the editor (the grid/peek/inspector
+                      // convention); single click keeps the read-only-reason
+                      // toggle and the truncated → inspector route
+                      onClick={editable ? undefined : () => openEdit(i)}
+                      onDoubleClick={editable ? () => openEdit(i) : undefined}
                     >
                       {renderValue(v, pretty, !!pe0?.useDefault)}
                       {truncated0 && (

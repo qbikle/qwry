@@ -8,9 +8,9 @@ import {
   Pencil,
   TriangleAlert,
 } from "lucide-react";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import * as ipc from "../ipc/commands";
 import { buildEditMapHint } from "../lib/editHints";
+import { copyCue } from "../lib/copyCue";
 import { ctidGuardPairs, editKey, useEdits } from "../stores/edits";
 import { useInspector } from "../stores/inspector";
 import { useResults } from "../stores/results";
@@ -26,7 +26,7 @@ function CopySplit({ raw, pretty }: { raw: string; pretty: string }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="insp-copy">
-      <button className="insp-tool insp-copy-main" title="Copy formatted" onClick={() => void writeText(pretty)}>
+      <button className="insp-tool insp-copy-main" title="Copy formatted" onClick={() => void copyCue(pretty)}>
         <Copy size={14} />
       </button>
       <button className="insp-tool insp-copy-caret" title="Copy options" onClick={() => setOpen((o) => !o)}>
@@ -35,8 +35,8 @@ function CopySplit({ raw, pretty }: { raw: string; pretty: string }) {
       {open && <div className="insp-copy-backdrop" onMouseDown={() => setOpen(false)} />}
       {open && (
         <div className="insp-copy-menu">
-          <button onClick={() => { void writeText(pretty); setOpen(false); }}>Copy formatted</button>
-          <button onClick={() => { void writeText(raw); setOpen(false); }}>Copy raw</button>
+          <button onClick={() => { void copyCue(pretty); setOpen(false); }}>Copy formatted</button>
+          <button onClick={() => { void copyCue(raw); setOpen(false); }}>Copy raw</button>
         </div>
       )}
     </div>
@@ -288,7 +288,7 @@ export function Inspector() {
           </span>
           {editMeta && <span className="insp-type">{editMeta.type_name}</span>}
         </div>
-        <span className="insp-rownum">row {target.row + 1}</span>
+        <span className="insp-rownum">source row {target.row + 1}</span>
       </div>
 
       {editMeta && !editMeta.editable && editMeta.reason && (
@@ -369,7 +369,7 @@ export function Inspector() {
             </>
           ) : (
             <>
-              <button className="insp-tool" title="Copy" onClick={() => void writeText(value)}>
+              <button className="insp-tool" title="Copy" onClick={() => void copyCue(value)}>
                 <Copy size={14} />
               </button>
               {canEdit && (

@@ -4,6 +4,7 @@ import { motion } from "motion/react";
 import { popIn } from "../design/springs";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  Bookmark,
   Check,
   Clock,
   Database,
@@ -22,6 +23,9 @@ import {
   X,
 } from "lucide-react";
 import { editorFormat, editorTimeTraveling } from "../editor/editorBus";
+import { copyCueShow } from "../lib/copyCue";
+import { useSaved, visibleSaved } from "../stores/saved";
+import { openSavedQuery } from "../sidebar/SavedQueries";
 import { confirmTxRollback, useConnections } from "../stores/connections";
 import { useResults } from "../stores/results";
 import { useSchema } from "../stores/schema";
@@ -48,6 +52,8 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
   );
   // palette lists the CURRENT connection's workspace, like the strip
   const tabs = visibleTabs(allTabs, pinnedTabs, activeProfileId);
+  const allSaved = useSaved((s) => s.queries);
+  const saved = visibleSaved(allSaved, activeProfileId);
 
   useEffect(() => {
     if (!open) setQuery("");
@@ -109,6 +115,14 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
     useTabs.getState().newTab(sql, "history");
     close();
   };
+
+  // clear must refresh the History group + flash a cue — a silent action that
+  // keeps showing deleted rows lies twice
+  const clearHistory = (pid: string, olderThanDays: number | null) =>
+    invoke("history_clear", { profileId: pid, olderThanDays }).then(async () => {
+      copyCueShow("History cleared");
+      setHistory(await invoke<HistoryRow[]>("history_search", { profileId: pid, query, limit: 20 }));
+    });
 
   return (
     <Modal backdropClassName="pal-backdrop" label="Command palette" onClose={close}>
@@ -249,12 +263,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
               value="clear history connection"
               onSelect={() => {
                 // no confirm() in WKWebView; picking the explicit item is the consent
-                if (activeProfileId) {
-                  void invoke("history_clear", {
-                    profileId: activeProfileId,
-                    olderThanDays: null,
-                  }).then(() => setHistory([]));
-                }
+                if (activeProfileId) void clearHistory(activeProfileId, null);
                 close();
               }}
             >
@@ -263,12 +272,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
             <Command.Item
               value="clear history older than 7 days"
               onSelect={() => {
-                if (activeProfileId) {
-                  void invoke("history_clear", {
-                    profileId: activeProfileId,
-                    olderThanDays: 7,
-                  });
-                }
+                if (activeProfileId) void clearHistory(activeProfileId, 7);
                 close();
               }}
             >
@@ -308,6 +312,26 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
               </Command.Item>
             )}
           </Command.Group>
+
+          {saved.length > 0 && (
+            <Command.Group heading="Saved">
+              {saved.map((q) => (
+                <Command.Item
+                  key={q.id}
+                  // q.id disambiguates duplicate names, like tabs/connections
+                  value={`saved ${q.id} ${q.name}`}
+                  onSelect={() => {
+                    openSavedQuery(q);
+                    close();
+                  }}
+                >
+                  <Bookmark size={13} />
+                  {q.name}
+                  <span className="pal-detail">saved</span>
+                </Command.Item>
+              ))}
+            </Command.Group>
+          )}
 
           <Command.Group heading="Appearance">
             <Command.Item

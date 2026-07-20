@@ -12,6 +12,7 @@ import { useFind } from "../stores/find";
 import { useResults } from "../stores/results";
 import { EditPreview } from "./EditPreview";
 import { FindBar } from "./FindBar";
+import { lastErrorKind } from "./flashReason";
 import { Grid } from "./Grid";
 import "./grid.css";
 
@@ -126,6 +127,15 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
       <div className="status-bar">
         {!running && !connecting && <RerunBtn />}
         {running && <span className="status-running">⏳ running</span>}
+        {running && browser && (
+          // browse tabs have no QueryBox — this is their only cancel affordance
+          <button
+            className="status-link"
+            onClick={() => void useResults.getState().cancel()}
+          >
+            Cancel ⌘.
+          </button>
+        )}
         {connecting && !running && <span className="status-running">🔌 connecting…</span>}
         {!browser && stmt.columns.length > 0 && !stmt.error && <QuickFilter />}
         {stmt.columns.length > 0 && <RowCount stmt={stmt} browser={browser} />}
@@ -376,12 +386,14 @@ function PendingEditsStatus() {
   return (
     <span className="status-edits">
       {lastError && (
-        // "building copy…" is progress, not a failure — render it neutral,
-        // not in the danger-red error styling (prefix convention, no store field)
+        // honesty notes ("no changes") and copy progress share the slot with
+        // real errors — classify so they render neutral, not danger-red
+        // (notes reuse the progress class: same --fg-muted styling)
         <span
           className={
-            lastError.startsWith("building copy…") ? "status-edit-progress" : "status-edit-error"
+            lastErrorKind(lastError) === "error" ? "status-edit-error" : "status-edit-progress"
           }
+          title={lastError}
         >
           {lastError}
         </span>
