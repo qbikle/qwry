@@ -58,13 +58,10 @@ import { qwryHighlight, qwryTheme } from "./theme";
 import { ContextMenu, type MenuNode } from "../app/overlay/ContextMenu";
 import "./editor.css";
 
-/** what ⌘↵ / the Run button should execute: the selection if any, else the
- * STATEMENT under the caret (Run All ⌘⇧↵ takes the whole buffer). offset =
- * where the text sits in the buffer, so error squiggles land right. Set while
- * the editor is mounted so the toolbar matches ⌘↵. */
-export const editorRunText: {
-  current: (() => { text: string; offset: number }) | null;
-} = { current: null };
+// run/format/time-travel registries live in editorBus.ts so the shell can
+// read them without pulling this (CodeMirror-heavy, lazily loaded) module
+export { editorRunText, editorFormat, editorTimeTraveling } from "./editorBus";
+import { editorRunText, editorFormat, editorTimeTraveling } from "./editorBus";
 
 /** caret inside a CTE definition → menu entry to run just that CTE (with its
  * preceding definitions as dependencies) */
@@ -229,15 +226,6 @@ function snapTime(ts: string): string {
   });
   return `${date}, ${time}`;
 }
-
-/** true while the mounted editor shows a read-only time-machine snapshot —
- * the live draft is parked then, and anything that would execute or persist
- * "the buffer" (menu Run All, palette Run, ⌘⇧S) must no-op instead of acting
- * on the INVISIBLE parked text. Kept accurate through every enter/exit path. */
-export const editorTimeTraveling = { current: false };
-
-/** Query ▸ Format SQL (menu) reaches the mounted editor through this */
-export const editorFormat: { current: (() => void) | null } = { current: null };
 
 /** insert text at the caret (sidebar column double-click etc.) */
 export const editorInsert: { current: ((text: string) => void) | null } = { current: null };
@@ -515,7 +503,10 @@ export function SqlEditor() {
         {
           // format dispatches straight to the doc — must not touch a snapshot
           key: "Mod-Shift-f",
-          run: (view) => (ttState ? true : formatDefault(view)),
+          run: (view) => {
+            if (!ttState) void formatDefault(view);
+            return true;
+          },
         },
         // ---- buffer time-machine ----
         { key: "Ctrl-Cmd-ArrowLeft", run: ttStepBack },
@@ -719,7 +710,7 @@ export function SqlEditor() {
     // blank sql) — the mouse paths must not execute the VIEWED snapshot.
     editorRunText.current = () => (ttState ? { text: "", offset: 0 } : runTarget(view));
     editorFormat.current = () => {
-      if (!ttState) formatDefault(view);
+      if (!ttState) void formatDefault(view);
     };
     editorInsert.current = (text) => {
       if (ttState) return; // snapshots are read-only
@@ -868,7 +859,7 @@ export function SqlEditor() {
               hint: "⌘⇧F",
               onSelect: () => {
                 const v = viewRef.current;
-                if (v) formatDefault(v);
+                if (v) void formatDefault(v);
               },
             },
             {
@@ -882,7 +873,7 @@ export function SqlEditor() {
                     hint: p.id === defaultPreset ? "default" : undefined,
                     onSelect: () => {
                       const v = viewRef.current;
-                      if (v) formatWithPreset(v, p.id);
+                      if (v) void formatWithPreset(v, p.id);
                     },
                   }),
                 ),

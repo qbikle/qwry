@@ -8,6 +8,10 @@ use crate::tunnel::Tunnel;
 
 pub struct AppState {
     pub appdb: AppDb,
+    /// true when setup refused the real appdb and managed a throwaway stub —
+    /// the frontend polls this (startup_ok) and must NOT reveal the hidden
+    /// window over the fatal dialog
+    pub startup_fatal: bool,
     /// Arc per session so commands clone out and release the map lock before awaiting.
     pub sessions: Mutex<HashMap<SessionId, Arc<PgSession>>>,
     /// SSH tunnels keyed by SPEC (forward target + ssh params) — profiles with
@@ -24,9 +28,19 @@ impl AppState {
     pub fn new(appdb: AppDb) -> Self {
         Self {
             appdb,
+            startup_fatal: false,
             sessions: Mutex::new(HashMap::new()),
             tunnels: Mutex::new(HashMap::new()),
             profile_specs: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// stub state for the refused-appdb path — IPC stays well-defined while
+    /// the fatal dialog is up, but startup_ok reports the failure
+    pub fn new_fatal(appdb: AppDb) -> Self {
+        Self {
+            startup_fatal: true,
+            ..Self::new(appdb)
         }
     }
 

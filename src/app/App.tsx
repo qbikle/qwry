@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { motion } from "motion/react";
 import { Lock, LockOpen, PanelRight, SwatchBook } from "lucide-react";
 import { panelIn, swapIn } from "../design/springs";
@@ -8,34 +8,38 @@ import { useConnections } from "../stores/connections";
 import { useInspector } from "../stores/inspector";
 import { openFilePaths, openSqlFileDialog, saveActiveToFile, useTabs } from "../stores/tabs";
 import { blankProfile, ConnectionRail } from "../sidebar/ConnectionRail";
-import { editorFormat, editorRunText, editorTimeTraveling } from "../editor/SqlEditor";
+import { editorFormat, editorRunText, editorTimeTraveling } from "../editor/editorBus";
 import { openTxCount, skey } from "../stores/connections";
 import { overlayOpen } from "./overlay/escStack";
 import { useSettings, zoomBy, zoomReset } from "../stores/settings";
 import { SettingsModal } from "./SettingsModal";
-import { HistoryPanel } from "./HistoryPanel";
-import { ShortcutsModal } from "./ShortcutsModal";
 import { ZenScreen } from "./ZenScreen";
 import { DbSwitcher } from "../sidebar/DbSwitcher";
 import { Home } from "../home/Home";
 import { SchemaTree } from "../sidebar/SchemaTree";
 import { SavedQueries } from "../sidebar/SavedQueries";
-import { QueryBox } from "../editor/QueryBox";
 import { TabBar } from "../editor/TabBar";
-import { ResultsPane } from "../grid/ResultsPane";
-import { Inspector } from "../inspector/Inspector";
-import { TableBrowser } from "../browser/TableBrowser";
 import { Palette } from "../palette/Palette";
 import { DangerModal } from "./DangerModal";
 import { CloseGuardModal } from "./CloseGuardModal";
 import { ConnToast } from "./ConnToast";
-import { ExplainView } from "../explain/ExplainView";
 import { useExplain } from "../stores/explain";
 import { useCloseGuard } from "../stores/closeGuard";
 import { useFind } from "../stores/find";
 import { useResults } from "../stores/results";
 import "./app.css";
 import "./v2.css";
+
+// heavy surfaces (CodeMirror, grid, explain) load as separate chunks — the
+// window shows on the light Home shell, then these warm in the background
+// (see the preload in the show effect) so connect never waits on a fetch
+const QueryBox = lazy(() => import("../editor/QueryBox").then((m) => ({ default: m.QueryBox })));
+const ResultsPane = lazy(() => import("../grid/ResultsPane").then((m) => ({ default: m.ResultsPane })));
+const Inspector = lazy(() => import("../inspector/Inspector").then((m) => ({ default: m.Inspector })));
+const TableBrowser = lazy(() => import("../browser/TableBrowser").then((m) => ({ default: m.TableBrowser })));
+const ExplainView = lazy(() => import("../explain/ExplainView").then((m) => ({ default: m.ExplainView })));
+const HistoryPanel = lazy(() => import("./HistoryPanel").then((m) => ({ default: m.HistoryPanel })));
+const ShortcutsModal = lazy(() => import("./ShortcutsModal").then((m) => ({ default: m.ShortcutsModal })));
 
 /** the sidebar card: DB header → tables → saved queries (shown when connected) */
 function SidebarCard({ profileId, dbname, name }: { profileId: string; dbname: string; name: string }) {
@@ -243,8 +247,34 @@ export function App() {
   };
 
   useEffect(() => {
-    loadProfiles();
-    void useTabs.getState().load();
+    // the window is created hidden (tauri.conf `visible: false`) so launch
+    // never shows an empty glass pane while the bundle evals. Reveal once the
+    // startup data (profiles, tabs) has settled AND the resulting shell has
+    // painted (two rAFs = post-commit, post-paint) — otherwise Home flashes
+    // its empty state before the connection list pops in. Then warm the lazy
+    // chunks so connecting never waits on a fetch. A Rust-side fallback shows
+    // the window after 5s if the frontend dies before reaching this.
+    void Promise.allSettled([loadProfiles(), useTabs.getState().load()]).then(() => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          void import("@tauri-apps/api/core").then(async ({ invoke }) => {
+            // refused-appdb startup keeps the window hidden — revealing an
+            // empty app beside the fatal dialog would contradict it. An IPC
+            // failure still reveals: a reachable-but-broken backend beats an
+            // invisible window (the Rust 5s fallback agrees).
+            const ok = await invoke<boolean>("startup_ok").catch(() => true);
+            if (!ok) return;
+            const { getCurrentWindow } = await import("@tauri-apps/api/window");
+            const win = getCurrentWindow();
+            void win.show().then(() => win.setFocus());
+          });
+          void import("../editor/QueryBox");
+          void import("../grid/ResultsPane");
+          void import("../inspector/Inspector");
+          void import("../browser/TableBrowser");
+        });
+      });
+    });
 
     // StrictMode double-mounts this effect — a listener that resolves after
     // the first mount's cleanup ran must unregister itself, not leak
@@ -713,9 +743,11 @@ export function App() {
                     // zero tabs is a legal state — breathe (no phoenix tab)
                     <ZenScreen />
                   ) : isTableTab ? (
-                    <TableBrowser />
+                    <Suspense fallback={null}>
+                      <TableBrowser />
+                    </Suspense>
                   ) : (
-                    <>
+                    <Suspense fallback={null}>
                       <section className="editor-pane">
                         <QueryBox />
                       </section>
@@ -732,7 +764,7 @@ export function App() {
                       <section className="results-pane">
                         {explainOpen ? <ExplainView /> : <ResultsPane />}
                       </section>
-                    </>
+                    </Suspense>
                   )}
                 </>
               ) : (
@@ -753,7 +785,9 @@ export function App() {
               {/* fixed-width content so it slides in from the right as the card
                   widens (the main card reflows in lockstep) */}
               <div className="inspector-fixed" style={{ width: "var(--inspector-w)" }}>
-                <Inspector />
+                <Suspense fallback={null}>
+                  <Inspector />
+                </Suspense>
               </div>
             </aside>
           </>
@@ -761,8 +795,16 @@ export function App() {
       </div>
 
       <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
-      {historyOpen && <HistoryPanel onClose={() => setHistoryOpen(false)} />}
-      {keysOpen && <ShortcutsModal onClose={() => setKeysOpen(false)} />}
+      {historyOpen && (
+        <Suspense fallback={null}>
+          <HistoryPanel onClose={() => setHistoryOpen(false)} />
+        </Suspense>
+      )}
+      {keysOpen && (
+        <Suspense fallback={null}>
+          <ShortcutsModal onClose={() => setKeysOpen(false)} />
+        </Suspense>
+      )}
       <SettingsModal />
       <ThemePicker />
       <DangerModal />

@@ -70,6 +70,14 @@ fn warn_skipped(app: &AppHandle, table: &'static str, skipped: usize) {
     }
 }
 
+/// false only on the refused-appdb path (stub state + fatal dialog) — the
+/// frontend must keep the hidden window hidden instead of revealing an
+/// empty app beside "qwry can't start"
+#[tauri::command]
+pub fn startup_ok(state: State<'_, AppState>) -> bool {
+    !state.startup_fatal
+}
+
 #[tauri::command]
 pub async fn profiles_list(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<Profile>> {
     let (profiles, skipped) = state.appdb.list_profiles()?;

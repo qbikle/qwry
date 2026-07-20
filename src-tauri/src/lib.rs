@@ -192,8 +192,18 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
-        // remembers window size/position across launches (saves on close/move)
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // remembers window size/position across launches (saves on close/move).
+        // VISIBLE is excluded: the window is created hidden and the frontend
+        // shows it after first paint — restoring visibility here would flash
+        // the empty glass pane the hidden start exists to prevent
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        - tauri_plugin_window_state::StateFlags::VISIBLE,
+                )
+                .build(),
+        )
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             let appdb = match appdb::AppDb::open(&dir) {
@@ -214,7 +224,7 @@ pub fn run() {
                     let stub_dir =
                         std::env::temp_dir().join(format!("qwry-refused-{}", uuid::Uuid::new_v4()));
                     if let Ok(stub) = appdb::AppDb::open(&stub_dir) {
-                        app.manage(state::AppState::new(stub));
+                        app.manage(state::AppState::new_fatal(stub));
                     }
                     let handle = app.handle().clone();
                     let message = e.to_string();
@@ -257,9 +267,28 @@ pub fn run() {
                     }
                 }
             }
+
+            // the frontend shows the hidden window after its first paint; if
+            // the webview ever fails to boot, this fallback keeps the app from
+            // looking dead (no window, no error) — a blank pane after 5s beats
+            // an invisible hang
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    if let Some(win) = handle.get_webview_window("main") {
+                        // unknowable visibility counts as hidden — a watchdog
+                        // that rescues invisible hangs must fail toward showing
+                        if !win.is_visible().unwrap_or(false) {
+                            let _ = win.show();
+                        }
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::startup_ok,
             commands::profiles_list,
             commands::profile_save,
             commands::profile_delete,

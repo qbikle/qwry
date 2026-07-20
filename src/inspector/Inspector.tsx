@@ -350,6 +350,22 @@ export function Inspector() {
               >
                 {mode === "auto" ? <Code size={14} /> : <ListTree size={14} />}
               </button>
+              {mode === "raw" && rawDirty && (
+                <div className="insp-editactions insp-tools-actions">
+                  <button
+                    onClick={() => {
+                      clearValidateTimer();
+                      setRawDraft(null);
+                      setJsonError(null);
+                    }}
+                  >
+                    Discard <span className="insp-key">esc</span>
+                  </button>
+                  <button className="primary" disabled={!!jsonError} onClick={saveRaw}>
+                    Stage edit <span className="insp-key">⌘↵</span>
+                  </button>
+                </div>
+              )}
             </>
           ) : (
             <>
@@ -366,7 +382,11 @@ export function Inspector() {
         </div>
       )}
 
-      <div className="insp-body">
+      <div
+        className={`insp-body${
+          editingText === null && value != null && isStructured && mode === "raw" ? " raw-fill" : ""
+        }`}
+      >
         {editingText !== null ? (
           <div className="insp-edit scalar">
             <textarea
@@ -439,16 +459,6 @@ export function Inspector() {
               }}
             />
             {jsonError && rawDirty && <div className="insp-jsonerror">{jsonError}</div>}
-            {rawDirty && (
-              <div className="insp-editactions">
-                <button onClick={() => { clearValidateTimer(); setRawDraft(null); setJsonError(null); }}>
-                  Discard <span className="insp-key">esc</span>
-                </button>
-                <button className="primary" disabled={!!jsonError} onClick={saveRaw}>
-                  Stage edit <span className="insp-key">⌘↵</span>
-                </button>
-              </div>
-            )}
           </div>
         ) : (
           <div
