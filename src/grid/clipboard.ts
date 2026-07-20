@@ -17,6 +17,63 @@ const tsvEscape = (v: string) =>
 const sqlLiteral = (v: Cell) =>
   v === null ? "NULL" : `'${v.replace(/'/g, "''")}'`;
 
+/** exact inverse of the TSV writer (Excel convention): a field that STARTS
+ * with a quote is quoted — it may contain tabs/newlines, `""` is a literal
+ * quote; any other field is verbatim. Returns null on malformed input
+ * (unterminated quote / garbage after a closing quote) so callers can fall
+ * back to a naive split instead of silently mangling non-TSV text. */
+export function parseTsv(text: string): string[][] | null {
+  const src = text.replace(/\r\n?/g, "\n");
+  const n = src.length;
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let i = 0;
+  while (i < n) {
+    if (src[i] === '"') {
+      // quoted field — only valid at field start (we're always at field
+      // start here after the inner loop below consumes to the delimiter)
+      i++;
+      let closed = false;
+      while (i < n) {
+        if (src[i] === '"') {
+          if (src[i + 1] === '"') {
+            field += '"';
+            i += 2;
+            continue;
+          }
+          i++;
+          closed = true;
+          break;
+        }
+        field += src[i++];
+      }
+      if (!closed) return null;
+      if (i < n && src[i] !== "\t" && src[i] !== "\n") return null;
+    } else {
+      while (i < n && src[i] !== "\t" && src[i] !== "\n") field += src[i++];
+    }
+    if (i >= n) break;
+    if (src[i] === "\t") {
+      row.push(field);
+      field = "";
+      i++;
+      continue;
+    }
+    row.push(field);
+    rows.push(row);
+    row = [];
+    field = "";
+    i++;
+  }
+  // a trailing newline is a record terminator, not a phantom empty row
+  if (!(field === "" && row.length === 0 && src.endsWith("\n"))) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+
 export function formatCells(
   columns: ColumnMeta[],
   rows: Cell[][],
