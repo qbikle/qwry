@@ -305,7 +305,7 @@ export function App() {
     const requestQuit = async () => {
       const { flushTabs } = await import("../stores/tabs");
       await flushTabs();
-      const [{ useEdits }, { useBrowser }] = await Promise.all([
+      const [{ useEdits }, { useBrowser, draftHasContent }] = await Promise.all([
         import("../stores/edits"),
         import("../stores/browser"),
       ]);
@@ -313,8 +313,8 @@ export function App() {
         (n, t) => n + Object.keys(t.pending).length,
         0,
       );
-      const draft = Object.values(useBrowser.getState().byTab).some(
-        (t) => t.draftRow && Object.keys(t.draftRow).length > 0,
+      const draft = Object.values(useBrowser.getState().byTab).some((t) =>
+        draftHasContent(t.draftRow),
       );
       // open transactions roll back on quit — that loss needs the same
       // confirm as staged edits, never a silent rollback

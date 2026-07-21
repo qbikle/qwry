@@ -11,12 +11,12 @@ import type { EditabilityMap } from "../ipc/types";
 import { formatCells, parseTsv, type CopyFormat } from "./clipboard";
 import { useSelection, type DragMode, type SelRect } from "./useSelection";
 import { typeIcon } from "./typeIcon";
-import { useBrowser } from "../stores/browser";
+import { draftHasContent, useBrowser, type DraftCell } from "../stores/browser";
 import { useTabs } from "../stores/tabs";
 import { qualify, qi } from "../lib/sqlIdent";
 import { useConnections } from "../stores/connections";
 import { useInspector } from "../stores/inspector";
-import { useSchema } from "../stores/schema";
+import { useSchema, type ColumnInfo } from "../stores/schema";
 import { RowPeek } from "./RowPeek";
 import { RecordView } from "./RecordView";
 import { LOSSY_NUMS, ValuePop } from "./ValuePop";
@@ -786,9 +786,34 @@ export function Grid({
       { passive: false },
     );
   }, []);
-  // first VISIBLE non-ctid column — data order broke autofocus when the
+  // per-column table metadata for the draft band (default expression,
+  // nullability, identity/generated) — the band is self-documenting: the
+  // placeholder shows what omitting the column actually does
+  const draftMeta = useMemo(() => {
+    const m = new Map<string, ColumnInfo>();
+    for (const c of browseTable?.columns ?? []) m.set(c.name, c);
+    return m;
+  }, [browseTable]);
+  // columns Postgres fills itself — no input, "auto" like ctid
+  const draftAuto = (name: string) => {
+    if (name === "ctid") return true;
+    const m = draftMeta.get(name);
+    return m?.identity === "a" || m?.generated === "s";
+  };
+  // '' is only a value for scalar text-family columns (anchored: a bare
+  // prefix matched "text[]", where '' is a malformed array literal)
+  const textFamily = (type: string | undefined) =>
+    !type || /^(text|citext|name|"char"|character varying|character)(\(\d+\))?$/.test(type);
+  const draftPlaceholder = (name: string) => {
+    const m = draftMeta.get(name);
+    if (!m) return "DEFAULT";
+    if (m.identity === "d") return "identity";
+    if (m.default !== null) return m.default;
+    return m.not_null ? "required" : "NULL";
+  };
+  // first VISIBLE typeable column — data order broke autofocus when the
   // first data column was hidden (no rendered draft cell matched)
-  const firstDraftCol = viewCols.find((d) => cols[d]?.name !== "ctid") ?? -1;
+  const firstDraftCol = viewCols.find((d) => cols[d] && !draftAuto(cols[d].name)) ?? -1;
   // focus once per draft-open, never per MOUNT: autoFocus re-fired whenever
   // the first draft cell REMOUNTED after a horizontal scroll, and WKWebView's
   // focus-reveal yanked the scroller back to the origin
@@ -828,6 +853,8 @@ export function Grid({
   const [peekRow, setPeekRow] = useState<number | null>(null);
   // pop-out editor for a DRAFT cell — multiline pastes and duplicated rows
   // with multiline values can't live honestly in a one-line input
+  // per-cell value-state menu (Set NULL / Set empty / Reset to DEFAULT)
+  const [draftMenu, setDraftMenu] = useState<{ x: number; y: number; col: string } | null>(null);
   const [draftPop, setDraftPop] = useState<{ col: string; dataC: number; text: string } | null>(
     null,
   );
@@ -1522,22 +1549,18 @@ export function Grid({
         // grid-focused Esc: an EMPTY draft band closes; one with typed values
         // refocuses instead — a stray Esc must never eat half-typed data
         // (discarding stays a deliberate act: Esc inside the band)
-        const hasContent = Object.values(useBrowser.getState().draftRow ?? {}).some(
-          (c) => c.isNull || c.touched || c.text !== "",
-        );
+        const hasContent = draftHasContent(useBrowser.getState().draftRow);
         e.preventDefault();
         if (hasContent) {
           // scroll first: the leading inputs may be virtualized out — focus
-          // needs a mounted target (rAF lands after the remount render).
-          // All columns NULL-toggled → every input is disabled; fall back to
-          // a ∅ button so the keyboard path still lands inside the band
+          // needs a mounted target (rAF lands after the remount render);
+          // inputs stay mounted in every value state, so the first one is
+          // always focusable
           colVirt.scrollToIndex(0);
           requestAnimationFrame(() => {
-            const el =
-              containerRef.current?.querySelector<HTMLElement>(
-                ".vgrid-draft-input:not(:disabled)",
-              ) ?? containerRef.current?.querySelector<HTMLElement>(".vgrid-draft-null");
-            el?.focus({ preventScroll: true });
+            containerRef.current
+              ?.querySelector<HTMLElement>(".vgrid-draft-input")
+              ?.focus({ preventScroll: true });
           });
         } else {
           cancelDraft();
@@ -1889,20 +1912,27 @@ export function Grid({
     const table = useBrowser.getState().table;
     if (!f || !table) return;
     const dataR = rowAt(f.r);
-    const prefill: Record<string, { text: string; isNull: boolean; touched?: boolean }> = {};
+    const prefill: Record<string, DraftCell> = {};
     // a truncated cell holds only the display prefix — silently inserting it
     // would corrupt the copy; leave those columns untouched (= DEFAULT) and say so
     const skippedCols: string[] = [];
     cols.forEach((c, i) => {
       if (c.name === "ctid" || table.pk.includes(c.name)) return;
+      // identity-ALWAYS/generated columns render "auto" in the band (no
+      // input) — prefilling them would smuggle an invisible value into a
+      // guaranteed-fail INSERT
+      const meta = table.columns.find((tc) => tc.name === c.name);
+      if (meta?.identity === "a" || meta?.generated === "s") return;
       if (statement.truncated.has(`${dataR}:${i}`)) {
         skippedCols.push(c.name);
         return;
       }
       const v = rows[dataR][i];
       // prefilled values are deliberate — a duplicated '' must insert '', not DEFAULT
+      // duplicated values are deliberate — NULL stays NULL, '' stays '' (the
+      // empty-input=DEFAULT rule must not resolve a copied '' to DEFAULT)
       prefill[c.name] =
-        v === null ? { text: "", isNull: true } : { text: v, isNull: false, touched: true };
+        v === null ? { text: "", state: "null" } : v === "" ? { text: "", state: "empty" } : { text: v };
     });
     useBrowser.getState().beginDraft(prefill);
     if (skippedCols.length > 0) {
@@ -2408,9 +2438,7 @@ export function Grid({
                   // a filled band arms: first Esc warns, second within 2s
                   // discards — one stray Esc must never eat typed row data
                   // (the app's two-click arm grammar)
-                  const hasContent = Object.values(useBrowser.getState().draftRow ?? {}).some(
-                    (c) => c.isNull || c.touched || c.text !== "",
-                  );
+                  const hasContent = draftHasContent(useBrowser.getState().draftRow);
                   if (hasContent && Date.now() - draftEscArmed.current > 2000) {
                     draftEscArmed.current = Date.now();
                     flashReadOnlyReason("press Esc again to discard the draft row");
@@ -2435,7 +2463,7 @@ export function Grid({
                   let target = -1;
                   for (let v = cur + dir; v >= 0 && v < viewColLen; v += dir) {
                     const cn = cols[colAt(v)]?.name;
-                    if (!cn || cn === "ctid" || draftRow?.[cn]?.isNull) continue;
+                    if (!cn || draftAuto(cn)) continue;
                     target = v;
                     break;
                   }
@@ -2466,8 +2494,8 @@ export function Grid({
               </div>
               {colVirt.getVirtualItems().map((vc) => {
                 const name = cols[colAt(vc.index)].name;
-                const isCtid = name === "ctid";
-                const cell = draftRow?.[name] ?? { text: "", isNull: false };
+                const cell = draftRow?.[name] ?? { text: "" };
+                const multiline = !cell.state && /[\r\n]/.test(cell.text);
                 return (
                   <div
                     key={vc.key}
@@ -2477,8 +2505,16 @@ export function Grid({
                       width: vc.size,
                       height: DRAFT_H,
                     }}
+                    onContextMenu={(ev) => {
+                      // swallow both branches — bubbling to the grid
+                      // container opens ITS cell menu on top of this one
+                      ev.preventDefault();
+                      ev.stopPropagation();
+                      if (draftAuto(name)) return;
+                      setDraftMenu({ x: ev.clientX, y: ev.clientY, col: name });
+                    }}
                   >
-                    {isCtid ? (
+                    {draftAuto(name) ? (
                       <span className="vgrid-draft-auto">auto</span>
                     ) : (
                       <>
@@ -2487,26 +2523,28 @@ export function Grid({
                           // a one-line input can't display newlines (WebKit
                           // strips them from .value, silently desyncing state)
                           // — multiline drafts render a ⏎ preview, read-only,
-                          // and edit through the pop-out instead
+                          // and edit through the pop-out instead. An explicit
+                          // NULL/'' renders as the grid's chip; typing over
+                          // it replaces the state with text
                           value={
-                            cell.isNull
+                            cell.state
                               ? ""
-                              : /[\r\n]/.test(cell.text)
+                              : multiline
                                 ? cell.text.replace(/\r\n?|\n/g, "⏎")
                                 : cell.text
                           }
-                          // untouched = DEFAULT; a touched-but-empty field is a
-                          // real '' and must not read as DEFAULT anymore
-                          placeholder={cell.isNull ? "NULL" : cell.touched ? "" : "DEFAULT"}
-                          disabled={cell.isNull}
-                          readOnly={!cell.isNull && /[\r\n]/.test(cell.text)}
+                          // empty = DEFAULT, always — the placeholder shows
+                          // what that resolves to (the column's default
+                          // expression / NULL / required)
+                          placeholder={cell.state ? "" : draftPlaceholder(name)}
+                          readOnly={multiline}
                           title={
-                            !cell.isNull && /[\r\n]/.test(cell.text)
+                            multiline
                               ? "Multiline value — click to edit"
-                              : undefined
+                              : `right-click: NULL${textFamily(draftMeta.get(name)?.type) ? " / empty" : ""} / DEFAULT${draftMeta.get(name)?.default ? ` · default = ${draftMeta.get(name)!.default}` : ""}`
                           }
                           onMouseDown={
-                            !cell.isNull && /[\r\n]/.test(cell.text)
+                            multiline
                               ? (ev) => {
                                   ev.preventDefault();
                                   setDraftPop({ col: name, dataC: colAt(vc.index), text: cell.text });
@@ -2514,8 +2552,31 @@ export function Grid({
                               : undefined
                           }
                           data-draft-col={vc.index}
+                          onKeyDown={(ev) => {
+                            // ⌫ on a chip resets to DEFAULT; ⌥⌫ on an EMPTY
+                            // cell toggles NULL (the grid's Delete=NULL
+                            // grammar, band edition). With text present, ⌥⌫
+                            // stays macOS word-delete — hijacking it there
+                            // destroyed typed text with no undo
+                            if (ev.key === "Backspace" && ev.altKey && cell.text === "") {
+                              ev.preventDefault();
+                              if (draftMeta.get(name)?.not_null && cell.state !== "null") {
+                                flashReadOnlyReason(`${name} is NOT NULL`);
+                                return;
+                              }
+                              setDraftCell(name, {
+                                text: "",
+                                state: cell.state === "null" ? undefined : "null",
+                              });
+                              return;
+                            }
+                            if (ev.key === "Backspace" && cell.state) {
+                              ev.preventDefault();
+                              setDraftCell(name, { text: "" });
+                            }
+                          }}
                           ref={(el) => {
-                            if (!el || el.disabled) return;
+                            if (!el) return;
                             if (pendingDraftFocus.current === vc.index) {
                               pendingDraftFocus.current = null;
                               el.focus({ preventScroll: true });
@@ -2541,17 +2602,11 @@ export function Grid({
                             lastDraftFocus.current = vc.index;
                           }}
                           spellCheck={false}
-                          onChange={(e) =>
-                            setDraftCell(name, {
-                              text: e.target.value,
-                              isNull: false,
-                              touched: true,
-                            })
-                          }
+                          onChange={(e) => setDraftCell(name, { text: e.target.value })}
                           onPaste={(e) => {
                             // read-only multiline draft: the DOM holds the ⏎
                             // preview, not the real text — edit in the pop-out
-                            if (!cell.isNull && /[\r\n]/.test(cell.text)) {
+                            if (multiline) {
                               e.preventDefault();
                               setDraftPop({ col: name, dataC: colAt(vc.index), text: cell.text });
                               return;
@@ -2580,20 +2635,55 @@ export function Grid({
                             const row0 =
                               parsed?.[0] ?? text.replace(/\r/g, "").split("\n")[0].split("\t");
                             if (row0.length > 1) {
-                              const values = row0;
+                              // a COPIED ROW carries the auto columns' values
+                              // too (identity/generated/ctid are ordinary
+                              // data on ⌘C). Pasting a full row at the band's
+                              // first cell must align from view 0 with autos
+                              // CONSUMING their value — skipping without
+                              // consuming shifted every value one column left
+                              // (silent wrong-column data). Partial pastes
+                              // keep the anchored spread.
+                              const fullRow =
+                                colAt(vc.index) === firstDraftCol && row0.length === viewColLen;
                               let vi = 0;
-                              for (let view = vc.index; view < viewColLen && vi < values.length; view++) {
+                              let autosConsumed = 0;
+                              let autosSpanned = 0;
+                              for (
+                                let view = fullRow ? 0 : vc.index;
+                                view < viewColLen && vi < row0.length;
+                                view++
+                              ) {
                                 const cn = cols[colAt(view)].name;
-                                if (cn === "ctid") continue;
-                                const v = values[vi];
+                                if (draftAuto(cn)) {
+                                  if (fullRow) {
+                                    vi++;
+                                    autosConsumed++;
+                                  } else {
+                                    autosSpanned++;
+                                  }
+                                  continue;
+                                }
+                                const v = row0[vi];
                                 vi++;
                                 if (v === "") continue;
-                                setDraftCell(cn, {
-                                  text: v,
-                                  isNull: false,
-                                  touched: true,
-                                });
+                                setDraftCell(cn, { text: v });
                               }
+                              // never silent: dropped/redirected values are
+                              // the difference between what was copied and
+                              // what landed
+                              const dropped = row0.length - vi;
+                              const notes = [
+                                autosConsumed > 0
+                                  ? `${autosConsumed} value${autosConsumed === 1 ? "" : "s"} for auto column${autosConsumed === 1 ? "" : "s"} ignored`
+                                  : null,
+                                autosSpanned > 0
+                                  ? `${autosSpanned} auto column${autosSpanned === 1 ? "" : "s"} skipped`
+                                  : null,
+                                dropped > 0
+                                  ? `${dropped} trailing value${dropped === 1 ? "" : "s"} didn't fit`
+                                  : null,
+                              ].filter(Boolean);
+                              if (notes.length > 0) flashReadOnlyReason(notes.join(" · "));
                               return;
                             }
                             // ONE value (a single quoted field unwraps; raw
@@ -2619,7 +2709,7 @@ export function Grid({
                             // quoted only for an inner quote char) — that
                             // belongs in the input, not the pop-out
                             if (!/[\r\n]/.test(merged)) {
-                              setDraftCell(name, { text: merged, isNull: false, touched: true });
+                              setDraftCell(name, { text: merged });
                               return;
                             }
                             const trimmed = merged.trim();
@@ -2630,11 +2720,7 @@ export function Grid({
                               !LOSSY_NUMS.test(trimmed)
                             ) {
                               try {
-                                setDraftCell(name, {
-                                  text: JSON.stringify(JSON.parse(trimmed)),
-                                  isNull: false,
-                                  touched: true,
-                                });
+                                setDraftCell(name, { text: JSON.stringify(JSON.parse(trimmed)) });
                                 return;
                               } catch {
                                 /* not (yet) valid JSON — pop-out editor */
@@ -2643,15 +2729,15 @@ export function Grid({
                             setDraftPop({ col: name, dataC: colAt(vc.index), text: merged });
                           }}
                         />
-                        <button
-                          type="button"
-                          tabIndex={-1}
-                          className={`vgrid-draft-null${cell.isNull ? " on" : ""}`}
-                          title="Set NULL"
-                          onClick={() => setDraftCell(name, { text: "", isNull: !cell.isNull })}
-                        >
-                          ∅
-                        </button>
+                        {cell.state && (
+                          <span
+                            className={
+                              cell.state === "null" ? "vgrid-nullchip draft" : "vgrid-emptychip draft"
+                            }
+                          >
+                            {cell.state === "null" ? "NULL" : "∅ empty"}
+                          </span>
+                        )}
                       </>
                     )}
                   </div>
@@ -2980,6 +3066,46 @@ export function Grid({
         />
       )}
 
+      {draftMenu !== null && (
+        <ContextMenu
+          point={{ x: draftMenu.x, y: draftMenu.y }}
+          onClose={() => setDraftMenu(null)}
+          items={(() => {
+            const m = draftMeta.get(draftMenu.col);
+            const cur = draftRow?.[draftMenu.col];
+            // '' on an int/uuid/timestamp column would stage a guaranteed
+            // commit error — withhold the item entirely
+            const textish = textFamily(m?.type);
+            return [
+              {
+                kind: "item",
+                label: "Set NULL",
+                hint: "⌥⌫",
+                disabled: !!m?.not_null,
+                onSelect: () =>
+                  setDraftCell(draftMenu.col, { text: "", state: "null" }),
+              },
+              ...(textish
+                ? [
+                    {
+                      kind: "item",
+                      label: "Set empty string ''",
+                      onSelect: () =>
+                        setDraftCell(draftMenu.col, { text: "", state: "empty" }),
+                    } as MenuNode,
+                  ]
+                : []),
+              {
+                kind: "item",
+                label: `Reset to DEFAULT${m?.default ? ` (${m.default})` : ""}`,
+                disabled: !cur?.state && (cur?.text ?? "") === "",
+                onSelect: () => setDraftCell(draftMenu.col, { text: "" }),
+              },
+            ] as MenuNode[];
+          })()}
+        />
+      )}
+
       {draftPop !== null && (
         <ValuePop
           colName={draftPop.col}
@@ -3003,7 +3129,15 @@ export function Grid({
                 return (ex as Error).message;
               }
             }
-            setDraftCell(draftPop.col, { text: value, isNull: false, touched: true });
+            // clearing all text in the pop means "make it empty", not
+            // DEFAULT — the pop was opened ON a value; the deliberate-''
+            // state keeps that intent for text columns (elsewhere '' isn't
+            // a value, so DEFAULT is the only honest resolution)
+            if (value === "" && textFamily(draftMeta.get(draftPop.col)?.type)) {
+              setDraftCell(draftPop.col, { text: "", state: "empty" });
+            } else {
+              setDraftCell(draftPop.col, { text: value });
+            }
             setDraftPop(null);
             return null;
           }}
