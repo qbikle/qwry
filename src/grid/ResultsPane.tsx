@@ -226,7 +226,7 @@ function QuickFilter() {
       {open && (
         <input
           ref={inputRef}
-          placeholder="filter rows…"
+          placeholder="Filter rows…"
           value={local}
           onChange={(e) => push(e.target.value)}
           onKeyDown={(e) => {
@@ -330,7 +330,7 @@ function RerunBtn() {
   return (
     <button
       className="status-rerun"
-      title="Re-run this query"
+      title="Refresh this query"
       onClick={() => {
         const st = useResults.getState();
         // keep the original buffer offset — the error squiggle stays honest

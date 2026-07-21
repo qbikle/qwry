@@ -56,22 +56,22 @@ export function connectionMenu(p: Profile, connected: boolean): MenuNode[] {
   // deliberate second click (locked decision #2)
   items.push({
     kind: "submenu",
-    label: "Copy URI",
+    label: "Copy Connection URL",
     items: [
       {
         kind: "item",
-        label: "Copy (no password)",
+        label: "Copy URL",
         onSelect: () => void ipc.connectionUri(p.id, false).then(writeText),
       },
       {
         kind: "item",
-        label: "Copy with password",
+        label: "Copy URL with Password",
         onSelect: () => void ipc.connectionUri(p.id, true).then(writeText),
       },
       { kind: "sep" },
       {
         kind: "item",
-        label: "Copy psql command",
+        label: "Copy psql Command",
         onSelect: () =>
           void writeText(`psql -h ${p.host} -p ${p.port} -U ${p.user} -d ${p.dbname}`),
       },
@@ -88,7 +88,7 @@ export function connectionMenu(p: Profile, connected: boolean): MenuNode[] {
         const { confirmDanger } = await import("../stores/danger");
         const txN = openTxCount(p.id);
         const ok = await confirmDanger(
-          `Delete connection “${p.name || p.host}”?`,
+          `Delete Connection “${p.name || p.host}”?`,
           `Removes the saved connection. This cannot be undone.${
             txN > 0
               ? `\nOpen transaction${txN === 1 ? "" : "s"} on ${txN} tab${txN === 1 ? "" : "s"} will be rolled back.`

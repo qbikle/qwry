@@ -158,7 +158,7 @@ export function StructureTab({ table }: { table: TableInfo }) {
                   </span>
                 )}
                 {c.generated === "s" && (
-                  <span className="badge badge-dim" title="generated stored column">
+                  <span className="badge badge-dim" title="Generated stored column">
                     generated
                   </span>
                 )}

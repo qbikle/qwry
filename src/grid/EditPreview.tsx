@@ -28,7 +28,7 @@ export function EditPreview() {
   return (
     <Modal
       backdropClassName="ep-backdrop"
-      label="Commit staged edits"
+      label="Commit Staged Edits"
       onClose={closePreview}
       onKey={(e) => {
         // Enter = commit — DELIBERATELY unlike CloseGuard/DangerModal, where
@@ -45,7 +45,7 @@ export function EditPreview() {
     >
       <motion.div className="ep-modal" {...popIn}>
         <div className="ep-title">
-          Commit {preview.statements.length} change
+          Commit {preview.statements.length} Change
           {preview.statements.length === 1 ? "" : "s"} — runs in one transaction
         </div>
         {originPid && (

@@ -28,7 +28,7 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
     ],
   },
   {
-    title: "Results grid",
+    title: "Results Grid",
     rows: [
       ["↑↓←→ / ⇧", "Move / extend selection"],
       ["⌘C", "Copy (single cell = raw)"],
@@ -42,7 +42,7 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
       ["⌘S", "Commit staged edits"],
       ["⌘⇧D", "Discard staged edits"],
       ["⌘F", "Find in results"],
-      ["⌘⇧I", "Insert row (table browser)"],
+      ["⌘⇧I", "Add row (table browser)"],
     ],
   },
   {
@@ -62,9 +62,9 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
 
 export function ShortcutsModal({ onClose }: { onClose: () => void }) {
   return (
-    <Modal label="Keyboard shortcuts" onClose={onClose}>
+    <Modal label="Keyboard Shortcuts" onClose={onClose}>
       <motion.div className="keys-modal" {...popIn}>
-        <div className="settings-title">Keyboard shortcuts</div>
+        <div className="settings-title">Keyboard Shortcuts</div>
         <div className="keys-grid">
           {SECTIONS.map((sec) => (
             <div key={sec.title} className="keys-section">

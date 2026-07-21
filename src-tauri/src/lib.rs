@@ -142,7 +142,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> 
         .item(&item("explain", "Explain", Some("Cmd+E"))?)
         .item(&item("format", "Format SQL", Some("Cmd+Shift+F"))?)
         .separator()
-        .item(&item("commit", "Commit Staged Edits / Save Query", Some("Cmd+S"))?)
+        .item(&item("commit", "Commit Edits or Save Query", Some("Cmd+S"))?)
         .build()?;
 
     let view = SubmenuBuilder::new(app, "View")

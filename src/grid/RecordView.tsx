@@ -186,7 +186,7 @@ export function RecordView({
   return (
     <>
       <Modal
-        label={diff ? "Compare rows" : "Record view"}
+        label={diff ? "Compare Rows" : "Record View"}
         onClose={() => {
           // layered close: an open inline editor absorbs the first Esc/
           // outside-click (its own overlay entry handles Esc; this covers the
@@ -213,7 +213,7 @@ export function RecordView({
             <span className="rowpeek-title">
               {diff ? (
                 <>
-                  Compare rows {viewRows[0] + 1} · {(viewRows[1] ?? 0) + 1}{" "}
+                  Compare Rows {viewRows[0] + 1} · {(viewRows[1] ?? 0) + 1}{" "}
                   <span className="rowpeek-of">
                     {differCount} of {viewColLen} visible column{viewColLen === 1 ? "" : "s"}{" "}
                     differ
@@ -221,7 +221,7 @@ export function RecordView({
                 </>
               ) : (
                 <>
-                  Record — row {viewRows[0] + 1}{" "}
+                  Record — Row {viewRows[0] + 1}{" "}
                   <span className="rowpeek-of">of {rowCount.toLocaleString()}</span>
                 </>
               )}
@@ -500,7 +500,7 @@ function RvInlineEdit({
           }}
           onBlur={() => finish(() => onStage(draft))}
         >
-          {draft === "" && <option value="">(pick)</option>}
+          {draft === "" && <option value="">Pick a value…</option>}
           {enumLabels?.map((l) => (
             <option key={l} value={l}>
               {l}

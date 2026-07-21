@@ -173,12 +173,12 @@ export function ThemePicker() {
           </div>
         ) : (
           <button className="tp-new" onClick={openCreate}>
-            <Plus size={14} /> Custom theme
+            <Plus size={14} /> Custom Theme…
           </button>
         )}
 
         <div className="tp-foot">
-          Custom themes pick exact colours; the opposite light/dark variant is generated
+          Custom themes pick exact colors; the opposite light/dark variant is generated
           automatically. Hover to edit or duplicate.
         </div>
       </motion.div>

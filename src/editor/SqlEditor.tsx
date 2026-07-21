@@ -80,7 +80,7 @@ function cteMenuItem(view: EditorView): MenuNode[] {
   return [
     {
       kind: "item",
-      label: `Run CTE ${name} standalone`,
+      label: `Run CTE ${name} Standalone`,
       onSelect: () => {
         const sql = cteStandaloneSql(stmt, parsed, idx);
         void useResults.getState().run(sql, 0);
@@ -864,7 +864,7 @@ export function SqlEditor() {
             },
             {
               kind: "submenu",
-              label: "Format as…",
+              label: "Format As",
               items: [
                 ...FORMAT_PRESETS.map(
                   (p): MenuNode => ({
@@ -880,7 +880,8 @@ export function SqlEditor() {
                 { kind: "sep" },
                 {
                   kind: "item",
-                  label: "Minify (one line)",
+                  label: "Minify",
+                  hint: "one line",
                   onSelect: () => {
                     const v = viewRef.current;
                     if (v) minifyBuffer(v);
@@ -890,11 +891,12 @@ export function SqlEditor() {
             },
             {
               kind: "submenu",
-              label: "Paste as…",
+              label: "Paste As",
               items: [
                 {
                   kind: "item",
-                  label: "IN list — ('a', 'b', …)",
+                  label: "IN List",
+                  hint: "('a', 'b', …)",
                   onSelect: () => {
                     const v = viewRef.current;
                     if (v) void smartPaste(v, "in");
@@ -902,7 +904,8 @@ export function SqlEditor() {
                 },
                 {
                   kind: "item",
-                  label: "VALUES rows — (a, b), (c, d)",
+                  label: "VALUES Rows",
+                  hint: "(a, b), (c, d)",
                   onSelect: () => {
                     const v = viewRef.current;
                     if (v) void smartPaste(v, "values");
@@ -912,7 +915,7 @@ export function SqlEditor() {
             },
             {
               kind: "item",
-              label: "Find / replace…",
+              label: "Find and Replace…",
               hint: "⌘F",
               onSelect: () => {
                 const v = viewRef.current;
@@ -921,11 +924,11 @@ export function SqlEditor() {
                 }
               },
             },
-            { kind: "item", label: "Search functions…", hint: "⌘⇧U", onSelect: () => setFnSearch(true) },
+            { kind: "item", label: "Search Functions…", hint: "⌘⇧U", onSelect: () => setFnSearch(true) },
             { kind: "sep" },
             {
               kind: "item",
-              label: `Functions in autocomplete: ${fnInComplete ? "ON" : "OFF"}`,
+              label: `Functions in Autocomplete: ${fnInComplete ? "On" : "Off"}`,
               onSelect: () => toggleFnInComplete(),
             },
           ]}

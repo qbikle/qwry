@@ -30,7 +30,7 @@ export function CloseGuardModal() {
   return (
     <Modal
       backdropClassName="danger-backdrop"
-      label={fileOnly ? "Unsaved changes" : "Unsaved edits"}
+      label={fileOnly ? "Unsaved Changes" : "Unsaved Edits"}
       onClose={cancel}
       onKey={(e) => {
         // plain Enter = SAFE (keep the tab), ⌘⌫ = destructive (discard),
@@ -48,7 +48,7 @@ export function CloseGuardModal() {
       }}
     >
       <motion.div className="cg-modal" {...popIn}>
-        <div className="cg-title">{fileOnly ? "Unsaved changes" : "Unsaved edits"}</div>
+        <div className="cg-title">{fileOnly ? "Unsaved Changes" : "Unsaved Edits"}</div>
         <div className="cg-detail">
           {fileOnly ? (
             <>
@@ -71,11 +71,11 @@ export function CloseGuardModal() {
           </button>
           {!fileOnly && (
             <button className="cg-commit" onClick={() => void commit()}>
-              Commit &amp; close <span className="cg-key">⌘↵</span>
+              Commit and Close <span className="cg-key">⌘↵</span>
             </button>
           )}
           <button className="cg-discard" onClick={discard}>
-            {fileOnly ? "Close anyway" : "Discard & close"} <span className="cg-key">⌘⌫</span>
+            {fileOnly ? "Close Anyway" : "Discard and Close"} <span className="cg-key">⌘⌫</span>
           </button>
         </div>
       </motion.div>

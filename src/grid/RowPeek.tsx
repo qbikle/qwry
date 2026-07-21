@@ -81,7 +81,7 @@ export function RowPeek({
   return (
     <>
       <Modal
-        label="Row details"
+        label="Row Details"
         onClose={onClose}
         onKey={(e) => {
           if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== " ") return;

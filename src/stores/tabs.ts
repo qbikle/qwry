@@ -256,7 +256,7 @@ async function confirmBulkClose(ids: string[]): Promise<boolean> {
   return confirmDanger(
     `Close ${n} tab${n === 1 ? "" : "s"} with unsaved changes?`,
     detail,
-    dirty > 0 ? "Discard & close" : "Close anyway",
+    dirty > 0 ? "Discard and Close" : "Close Anyway",
   );
 }
 

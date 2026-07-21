@@ -351,8 +351,8 @@ function Node({
                   });
               }}
             >
-              show previous {Math.min(CHILD_CAP, win.before).toLocaleString()} (
-              {win.before.toLocaleString()} above)
+              Show Previous {Math.min(CHILD_CAP, win.before).toLocaleString()} ·{" "}
+              {win.before.toLocaleString()} above
             </button>
           )}
           {shownKeys.map((ck) => (
@@ -385,8 +385,8 @@ function Node({
                 else setShown(win.end + CHILD_CAP);
               }}
             >
-              show next {Math.min(CHILD_CAP, win.after).toLocaleString()} (
-              {win.after.toLocaleString()} remaining)
+              Show Next {Math.min(CHILD_CAP, win.after).toLocaleString()} ·{" "}
+              {win.after.toLocaleString()} remaining
             </button>
           )}
         </div>

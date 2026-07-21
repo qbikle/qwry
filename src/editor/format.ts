@@ -31,13 +31,13 @@ export const FORMAT_PRESETS: {
   },
   {
     id: "tabular-left",
-    label: "Tabular (river left)",
+    label: "Tabular Left",
     blurb: "keywords aligned in a left column",
     opts: { indentStyle: "tabularLeft", expressionWidth: 50 },
   },
   {
     id: "tabular-right",
-    label: "Tabular (river right)",
+    label: "Tabular Right",
     blurb: "keywords right-aligned to the river",
     opts: { indentStyle: "tabularRight", expressionWidth: 50 },
   },

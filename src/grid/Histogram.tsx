@@ -142,18 +142,18 @@ export function Histogram({
   const note = fallbackNote ?? mode.note;
 
   return (
-    <AnchoredOverlay point={point} onClose={onClose} role="dialog" label={`${column} value distribution`}>
+    <AnchoredOverlay point={point} onClose={onClose} role="dialog" label={`${column} Value Distribution`}>
       <motion.div className="histo" {...menuIn}>
         <div className="histo-head">
           <span className="histo-col">{column}</span>
-          <span className="histo-sub">value distribution</span>
+          <span className="histo-sub">Value Distribution</span>
         </div>
         {err ? (
           <div className="histo-err">{err}</div>
         ) : !res ? (
           <div className="histo-loading">computing…</div>
         ) : res.total === 0 ? (
-          <div className="histo-empty">no rows</div>
+          <div className="histo-empty">No rows</div>
         ) : (
           <div className="histo-rows">
             {res.buckets.map((b, i) => (
