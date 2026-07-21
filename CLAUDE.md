@@ -8,6 +8,8 @@ This repo is built across many Claude Code sessions by different agents.
 
 1. Read `docs/ROADMAP.md` — find the current phase and next unchecked item.
 2. Read `docs/ARCHITECTURE.md` for the design you must fit into. Don't invent parallel structures.
+   `docs/COPY.md` (text registers) and `docs/LESSONS.md` (bug-class law) bind every change;
+   when a request — including the user's own idea — violates one, say so and cite it: the pushback is wanted.
 3. Build the item. Verify it per the phase's verification gate.
 4. Tick the checkbox, append a dated session note at the bottom of ROADMAP.md (what was done, what's half-done, gotchas).
 5. Record any new design decision as one line in `docs/DECISIONS.md`.
