@@ -1533,6 +1533,8 @@ export function Grid({
       if (editing) return; // cell editor owns the keyboard
       if (peekRow !== null) return; // row peek modal owns the keyboard
       if (record !== null) return; // record view modal owns the keyboard
+      if (draftPop !== null) return; // draft-cell pop owns the keyboard (CM
+      // targets are contenteditable — the tag check below never catches them)
       // embedded inputs (draft band, future controls) own their keys — the
       // grammar was eating Backspace/Tab/arrows and staging NULLs while typing
       const tag = (e.target as HTMLElement).tagName;
@@ -1687,7 +1689,7 @@ export function Grid({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [copySelection, sel, viewLen, viewColLen, rowVirt, colVirt, startEdit, editing, peekRow, record, fillDown, pasteIntoSelection, setSelectionValue, showDraft, cancelDraft],
+    [copySelection, sel, viewLen, viewColLen, rowVirt, colVirt, startEdit, editing, peekRow, record, draftPop, fillDown, pasteIntoSelection, setSelectionValue, showDraft, cancelDraft],
   );
 
   // a result row is deletable iff exactly one source table has a locator
@@ -2250,8 +2252,22 @@ export function Grid({
         // a paste INTO the draft band (or any embedded control) bubbles up
         // here — swallowing it killed the input paste AND staged the clipboard
         // over the grid selection
-        const tag = (e.target as HTMLElement).tagName;
-        if (editing || tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+        const t = e.target as HTMLElement;
+        const tag = t.tagName;
+        // paste events bubble across portals — a ⌘V inside the row peek /
+        // record view / draft pop (CodeMirror = contenteditable, invisible
+        // to tag checks) must never ALSO stage over the grid selection
+        if (
+          editing ||
+          peekRow !== null ||
+          record !== null ||
+          draftPop !== null ||
+          t.isContentEditable ||
+          tag === "INPUT" ||
+          tag === "TEXTAREA" ||
+          tag === "SELECT"
+        )
+          return;
         e.preventDefault();
         const text = e.clipboardData.getData("text/plain");
         if (text) pasteIntoSelection(text);

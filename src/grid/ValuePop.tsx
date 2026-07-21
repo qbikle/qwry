@@ -151,7 +151,9 @@ export function ValuePop({
       <motion.div
         className="valuepop"
         {...popIn}
-        onKeyDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
+        }}
       >
         <div className="valuepop-head">
           <span className="valuepop-title">{colName}</span>

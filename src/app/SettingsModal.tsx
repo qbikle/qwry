@@ -70,7 +70,9 @@ export function SettingsModal() {
               max={100}
               value={Math.round((1 - glassAlpha) * 100)}
               onChange={(e) => setGlass(1 - Number(e.target.value) / 100)}
-              onKeyDown={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
+              }}
             />
             <span className="settings-slider-end">Glass</span>
           </div>
@@ -191,7 +193,9 @@ export function SettingsModal() {
               max={7200}
               value={timeout}
               onChange={(e) => setTimeoutSecs(Number(e.target.value))}
-              onKeyDown={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
+              }}
             />
             <span className="settings-hint">
               seconds · 0 = none · applies to new connections

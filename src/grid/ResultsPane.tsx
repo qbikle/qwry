@@ -1,4 +1,5 @@
 import { useBrowser } from "../stores/browser";
+import { overlayOpen } from "../app/overlay/escStack";
 import { useGridStats } from "../stores/gridStats";
 import { useGridFilter } from "../stores/gridFilter";
 import { RotateCw } from "lucide-react";
@@ -230,7 +231,8 @@ function QuickFilter() {
           value={local}
           onChange={(e) => push(e.target.value)}
           onKeyDown={(e) => {
-            e.stopPropagation();
+            // typing keys only — ⌘/⌃ chords must reach the window handler
+            if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
             if (e.key === "Escape") useGridFilter.getState().clear();
             if (e.key === "Enter") flush();
           }}
@@ -411,6 +413,12 @@ function PendingEditsStatus() {
     if (!offer) return;
     const h = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
+      // never claim redo from text editing (inputs/contenteditable) or from
+      // under an overlay — this chord reverts a DB commit, not a keystroke
+      const t = e.target as HTMLElement | null;
+      const tag = t?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || t?.isContentEditable) return;
+      if (overlayOpen()) return;
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "z") {
         e.preventDefault();
         void useEdits.getState().undoLastCommit();

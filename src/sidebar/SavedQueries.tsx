@@ -111,7 +111,8 @@ export function SavedQueries() {
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             onKeyDown={(e) => {
-              e.stopPropagation();
+              // typing keys only — ⌘/⌃ chords must reach the window handler
+              if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
               if (e.key === "Escape") setFilter("");
             }}
           />

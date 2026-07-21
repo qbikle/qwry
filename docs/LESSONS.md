@@ -55,15 +55,21 @@ the user) violates one, say so and cite it; the pushback is wanted.
    notes rendered error-red; "copy cancelled" flashed while the clipboard was
    being replaced anyway. Silence, wrong tone, and false messages all read as
    broken. Feedback must exist, match its register, and be true.
+10. **An input may swallow only the keys it owns.** FindBar's blanket
+    `stopPropagation` orphaned every window chord (⌘I, ⌘G, ⌘W…) whenever
+    focus sat in it — five more surfaces had the same pattern. Stop
+    unmodified typing keys only; ⌘/⌃ chords belong to the window handler
+    and must bubble. (Capture-phase globals are not the fix: ⌘F scoping
+    depends on inner surfaces claiming first.)
 
 ## Process
 
-10. **Polish is consistency systems, not good individual decisions.** Tokens,
+11. **Polish is consistency systems, not good individual decisions.** Tokens,
     copy registers (WRITING.md), the z-ladder, one easing, one term per concept.
     Each drift is invisible alone and corrosive together. Multi-session work
     WILL drift unless conventions are written law — DECISIONS.md worked;
     strings had no law until WRITING.md and it showed.
-11. **One review is not review.** A second pass with a different lens found an
+12. **One review is not review.** A second pass with a different lens found an
     S1 the first pass missed on the same diff. Independence and a changed
     lens beat added effort on one pass. Reviewers that can execute (repro
     harnesses, property tests) beat reviewers that read. House style: every

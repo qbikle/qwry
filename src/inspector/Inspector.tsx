@@ -398,10 +398,18 @@ export function Inspector() {
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  // ⌘↵ is also the Run accelerator — claim it or staging
+                  // could ALSO run the active statement
+                  e.preventDefault();
+                  const shell = e.currentTarget.closest(".inspector-fixed") as HTMLElement | null;
                   stage(editingText);
                   setEditingText(null);
+                  if (shell) requestAnimationFrame(() => shell.focus({ preventScroll: true }));
                 } else if (e.key === "Escape") {
+                  // refocus the shell, not body — ⌘F must keep inspector scope
+                  const shell = e.currentTarget.closest(".inspector-fixed") as HTMLElement | null;
                   setEditingText(null);
+                  if (shell) requestAnimationFrame(() => shell.focus({ preventScroll: true }));
                 }
               }}
               spellCheck={false}

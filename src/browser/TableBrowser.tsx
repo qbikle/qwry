@@ -3,6 +3,7 @@ import { motion } from "motion/react";
 import { menuIn } from "../design/springs";
 import { FileUp, Plus, RefreshCw, X } from "lucide-react";
 import { copyCue } from "../lib/copyCue";
+import { overlayOpen } from "../app/overlay/escStack";
 import {
   compiledWhere,
   opNeedsValue,
@@ -50,6 +51,7 @@ export function TableBrowser() {
     const h = (e: KeyboardEvent) => {
       if (e.metaKey && !e.shiftKey && !e.altKey && !e.ctrlKey && e.key.toLowerCase() === "l") {
         if (useBrowser.getState().tab !== "data") return;
+        if (overlayOpen()) return; // jump's autoFocus would steal from a modal
         e.preventDefault();
         setJumpOpen(true);
       }
