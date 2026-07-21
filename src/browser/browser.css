@@ -151,11 +151,22 @@
   background: var(--accent);
   color: var(--accent-fg);
 }
-/* inline shortcut hint — same grammar as the app's other kbd-carrying buttons */
+/* inline shortcut hint — a quiet inset chip (palette-kbd treatment), not
+   label-weight text mushing into the button copy */
 .tb-key {
+  margin-left: 2px;
+  padding: 1px 4px;
+  border-radius: var(--radius-xs);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
-  opacity: 0.55;
+  font-weight: 400;
+  line-height: 1.4;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: color-mix(in srgb, var(--accent) 60%, var(--fg-muted));
+}
+.tb-addrow.active .tb-key {
+  background: color-mix(in srgb, var(--accent-fg) 18%, transparent);
+  color: var(--accent-fg);
 }
 
 .tb-addfilter {
