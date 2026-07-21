@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { Lock, LockOpen, PanelRight, SwatchBook } from "lucide-react";
 import { panelIn, swapIn } from "../design/springs";
@@ -63,6 +63,8 @@ export function App() {
   const connState = useConnections((s) => s.connState);
   const inspectorOpen = useInspector((s) => s.open);
   const inspectorWidth = useInspector((s) => s.width);
+  const inspectorFixedRef = useRef<HTMLDivElement>(null);
+  const preInspectorFocus = useRef<HTMLElement | null>(null);
   const explainOpen = useExplain((s) => s.open);
   // scalar selectors only — selecting the tab OBJECT re-rendered the entire
   // shell tree on every editor keystroke (setSql replaces the active tab
@@ -646,7 +648,21 @@ export function App() {
       }
       if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "i") {
         e.preventDefault();
-        useInspector.getState().toggle();
+        // focus follows the explicit open so ⌘F scopes to the inspector;
+        // close hands focus back to wherever the user was
+        const insp = useInspector.getState();
+        if (!insp.open) {
+          preInspectorFocus.current = document.activeElement as HTMLElement | null;
+          insp.toggle();
+          requestAnimationFrame(() =>
+            inspectorFixedRef.current?.focus({ preventScroll: true }),
+          );
+        } else {
+          insp.toggle();
+          const prev = preInspectorFocus.current;
+          preInspectorFocus.current = null;
+          if (prev && document.contains(prev)) prev.focus({ preventScroll: true });
+        }
       }
       if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "i") {
         // table browser: open (or toggle away) the inline new-row band
@@ -821,7 +837,20 @@ export function App() {
               <div className="inspector-resize" onMouseDown={startInspectorResize} />
               {/* fixed-width content so it slides in from the right as the card
                   widens (the main card reflows in lockstep) */}
-              <div className="inspector-fixed" style={{ width: "var(--inspector-w)" }}>
+              <div
+                className="inspector-fixed"
+                style={{ width: "var(--inspector-w)", outline: "none" }}
+                ref={inspectorFixedRef}
+                // click-to-focus so ⌘F scopes here — JsonTree rows are plain
+                // divs and WKWebView won't focus ancestors on click; explicit
+                // focus is the only engine-proof path. Inputs keep their own.
+                tabIndex={-1}
+                onMouseDown={(e) => {
+                  const t = e.target as HTMLElement;
+                  if (t.closest("input,textarea,[contenteditable=\"true\"]")) return;
+                  inspectorFixedRef.current?.focus({ preventScroll: true });
+                }}
+              >
                 <Suspense fallback={null}>
                   <Inspector />
                 </Suspense>

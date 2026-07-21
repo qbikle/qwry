@@ -33,6 +33,14 @@ import {
 import "./inspector.css";
 
 /** human-readable JSON path: a.b[0].c */
+/** hand focus back to the inspector shell (next frame — after the editor's
+ *  unmount settles) so ⌘F and the global chords keep their inspector scope */
+function refocusInspector(from: HTMLElement): void {
+  const box = from.closest(".inspector-fixed") as HTMLElement | null;
+  if (!box) return;
+  requestAnimationFrame(() => box.focus({ preventScroll: true }));
+}
+
 function displayPath(p: Path): string {
   let s = "";
   for (const seg of p) {
@@ -143,12 +151,13 @@ function KeyLabel({
         onChange={(e) => setDraft(e.target.value)}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
-          e.stopPropagation();
+          if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
           if (e.key === "Enter") {
             if (draft && draft !== k) ctx.onRenameKey(parentPath, k, draft);
             setEditing(false);
           }
           if (e.key === "Escape") {
+            refocusInspector(e.currentTarget);
             setDraft(k);
             setEditing(false);
           }
@@ -222,9 +231,12 @@ function Leaf({ value, path }: { value: Json; path: Path }) {
         }}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
-          e.stopPropagation();
+          if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
           if (e.key === "Enter") commit();
-          if (e.key === "Escape") setEditing(false);
+          if (e.key === "Escape") {
+            refocusInspector(e.currentTarget);
+            setEditing(false);
+          }
         }}
         onBlur={commit}
       />
@@ -529,7 +541,12 @@ export function JsonTree({
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") step(e.shiftKey ? -1 : 1);
-            if (e.key === "Escape") setInput("");
+            if (e.key === "Escape") {
+              // first Esc clears; second hands focus back to the tree so
+              // grid/global keys work again without a mouse trip
+              if (input) setInput("");
+              else refocusInspector(e.currentTarget);
+            }
           }}
         />
         {input && (
