@@ -410,7 +410,8 @@
   color: var(--fg-faint);
 }
 
-/* JSON tree search bar */
+/* JSON tree search bar — pinned while the tree scrolls (it used to ride the
+   scroll and clip under the toolbar) */
 .jt-search {
   display: flex;
   align-items: center;
@@ -420,6 +421,22 @@
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
+  position: sticky;
+  top: var(--sp-3);
+  z-index: 1;
+}
+/* opaque backdrop behind/above the pinned bar: covers the insp-body padding
+   band and the rounded-corner gaps so tree text scrolls UNDER, never through
+   (surfaces are opaque hex — safe as a mask) */
+.jt-search::before {
+  content: "";
+  position: absolute;
+  top: calc(var(--sp-3) * -1);
+  left: calc(var(--sp-3) * -1);
+  right: calc(var(--sp-3) * -1);
+  bottom: -5px;
+  background: var(--bg-panel);
+  z-index: -1;
 }
 .jt-search:focus-within {
   border-color: var(--accent);
