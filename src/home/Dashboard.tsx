@@ -90,7 +90,7 @@ export function Dashboard() {
             Connect to a PostgreSQL database to start querying.
           </div>
           <button className="dash-hero-btn" onClick={() => editConnection(blankProfile())}>
-            <Plus size={15} /> Add your first connection
+            <Plus size={15} /> Add Your First Connection
           </button>
           <div className="dash-hero-hint">
             <kbd>⌘K</kbd> opens the command palette anytime
@@ -140,7 +140,7 @@ export function Dashboard() {
             <span className="dash-new-icon">
               <Plus size={22} />
             </span>
-            <span>New connection</span>
+            <span>New Connection</span>
           </button>
         </div>
       )}

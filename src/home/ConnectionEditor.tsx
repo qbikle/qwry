@@ -103,9 +103,9 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
     }
     void import("../stores/danger").then(async ({ confirmDanger }) => {
       const ok = await confirmDanger(
-        "Discard connection changes?",
+        "Discard Connection Changes?",
         "Edits to this connection form will be lost.",
-        "Discard",
+        "Discard Edits",
       );
       if (ok) setHome("dashboard");
     });
@@ -197,9 +197,9 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
           <div className="ce-label">
             Connection
             {pastedDsn ? (
-              <span className="ce-hint ok">filled from pasted URI</span>
+              <span className="ce-hint ok">filled from the pasted URL</span>
             ) : (
-              <span className="ce-hint">paste a postgres:// URI to fill</span>
+              <span className="ce-hint">paste a postgres:// URL to fill</span>
             )}
           </div>
           <div className="ce-grid">
@@ -229,7 +229,7 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder={isNew ? "" : "(unchanged)"}
+                placeholder={isNew ? "" : "Unchanged"}
               />
             </label>
             <label className="ce-field ce-span2">
@@ -243,7 +243,7 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
           </div>
           <label className="ce-check">
             <input type="checkbox" checked={p.is_prod} onChange={(e) => field("is_prod", e.target.checked)} />
-            Production connection
+            Production Connection
           </label>
         </div>
 
@@ -258,12 +258,12 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
                 if (!e.target.checked) field("ssh_host", null);
               }}
             />
-            SSH tunnel
+            SSH Tunnel
           </label>
           {tunnel && (
             <div className="ce-grid">
               <label className="ce-field ce-span3">
-                <span>SSH host</span>
+                <span>SSH Host</span>
                 <input
                   value={p.ssh_host ?? ""}
                   onChange={(e) => field("ssh_host", e.target.value)}
@@ -271,7 +271,7 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
                 />
               </label>
               <label className="ce-field">
-                <span>SSH port</span>
+                <span>SSH Port</span>
                 <input
                   type="number"
                   value={p.ssh_port ?? 22}
@@ -279,12 +279,12 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
                 />
               </label>
               <label className="ce-field ce-span2">
-                <span>SSH user</span>
-                <input value={p.ssh_user ?? ""} onChange={(e) => field("ssh_user", e.target.value)} placeholder="(optional)" />
+                <span>SSH User</span>
+                <input value={p.ssh_user ?? ""} onChange={(e) => field("ssh_user", e.target.value)} placeholder="Optional" />
               </label>
               <label className="ce-field ce-span2">
-                <span>Identity file</span>
-                <input value={p.ssh_key ?? ""} onChange={(e) => field("ssh_key", e.target.value)} placeholder="(optional)" />
+                <span>Identity File</span>
+                <input value={p.ssh_key ?? ""} onChange={(e) => field("ssh_key", e.target.value)} placeholder="Optional" />
               </label>
             </div>
           )}
@@ -324,7 +324,7 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
               }
             }}
           >
-            <Trash2 size={14} /> {armed ? "Click again" : "Delete"}
+            <Trash2 size={14} /> {armed ? "Confirm Delete" : "Delete"}
           </button>
         )}
         <button className="ce-cancel" onClick={requestCancel}>
@@ -334,7 +334,7 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
           {saving ? "Saving…" : "Save"} <span className="ce-key">⌘S</span>
         </button>
         <button className="primary" disabled={!valid} onClick={() => void save(true)}>
-          Save &amp; Connect <span className="ce-key">⌘↵</span>
+          Save and Connect <span className="ce-key">⌘↵</span>
         </button>
       </div>
     </div>

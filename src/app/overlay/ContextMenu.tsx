@@ -344,7 +344,7 @@ function SubPanel({
           );
         })}
         {q && visible.every(([it]) => it.kind !== "item") && (
-          <div className="ctx-empty">no matches</div>
+          <div className="ctx-empty">No matches</div>
         )}
       </motion.div>
     </div>,

@@ -23,7 +23,7 @@ let promptSeq = 0;
 export function confirmDanger(
   title: string,
   detail: string,
-  confirmLabel = "Run anyway",
+  confirmLabel = "Run Anyway",
 ): Promise<boolean> {
   return confirmDangerLive(title, detail, confirmLabel).done;
 }
@@ -35,7 +35,7 @@ export function confirmDanger(
 export function confirmDangerLive(
   title: string,
   detail: string,
-  confirmLabel = "Run anyway",
+  confirmLabel = "Run Anyway",
 ): { done: Promise<boolean>; update: (detail: string) => void } {
   const id = ++promptSeq;
   const done = new Promise<boolean>((resolve) => {

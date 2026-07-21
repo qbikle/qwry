@@ -106,7 +106,7 @@ export function FkPicker({
       point={point}
       onClose={onClose}
       role="dialog"
-      label={`Pick referenced row from ${target.table}`}
+      label={`Pick Referenced Row from ${target.table}`}
       onKey={(e) => {
         if (e.key === "ArrowDown") {
           e.preventDefault();
@@ -137,7 +137,7 @@ export function FkPicker({
           {err ? (
             <div className="fkpick-err">{err}</div>
           ) : rows.length === 0 && !loading ? (
-            <div className="fkpick-empty">no matching rows</div>
+            <div className="fkpick-empty">No matching rows</div>
           ) : (
             rows.map((r, i) => (
               <div

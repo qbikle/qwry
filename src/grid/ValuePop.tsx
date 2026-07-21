@@ -186,7 +186,7 @@ export function ValuePop({
             Cancel <span className="insp-key">esc</span>
           </button>
           <button className="primary" onClick={stage}>
-            Stage edit <span className="insp-key">⌘↵</span>
+            Stage Edit <span className="insp-key">⌘↵</span>
           </button>
         </div>
       </motion.div>

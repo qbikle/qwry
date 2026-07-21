@@ -669,18 +669,18 @@ export function SchemaTree({ profileId }: { profileId: string }) {
     const ref = qualify(t.schema, t.name);
     return [
       { kind: "item", label: "Browse", onSelect: () => browseTable(t) },
-      { kind: "item", label: "Open SELECT in editor", onSelect: () => insertSelect(t) },
+      { kind: "item", label: "Open SELECT in Editor", onSelect: () => insertSelect(t) },
       { kind: "sep" },
       {
         kind: "item",
-        label: isPinned(t) ? "Unpin table" : "Pin table",
+        label: isPinned(t) ? "Unpin Table" : "Pin Table",
         onSelect: () => togglePin(t),
       },
       { kind: "sep" },
-      { kind: "item", label: "Copy name", onSelect: () => void copyCue(t.name, "Copied table name") },
+      { kind: "item", label: "Copy Name", onSelect: () => void copyCue(t.name, "Copied table name") },
       {
         kind: "item",
-        label: "Copy qualified name",
+        label: "Copy Qualified Name",
         onSelect: () => void copyCue(ref, "Copied qualified name"),
       },
       {
@@ -691,7 +691,7 @@ export function SchemaTree({ profileId }: { profileId: string }) {
       { kind: "sep" },
       {
         kind: "item",
-        label: "Refresh schema",
+        label: "Refresh Schema",
         onSelect: () => {
           const { sessions } = useConnections.getState();
           if (sessions[profileId]) void useSchema.getState().fetch(profileId, sessions[profileId]);
@@ -794,12 +794,12 @@ export function SchemaTree({ profileId }: { profileId: string }) {
           <div className="tree-empty">
             <span>No tables match “{filterInput}”</span>
             <button className="tree-retry" onClick={() => setFilterInput("")}>
-              Clear filter
+              Clear Filter
             </button>
           </div>
         ) : (
           <div className="tree-empty">
-            <span>No tables in this database yet.</span>
+            <span>No tables in this database yet</span>
           </div>
         ))}
       {menu && (

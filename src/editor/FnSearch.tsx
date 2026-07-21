@@ -82,7 +82,7 @@ export function FnSearch({ view, onClose }: { view: EditorView; onClose: () => v
       <motion.div className="fn-search" {...popIn}>
         <input
           autoFocus
-          placeholder="Search functions… (↵ insert, esc close)"
+          placeholder="Search functions…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}

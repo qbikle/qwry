@@ -35,8 +35,8 @@ function CopySplit({ raw, pretty }: { raw: string; pretty: string }) {
       {open && <div className="insp-copy-backdrop" onMouseDown={() => setOpen(false)} />}
       {open && (
         <div className="insp-copy-menu">
-          <button onClick={() => { void copyCue(pretty); setOpen(false); }}>Copy formatted</button>
-          <button onClick={() => { void copyCue(raw); setOpen(false); }}>Copy raw</button>
+          <button onClick={() => { void copyCue(pretty); setOpen(false); }}>Copy Formatted</button>
+          <button onClick={() => { void copyCue(raw); setOpen(false); }}>Copy Raw</button>
         </div>
       )}
     </div>
@@ -303,7 +303,7 @@ export function Inspector() {
       )}
       {pendingEdit && (
         <div className="insp-chip pend">
-          <Pencil size={12} /> Pending edit{pendingEdit.useDefault ? " (SET DEFAULT)" : ""} — ⌘S to
+          <Pencil size={12} /> Pending edit{pendingEdit.useDefault ? " · SET DEFAULT" : ""} — ⌘S to
           commit
         </div>
       )}
@@ -362,7 +362,7 @@ export function Inspector() {
                     Discard <span className="insp-key">esc</span>
                   </button>
                   <button className="primary" disabled={!!jsonError} onClick={saveRaw}>
-                    Stage edit <span className="insp-key">⌘↵</span>
+                    Stage Edit <span className="insp-key">⌘↵</span>
                   </button>
                 </div>
               )}
@@ -418,7 +418,7 @@ export function Inspector() {
                   setEditingText(null);
                 }}
               >
-                Stage edit <span className="insp-key">⌘↵</span>
+                Stage Edit <span className="insp-key">⌘↵</span>
               </button>
             </div>
           </div>
@@ -427,7 +427,7 @@ export function Inspector() {
             {pendingEdit?.useDefault ? "DEFAULT" : "NULL"}
             {editMeta?.editable && (
               <button className="insp-null-edit" onClick={() => setEditingText("")}>
-                set value
+                Set Value
               </button>
             )}
           </div>

@@ -84,17 +84,17 @@ export function SettingsModal() {
               useUI.getState().openThemePicker();
             }}
           >
-            Choose theme…
+            Choose Theme…
           </button>
         </div>
         <div className="settings-row">
-          <span className="settings-label">UI zoom</span>
+          <span className="settings-label">UI Zoom</span>
           <div className="settings-stepper">
-            <button onClick={() => zoomBy(-1)} aria-label="zoom out">
+            <button onClick={() => zoomBy(-1)} aria-label="Zoom Out">
               <Minus size={12} />
             </button>
             <span>{uiZoom}%</span>
-            <button onClick={() => zoomBy(1)} aria-label="zoom in">
+            <button onClick={() => zoomBy(1)} aria-label="Zoom In">
               <Plus size={12} />
             </button>
           </div>
@@ -102,35 +102,35 @@ export function SettingsModal() {
 
         <div className="settings-section">Editor</div>
         <div className="settings-row">
-          <span className="settings-label">Font size</span>
+          <span className="settings-label">Font Size</span>
           <div className="settings-stepper">
-            <button onClick={() => setFontSize(fontSize - 1)} aria-label="smaller">
+            <button onClick={() => setFontSize(fontSize - 1)} aria-label="Decrease Font Size">
               <Minus size={12} />
             </button>
             <span>{fontSize}px</span>
-            <button onClick={() => setFontSize(fontSize + 1)} aria-label="larger">
+            <button onClick={() => setFontSize(fontSize + 1)} aria-label="Increase Font Size">
               <Plus size={12} />
             </button>
           </div>
         </div>
         <label className="settings-row settings-check">
-          <span className="settings-label">Wrap long lines</span>
+          <span className="settings-label">Wrap Long Lines</span>
           <input type="checkbox" checked={wrapLines} onChange={toggleWrapLines} />
         </label>
         <label className="settings-row settings-check">
-          <span className="settings-label">Functions in autocomplete</span>
+          <span className="settings-label">Functions in Autocomplete</span>
           <input type="checkbox" checked={fnInComplete} onChange={toggleFnInComplete} />
         </label>
 
-        <div className="settings-section">Results grid</div>
+        <div className="settings-section">Results Grid</div>
         <div className="settings-row">
-          <span className="settings-label">Font size</span>
+          <span className="settings-label">Font Size</span>
           <div className="settings-stepper">
-            <button onClick={() => setGridFontSize(gridFontSize - 1)} aria-label="smaller">
+            <button onClick={() => setGridFontSize(gridFontSize - 1)} aria-label="Decrease Font Size">
               <Minus size={12} />
             </button>
             <span>{gridFontSize}px</span>
-            <button onClick={() => setGridFontSize(gridFontSize + 1)} aria-label="larger">
+            <button onClick={() => setGridFontSize(gridFontSize + 1)} aria-label="Increase Font Size">
               <Plus size={12} />
             </button>
           </div>
@@ -150,7 +150,7 @@ export function SettingsModal() {
           </div>
         </div>
 
-        <div className="settings-section">SQL Format (⌘⇧F)</div>
+        <div className="settings-section">SQL Format</div>
         <div className="settings-row">
           <span className="settings-label">Style</span>
           <select
@@ -183,7 +183,7 @@ export function SettingsModal() {
 
         <div className="settings-section">Query</div>
         <div className="settings-row">
-          <span className="settings-label">Statement timeout</span>
+          <span className="settings-label">Statement Timeout</span>
           <div className="settings-timeout">
             <input
               type="number"

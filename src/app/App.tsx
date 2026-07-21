@@ -105,7 +105,7 @@ export function App() {
   );
 
   const crumbs: string[] = useMemo(() => {
-    if (homeMode) return [homeMode === "edit" ? "Edit connection" : "Connections"];
+    if (homeMode) return [homeMode === "edit" ? "Edit Connection" : "Connections"];
     if (!activeProfile) return ["qwry"];
     const ctx =
       isTableTab && browserTable
@@ -238,9 +238,9 @@ export function App() {
     const target = profs.find((p) => p.id === pid);
     const name = target?.name || target?.host || "production";
     const ok = await confirmDanger(
-      `Enable writes on ${name}?`,
+      `Enable Writes on ${name}?`,
       `This tab's ${name} session drops the server-side read-only guard.\nEvery other tab stays read-only. Re-lock via the same chip.`,
-      "Enable writes",
+      "Enable Writes",
     );
     if (ok) void setSessionWrites(pid, tabId, true);
   };
@@ -341,10 +341,10 @@ export function App() {
         const { confirmDanger } = await import("../stores/danger");
         const ok = await confirmDanger(
           dirty > 0
-            ? `Quit with ${dirty} uncommitted edit${dirty === 1 ? "" : "s"}?`
+            ? `Quit with ${dirty} Uncommitted Edit${dirty === 1 ? "" : "s"}?`
             : draft
-              ? "Quit with an unfinished new row?"
-              : `Quit with ${txn} open transaction${txn === 1 ? "" : "s"}?`,
+              ? "Quit with an Unfinished New Row?"
+              : `Quit with ${txn} Open Transaction${txn === 1 ? "" : "s"}?`,
           [
             dirty > 0 || draft
               ? "Staged changes are not written to the database and will be lost."
@@ -700,8 +700,8 @@ export function App() {
           className="prod-strip"
           title={
             railProd
-              ? "Connected to PRODUCTION"
-              : `This tab's rows & writes target PRODUCTION (${chipName})`
+              ? "Connected to production"
+              : `This tab's rows and writes target production — ${chipName}`
           }
         />
       )}
@@ -721,8 +721,8 @@ export function App() {
             className={`prod-chip ${writeUnlocked ? "unlocked" : "locked"}`}
             title={
               writeUnlocked
-                ? `Writes ENABLED on this tab's ${chipName} session — click to re-lock`
-                : `PROD safe-mode: this tab's ${chipName} session is read-only at the server — click to enable writes`
+                ? `Writes enabled on this tab's ${chipName} session — click to re-lock`
+                : `Production safe mode: this tab's ${chipName} session is read-only at the server — click to enable writes`
             }
             onClick={() => void toggleProdWrites()}
           >
@@ -790,7 +790,7 @@ export function App() {
                       </section>
                       <div
                         className={`split-divider${splitDragging ? " dragging" : ""}`}
-                        title="Drag to resize editor / results"
+                        title="Drag to resize editor and results"
                         onMouseDown={startSplitResize}
                         onDoubleClick={() => {
                           // dbl-click = reset to the default split
@@ -807,7 +807,7 @@ export function App() {
               ) : (
                 <div className="main-empty">
                   <div className="me-title">qwry</div>
-                  <div>Pick a connection from the rail.</div>
+                  <div>Pick a connection from the rail</div>
                 </div>
               )}
 

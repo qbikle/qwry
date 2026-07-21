@@ -234,7 +234,7 @@ function DateValue({
             setRaw(false);
           }}
         >
-          picker
+          Picker
         </button>
       </>
     );
@@ -248,7 +248,7 @@ function DateValue({
         onChange={(e) => onCommit(e.target.value)}
       />
       <button className="tb-datemode" title="Type a raw value" onClick={() => setRaw(true)}>
-        raw
+        Raw
       </button>
     </>
   );
@@ -310,12 +310,12 @@ function FilterRow({
         dateKind ? (
           <DateValue kind={dateKind} value={value} onCommit={commit} />
         ) : (
-          <FilterValue value={value} placeholder="value" onCommit={commit} />
+          <FilterValue value={value} placeholder="Value" onCommit={commit} />
         );
       return (
         <>
           {input(f.value, (value) => onPatch({ value }))}
-          <span className="tb-between-and">and</span>
+          <span className="tb-between-and">AND</span>
           {input(f.value2 ?? "", (value2) => onPatch({ value2 }))}
         </>
       );
@@ -352,7 +352,7 @@ function FilterRow({
           onChange={(e) => onPatch({ value: e.target.value })}
         >
           {!labels.includes(f.value) && (
-            <option value={f.value}>{f.value === "" ? "— pick —" : f.value}</option>
+            <option value={f.value}>{f.value === "" ? "Pick a value…" : f.value}</option>
           )}
           {labels.map((l) => (
             <option key={l} value={l}>
@@ -364,7 +364,7 @@ function FilterRow({
     if (dateKind)
       return <DateValue kind={dateKind} value={f.value} onCommit={(value) => onPatch({ value })} />;
     return (
-      <FilterValue value={f.value} placeholder="value" onCommit={(value) => onPatch({ value })} />
+      <FilterValue value={f.value} placeholder="Value" onCommit={(value) => onPatch({ value })} />
     );
   };
 
@@ -452,7 +452,8 @@ function RawWhere() {
       <textarea
         rows={2}
         spellCheck={false}
-        placeholder="status = 'paid' AND created_at > now() - interval '7 days'   (runs as written — ⌘↵ or blur applies)"
+        title="Runs as written — ⌘↵ or blur applies"
+        placeholder="status = 'paid' AND created_at > now() - interval '7 days'"
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={() => {
@@ -481,7 +482,7 @@ function WherePreview({ text }: { text: string }) {
   return (
     <div
       className="tb-wherepreview"
-      title={`${text}\n\nclick to copy`}
+      title={`${text}\n\nClick to copy`}
       onClick={() => {
         void copyCue(text, "Copied WHERE clause");
         setCopied(true);
@@ -536,10 +537,10 @@ function FilterBar() {
         {canInsert && (
           <button
             className={`tb-addrow${draftRow ? " active" : ""}`}
-            title={draftRow ? "Close the new-row band ⌘⇧I" : "Add row ⌘⇧I"}
+            title={draftRow ? "Close the Add Row band ⌘⇧I" : "Add Row ⌘⇧I"}
             onClick={() => (draftRow ? cancelDraft() : beginDraft())}
           >
-            <Plus size={12} /> Add row <kbd className="tb-key">⌘⇧I</kbd>
+            <Plus size={12} /> Add Row <kbd className="tb-key">⌘⇧I</kbd>
           </button>
         )}
         {whereMode === "builder" && (
@@ -671,7 +672,7 @@ function BrowseFooter({
           }
           onClick={() => void runExactCount()}
         >
-          {est ? `≈ ${est} rows${whereActive ? " in table" : ""}` : "count rows"}
+          {est ? `≈ ${est} rows${whereActive ? " in table" : ""}` : "Count Rows"}
         </button>
       )}
       {countError && (
@@ -697,7 +698,7 @@ function BrowseFooter({
           autoFocus
           type="number"
           min={1}
-          placeholder="row #"
+          placeholder="Row #"
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               const n = parseInt((e.target as HTMLInputElement).value, 10);
@@ -710,7 +711,7 @@ function BrowseFooter({
         />
       ) : (
         <button className="tbf-jumpbtn" title="Jump to row ⌘L" onClick={onJumpOpen}>
-          Go to row
+          Go to Row…
         </button>
       )}
     </div>
@@ -906,12 +907,12 @@ function SortSelect() {
                   }}
                 >
                   <X size={12} />
-                  <span>Clear sort</span>
+                  <span>Clear Sort</span>
                 </div>
               )}
-              {quickM.length > 0 && <div className="tbs-group">PK & time</div>}
+              {quickM.length > 0 && <div className="tbs-group">PK & Time</div>}
               {quickM.map(row)}
-              {restM.length > 0 && <div className="tbs-group">All columns</div>}
+              {restM.length > 0 && <div className="tbs-group">All Columns</div>}
               {restM.map(row)}
               {quickM.length === 0 && restM.length === 0 && (
                 <div style={{ padding: "5px 10px", color: "var(--fg-muted)" }}>

@@ -39,6 +39,13 @@ function dayLabel(d: Date): string {
 const norm = (sql: string) => sql.replace(/\s+/g, " ").trim();
 
 const STATUS_FILTERS: (HistoryStatus | "all")[] = ["all", "ok", "error", "cancelled"];
+/** chip display text — the filter VALUES above stay lowercase code tokens */
+const STATUS_CHIP: Record<HistoryStatus | "all", string> = {
+  all: "All",
+  ok: "OK",
+  error: "Error",
+  cancelled: "Cancelled",
+};
 const STATUS_DOT: Record<HistoryStatus, string> = {
   ok: "var(--ok)",
   error: "var(--danger)",
@@ -234,7 +241,7 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <Modal
-      label="Query history"
+      label="Query History"
       onClose={onClose}
       onKey={(e) => {
         if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -306,7 +313,7 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
               {s !== "all" && (
                 <span className="history-chip-dot" style={{ background: STATUS_DOT[s] }} />
               )}
-              {s}
+              {STATUS_CHIP[s]}
             </button>
           ))}
         </div>
@@ -316,8 +323,8 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
               {fetchError
                 ? "couldn't load history"
                 : query || statusFilter !== "all" || profileFilter
-                  ? "No matches."
-                  : "No queries yet — queries you run appear here."}
+                  ? "No matches"
+                  : "No queries yet — queries you run appear here"}
             </div>
           )}
           {items.map((it, i) =>

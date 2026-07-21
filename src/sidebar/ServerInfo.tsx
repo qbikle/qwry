@@ -22,7 +22,7 @@ const LABELS = [
   "Encoding",
   "Time zone",
   "search_path",
-  "DB size",
+  "Database size",
   "Database",
   "User",
   "Listening on",
@@ -75,7 +75,7 @@ export function ServerInfo({ profileId }: { profileId: string }) {
       : tls
         ? "TLS"
         : sslmode === "prefer"
-          ? "TLS off (downgraded — server skipped encryption)"
+          ? "TLS off — server skipped encryption"
           : "TLS off";
 
   return (
@@ -84,9 +84,9 @@ export function ServerInfo({ profileId }: { profileId: string }) {
         <Info size={13} />
       </button>
       {open && (
-        <Modal label="Server info" onClose={() => setOpen(false)}>
+        <Modal label="Server Info" onClose={() => setOpen(false)}>
           <motion.div className="srvinfo-modal" {...popIn}>
-            <div className="settings-title">Server info</div>
+            <div className="settings-title">Server Info</div>
             {error ? (
               <div className="srvinfo-err">{error}</div>
             ) : rows === null ? (

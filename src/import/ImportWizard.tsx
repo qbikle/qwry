@@ -25,10 +25,10 @@ import { useTabs } from "../stores/tabs";
 import "./import.css";
 
 const DELIMS: { d: string; label: string }[] = [
-  { d: ",", label: "comma" },
-  { d: "\t", label: "tab" },
-  { d: ";", label: "semicolon" },
-  { d: "|", label: "pipe" },
+  { d: ",", label: "Comma" },
+  { d: "\t", label: "Tab" },
+  { d: ";", label: "Semicolon" },
+  { d: "|", label: "Pipe" },
 ];
 
 const NULL_SENTENCE: Record<ImportNullMode, string> = {
@@ -68,7 +68,7 @@ function errText(e: unknown): { message: string; code: string | null } {
   const code = err?.code ?? null;
   if (code === "25006") {
     return {
-      message: `${message} — this is a prod connection in safe-mode; unlock writes for this tab first`,
+      message: `${message} — this is a production connection in safe mode; unlock writes for this tab first`,
       code,
     };
   }
@@ -318,7 +318,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
           </span>
           <span
             className="imp-conn"
-            title="the connection this import writes to — the browse tab's session, never the rail selection"
+            title="The connection this import writes to — the browse tab's session, never the rail selection"
           >
             {connName ?? "no session"}
           </span>
@@ -344,7 +344,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
             {!path ? (
               <button className="imp-drop" onClick={() => void pickFile()}>
                 <FileUp size={18} />
-                <span>Choose a CSV or TSV file…</span>
+                <span>Choose a CSV or TSV File…</span>
               </button>
             ) : (
               <>
@@ -353,7 +353,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                     {fileName}
                   </span>
                   <button className="imp-link" onClick={() => void pickFile()}>
-                    change
+                    Change
                   </button>
                   <span className="imp-spacer" />
                   {preview && (
@@ -389,7 +389,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                         void loadPreview(path, preview?.delimiter ?? null);
                       }}
                     />
-                    first row is a header
+                    Header Row
                   </label>
                 </div>
                 {fileError && <div className="imp-error">{fileError}</div>}
@@ -418,8 +418,8 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                 )}
                 {headerish && (
                   <div className="imp-warn">
-                    <AlertTriangle size={11} /> row 1 looks like a header — its fields match{" "}
-                    {table.name} column names. Did you mean to enable “first row is a header”?
+                    <AlertTriangle size={11} /> Row 1 looks like a header — its fields match{" "}
+                    {table.name} column names. Did you mean to enable “Header Row”?
                   </div>
                 )}
                 <div className="imp-note">
@@ -434,10 +434,10 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
         {step === 2 && preview && (
           <div className="imp-body">
             <div className="imp-maphead">
-              <span>source column</span>
-              <span>sample</span>
+              <span>Source Column</span>
+              <span>Sample</span>
               <span />
-              <span>target column</span>
+              <span>Target Column</span>
             </div>
             <div className="imp-maplist">
               {preview.source_columns.map((src, i) => (
@@ -522,7 +522,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                   className="imp-link"
                   onClick={() => invalidateRuns() /* forces a fresh validate */}
                 >
-                  re-validate
+                  Validate Again
                 </button>
               </div>
             )}
@@ -534,7 +534,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                       // batch — say so instead of freezing the bar at 100%
                       progress && progress.total > 0 && progress.processed >= progress.total
                       ? "locating failed rows…"
-                      : "Validating (dry run — always rolls back)…"
+                      : "Validating — dry run, always rolls back…"
                     : "Importing…"}
                   {progress && (
                     <span className="imp-total">
@@ -550,7 +550,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                     className="btnish"
                     onClick={() => sessionRef.current && void ipc.cancel(sessionRef.current)}
                   >
-                    Cancel run
+                    Cancel Run
                   </button>
                 </div>
               </>
@@ -559,7 +559,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
               <div className="imp-error">
                 {runError}
                 <button className="imp-link" onClick={() => void runPhase("validate")}>
-                  retry validate
+                  Validate Again
                 </button>
               </div>
             )}
@@ -632,7 +632,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
               disabled={(step === 1 && !preview) || (step === 2 && mappedCount === 0)}
               onClick={() => setStep((step + 1) as 2 | 3)}
             >
-              {step === 2 && mappedCount === 0 ? "map a column" : "Next"}
+              {step === 2 && mappedCount === 0 ? "Map a Column" : "Next"}
             </button>
           ) : done ? (
             <button className="btnish imp-primary" onClick={onClose}>
@@ -644,7 +644,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
               disabled={!canCommit}
               onClick={() => void runPhase("commit")}
             >
-              {report ? `Import ${report.total_rows.toLocaleString()} rows` : "Import"}
+              {report ? `Import ${report.total_rows.toLocaleString()} Rows` : "Import"}
             </button>
           )}
         </div>

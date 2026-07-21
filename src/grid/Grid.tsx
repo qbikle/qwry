@@ -65,6 +65,14 @@ const NUMERIC_TYPES = new Set([
 const COPY_ASYNC_CELLS = 16_000;
 const COPY_SLICE_ROWS = 4_000;
 
+const FORMAT_LABEL: Record<CopyFormat, string> = {
+  tsv: "TSV",
+  csv: "CSV",
+  json: "JSON",
+  markdown: "Markdown",
+  insert: "SQL INSERTs",
+};
+
 // chunked-copy slice scheduling: rAF stalls while the window is occluded
 // (WKWebView suspends rAF) — race it against a timeout, first wins, cancel
 // the loser, so a background build still finishes
@@ -366,7 +374,7 @@ function CellEditor({
             if (!cancelled.current) onSave();
           }}
         >
-          {draft === "" && <option value="">(pick)</option>}
+          {draft === "" && <option value="">Pick a value…</option>}
           {enumLabels?.map((l) => (
             <option key={l} value={l}>
               {l}
@@ -961,7 +969,7 @@ export function Grid({
         }
       };
       // opened on NULL and left empty → still NULL, stage nothing (empty
-      // string is only reachable explicitly via Set EMPTY)
+      // string is only reachable explicitly via Set Empty String)
       if (value === "" && editing.startedNull) {
         finish();
         return;
@@ -1159,7 +1167,7 @@ export function Grid({
         const { save } = await import("@tauri-apps/plugin-dialog");
         const path = await save({
           defaultPath: `${table?.split(".").pop() ?? "qwry-export"}.${ext}`,
-          filters: [{ name: format.toUpperCase(), extensions: [ext] }],
+          filters: [{ name: FORMAT_LABEL[format], extensions: [ext] }],
         });
         if (!path) return; // dialog cancelled
         const text = formatCells(outCols, outRows, format, { table, ctidCols });
@@ -1741,7 +1749,7 @@ export function Grid({
 
     const { confirmDanger } = await import("../stores/danger");
     const ok = await confirmDanger(
-      `Delete ${n} row${n > 1 ? "s" : ""} from ${tableName}?`,
+      `Delete ${n} Row${n > 1 ? "s" : ""} from ${tableName}?`,
       `This cannot be undone.\n\n${preview}${n > 8 ? `\n… and ${n - 8} more` : ""}`,
       "Delete",
     );
@@ -1876,7 +1884,7 @@ export function Grid({
       if (target) {
         items.push({
           kind: "item",
-          label: `Open referenced ${fk.dst_table} →`,
+          label: `Open Referenced ${fk.dst_table} →`,
           onSelect: () => openFkQuery(target, fk.dst_cols[0]),
         });
       }
@@ -1891,7 +1899,7 @@ export function Grid({
     if (inbound.length > 0) {
       items.push({
         kind: "submenu",
-        label: "Referenced by",
+        label: "Referenced By",
         items: inbound.map((k): MenuNode => {
           const src = snapshot.tables.find(
             (t) => t.schema === k.src_schema && t.name === k.src_table,
@@ -2383,7 +2391,7 @@ export function Grid({
                   {sortDir && (sortLen > 1 || sortNulls) && (
                     <span
                       className="vgrid-sortpos"
-                      title={`sort ${sortPos} of ${sortLen}${sortNulls ? ` · NULLS ${sortNulls.toUpperCase()}` : ""}`}
+                      title={`Sort ${sortPos} of ${sortLen}${sortNulls ? ` · NULLS ${sortNulls.toUpperCase()}` : ""}`}
                     >
                       {sortLen > 1 ? sortPos : ""}
                       {sortNulls ? (sortNulls === "first" ? "∅↑" : "∅↓") : ""}
@@ -2838,35 +2846,36 @@ export function Grid({
           items={[
             {
               kind: "item",
-              label: `Copy name  ${cols[headerMenu.dataC]?.name ?? ""}`,
+              label: "Copy Name",
+              hint: cols[headerMenu.dataC]?.name ?? "",
               onSelect: () => void copyCue(cols[headerMenu.dataC]?.name ?? ""),
             },
             { kind: "sep" },
             {
               kind: "item",
-              label: `Sort ${cols[headerMenu.dataC]?.name ?? ""} ascending`,
+              label: `Sort ${cols[headerMenu.dataC]?.name ?? ""} Ascending`,
               onSelect: () => toggleSortTo(headerMenu.dataC, "asc"),
             },
             {
               kind: "item",
-              label: "Sort descending",
+              label: "Sort Descending",
               onSelect: () => toggleSortTo(headerMenu.dataC, "desc"),
             },
             ...((insertable ? browseChainEff.length > 0 : clientChain.length > 0)
               ? ([
-                  { kind: "item", label: "Clear sort", onSelect: clearSort },
+                  { kind: "item", label: "Clear Sort", onSelect: clearSort },
                 ] as MenuNode[])
               : []),
             { kind: "sep" },
             {
               kind: "item",
-              label: "Value distribution",
+              label: "Value Distribution",
               onSelect: () => openHistogram(headerMenu.dataC, { x: headerMenu.x, y: headerMenu.y }),
             },
             { kind: "sep" },
             {
               kind: "item",
-              label: `Hide column ${cols[headerMenu.dataC]?.name ?? ""}`,
+              label: `Hide Column ${cols[headerMenu.dataC]?.name ?? ""}`,
               // hiding the LAST visible column would leave an unusable grid
               disabled: viewColLen <= 1,
               onSelect: () => {
@@ -2887,7 +2896,7 @@ export function Grid({
               ? ([
                   {
                     kind: "submenu",
-                    label: `Show hidden (${hiddenCols.size})`,
+                    label: `Show ${hiddenCols.size} Hidden Column${hiddenCols.size === 1 ? "" : "s"}`,
                     items: [
                       ...[...hiddenCols].map((d): MenuNode => ({
                         kind: "item",
@@ -2902,7 +2911,7 @@ export function Grid({
                       { kind: "sep" },
                       {
                         kind: "item",
-                        label: "Show all",
+                        label: "Show All",
                         onSelect: () => setHiddenCols(new Set()),
                       },
                     ],
@@ -2921,11 +2930,11 @@ export function Grid({
             { kind: "item", label: "Copy", hint: "⌘C", onSelect: () => copySelection("tsv") },
             {
               kind: "submenu",
-              label: "Copy as",
+              label: "Copy As",
               items: (["tsv", "csv", "json", "markdown", "insert"] as CopyFormat[]).map(
                 (f): MenuNode => ({
                   kind: "item",
-                  label: f.toUpperCase(),
+                  label: FORMAT_LABEL[f],
                   onSelect: () => copySelection(f),
                 }),
               ),
@@ -2934,12 +2943,12 @@ export function Grid({
               kind: "submenu",
               label:
                 sel.rect && !(sel.rect.r0 === sel.rect.r1 && sel.rect.c0 === sel.rect.c1)
-                  ? "Export selection to file"
-                  : "Export to file",
+                  ? "Export Selection to File"
+                  : "Export to File",
               items: (["csv", "tsv", "json", "markdown", "insert"] as CopyFormat[]).map(
                 (f): MenuNode => ({
                   kind: "item",
-                  label: f === "insert" ? "SQL INSERTs…" : `${f.toUpperCase()}…`,
+                  label: `${FORMAT_LABEL[f]}…`,
                   onSelect: () => void exportRows(f),
                 }),
               ),
@@ -2947,19 +2956,19 @@ export function Grid({
             { kind: "sep" },
             {
               kind: "item",
-              label: "Find in results…",
+              label: "Find in Results…",
               hint: "⌘F",
               onSelect: () => useFind.getState().openFind(),
             },
             {
               kind: "item",
-              label: "Row details",
+              label: "Row Details",
               hint: "space",
               onSelect: () => sel.focus && setPeekRow(sel.focus.r),
             },
             {
               kind: "item",
-              label: "Open as record",
+              label: "Open as Record",
               hint: "⇧space",
               onSelect: () => sel.focus && setRecord({ rows: [sel.focus.r] }),
             },
@@ -2967,7 +2976,7 @@ export function Grid({
               ? ([
                   {
                     kind: "item",
-                    label: "Compare 2 rows",
+                    label: "Compare 2 Rows",
                     onSelect: () =>
                       sel.rect && setRecord({ rows: [sel.rect.r0, sel.rect.r1] }),
                   },
@@ -2980,7 +2989,7 @@ export function Grid({
                   // view/matview draft could only fail at commit time
                   {
                     kind: "item",
-                    label: "Duplicate row…",
+                    label: "Duplicate Row…",
                     onSelect: duplicateRow,
                   },
                 ] as MenuNode[])
@@ -2989,20 +2998,25 @@ export function Grid({
               ? ([
                   { kind: "sep" },
                   { kind: "item", label: "Set NULL", onSelect: () => setSelectionValue(null) },
-                  { kind: "item", label: "Set EMPTY", onSelect: () => setSelectionValue("") },
+                  {
+                    kind: "item",
+                    label: "Set Empty String",
+                    hint: "''",
+                    onSelect: () => setSelectionValue(""),
+                  },
                   {
                     kind: "item",
                     label: "Set DEFAULT",
                     onSelect: () => setSelectionValue(null, true),
                   },
-                  { kind: "item", label: "Fill down", hint: "⌘D", onSelect: fillDown },
+                  { kind: "item", label: "Fill Down", hint: "⌘D", onSelect: fillDown },
                 ] as MenuNode[])
               : []),
             ...(selectionHasPending
               ? ([
                   {
                     kind: "item",
-                    label: "Revert edits in selection",
+                    label: "Discard Edits in Selection",
                     onSelect: revertSelection,
                   },
                 ] as MenuNode[])
@@ -3014,9 +3028,9 @@ export function Grid({
                     kind: "item",
                     label: `Delete ${
                       sel.rect && sel.rect.r1 > sel.rect.r0
-                        ? `${sel.rect.r1 - sel.rect.r0 + 1} rows`
-                        : "row"
-                    }`,
+                        ? `${sel.rect.r1 - sel.rect.r0 + 1} Rows`
+                        : "Row"
+                    }…`,
                     danger: true,
                     onSelect: () => void deleteSelectedRows(),
                   },
@@ -3093,7 +3107,8 @@ export function Grid({
                 ? [
                     {
                       kind: "item",
-                      label: "Set empty string ''",
+                      label: "Set Empty String",
+                      hint: "''",
                       onSelect: () =>
                         setDraftCell(draftMenu.col, { text: "", state: "empty" }),
                     } as MenuNode,
@@ -3101,7 +3116,8 @@ export function Grid({
                 : []),
               {
                 kind: "item",
-                label: `Reset to DEFAULT${m?.default ? ` (${m.default})` : ""}`,
+                label: "Reset to DEFAULT",
+                hint: m?.default ?? undefined,
                 disabled: !cur?.state && (cur?.text ?? "") === "",
                 onSelect: () => setDraftCell(draftMenu.col, { text: "" }),
               },

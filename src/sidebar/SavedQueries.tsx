@@ -51,7 +51,7 @@ export function SavedQueries() {
   const confirmDelete = async (q: SavedQuery) => {
     const { confirmDanger } = await import("../stores/danger");
     const ok = await confirmDanger(
-      `Delete saved query “${q.name}”?`,
+      `Delete Saved Query “${q.name}”?`,
       "This cannot be undone.",
       "Delete",
     );
@@ -99,7 +99,7 @@ export function SavedQueries() {
       <div className="pl-header saved-header" onClick={toggleExpanded}>
         <span className="saved-title">
           {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-          Saved queries
+          Saved Queries
         </span>
         <span className="tree-count">{queries.length}</span>
       </div>
@@ -191,7 +191,7 @@ export function SavedQueries() {
           </div>
         ))}
       {expanded && queries.length === 0 && (
-        <div className="pl-empty">Bookmark a tab to save it here</div>
+        <div className="pl-empty">Save a query with ⌘S to keep it here</div>
       )}
       {expanded && queries.length > 0 && shown.length === 0 && (
         <div className="pl-empty">No matches</div>

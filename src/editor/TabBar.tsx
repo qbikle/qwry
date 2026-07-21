@@ -177,10 +177,10 @@ export function TabBar() {
     items.push({ kind: "sep" });
     items.push({ kind: "item", label: "Close", hint: "⌘W", onSelect: () => requestClose(id) });
     if (tabs.length > 1)
-      items.push({ kind: "item", label: "Close others", onSelect: () => closeOthers(id) });
+      items.push({ kind: "item", label: "Close Others", onSelect: () => closeOthers(id) });
     if (idx < tabs.length - 1)
-      items.push({ kind: "item", label: "Close to the right", onSelect: () => closeToRight(id) });
-    items.push({ kind: "item", label: "Close all", onSelect: () => closeAll() });
+      items.push({ kind: "item", label: "Close to the Right", onSelect: () => closeToRight(id) });
+    items.push({ kind: "item", label: "Close All", onSelect: () => closeAll() });
     return items;
   };
 
@@ -316,7 +316,7 @@ export function TabBar() {
               point={pinInfo}
               onClose={() => setPinInfo(null)}
               role="dialog"
-              label="Pinned tab info"
+              label="Pinned Tab Info"
             >
               <motion.div className="pin-info" {...popIn}>
                 <div className="pin-info-head">
@@ -329,7 +329,7 @@ export function TabBar() {
                 </div>
                 {firstLine && <div className="pin-info-sql">{firstLine.slice(0, 80)}</div>}
                 <div className="pin-info-hint">
-                  Visible on every connection · runs against the ACTIVE one
+                  Visible on every connection · runs against the active one
                   <br />
                   Unpin: right-click → Unpin (closing also unpins)
                 </div>

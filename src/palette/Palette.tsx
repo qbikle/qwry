@@ -125,7 +125,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
     });
 
   return (
-    <Modal backdropClassName="pal-backdrop" label="Command palette" onClose={close}>
+    <Modal backdropClassName="pal-backdrop" label="Command Palette" onClose={close}>
       <motion.div className="pal-wrap" {...popIn}>
       <Command className="pal" shouldFilter={true} loop>
         <Command.Input
@@ -147,10 +147,10 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 close();
               }}
             >
-              <Play size={13} /> Run query <kbd>⌘↵</kbd>
+              <Play size={13} /> Run Query <kbd>⌘↵</kbd>
             </Command.Item>
             <Command.Item onSelect={() => { useTabs.getState().newTab(); close(); }}>
-              <Plus size={13} /> New tab <kbd>⌘T</kbd>
+              <Plus size={13} /> New Tab <kbd>⌘T</kbd>
             </Command.Item>
             <Command.Item
               onSelect={() => {
@@ -160,7 +160,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 close();
               }}
             >
-              <PanelRight size={13} /> Toggle inspector <kbd>⌘I</kbd>
+              <PanelRight size={13} /> Toggle Inspector <kbd>⌘I</kbd>
             </Command.Item>
             <Command.Item
               onSelect={() => {
@@ -171,7 +171,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 close();
               }}
             >
-              <RefreshCw size={13} /> Refresh schema <kbd>⌘R</kbd>
+              <RefreshCw size={13} /> Refresh Schema <kbd>⌘R</kbd>
             </Command.Item>
             <Command.Item
               value="save query bookmark"
@@ -180,16 +180,16 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 close();
               }}
             >
-              <Plus size={13} /> Save query to sidebar <kbd>⌘S</kbd>
+              <Plus size={13} /> Save Query to Sidebar <kbd>⌘S</kbd>
             </Command.Item>
             <Command.Item
-              value="restore closed tab"
+              value="restore reopen closed tab"
               onSelect={() => {
                 useTabs.getState().restoreClosed();
                 close();
               }}
             >
-              <Plus size={13} /> Restore closed tab <kbd>⌘⇧T</kbd>
+              <Plus size={13} /> Reopen Closed Tab <kbd>⌘⇧T</kbd>
             </Command.Item>
             <Command.Item
               value="format sql beautify"
@@ -216,7 +216,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 close();
               }}
             >
-              <Clock size={13} /> Query history panel <kbd>⌘Y</kbd>
+              <Clock size={13} /> Query History <kbd>⌘Y</kbd>
             </Command.Item>
             <Command.Item
               value="disconnect current connection"
@@ -257,7 +257,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 })();
               }}
             >
-              <Database size={13} /> Disconnect current
+              <Database size={13} /> Disconnect Current Connection
             </Command.Item>
             <Command.Item
               value="clear history connection"
@@ -267,7 +267,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 close();
               }}
             >
-              <Clock size={13} /> Clear history (this connection)
+              <Clock size={13} /> Clear History for This Connection
             </Command.Item>
             <Command.Item
               value="clear history older than 7 days"
@@ -276,11 +276,11 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 close();
               }}
             >
-              <Clock size={13} /> Clear history older than 7 days
+              <Clock size={13} /> Clear History Older than 7 Days
             </Command.Item>
           </Command.Group>
 
-          <Command.Group heading="Open tabs">
+          <Command.Group heading="Open Tabs">
             {tabs.map((t, i) => (
               <Command.Item
                 key={t.id}
@@ -308,7 +308,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                   close();
                 }}
               >
-                <X size={13} /> Close current tab <kbd>⌘W</kbd>
+                <X size={13} /> Close Current Tab <kbd>⌘W</kbd>
               </Command.Item>
             )}
           </Command.Group>
@@ -341,7 +341,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 close();
               }}
             >
-              <SwatchBook size={13} /> Customize theme…
+              <SwatchBook size={13} /> Customize Theme…
             </Command.Item>
             {(
               [
