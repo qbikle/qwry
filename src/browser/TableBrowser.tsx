@@ -536,10 +536,10 @@ function FilterBar() {
         {canInsert && (
           <button
             className={`tb-addrow${draftRow ? " active" : ""}`}
-            title="Add row ⌘⇧I"
+            title={draftRow ? "Close the new-row band ⌘⇧I" : "Add row ⌘⇧I"}
             onClick={() => (draftRow ? cancelDraft() : beginDraft())}
           >
-            <Plus size={12} /> Add row
+            <Plus size={12} /> Add row <kbd className="tb-key">⌘⇧I</kbd>
           </button>
         )}
         {whereMode === "builder" && (

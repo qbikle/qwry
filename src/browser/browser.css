@@ -151,6 +151,12 @@
   background: var(--accent);
   color: var(--accent-fg);
 }
+/* inline shortcut hint — same grammar as the app's other kbd-carrying buttons */
+.tb-key {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  opacity: 0.55;
+}
 
 .tb-addfilter {
   margin-left: auto; /* push Filter + Sort to the right; Add row stays left */
