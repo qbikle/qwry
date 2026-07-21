@@ -65,6 +65,21 @@ export function App() {
   const inspectorWidth = useInspector((s) => s.width);
   const inspectorFixedRef = useRef<HTMLDivElement>(null);
   const preInspectorFocus = useRef<HTMLElement | null>(null);
+  // the inspector card never unmounts (collapses to width 0) — a close from
+  // ANY path (rail button, palette, ⌘I with a dead prev element) must pull
+  // focus out of the now-invisible panel, or ⌘F and typing land in a hidden
+  // input (the app-lies class). Mirrors escStack's restore fallback chain.
+  useEffect(() => {
+    if (inspectorOpen) return;
+    const el = inspectorFixedRef.current;
+    if (!el || !el.contains(document.activeElement)) return;
+    const prev = preInspectorFocus.current;
+    preInspectorFocus.current = null;
+    const fallback =
+      document.querySelector<HTMLElement>(".main-card .cm-content") ??
+      document.querySelector<HTMLElement>(".main-card");
+    (prev && document.contains(prev) ? prev : fallback)?.focus({ preventScroll: true });
+  }, [inspectorOpen]);
   const explainOpen = useExplain((s) => s.open);
   // scalar selectors only — selecting the tab OBJECT re-rendered the entire
   // shell tree on every editor keystroke (setSql replaces the active tab
@@ -623,7 +638,9 @@ export function App() {
       // else routes to find-in-results over the loaded grid rows.
       if (e.metaKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
         const t = e.target as HTMLElement | null;
-        const inInspector = !!t?.closest?.(".inspector-fixed");
+        // a CLOSED inspector never claims scope, even if focus lingers there
+        const inInspector =
+          useInspector.getState().open && !!t?.closest?.(".inspector-fixed");
         if (!inInspector && useResults.getState().statements.length > 0) {
           e.preventDefault();
           useFind.getState().openFind();

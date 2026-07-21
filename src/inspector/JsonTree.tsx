@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { useInspector } from "../stores/inspector";
 import {
   CHILD_CAP,
   SEARCH_NODE_CAP,
@@ -153,6 +154,7 @@ function KeyLabel({
         onKeyDown={(e) => {
           if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
           if (e.key === "Enter") {
+            refocusInspector(e.currentTarget);
             if (draft && draft !== k) ctx.onRenameKey(parentPath, k, draft);
             setEditing(false);
           }
@@ -209,14 +211,15 @@ function Leaf({ value, path }: { value: Json; path: Path }) {
     setErr(false);
     setEditing(true);
   };
-  const commit = () => {
+  const commit = (): boolean => {
     const c = coerce(value, draft);
     if (!c.ok) {
       setErr(true);
-      return;
+      return false;
     }
     if (c.value !== value) ctx.onEditValue(path, c.value);
     setEditing(false);
+    return true;
   };
 
   if (editing) {
@@ -232,7 +235,12 @@ function Leaf({ value, path }: { value: Json; path: Path }) {
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
-          if (e.key === "Enter") commit();
+          if (e.key === "Enter") {
+            // refocus only when the edit actually closes — an invalid value
+            // keeps the input (and its error state) focused
+            const el = e.currentTarget;
+            if (commit()) refocusInspector(el);
+          }
           if (e.key === "Escape") {
             refocusInspector(e.currentTarget);
             setEditing(false);
@@ -496,6 +504,8 @@ export function JsonTree({
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
       if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "f") {
+        // never claim ⌘F from inside the collapsed (invisible) panel
+        if (!useInspector.getState().open) return;
         const within = (el: unknown) =>
           el instanceof Element && !!el.closest(".inspector-fixed");
         if (!within(e.target) && !within(document.activeElement)) return;

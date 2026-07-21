@@ -231,7 +231,8 @@ function QuickFilter() {
           value={local}
           onChange={(e) => push(e.target.value)}
           onKeyDown={(e) => {
-            e.stopPropagation();
+            // typing keys only — ⌘/⌃ chords must reach the window handler
+            if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
             if (e.key === "Escape") useGridFilter.getState().clear();
             if (e.key === "Enter") flush();
           }}
