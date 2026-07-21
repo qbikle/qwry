@@ -524,7 +524,7 @@ export function JsonTree({
         <Search size={12} className="jt-search-icon" />
         <input
           ref={searchRef}
-          placeholder="Search keys & values… ⌘F"
+          placeholder="Search keys and values… ⌘F"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {

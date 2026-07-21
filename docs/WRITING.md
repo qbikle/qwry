@@ -38,7 +38,9 @@ is law, same as tokens.css — check every new string against it.
    read as different features.
 6. **Typography register**: real `…` and `⌘⇧⌥⌃` glyphs (never `Cmd+`),
    em-dash `—` for asides, `·` for metadata separators, typographic quotes in
-   prose (straight quotes only inside SQL/code).
+   prose (straight quotes only inside SQL/code). "and" over `&` everywhere
+   except space-tight compact labels (chip/group-header width limits, e.g.
+   `PK & Time`); placeholders and dialog text are prose — always "and".
 
 ## Terminology (canonical → banned synonyms)
 
