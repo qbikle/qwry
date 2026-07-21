@@ -3,6 +3,8 @@ import { motion } from "motion/react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { popIn } from "../design/springs";
 import { useEdits } from "../stores/edits";
+import { useConnections } from "../stores/connections";
+import { useResults } from "../stores/results";
 import { Modal } from "../app/overlay/Overlay";
 import "./grid.css";
 
@@ -11,6 +13,11 @@ export function EditPreview() {
   const committing = useEdits((s) => s.committing);
   const closePreview = useEdits((s) => s.closePreview);
   const commit = useEdits((s) => s.commit);
+  // where this commit lands: the result's ORIGIN connection, never the rail
+  const originPid = useResults((s) => s.executedProfileId);
+  const origin = useConnections((s) =>
+    originPid ? (s.profiles.find((p) => p.id === originPid) ?? null) : null,
+  );
   const [copied, setCopied] = useState(false);
 
   if (!preview) return null;
@@ -41,6 +48,17 @@ export function EditPreview() {
           Commit {preview.statements.length} change
           {preview.statements.length === 1 ? "" : "s"} — runs in one transaction
         </div>
+        {originPid && (
+          // always shown, same-profile included — the moment of consequence
+          // must name the write target
+          <div className="ep-target">
+            <span
+              className="ep-target-dot"
+              style={{ background: origin?.color || "var(--accent)" }}
+            />
+            commits to <strong>{origin ? origin.name || origin.host : "a deleted connection"}</strong>
+          </div>
+        )}
         {preview.notice && <div className="ep-notice">⚠ {preview.notice}</div>}
         {preview.loading ? (
           <div className="ep-loading">Building preview…</div>

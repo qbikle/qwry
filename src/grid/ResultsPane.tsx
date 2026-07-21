@@ -61,6 +61,7 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
 
   return (
     <div className="results-pane-inner">
+      <OriginBanner />
       {globalError && (
         <div className="ge-banner" title={globalError.message}>
           {globalError.code ? `Error ${globalError.code}: ` : "Error: "}
@@ -148,6 +149,34 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
         <PendingEditsStatus />
       </div>
       <EditPreview />
+    </div>
+  );
+}
+
+/** the rows on screen came from a DIFFERENT connection than the rail
+ * selection (pinned tab ran elsewhere): edits/imports commit to the ORIGIN
+ * while Run executes on the rail — say so, tinted with the origin's color.
+ * Sits beside the other strips OUTSIDE .stmt-body so grid geometry
+ * (HEADER_H anchors, virtualizer measures) is untouched. */
+function OriginBanner() {
+  const originPid = useResults((s) => s.executedProfileId);
+  const railPid = useConnections((s) => s.activeProfileId);
+  const profiles = useConnections((s) => s.profiles);
+  if (!originPid || originPid === railPid) return null;
+  const origin = profiles.find((p) => p.id === originPid);
+  const rail = profiles.find((p) => p.id === railPid);
+  const originName = origin ? origin.name || origin.host : "a deleted connection";
+  const railName = rail ? rail.name || rail.host : "the active connection";
+  return (
+    <div
+      className="origin-banner"
+      style={{ "--origin-color": origin?.color || "var(--accent)" } as React.CSSProperties}
+    >
+      <span className="origin-banner-dot" />
+      <span className="origin-banner-text">
+        rows from <strong>{originName}</strong> — edits &amp; imports commit there · Run executes
+        on <strong>{railName}</strong>
+      </span>
     </div>
   );
 }
@@ -313,20 +342,29 @@ function RerunBtn() {
   );
 }
 
-/** explicit transaction open on this tab's session → chip + one-click ROLLBACK */
+/** explicit transaction open on one of this tab's sessions → chip + one-click
+ * ROLLBACK. The tx can live on the tab's ORIGIN session (rows ran on another
+ * connection) as well as the rail's — prefer origin (writes live there); any
+ * other session-tx for the tab still resolves so ROLLBACK always targets the
+ * session that actually holds it. */
 function TxChip() {
   const activeTab = useTabs((s) => s.activeId);
   const running = useResults((s) => s.running);
-  const inTx = useConnections((s) => {
-    const pid = s.activeProfileId;
-    return pid && activeTab ? !!s.txTabs[skey(pid, activeTab)] : false;
+  const originPid = useResults((s) => s.executedProfileId);
+  const txPid = useConnections((s) => {
+    if (!activeTab) return null;
+    if (originPid && s.txTabs[skey(originPid, activeTab)]) return originPid;
+    if (s.activeProfileId && s.txTabs[skey(s.activeProfileId, activeTab)])
+      return s.activeProfileId;
+    const hit = Object.entries(s.txTabs).find(([k, v]) => v && k.endsWith(`::${activeTab}`));
+    return hit ? hit[0].split("::")[0] : null;
   });
-  if (!inTx) return null;
+  if (!txPid) return null;
   const rollback = async () => {
-    const { activeProfileId: pid, tabSessions, setTxTab } = useConnections.getState();
+    const { tabSessions, setTxTab } = useConnections.getState();
     const tabId = useTabs.getState().activeId;
-    if (!pid || !tabId) return;
-    const key = skey(pid, tabId);
+    if (!tabId) return;
+    const key = skey(txPid, tabId);
     const sid = tabSessions[key];
     if (!sid) return;
     try {

@@ -3,7 +3,7 @@ import { Bookmark, ChevronDown, ChevronRight, Pencil, Search, Trash2 } from "luc
 import { copyCue } from "../lib/copyCue";
 import { useSaved, visibleSaved, type SavedQuery } from "../stores/saved";
 import { useConnections } from "../stores/connections";
-import { useTabs } from "../stores/tabs";
+import { isTabVisible, useTabs } from "../stores/tabs";
 import { ContextMenu, type MenuNode } from "../app/overlay/ContextMenu";
 import "./sidebar.css";
 import "./sidebar-tree.css";
@@ -13,8 +13,13 @@ import "./sidebar-tree.css";
 export function openSavedQuery(q: { id: string; sql: string; name: string }) {
   // selecting/creating a query tab makes the active tab a query tab, so any
   // open table view is left automatically
-  const { tabs, select } = useTabs.getState();
-  const existing = tabs.find((t) => t.saved_id === q.id);
+  const { tabs, select, pinned } = useTabs.getState();
+  // match within the VISIBLE strip only (own profile ∪ legacy null ∪ pinned)
+  // — an unscoped match could select another workspace's tab: its cached rows
+  // render under this connection's branding with no active tab in the strip
+  // (same seam as openTable's scoped dedup)
+  const pid = useConnections.getState().activeProfileId;
+  const existing = tabs.find((t) => t.saved_id === q.id && isTabVisible(t, pinned, pid));
   if (existing) select(existing.id);
   else useTabs.getState().newTab(q.sql, q.name, q.id);
 }

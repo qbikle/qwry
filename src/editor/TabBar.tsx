@@ -4,7 +4,7 @@ import { useSaved } from "../stores/saved";
 import { copyCue } from "../lib/copyCue";
 import { useTabs, visibleTabs } from "../stores/tabs";
 import { useCloseGuard } from "../stores/closeGuard";
-import { skey, useConnections } from "../stores/connections";
+import { useConnections } from "../stores/connections";
 import { ContextMenu, type MenuNode } from "../app/overlay/ContextMenu";
 import { AnchoredOverlay } from "../app/overlay/Overlay";
 import { motion } from "motion/react";
@@ -54,8 +54,13 @@ export function TabBar() {
     file_path?: string;
     file_saved_sql?: string;
   }) => savedDirty(t) || fileDirty(t);
-  const activeProfileId = useConnections((s) => s.activeProfileId);
   const txTabs = useConnections((s) => s.txTabs);
+  // tx dot: sessions are keyed skey(`${profileId}::${tabId}`) — a transaction
+  // can be open on the RAIL session or the tab's ORIGIN session (pinned tab
+  // that ran on another connection), so ANY open tx for this tab id counts
+  // (same suffix match closeTabSessions uses)
+  const tabHasTx = (id: string) =>
+    Object.entries(txTabs).some(([k, v]) => v && k.endsWith(`::${id}`));
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null);
@@ -259,7 +264,7 @@ export function TabBar() {
               <span className="tab-icon" title={t.kind === "table" ? "Table" : "Query"}>
                 {t.kind === "table" ? <Table size={12} /> : <SquareTerminal size={12} />}
               </span>
-              {activeProfileId && txTabs[skey(activeProfileId, t.id)] && (
+              {tabHasTx(t.id) && (
                 <span className="tab-tx" title="Open transaction on this tab" />
               )}
               <span className="tab-name-text">{t.name}</span>

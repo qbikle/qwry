@@ -769,7 +769,11 @@ export const useEdits = create<EditsState>((set, get) => ({
         // (the old fire-and-forget order let resetTab wipe the fresh offer)
         const rt = useResults.getState().byTab[offer.tabId];
         if (rt?.executedSql && useResults.getState().active === offer.tabId) {
-          await useResults.getState().run(rt.executedSql, rt.executedOffset);
+          // the undo committed on the OFFER's profile — reload from there,
+          // not the rail, or the reverted rows repaint from another database
+          await useResults
+            .getState()
+            .run(rt.executedSql, rt.executedOffset, { profileId: offer.profileId });
         }
         // the undo commit wrote its own undo row — redo emerges as the next offer
         void refreshUndoOffer(offer.tabId, offer.sessionId, offer.profileId);

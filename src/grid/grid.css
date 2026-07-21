@@ -5,6 +5,37 @@
   background: var(--bg-panel);
 }
 
+/* origin provenance: the rows came from a different connection than the rail
+   — a slim strip tinted with the ORIGIN profile's color, outside the grid
+   scroller so no grid math changes */
+.origin-banner {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px var(--sp-3);
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  background: color-mix(in srgb, var(--origin-color) 10%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--origin-color) 35%, transparent);
+}
+.origin-banner-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--origin-color);
+  flex-shrink: 0;
+}
+.origin-banner-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.origin-banner strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+
 .grid-msg {
   display: flex;
   align-items: center;
@@ -508,6 +539,26 @@
 }
 
 .ep-title {
+  font-weight: 600;
+}
+
+/* write target line — names the origin connection the commit lands on */
+.ep-target {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: calc(-1 * var(--sp-2));
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+.ep-target-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.ep-target strong {
+  color: var(--fg);
   font-weight: 600;
 }
 

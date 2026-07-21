@@ -65,7 +65,10 @@ interface ResultsState extends TabResult {
 
   setActive: (tabId: string) => void;
   clearTab: (tabId: string) => void;
-  run: (sqlOverride?: string, offset?: number) => Promise<void>;
+  /** opts.profileId pins the run to that profile instead of the rail-active
+   * one — post-write reloads must read the connection they wrote to; every
+   * other caller keeps rail semantics (the v0.6 contract) */
+  run: (sqlOverride?: string, offset?: number, opts?: { profileId?: string }) => Promise<void>;
   cancel: () => Promise<void>;
   setActiveStatement: (i: number) => void;
   /** patch one statement's rows (edits commit); tabId defaults to the active
@@ -185,9 +188,12 @@ export const useResults = create<ResultsState>((set, get) => ({
       ),
     })),
 
-  run: async (sqlOverride?: string, offset = 0) => {
+  run: async (sqlOverride?: string, offset = 0, opts?: { profileId?: string }) => {
     const conn = useConnections.getState();
-    const { activeProfileId } = conn;
+    // the profile this run EXECUTES on — everything downstream (session,
+    // history, executedProfileId stamp, disconnect reaping) reads this one
+    // variable, so the stamp can never claim a profile that didn't execute
+    const profileId = opts?.profileId ?? conn.activeProfileId;
     const sql = sqlOverride ?? conn.sql;
     // captured AT ENTRY, next to the executed sql — the snapshot block below
     // sits after awaits (session connect, confirms), and a mid-connect tab
@@ -196,7 +202,7 @@ export const useResults = create<ResultsState>((set, get) => ({
     const tabId = get().active;
     if (!tabId) return;
     const cur = get().byTab[tabId] ?? blankTab();
-    if (runInflight.has(tabId) || cur.running || !activeProfileId || !sql.trim()) return;
+    if (runInflight.has(tabId) || cur.running || !profileId || !sql.trim()) return;
     // a commit in flight builds PK locators against the CURRENT result set —
     // replacing it mid-commit could aim UPDATEs at the wrong rows
     {
@@ -209,7 +215,7 @@ export const useResults = create<ResultsState>((set, get) => ({
     // the first run in a fresh tab establishes its dedicated session — say so
     // instead of sitting silent for the tunnel handshake
     writeTab(set, tabId, { connecting: true });
-    const sessionId = await conn.ensureTabSession(activeProfileId, tabId);
+    const sessionId = await conn.ensureTabSession(profileId, tabId);
     writeTab(set, tabId, { connecting: false });
     if (!sessionId) {
       // no statements will ever arrive — without an error the pane sits on
@@ -260,7 +266,7 @@ export const useResults = create<ResultsState>((set, get) => ({
         `${danger.length === 1 ? "Statement has" : `${danger.length} statements have`} no WHERE clause`,
         render(),
       );
-      const primary = useConnections.getState().sessions[activeProfileId];
+      const primary = useConnections.getState().sessions[profileId];
       if (primary) {
         danger.forEach((stmt, i) => {
           const explain = (async (): Promise<number | null> => {
@@ -320,7 +326,7 @@ export const useResults = create<ResultsState>((set, get) => ({
       executedOffset: sqlOverride === undefined ? 0 : offset,
       notices: [],
       executedSessionId: sessionId,
-      executedProfileId: activeProfileId,
+      executedProfileId: profileId,
       globalError: null,
     });
     // this tab's stale editability + pending edits die with its old result set
@@ -407,7 +413,7 @@ export const useResults = create<ResultsState>((set, get) => ({
           writeTab(set, tabId, { totalMs: ev.total_ms });
           historyDone = true;
           void ipc
-            .historyAdd(activeProfileId, sql, ev.total_ms, historyRows, "ok")
+            .historyAdd(profileId, sql, ev.total_ms, historyRows, "ok")
             .catch((err) => console.error("history_add failed", err));
           break;
       }
@@ -427,8 +433,8 @@ export const useResults = create<ResultsState>((set, get) => ({
       );
       if (ranDdl) {
         const { useSchema } = await import("./schema");
-        const primary = useConnections.getState().sessions[activeProfileId];
-        if (primary) void useSchema.getState().fetch(activeProfileId, primary);
+        const primary = useConnections.getState().sessions[profileId];
+        if (primary) void useSchema.getState().fetch(profileId, primary);
         void import("./edits").then(({ useEdits }) => useEdits.getState().refreshMapsAfterDdl());
       }
     } catch (e) {
@@ -444,7 +450,7 @@ export const useResults = create<ResultsState>((set, get) => ({
         historyDone = true;
         void ipc
           .historyAdd(
-            activeProfileId,
+            profileId,
             sql,
             performance.now() - runStart,
             historyRows,
@@ -460,7 +466,7 @@ export const useResults = create<ResultsState>((set, get) => ({
         // reap the EXECUTED session only — sibling tabs on the profile keep
         // their live sessions (flipping the whole profile contradicted the
         // per-session reaping in markDisconnected)
-        useConnections.getState().markDisconnected(activeProfileId, sessionId);
+        useConnections.getState().markDisconnected(profileId, sessionId);
       }
     } finally {
       terminatedSessions.delete(sessionId);
