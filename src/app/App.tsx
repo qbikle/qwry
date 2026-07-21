@@ -79,17 +79,30 @@ export function App() {
   const [keysOpen, setKeysOpen] = useState(false);
   const [resizing, setResizing] = useState(false);
   const activeTabId = useTabs((s) => s.activeId);
-  // prod safe-mode: is the ACTIVE tab's session unlocked for writes?
-  const writeUnlocked = useConnections((s) => {
-    const pid = s.activeProfileId;
-    return pid && activeTabId ? !!s.writeTabs[skey(pid, activeTabId)] : false;
-  });
+  // origin of the active tab's CURRENT rows (results mirror the active tab) —
+  // a pinned tab can show rows from a connection other than the rail selection
+  const originPid = useResults((s) => s.executedProfileId);
   const editorFontSize = useSettings((s) => s.fontSize);
   const gridFontSize = useSettings((s) => s.gridFontSize);
 
   const activeProfile = profiles.find((p) => p.id === activeProfileId) ?? null;
   const connected = activeProfileId ? connState[activeProfileId] === "connected" : false;
-  const prodActive = !!activeProfile?.is_prod && connected;
+  const railProd = !!activeProfile?.is_prod && connected;
+  // prod ceremony keys on the ORIGIN too: when the rows came from a foreign
+  // prod connection, the chip binds to the ORIGIN session — the chip's verb is
+  // WRITES, and edits/imports commit to the origin while Run executes on the
+  // rail. Rail-only prod keeps the rail chip (Run still executes there).
+  const originProfile = originPid ? (profiles.find((p) => p.id === originPid) ?? null) : null;
+  const originProd = !!originPid && originPid !== activeProfileId && !!originProfile?.is_prod;
+  const prodActive = railProd || originProd;
+  const chipPid = originProd ? originPid : railProd ? activeProfileId : null;
+  const chipName = originProd
+    ? originProfile?.name || originProfile?.host || "production"
+    : activeProfile?.name || activeProfile?.host || "production";
+  // prod safe-mode: is the chip's session unlocked for writes on this tab?
+  const writeUnlocked = useConnections((s) =>
+    chipPid && activeTabId ? !!s.writeTabs[skey(chipPid, activeTabId)] : false,
+  );
 
   const crumbs: string[] = useMemo(() => {
     if (homeMode) return [homeMode === "edit" ? "Edit connection" : "Connections"];
@@ -210,20 +223,23 @@ export function App() {
     window.addEventListener("mouseup", onUp);
   };
 
-  // prod safe-mode chip: confirm, then lift read-only on THIS tab's session only
+  // prod safe-mode chip: confirm, then lift read-only on the chip's session —
+  // the ORIGIN session when the rows came from a foreign prod connection
   const toggleProdWrites = async () => {
-    const { activeProfileId: pid, setSessionWrites } = useConnections.getState();
+    const { setSessionWrites, profiles: profs } = useConnections.getState();
     const tabId = useTabs.getState().activeId;
+    const pid = chipPid;
     if (!pid || !tabId) return;
     if (writeUnlocked) {
       void setSessionWrites(pid, tabId, false); // re-locking needs no ceremony
       return;
     }
     const { confirmDanger } = await import("../stores/danger");
-    const name = useConnections.getState().profiles.find((p) => p.id === pid)?.name || "production";
+    const target = profs.find((p) => p.id === pid);
+    const name = target?.name || target?.host || "production";
     const ok = await confirmDanger(
       `Enable writes on ${name}?`,
-      "This tab's session drops the server-side read-only guard.\nEvery other tab stays read-only. Re-lock via the same chip.",
+      `This tab's ${name} session drops the server-side read-only guard.\nEvery other tab stays read-only. Re-lock via the same chip.`,
       "Enable writes",
     );
     if (ok) void setSessionWrites(pid, tabId, true);
@@ -679,7 +695,16 @@ export function App() {
 
   return (
     <div className="v2-shell">
-      {prodActive && <div className="prod-strip" title="Connected to PRODUCTION" />}
+      {prodActive && (
+        <div
+          className="prod-strip"
+          title={
+            railProd
+              ? "Connected to PRODUCTION"
+              : `This tab's rows & writes target PRODUCTION (${chipName})`
+          }
+        />
+      )}
 
       <div className="v2-titlebar" data-tauri-drag-region>
         <motion.span className="v2-breadcrumb" key={crumbs.join("›")} {...swapIn}>
@@ -691,18 +716,20 @@ export function App() {
             </span>
           ))}
         </motion.span>
-        {prodActive && (
+        {chipPid && (
           <button
             className={`prod-chip ${writeUnlocked ? "unlocked" : "locked"}`}
             title={
               writeUnlocked
-                ? "Writes ENABLED on this tab's session — click to re-lock"
-                : "PROD safe-mode: session is read-only at the server — click to enable writes for this tab"
+                ? `Writes ENABLED on this tab's ${chipName} session — click to re-lock`
+                : `PROD safe-mode: this tab's ${chipName} session is read-only at the server — click to enable writes`
             }
             onClick={() => void toggleProdWrites()}
           >
             {writeUnlocked ? <LockOpen size={10} /> : <Lock size={10} />}
-            {writeUnlocked ? "PROD · WRITES ON" : "PROD · READ-ONLY"}
+            {/* foreign origin wears its name — a bare PROD would read as the rail */}
+            {originProd ? `PROD · ${chipName}` : "PROD"}
+            {writeUnlocked ? " · WRITES ON" : " · READ-ONLY"}
           </button>
         )}
         <button

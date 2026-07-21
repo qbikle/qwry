@@ -43,7 +43,7 @@ const NULL_SENTENCE: Record<ImportNullMode, string> = {
  * came from — NEVER the rail-active profile or any fallback session: a rail
  * click mid-wizard must not redirect the import to a different database.
  * Absent or dead session → the caller refuses honestly. */
-function browseSession(): { sessionId: string; profileId: string } | null {
+function browseSession(): { tabId: string; sessionId: string; profileId: string } | null {
   const tabId = useTabs.getState().activeId;
   if (!tabId) return null;
   const rt = useResults.getState().byTab[tabId];
@@ -52,7 +52,9 @@ function browseSession(): { sessionId: string; profileId: string } | null {
   const alive = Object.values(useConnections.getState().tabSessions).includes(
     rt.executedSessionId,
   );
-  return alive ? { sessionId: rt.executedSessionId, profileId: rt.executedProfileId } : null;
+  return alive
+    ? { tabId, sessionId: rt.executedSessionId, profileId: rt.executedProfileId }
+    : null;
 }
 
 /** the commit-phase refusal when the file's stat no longer matches the
@@ -241,7 +243,9 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
         setReport(rep);
       } else {
         setCommitReport(rep);
-        if (rep.committed) useBrowser.getState().refresh();
+        // reload reads where the COPY landed — the import's bound origin,
+        // never the rail (refresh() alone follows the rail selection)
+        if (rep.committed) useBrowser.getState().reloadAfterWrite(ctx.tabId, ctx.profileId);
       }
     } catch (e) {
       const msg = errText(e).message;

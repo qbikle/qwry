@@ -150,6 +150,12 @@ interface BrowserState extends BrowseTab {
   cancelExactCount: () => void;
   loadMore: () => void;
   refresh: () => void;
+  /** post-write reload (insert / import): re-run the browse reading the
+   * connection the write landed on — under a different rail a plain run()
+   * would repaint from the rail's database, the committed rows would silently
+   * vanish and executedProfileId would flip; a backgrounded tab latches
+   * pageStale instead (refreshed on return, same as a mid-flight switch) */
+  reloadAfterWrite: (tabId: string, profileId: string | null) => void;
   /** commit-patch hook (called from edits.ts after a commit patches rows):
    * when any patched column is one of the PINNED keyset key columns, latch
    * the tab stale so the next loadMore re-runs instead of appending — a seek
@@ -201,9 +207,14 @@ function serverVersionNum(profileId: string | null): number | null {
   return useSchema.getState().snapshots[profileId]?.server_version_num ?? null;
 }
 
-/** keyset sort keys for the current browse, or null → offset fallback */
-function keysFor(table: TableInfo, chain: SortChain): KeysetKey[] | null {
-  return keysetKeys(table, chain, serverVersionNum(useConnections.getState().activeProfileId));
+/** keyset sort keys for the current browse, or null → offset fallback;
+ * profileId overrides the rail when the run itself is profile-pinned */
+function keysFor(table: TableInfo, chain: SortChain, profileId?: string): KeysetKey[] | null {
+  return keysetKeys(
+    table,
+    chain,
+    serverVersionNum(profileId ?? useConnections.getState().activeProfileId),
+  );
 }
 
 /** in-flight keyset page fetches, per tab */
@@ -339,10 +350,11 @@ function appendPage(
  * built from exactly these, so page seeks must reuse them verbatim — and
  * clears the stale/broken pagination latches (a fresh result set resets
  * both) plus the exact-count footer (the number no longer describes the new
- * result; an in-flight count is orphaned via its epoch). */
-function run(set: SetFn, s: BrowserState) {
+ * result; an in-flight count is orphaned via its epoch). profileId pins the
+ * run to that profile (post-write reloads); default = rail semantics. */
+function run(set: SetFn, s: BrowserState, profileId?: string) {
   if (!s.table) return;
-  const keys = keysFor(s.table, s.sortChain);
+  const keys = keysFor(s.table, s.sortChain, profileId);
   countEpoch.set(s.active, (countEpoch.get(s.active) ?? 0) + 1);
   writeBrowse(set, s.active, {
     pinnedKeys: keys,
@@ -362,6 +374,8 @@ function run(set: SetFn, s: BrowserState) {
       rawWhere: rawWhereArg(s),
       offset: s.jumpOffset,
     }),
+    0,
+    profileId ? { profileId } : undefined,
   );
 }
 
@@ -403,11 +417,21 @@ export const useBrowser = create<BrowserState>((set, get) => ({
 
   openTable: (t, initialFilters) => {
     const tabsApi = useTabs.getState();
-    // already open in a tab → focus it (and apply the requested filter)
+    const pid = useConnections.getState().activeProfileId;
+    // already open in THIS connection's workspace → focus it (and apply the
+    // requested filter). Scoped by profile: an unscoped match selected the
+    // OTHER connection's same-named table tab — its cached rows rendered
+    // under this connection's branding (identity lie), with no active tab in
+    // the strip. profile_id null = legacy tab, adopted on select.
     const existing = tabsApi.tabs.find(
-      (tb) => tb.kind === "table" && tb.table?.schema === t.schema && tb.table?.name === t.name,
+      (tb) =>
+        tb.kind === "table" &&
+        tb.table?.schema === t.schema &&
+        tb.table?.name === t.name &&
+        (tb.profile_id === pid || tb.profile_id === null),
     );
     if (existing) {
+      if (existing.profile_id === null) tabsApi.adoptTab(existing.id);
       tabsApi.select(existing.id);
       if (initialFilters) get().setFilters(initialFilters);
       return;
@@ -511,16 +535,19 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     const tabId = s.active;
     if (!s.table || s.counting) return;
     const conn = useConnections.getState();
-    const pid = conn.activeProfileId;
+    // count the database the ROWS came from — under a foreign rail, a
+    // rail-bound count would print another database's number directly
+    // beneath the origin's rows (same rule as loadMore/import binding)
+    const pid = useResults.getState().byTab[tabId]?.executedProfileId ?? conn.activeProfileId;
     // primary preferred (never queued behind the tab session's own page
-    // fetches); any live tab session works as fallback — same rule as the
-    // planner-estimate probe
+    // fetches); any live tab session on that profile works as fallback —
+    // same rule as the planner-estimate probe
     const sid = pid
       ? (conn.sessions[pid] ??
         Object.entries(conn.tabSessions).find(([k]) => k.startsWith(`${pid}::`))?.[1])
       : undefined;
     if (!sid) {
-      writeBrowse(set, tabId, { countError: "not connected" });
+      writeBrowse(set, tabId, { countError: "origin connection not available" });
       return;
     }
     const epoch = (countEpoch.get(tabId) ?? 0) + 1;
@@ -669,6 +696,15 @@ export const useBrowser = create<BrowserState>((set, get) => ({
 
   refresh: () => run(set, get()),
 
+  reloadAfterWrite: (tabId, profileId) => {
+    if (get().active !== tabId) {
+      writeBrowse(set, tabId, { pageStale: true });
+      return;
+    }
+    const rail = useConnections.getState().activeProfileId;
+    run(set, get(), profileId && profileId !== rail ? profileId : undefined);
+  },
+
   noteCommittedPatch: (tabId, cols) => {
     const t = get().byTab[tabId];
     if (!t?.pinnedKeys || t.pageStale) return;
@@ -679,16 +715,14 @@ export const useBrowser = create<BrowserState>((set, get) => ({
   insertRow: async (cols, values, tabId = get().active, table = get().table ?? undefined) => {
     if (!table) return { ok: false, error: "no table open" };
     // insert on the same session the browse query ran on (shares the tab txn)
-    const sessionId = useResults.getState().byTab[tabId]?.executedSessionId ?? null;
+    const rt = useResults.getState().byTab[tabId];
+    const sessionId = rt?.executedSessionId ?? null;
     if (!sessionId) return { ok: false, error: "not connected" };
     try {
       await ipc.insertRow(sessionId, table.schema, table.name, cols, values);
-      // reload so the new row shows — run() targets the ACTIVE tab; when
-      // focus moved mid-insert, mark the page stale instead so the return
-      // to this tab (syncActive) refreshes it — the committed row must never
-      // be silently invisible
-      if (get().active === tabId) run(set, get());
-      else writeBrowse(set, tabId, { pageStale: true });
+      // reload so the new row shows — reading the ORIGIN the INSERT landed on
+      // (entry-time executedProfileId: the profile that owns sessionId)
+      get().reloadAfterWrite(tabId, rt?.executedProfileId ?? null);
       return { ok: true };
     } catch (e) {
       return { ok: false, error: (e as { message?: string }).message ?? String(e) };

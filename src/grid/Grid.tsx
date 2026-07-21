@@ -1768,7 +1768,11 @@ export function Grid({
       // resetTab clears the tab's undo offer, so the fresh offer must only be
       // fetched after it (the old order let resetTab wipe it)
       if (useResults.getState().active === tabId) {
-        await useResults.getState().run(executedSql);
+        // the DELETE ran on the result's origin session — reload from the
+        // same profile, never the rail (write to A, repaint from B)
+        await useResults
+          .getState()
+          .run(executedSql, undefined, { profileId: executedProfileId ?? undefined });
       }
       if (executedProfileId) {
         const { refreshUndoOffer } = await import("../stores/edits");

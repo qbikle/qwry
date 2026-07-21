@@ -66,6 +66,9 @@ interface TabsState {
   openFileTab: (path: string, contents: string, mtimeMs?: number) => string;
   closeTab: (id: string) => void;
   select: (id: string) => void;
+  /** stamp a legacy tab (profile_id null) into the active workspace —
+   * adopt-on-touch, persisted; no-op for owned tabs or with no connection */
+  adoptTab: (id: string) => void;
   /** drag-reorder: move VISIBLE index `from` to sit at VISIBLE boundary `to` */
   moveTab: (from: number, to: number) => void;
   selectByIndex: (i: number) => void;
@@ -553,10 +556,30 @@ export const useTabs = create<TabsState>((set, get) => ({
   select: (id) => {
     const t = get().tabs.find((t) => t.id === id);
     if (!t) return;
+    // invariant: activeId is always a member of the visible strip — selecting
+    // a tab hidden under this workspace would render foreign state with no
+    // tab lit in the strip; refuse instead of silently leaking across
+    if (!isTabVisible(t, get().pinned, activePid())) {
+      // unconditional: a refused select in the field is the breadcrumb that
+      // finds the next unscoped-lookup bug (cheap — this path never fires
+      // in normal use)
+      console.error("select refused: tab not visible in the active workspace", id);
+      return;
+    }
     set({ activeId: id });
     localStorage.setItem("qwry.activeTab", id); // launch fallback
     rememberActive(activePid(), id);
     useConnections.getState().setSql(t.sql);
+  },
+
+  adoptTab: (id) => {
+    const pid = activePid();
+    const t = get().tabs.find((x) => x.id === id);
+    if (!t || t.profile_id !== null || !pid) return;
+    set((s) => ({
+      tabs: s.tabs.map((x) => (x.id === id ? { ...x, profile_id: pid } : x)),
+    }));
+    persist();
   },
 
   moveTab: (from, to) => {

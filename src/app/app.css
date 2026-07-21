@@ -453,6 +453,10 @@
   letter-spacing: 0.05em;
   padding: 2px 8px;
   cursor: pointer;
+  white-space: nowrap; /* a foreign origin's name rides in the label */
+  max-width: 260px; /* long profile names must not crowd the breadcrumb */
+  overflow: hidden;
+  text-overflow: ellipsis;
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
