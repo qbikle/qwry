@@ -1533,6 +1533,8 @@ export function Grid({
       if (editing) return; // cell editor owns the keyboard
       if (peekRow !== null) return; // row peek modal owns the keyboard
       if (record !== null) return; // record view modal owns the keyboard
+      if (draftPop !== null) return; // draft-cell pop owns the keyboard (CM
+      // targets are contenteditable — the tag check below never catches them)
       // embedded inputs (draft band, future controls) own their keys — the
       // grammar was eating Backspace/Tab/arrows and staging NULLs while typing
       const tag = (e.target as HTMLElement).tagName;

@@ -75,7 +75,9 @@ export function FindBar({ stmt }: { stmt: StatementState }) {
         spellCheck={false}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => {
-          e.stopPropagation();
+          // swallow only unmodified typing keys — ⌘/⌃ chords must bubble to
+          // the window shortcuts (⌘I, ⌘G step, …) or they die while finding
+          if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
           if (e.key === "Enter") {
             e.preventDefault();
             step(e.shiftKey ? -1 : 1);

@@ -95,8 +95,11 @@ export function RowPeek({
         className="rowpeek"
         {...popIn}
         // portals bubble through the REACT tree — without this, keys typed in
-        // the peek reach the grid underneath and seed type-to-edit
-        onKeyDown={(e) => e.stopPropagation()}
+        // the peek reach the grid underneath and seed type-to-edit. ⌘/⌃
+        // chords bubble on: the window shortcuts own those (LESSONS.md)
+        onKeyDown={(e) => {
+          if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
+        }}
       >
           <div className="rowpeek-head">
             <span className="rowpeek-title">

@@ -206,8 +206,11 @@ export function RecordView({
           className={`recordview${diff ? " rv-cmp" : ""}`}
           {...popIn}
           // portals bubble through the REACT tree — without this, keys typed
-          // here reach the grid underneath and seed type-to-edit
-          onKeyDown={(e) => e.stopPropagation()}
+          // here reach the grid underneath and seed type-to-edit. ⌘/⌃
+          // chords bubble on: the window shortcuts own those (LESSONS.md)
+          onKeyDown={(e) => {
+            if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
+          }}
         >
           <div className="rowpeek-head">
             <span className="rowpeek-title">
