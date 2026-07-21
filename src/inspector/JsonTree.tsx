@@ -584,9 +584,14 @@ export function JsonTree({
           missing
         </div>
       )}
-      <Ctx.Provider value={ctx}>
-        <Node k={null} value={json} path={[]} parentPath={[]} isArrayItem={false} depth={0} />
-      </Ctx.Provider>
+      {/* rows scroll in their own container so the search bar is a fixed
+          header by STRUCTURE — the sticky+mask approach fought the body's
+          padding and let rows paint above the bar */}
+      <div className="jt-scroll">
+        <Ctx.Provider value={ctx}>
+          <Node k={null} value={json} path={[]} parentPath={[]} isArrayItem={false} depth={0} />
+        </Ctx.Provider>
+      </div>
     </div>
   );
 }

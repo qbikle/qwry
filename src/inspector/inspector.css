@@ -342,11 +342,23 @@
 
 .jt-line {
   display: flex;
-  align-items: center;
+  /* top-aligned: a long wrapped value must not float its key to the block's
+     vertical center (the key reads detached, lines appear above it) */
+  align-items: flex-start;
   gap: 4px;
   cursor: pointer;
   border-radius: var(--radius-xs);
   padding: 0 3px;
+}
+/* chevrons re-center against the FIRST text line (line-height 1.6 × 12px) */
+.jt-line > svg {
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+.jt-line .jt-key,
+.jt-line .jt-brace,
+.jt-line .jt-pad {
+  flex-shrink: 0;
 }
 .jt-line:hover {
   background: var(--bg-hover);
@@ -410,9 +422,27 @@
   color: var(--fg-faint);
 }
 
-/* JSON tree search bar — pinned while the tree scrolls (it used to ride the
-   scroll and clip under the toolbar) */
+/* JSON tree: fixed search header + independently scrolling rows — the bar
+   never rides the scroll, structurally (no sticky, no masks) */
+.insp-body:has(> .json-tree) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.json-tree {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.jt-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: var(--sp-2);
+}
 .jt-search {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -421,22 +451,6 @@
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  position: sticky;
-  top: var(--sp-3);
-  z-index: 1;
-}
-/* opaque backdrop behind/above the pinned bar: covers the insp-body padding
-   band and the rounded-corner gaps so tree text scrolls UNDER, never through
-   (surfaces are opaque hex — safe as a mask) */
-.jt-search::before {
-  content: "";
-  position: absolute;
-  top: calc(var(--sp-3) * -1);
-  left: calc(var(--sp-3) * -1);
-  right: calc(var(--sp-3) * -1);
-  bottom: -5px;
-  background: var(--bg-panel);
-  z-index: -1;
 }
 .jt-search:focus-within {
   border-color: var(--accent);
