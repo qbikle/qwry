@@ -97,7 +97,7 @@ export function DbSwitcher({ profileId, dbname, name }: { profileId: string; dbn
         <motion.div className="dbsw-pop" {...menuIn}>
           {err ? (
             <div className="dbsw-msg dbsw-err" title={err}>
-              couldn't list databases: {err.slice(0, 120)}
+              Couldn’t list databases: {err.slice(0, 120)}
             </div>
           ) : dbs === null ? (
             <div className="dbsw-msg">Loading…</div>

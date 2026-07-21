@@ -80,7 +80,8 @@ function cteMenuItem(view: EditorView): MenuNode[] {
   return [
     {
       kind: "item",
-      label: `Run CTE ${name} Standalone`,
+      label: "Run CTE Standalone",
+      hint: name,
       onSelect: () => {
         const sql = cteStandaloneSql(stmt, parsed, idx);
         void useResults.getState().run(sql, 0);

@@ -321,7 +321,7 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
           {runs.length === 0 && (
             <div className="history-empty">
               {fetchError
-                ? "couldn't load history"
+                ? "Couldn’t load history"
                 : query || statusFilter !== "all" || profileFilter
                   ? "No matches"
                   : "No queries yet — queries you run appear here"}

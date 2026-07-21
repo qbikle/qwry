@@ -86,10 +86,10 @@ export function FindBar({ stmt }: { stmt: StatementState }) {
         }}
       />
       <span className="find-count">{count}</span>
-      <button className="find-btn" title="Previous (⇧⏎)" onClick={() => step(-1)}>
+      <button className="find-btn" title="Previous ⇧⏎" onClick={() => step(-1)}>
         <ChevronUp size={13} />
       </button>
-      <button className="find-btn" title="Next (⏎)" onClick={() => step(1)}>
+      <button className="find-btn" title="Next ⏎" onClick={() => step(1)}>
         <ChevronDown size={13} />
       </button>
       {stmt.capped && (
@@ -100,7 +100,7 @@ export function FindBar({ stmt }: { stmt: StatementState }) {
           loaded {stmt.rows.length.toLocaleString()} of {stmt.rowCount.toLocaleString()} rows
         </span>
       )}
-      <button className="find-btn" title="Close (Esc)" onClick={close}>
+      <button className="find-btn" title="Close esc" onClick={close}>
         <X size={13} />
       </button>
     </div>

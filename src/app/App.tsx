@@ -239,7 +239,7 @@ export function App() {
     const name = target?.name || target?.host || "production";
     const ok = await confirmDanger(
       `Enable Writes on ${name}?`,
-      `This tab's ${name} session drops the server-side read-only guard.\nEvery other tab stays read-only. Re-lock via the same chip.`,
+      `This tab’s ${name} session drops the server-side read-only guard.\nEvery other tab stays read-only. Re-lock via the same chip.`,
       "Enable Writes",
     );
     if (ok) void setSessionWrites(pid, tabId, true);
@@ -701,7 +701,7 @@ export function App() {
           title={
             railProd
               ? "Connected to production"
-              : `This tab's rows and writes target production — ${chipName}`
+              : `This tab’s rows and writes target production — ${chipName}`
           }
         />
       )}
@@ -721,8 +721,8 @@ export function App() {
             className={`prod-chip ${writeUnlocked ? "unlocked" : "locked"}`}
             title={
               writeUnlocked
-                ? `Writes enabled on this tab's ${chipName} session — click to re-lock`
-                : `Production safe mode: this tab's ${chipName} session is read-only at the server — click to enable writes`
+                ? `Writes enabled on this tab’s ${chipName} session — click to re-lock`
+                : `Production safe mode: this tab’s ${chipName} session is read-only at the server — click to enable writes`
             }
             onClick={() => void toggleProdWrites()}
           >

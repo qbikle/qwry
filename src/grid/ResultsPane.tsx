@@ -288,7 +288,7 @@ function RowCount({
   if (stmt.capped)
     return (
       <span>
-        {n.toLocaleString()} of {stmt.rowCount.toLocaleString()} rows (capped)
+        {n.toLocaleString()} of {stmt.rowCount.toLocaleString()} rows · capped
       </span>
     );
   if (browser && stmt.done && n >= limit)
@@ -384,7 +384,7 @@ function TxChip() {
         // tokio-postgres serializes on the single session connection — a
         // ROLLBACK behind a running query would silently queue ("frozen app")
         disabled={running}
-        title={running ? "Waiting for the running query — cancel it first (⌘.)" : "Roll back this tab's open transaction"}
+        title={running ? "Waiting for the running query — cancel it first (⌘.)" : "Roll back this tab’s open transaction"}
         onClick={() => void rollback()}
       >
         ROLLBACK

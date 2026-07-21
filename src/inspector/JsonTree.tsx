@@ -539,10 +539,10 @@ export function JsonTree({
                   showing the previous query's count would be a lie */}
               {input !== query ? "…" : hits.length === 0 ? "0/0" : `${hitIdx + 1}/${hits.length}`}
             </span>
-            <button className="jt-nav" title="Previous (⇧⏎)" onClick={() => step(-1)}>
+            <button className="jt-nav" title="Previous ⇧⏎" onClick={() => step(-1)}>
               <ArrowUp size={12} />
             </button>
-            <button className="jt-nav" title="Next (⏎)" onClick={() => step(1)}>
+            <button className="jt-nav" title="Next ⏎" onClick={() => step(1)}>
               <ArrowDown size={12} />
             </button>
             <button className="jt-nav" title="Clear" onClick={() => setInput("")}>

@@ -234,7 +234,7 @@ export function RecordView({
                 <button
                   className="rv-navbtn"
                   disabled={viewRows[0] <= 0}
-                  title="Previous row (⌘↑)"
+                  title="Previous row ⌘↑"
                   onClick={() => onStep(-1)}
                 >
                   <ChevronLeft size={14} />
@@ -242,7 +242,7 @@ export function RecordView({
                 <button
                   className="rv-navbtn"
                   disabled={viewRows[0] >= rowCount - 1}
-                  title="Next row (⌘↓)"
+                  title="Next row ⌘↓"
                   onClick={() => onStep(1)}
                 >
                   <ChevronRight size={14} />
@@ -344,7 +344,7 @@ export function RecordView({
                     >
                       {renderValue(v, pretty, !!pe0?.useDefault)}
                       {truncated0 && (
-                        <span className="vgrid-trunc rv-truncbtn" title="Truncated — open full value in inspector">
+                        <span className="vgrid-trunc rv-truncbtn" title="Truncated — open the full value in the Inspector">
                           {" "}…⧉
                         </span>
                       )}

@@ -61,3 +61,21 @@ is law, same as tokens.css — check every new string against it.
 
 Not a style straitjacket for docs/comments/commits — those are engineer-facing
 and follow normal prose. This file governs ONLY strings a user sees in the app.
+
+## Identifiers inside chrome (the data/chrome boundary)
+
+User data (column names, table names, CTE names, file names) never sits bare
+inside a Title Case label — it reads as a typo in the sentence. Three
+sanctioned forms:
+
+1. **Context supplies the object** (preferred): the menu/dialog already belongs
+   to the thing — `Sort Ascending`, `Hide Column`, not `Sort quantity Ascending`.
+2. **The mono hint slot**: when the name aids confirmation, it rides
+   right-aligned in mono (`Copy Name   quantity`).
+3. **Inline only to disambiguate siblings**: `Open Referenced orders →` next to
+   `Open Referenced users →` keeps names — dropping them would merge the items.
+   Whole-label identifiers (submenu rows that ARE the identifier) are data
+   items, fine as-is.
+
+General form: every string is chrome or data; when data appears inside chrome
+it wears data's clothes (mono, hint slot, quotes) or doesn't appear.
