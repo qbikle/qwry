@@ -1,4 +1,4 @@
-# COPY.md — the text register system
+# WRITING.md — the text register system (UX writing law)
 
 Every user-facing string belongs to exactly one register. Registers have fixed
 rules. A string that follows its register reads polished; strings that drift

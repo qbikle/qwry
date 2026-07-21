@@ -59,10 +59,10 @@ the user) violates one, say so and cite it; the pushback is wanted.
 ## Process
 
 10. **Polish is consistency systems, not good individual decisions.** Tokens,
-    copy registers (COPY.md), the z-ladder, one easing, one term per concept.
+    copy registers (WRITING.md), the z-ladder, one easing, one term per concept.
     Each drift is invisible alone and corrosive together. Multi-session work
     WILL drift unless conventions are written law — DECISIONS.md worked;
-    strings had no law until COPY.md and it showed.
+    strings had no law until WRITING.md and it showed.
 11. **One review is not review.** A second pass with a different lens found an
     S1 the first pass missed on the same diff. Independence and a changed
     lens beat added effort on one pass. Reviewers that can execute (repro
