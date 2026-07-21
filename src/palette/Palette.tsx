@@ -248,7 +248,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                   const { confirmDanger } = await import("../stores/danger");
                   const ok = await confirmDanger(
                     `Disconnect ${name}?`,
-                    `Closes every tab's session on this connection${
+                    `Closes every tab’s session on this connection${
                       pending > 0 ? ` — ${pending} staged edit${pending === 1 ? "" : "s"} will be lost` : ""
                     }. Open transactions roll back.`,
                     "Disconnect",

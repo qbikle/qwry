@@ -80,7 +80,7 @@ export const useExplain = create<ExplainState>((set) => ({
     const { splitStatementSpans } = await import("../editor/statements");
     if (splitStatementSpans(sql).some((sp) => isMutating(sql.slice(sp.from, sp.to)))) {
       const ok = await confirmDanger(
-        "EXPLAIN ANALYZE executes the statement",
+        "EXPLAIN ANALYZE Executes the Statement",
         `This will actually run:\n\n${sql.trim().slice(0, 400)}`,
       );
       if (!ok) return;

@@ -5,8 +5,8 @@ import "./app.css";
 
 /** quotes + small thoughts for the zero-tab zen screen — DB-flavored calm */
 const THOUGHTS = [
-  "The best query is the one you didn't have to run.",
-  "NULL is not nothing. It's the unknown, politely labeled.",
+  "The best query is the one you didn’t have to run.",
+  "NULL is not nothing. It’s the unknown, politely labeled.",
   "Somewhere, a sequential scan is becoming an index scan.",
   "An empty result set is still an answer.",
   "Normalize until it hurts, denormalize until it works.",
@@ -14,14 +14,14 @@ const THOUGHTS = [
   "Every table was once an idea someone believed in.",
   "ROLLBACK is just the database forgiving you.",
   "A transaction is a promise. COMMIT keeps it.",
-  "Rest. The autovacuum is working so you don't have to.",
+  "Rest. The autovacuum is working so you don’t have to.",
   "Deleted tabs, like deleted rows, live on in the WAL of memory.",
   "EXPLAIN before you assume.",
   "The planner already knows. Ask it.",
   "Zero tabs. Zero pending edits. Inner peace.",
   "Even a LEFT JOIN keeps what matters on the left.",
   "Breathe in. VACUUM FULL. Breathe out.",
-  "There is no cloud — just someone else's Postgres.",
+  "There is no cloud — just someone else’s Postgres.",
   "Your indexes are only as good as your WHERE clauses.",
   "A slow query is a story about your data waiting to be read.",
   "SELECT calm FROM chaos WHERE focus IS NOT NULL;",
@@ -29,7 +29,7 @@ const THOUGHTS = [
   "The empty page is the fastest page.",
   "First, make it correct. The grid never lies.",
   "Somewhere between BEGIN and COMMIT, everything is possible.",
-  "Idle in transaction is a state of mind. Don't stay in it.",
+  "Idle in transaction is a state of mind. Don’t stay in it.",
 ];
 
 /** monochrome flow-field: a sheet of thin drifting lines, amplitude breathing

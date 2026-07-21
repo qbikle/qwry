@@ -130,7 +130,7 @@ async function liveSessionId(tabId: string): Promise<string | typeof DECLINED | 
         // transaction died with it; writing against current state needs consent
         const { confirmDanger } = await import("./danger");
         const ok = await confirmDanger(
-          "Connection was rebuilt",
+          "Connection Was Rebuilt",
           "The connection this result ran on was rebuilt (any open transaction is gone).\nCommit against the current database state?",
           "Commit",
         );

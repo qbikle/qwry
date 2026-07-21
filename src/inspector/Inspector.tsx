@@ -317,7 +317,7 @@ export function Inspector() {
               </button>
             </>
           ) : editMap === "unavailable" || (editMeta && editMeta.table_oid === 0) ? (
-            "showing first 8KB — full value unavailable (result not mapped to a table)"
+            "showing first 8KB — full value unavailable · result not mapped to a table"
           ) : (
             "Loading full value… editing disabled until loaded"
           )}

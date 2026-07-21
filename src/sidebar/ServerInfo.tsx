@@ -20,12 +20,12 @@ const INFO_SQL = `SELECT
 const LABELS = [
   "Server",
   "Encoding",
-  "Time zone",
+  "Time Zone",
   "search_path",
-  "Database size",
+  "Database Size",
   "Database",
   "User",
-  "Listening on",
+  "Address",
 ];
 
 /** ⓘ next to the DB switcher — one-shot server facts (read-only catalog calls) */
@@ -51,7 +51,7 @@ export function ServerInfo({ profileId }: { profileId: string }) {
       conn.sessions[profileId] ??
       Object.entries(conn.tabSessions).find(([k]) => k.startsWith(`${profileId}::`))?.[1];
     if (!sid) {
-      setError("not connected");
+      setError("Not connected");
       return;
     }
     let stale = false;

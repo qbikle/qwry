@@ -318,7 +318,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
           </span>
           <span
             className="imp-conn"
-            title="The connection this import writes to — the browse tab's session, never the rail selection"
+            title="The connection this import writes to — the browse tab’s session, never the rail selection"
           >
             {connName ?? "no session"}
           </span>
@@ -533,7 +533,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                     ? // once every row streamed, validate is bisecting the failed
                       // batch — say so instead of freezing the bar at 100%
                       progress && progress.total > 0 && progress.processed >= progress.total
-                      ? "locating failed rows…"
+                      ? "Locating failed rows…"
                       : "Validating — dry run, always rolls back…"
                     : "Importing…"}
                   {progress && (
@@ -605,7 +605,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                     ))}
                     {issues.more_errors && (
                       <div className="imp-issue imp-issue-more">
-                        …and possibly more (stopped at {issues.errors.length})
+                        …and possibly more — stopped at {issues.errors.length}
                       </div>
                     )}
                   </div>

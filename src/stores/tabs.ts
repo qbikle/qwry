@@ -254,7 +254,7 @@ async function confirmBulkClose(ids: string[]): Promise<boolean> {
     }),
   ]).size;
   return confirmDanger(
-    `Close ${n} tab${n === 1 ? "" : "s"} with unsaved changes?`,
+    `Close ${n} Tab${n === 1 ? "" : "s"} with Unsaved Changes?`,
     detail,
     dirty > 0 ? "Discard and Close" : "Close Anyway",
   );
@@ -371,7 +371,7 @@ export const useTabs = create<TabsState>((set, get) => ({
         // say so instead of silently discarding the read
         void import("./danger").then(({ confirmDanger }) =>
           confirmDanger(
-            "File changed on disk",
+            "File Changed on Disk",
             `${path}\n\nThe tab keeps your unsaved version — the newer disk contents were not loaded. ⌘⇧S will ask before overwriting them.`,
             "OK",
           ),
@@ -729,8 +729,8 @@ export async function openFilePaths(paths: string[]): Promise<void> {
       if (stat && stat.size > OPEN_REFUSE_BYTES) {
         const { confirmDanger } = await import("./danger");
         await confirmDanger(
-          "File too large",
-          `${path}\nis ${fmtMb(stat.size)} — qwry can't open files over 64 MB.`,
+          "File Too Large",
+          `${path}\nis ${fmtMb(stat.size)} — qwry can’t open files over 64 MB.`,
           "OK",
         );
         continue;
@@ -738,7 +738,7 @@ export async function openFilePaths(paths: string[]): Promise<void> {
       if (stat && stat.size > OPEN_CONFIRM_BYTES) {
         const { confirmDanger } = await import("./danger");
         const ok = await confirmDanger(
-          "Large file",
+          "Large File",
           `${path}\nis ${fmtMb(stat.size)} — the editor may be slow. Open anyway?`,
           "Open",
         );
@@ -749,7 +749,7 @@ export async function openFilePaths(paths: string[]): Promise<void> {
     } catch (e) {
       console.error("open file failed", path, e);
       const { confirmDanger } = await import("./danger");
-      await confirmDanger("Couldn't open file", `${path}\n${String(e)}`, "OK");
+      await confirmDanger("Couldn’t Open File", `${path}\n${String(e)}`, "OK");
     }
   }
 }
@@ -791,7 +791,7 @@ export async function saveActiveToFile(): Promise<void> {
     if (stat && stat.mtime_ms !== tab.file_mtime_ms) {
       const { confirmDanger } = await import("./danger");
       const ok = await confirmDanger(
-        "File changed on disk",
+        "File Changed on Disk",
         `${dest}\nchanged on disk since you opened it — overwrite the newer version?`,
         "Overwrite",
       );
@@ -803,7 +803,7 @@ export async function saveActiveToFile(): Promise<void> {
   } catch (e) {
     console.error("save file failed", dest, e);
     const { confirmDanger } = await import("./danger");
-    await confirmDanger("Couldn't save file", `${dest}\n${String(e)}`, "OK");
+    await confirmDanger("Couldn’t Save File", `${dest}\n${String(e)}`, "OK");
     return;
   }
   // re-stat AFTER the write — the fresh mtime is the new conflict baseline

@@ -658,7 +658,7 @@ function BrowseFooter({
           title="Exact count over the current WHERE — click to re-count"
           onClick={() => void runExactCount()}
         >
-          {exactCount.toLocaleString()} rows{whereActive ? " (filtered)" : ""}
+          {exactCount.toLocaleString()} rows{whereActive ? " · filtered" : ""}
         </button>
       ) : (
         <button
@@ -684,7 +684,7 @@ function BrowseFooter({
       {jumpOffset > 0 && (
         <span
           className="tbf-jumpchip"
-          title="The result starts at this row (⌘L jump) — × returns to the top"
+          title="The result starts at this row (⌘L) — × returns to the top"
         >
           from row {(jumpOffset + 1).toLocaleString()}
           <button className="tbf-x" onClick={clearJump}>
@@ -710,7 +710,7 @@ function BrowseFooter({
           onBlur={onJumpClose}
         />
       ) : (
-        <button className="tbf-jumpbtn" title="Jump to row ⌘L" onClick={onJumpOpen}>
+        <button className="tbf-jumpbtn" title="Go to row ⌘L" onClick={onJumpOpen}>
           Go to Row…
         </button>
       )}

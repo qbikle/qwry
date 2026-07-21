@@ -50,6 +50,9 @@
 
 .ctx-hint {
   color: var(--fg-faint);
+  /* hints carry identifiers (column/CTE names) and shortcut glyphs — both are
+     data-register, both wear mono (WRITING.md: data never dresses as chrome) */
+  font-family: var(--font-mono);
   font-size: var(--text-xs);
 }
 .ctx-item.hot .ctx-hint {

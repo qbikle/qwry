@@ -22,13 +22,13 @@ function Node({ node, total, depth }: { node: PlanNode; total: number; depth: nu
           {misestimate && (
             <span
               className="ex-mis"
-              title={`planner estimated ${node.planRows.toLocaleString()} rows, got ${node.actualRows.toLocaleString()}`}
+              title={`Planner estimated ${node.planRows.toLocaleString()} rows, got ${node.actualRows.toLocaleString()}`}
             >
               est ⚠
             </span>
           )}
         </div>
-        <div className="ex-rows" title="actual rows (plan rows)">
+        <div className="ex-rows" title="Actual rows (plan rows)">
           {node.actualRows.toLocaleString()}
           <span className="ex-plan-rows"> ({node.planRows.toLocaleString()})</span>
         </div>
@@ -36,7 +36,7 @@ function Node({ node, total, depth }: { node: PlanNode; total: number; depth: nu
           <div
             className="ex-bar"
             style={{ width: `${Math.max(0.5, selfPct)}%` }}
-            title={`self ${node.selfMs.toFixed(2)}ms of ${total.toFixed(2)}ms`}
+            title={`Self ${node.selfMs.toFixed(2)}ms of ${total.toFixed(2)}ms`}
           />
         </div>
         <div className="ex-ms">{node.selfMs.toFixed(1)}ms</div>
@@ -65,7 +65,7 @@ export function ExplainView() {
             execution {executionMs.toFixed(1)}ms · planning {planningMs.toFixed(1)}ms
           </span>
         )}
-        <button className="icon-btn" title="Close (esc)" onClick={close}>
+        <button className="icon-btn" title="Close esc" onClick={close}>
           <X size={14} />
         </button>
       </div>
@@ -75,9 +75,11 @@ export function ExplainView() {
       {root && (
         <div className="ex-tree">
           <div className="ex-row ex-head">
-            <div className="ex-label">node</div>
-            <div className="ex-rows">rows (est)</div>
-            <div className="ex-bar-wrap">self time</div>
+            <div className="ex-label">Node</div>
+            <div className="ex-rows" title="Actual rows (plan rows)">
+              Rows
+            </div>
+            <div className="ex-bar-wrap">Self Time</div>
             <div className="ex-ms" />
           </div>
           <Node node={root} total={executionMs} depth={0} />

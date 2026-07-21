@@ -233,7 +233,7 @@ pub fn run() {
                         handle
                             .dialog()
                             .message(&message)
-                            .title("qwry can't start")
+                            .title("qwry Can’t Start")
                             .kind(MessageDialogKind::Error)
                             .blocking_show();
                         handle.exit(1);

@@ -415,7 +415,7 @@ function CellEditor({
       {kind !== "bool" && (
         <button
           className="vgrid-nullbtn"
-          title="Set NULL (⌘⇧⌫)"
+          title="Set NULL ⌘⇧⌫"
           onMouseDown={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -429,7 +429,7 @@ function CellEditor({
       {kind === "text" && fk && (
         <button
           className="vgrid-fkbtn"
-          title={`Pick from ${fk.table} (⌘↓)`}
+          title={`Pick from ${fk.table} ⌘↓`}
           onMouseDown={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -1042,7 +1042,7 @@ export function Grid({
       const truncFlash = () => {
         if (truncCount > 0)
           flashReadOnlyReason(
-            `${truncCount} truncated cell${truncCount === 1 ? "" : "s"} copied as 8KB prefix — open in inspector for full values`,
+            `${truncCount} truncated cell${truncCount === 1 ? "" : "s"} copied as 8KB prefix — open in the Inspector for full values`,
           );
       };
       // the selection rect is view-space — resolve through the sort/reorder
@@ -2500,7 +2500,7 @@ export function Grid({
               <div
                 className="vgrid-draft-corner"
                 style={{ width: ROWNUM_W, height: DRAFT_H }}
-                title="⌘↵ insert · Esc cancel"
+                title="⌘↵ insert · esc cancel"
               >
                 <Plus size={13} />
               </div>
@@ -2851,9 +2851,12 @@ export function Grid({
               onSelect: () => void copyCue(cols[headerMenu.dataC]?.name ?? ""),
             },
             { kind: "sep" },
+            // identifier register: the menu belongs to the column it opened
+            // from — the name inlined in Title Case labels read as chrome
+            // (WRITING.md); it rides the mono hint slot where needed
             {
               kind: "item",
-              label: `Sort ${cols[headerMenu.dataC]?.name ?? ""} Ascending`,
+              label: "Sort Ascending",
               onSelect: () => toggleSortTo(headerMenu.dataC, "asc"),
             },
             {
@@ -2875,7 +2878,8 @@ export function Grid({
             { kind: "sep" },
             {
               kind: "item",
-              label: `Hide Column ${cols[headerMenu.dataC]?.name ?? ""}`,
+              label: "Hide Column",
+              hint: cols[headerMenu.dataC]?.name ?? "",
               // hiding the LAST visible column would leave an unusable grid
               disabled: viewColLen <= 1,
               onSelect: () => {

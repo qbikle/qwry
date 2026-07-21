@@ -222,7 +222,7 @@ export const useResults = create<ResultsState>((set, get) => ({
       // "Loading table…" forever once the connect toast expires
       writeTab(set, tabId, {
         globalError: {
-          message: "couldn't establish a session — check the connection",
+          message: "couldn’t establish a session — check the connection",
           position: null,
           code: null,
         },
@@ -240,9 +240,9 @@ export const useResults = create<ResultsState>((set, get) => ({
       if (pendingN > 0) {
         const { confirmDanger } = await import("./danger");
         const ok = await confirmDanger(
-          `Discard ${pendingN} staged edit${pendingN === 1 ? "" : "s"}?`,
+          `Discard ${pendingN} Staged Edit${pendingN === 1 ? "" : "s"}?`,
           "Re-running replaces this result set; uncommitted cell edits will be lost.\nCommit with ⌘S first to keep them.",
-          "Discard & run",
+          "Discard and Run",
         );
         if (!ok) {
           runInflight.delete(tabId);
@@ -263,7 +263,7 @@ export const useResults = create<ResultsState>((set, get) => ({
       const est: string[] = danger.map(() => "≈ estimating…");
       const render = () => danger.map((stmt, i) => `${est[i]}\n${stmt}`).join("\n\n");
       const { done, update } = confirmDangerLive(
-        `${danger.length === 1 ? "Statement has" : `${danger.length} statements have`} no WHERE clause`,
+        `${danger.length === 1 ? "Statement Has" : `${danger.length} Statements Have`} No WHERE Clause`,
         render(),
       );
       const primary = useConnections.getState().sessions[profileId];
@@ -500,11 +500,11 @@ export const useResults = create<ResultsState>((set, get) => ({
       const { confirmDanger } = await import("./danger");
       const inTx = entry ? !!conns.txTabs[entry[0]] : false;
       const ok = await confirmDanger(
-        "Cancel didn't stop the query",
-        `${msg}\n\nTerminate the server-side query (pg_terminate_backend) and force-disconnect this tab's session? A fresh session is created on the next run.${
+        "Cancel Didn’t Stop the Query",
+        `${msg}\n\nTerminate the server-side query (pg_terminate_backend) and force-disconnect this tab’s session? A fresh session is created on the next run.${
           inTx ? "\n\nThis tab has an open transaction — it will be rolled back." : ""
         }`,
-        "Terminate & disconnect",
+        "Terminate and Disconnect",
       );
       if (!ok) return;
       terminatedSessions.add(sessionId); // history logs the fallout as a cancel

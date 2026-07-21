@@ -542,7 +542,7 @@ export async function confirmTxRollback(
   if (n === 0) return true;
   const { confirmDanger } = await import("./danger");
   return confirmDanger(
-    `Open transaction${n === 1 ? "" : "s"} on ${n} tab${n === 1 ? "" : "s"}`,
+    `Open Transaction${n === 1 ? "" : "s"} on ${n} Tab${n === 1 ? "" : "s"}`,
     "Uncommitted work in open transactions will be rolled back.",
     confirmLabel,
   );
