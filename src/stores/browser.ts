@@ -700,7 +700,9 @@ export const useBrowser = create<BrowserState>((set, get) => ({
   cancelDraft: () => writeBrowse(set, get().active, { draftRow: null, draftError: null }),
   setDraftCell: (col, cell) =>
     writeBrowse(set, get().active, (t) =>
-      t.draftRow ? { draftRow: { ...t.draftRow, [col]: cell } } : {},
+      // editing clears a pre-check error — "required: a" must not sit red
+      // while the user is filling a
+      t.draftRow ? { draftRow: { ...t.draftRow, [col]: cell }, draftError: null } : {},
     ),
 
   commitDraft: async () => {
@@ -768,6 +770,25 @@ async function commitDraftInner(
     if (missing.length > 0) {
       writeBrowse(set, tabId, {
         draftError: `required (NOT NULL, no default): ${missing.join(", ")}`,
+      });
+      return;
+    }
+    // the loop stages from the LIVE column list; a draft cell whose column
+    // was dropped/renamed/made-auto since the tab opened would silently
+    // vanish from the INSERT while the band still shows it — refuse loudly
+    // instead (frozen-auto cells can't hold content, setters never write them)
+    const stagedSet = new Set(cols);
+    const frozenAuto = new Set(
+      s.table!.columns
+        .filter((c) => c.identity === "a" || c.generated === "s" || c.name === "ctid")
+        .map((c) => c.name),
+    );
+    const gone = Object.entries(draft)
+      .filter(([n, c]) => (c.state || c.text !== "") && !stagedSet.has(n) && !frozenAuto.has(n))
+      .map(([n]) => n);
+    if (gone.length > 0) {
+      writeBrowse(set, tabId, {
+        draftError: `column${gone.length === 1 ? "" : "s"} changed or removed since this tab opened (${gone.join(", ")}) — reopen the table`,
       });
       return;
     }

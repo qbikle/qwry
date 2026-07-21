@@ -800,6 +800,10 @@ export function Grid({
     const m = draftMeta.get(name);
     return m?.identity === "a" || m?.generated === "s";
   };
+  // '' is only a value for scalar text-family columns (anchored: a bare
+  // prefix matched "text[]", where '' is a malformed array literal)
+  const textFamily = (type: string | undefined) =>
+    !type || /^(text|citext|name|"char"|character varying|character)(\(\d+\))?$/.test(type);
   const draftPlaceholder = (name: string) => {
     const m = draftMeta.get(name);
     if (!m) return "DEFAULT";
@@ -2537,7 +2541,7 @@ export function Grid({
                           title={
                             multiline
                               ? "Multiline value — click to edit"
-                              : `right-click: NULL / empty / DEFAULT${draftMeta.get(name)?.default ? ` · default = ${draftMeta.get(name)!.default}` : ""}`
+                              : `right-click: NULL${textFamily(draftMeta.get(name)?.type) ? " / empty" : ""} / DEFAULT${draftMeta.get(name)?.default ? ` · default = ${draftMeta.get(name)!.default}` : ""}`
                           }
                           onMouseDown={
                             multiline
@@ -2631,16 +2635,55 @@ export function Grid({
                             const row0 =
                               parsed?.[0] ?? text.replace(/\r/g, "").split("\n")[0].split("\t");
                             if (row0.length > 1) {
-                              const values = row0;
+                              // a COPIED ROW carries the auto columns' values
+                              // too (identity/generated/ctid are ordinary
+                              // data on ⌘C). Pasting a full row at the band's
+                              // first cell must align from view 0 with autos
+                              // CONSUMING their value — skipping without
+                              // consuming shifted every value one column left
+                              // (silent wrong-column data). Partial pastes
+                              // keep the anchored spread.
+                              const fullRow =
+                                colAt(vc.index) === firstDraftCol && row0.length === viewColLen;
                               let vi = 0;
-                              for (let view = vc.index; view < viewColLen && vi < values.length; view++) {
+                              let autosConsumed = 0;
+                              let autosSpanned = 0;
+                              for (
+                                let view = fullRow ? 0 : vc.index;
+                                view < viewColLen && vi < row0.length;
+                                view++
+                              ) {
                                 const cn = cols[colAt(view)].name;
-                                if (draftAuto(cn)) continue;
-                                const v = values[vi];
+                                if (draftAuto(cn)) {
+                                  if (fullRow) {
+                                    vi++;
+                                    autosConsumed++;
+                                  } else {
+                                    autosSpanned++;
+                                  }
+                                  continue;
+                                }
+                                const v = row0[vi];
                                 vi++;
                                 if (v === "") continue;
                                 setDraftCell(cn, { text: v });
                               }
+                              // never silent: dropped/redirected values are
+                              // the difference between what was copied and
+                              // what landed
+                              const dropped = row0.length - vi;
+                              const notes = [
+                                autosConsumed > 0
+                                  ? `${autosConsumed} value${autosConsumed === 1 ? "" : "s"} for auto column${autosConsumed === 1 ? "" : "s"} ignored`
+                                  : null,
+                                autosSpanned > 0
+                                  ? `${autosSpanned} auto column${autosSpanned === 1 ? "" : "s"} skipped`
+                                  : null,
+                                dropped > 0
+                                  ? `${dropped} trailing value${dropped === 1 ? "" : "s"} didn't fit`
+                                  : null,
+                              ].filter(Boolean);
+                              if (notes.length > 0) flashReadOnlyReason(notes.join(" · "));
                               return;
                             }
                             // ONE value (a single quoted field unwraps; raw
@@ -2692,7 +2735,7 @@ export function Grid({
                               cell.state === "null" ? "vgrid-nullchip draft" : "vgrid-emptychip draft"
                             }
                           >
-                            {cell.state === "null" ? "NULL" : "EMPTY"}
+                            {cell.state === "null" ? "NULL" : "∅ empty"}
                           </span>
                         )}
                       </>
@@ -3030,13 +3073,9 @@ export function Grid({
           items={(() => {
             const m = draftMeta.get(draftMenu.col);
             const cur = draftRow?.[draftMenu.col];
-            // '' is only a value for text-family columns — offering it on an
-            // int/uuid/timestamp column would stage a guaranteed commit
-            // error. Anchored: a bare prefix matched arrays ("text[]" — ''
-            // is a malformed array literal) and lookalike domain names
-            const textish =
-              !m ||
-              /^(text|citext|name|"char"|character varying|character)(\(\d+\))?$/.test(m.type);
+            // '' on an int/uuid/timestamp column would stage a guaranteed
+            // commit error — withhold the item entirely
+            const textish = textFamily(m?.type);
             return [
               {
                 kind: "item",
@@ -3090,7 +3129,15 @@ export function Grid({
                 return (ex as Error).message;
               }
             }
-            setDraftCell(draftPop.col, { text: value });
+            // clearing all text in the pop means "make it empty", not
+            // DEFAULT — the pop was opened ON a value; the deliberate-''
+            // state keeps that intent for text columns (elsewhere '' isn't
+            // a value, so DEFAULT is the only honest resolution)
+            if (value === "" && textFamily(draftMeta.get(draftPop.col)?.type)) {
+              setDraftCell(draftPop.col, { text: "", state: "empty" });
+            } else {
+              setDraftCell(draftPop.col, { text: value });
+            }
             setDraftPop(null);
             return null;
           }}

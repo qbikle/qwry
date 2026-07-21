@@ -276,7 +276,8 @@
   cursor: pointer;
 }
 /* explicit NULL/'' state rides as the grid's own chip, floated inside the
-   input (which stays mounted for focus/Tab; typing replaces the state) */
+   input (which stays mounted for focus/Tab; typing replaces the state).
+   Font pinned like the band's inputs — the band is zoom-excluded geometry */
 .vgrid-nullchip.draft,
 .vgrid-emptychip.draft {
   position: absolute;
@@ -284,12 +285,14 @@
   top: 50%;
   transform: translateY(-50%);
   pointer-events: none;
+  font-size: calc(var(--text-2xs) / var(--zoom, 1));
+  line-height: normal;
 }
 .vgrid-draft-auto {
   padding-left: 6px;
   color: var(--fg-faint);
   font-style: italic;
-  font-size: var(--text-xs);
+  font-size: calc(var(--text-xs) / var(--zoom, 1));
 }
 .vgrid-draft-error {
   position: absolute;
