@@ -266,13 +266,18 @@ function Leaf({ value, path }: { value: Json; path: Path }) {
   };
 
   if (editing) {
+    // strings wrap and take the row (flex: 1); numbers/bools/null never wrap,
+    // so their box hugs the content by mono char count (the key-editor law) —
+    // a full-row editor around `43` read as excessive chrome
+    const fit = typeof value !== "string";
     return (
       <textarea
         ref={taRef}
-        className={`jt-edit jt-edit-val${err ? " err" : ""}`}
+        className={`jt-edit jt-edit-val${fit ? " fit" : ""}${err ? " err" : ""}`}
         rows={1}
         value={draft}
         spellCheck={false}
+        style={fit ? { width: `calc(${Math.max(draft.length, 1)}ch + 12px)` } : undefined}
         onChange={(e) => {
           setDraft(e.target.value);
           setErr(false);

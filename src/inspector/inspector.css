@@ -478,6 +478,12 @@
    negative margin), so entering edit mode changes nothing but the border
    appearing and the row below staying put. Height is JS-grown to the wrapped
    content (Leaf's layout effect), capped at 40% of the window */
+.jt-edit:focus-visible {
+  /* the always-on accent border IS the focus treatment (the editor only
+     exists focused) — the global ring paints outside the box and sibling
+     hover backgrounds swallowed its edges by DOM paint order */
+  outline: none;
+}
 .jt-edit-val {
   flex: 1 1 auto;
   min-width: 60px;
@@ -488,6 +494,11 @@
   line-height: inherit;
   white-space: pre-wrap;
   word-break: break-all;
+}
+/* content-hugging variant (non-strings): width rides the char count inline */
+.jt-edit-val.fit {
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 .jt-edit.err {
   border-color: var(--danger);
