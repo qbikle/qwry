@@ -492,6 +492,18 @@
 .jt-edit.err {
   border-color: var(--danger);
 }
+/* key editor: box hugs the key text (width set inline from the mono char
+   count), chrome pulled back so the text never shifts — the sibling value's
+   wrap column stays exactly where the display had it */
 .jt-key-edit {
+  color: var(--syn-prop);
+  flex: 0 0 auto;
+  min-width: 0;
+  margin: -1px -5px; /* optical */ /* border 1 + padding 4 compensation */
+}
+.jt-keywrap {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: baseline;
   color: var(--syn-prop);
 }

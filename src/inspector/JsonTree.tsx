@@ -143,33 +143,53 @@ function KeyLabel({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(k);
   const canEdit = ctx.editable && !isArrayItem;
+  const inRef = useRef<HTMLInputElement>(null);
+  // caret AFTER the key (autoFocus alone lands it engine-dependently)
+  useEffect(() => {
+    if (!editing) return;
+    const el = inRef.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [editing]);
 
   if (editing) {
     return (
-      <input
-        className="jt-edit jt-key-edit"
-        autoFocus
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
-          if (e.key === "Enter") {
-            refocusInspector(e.currentTarget);
+      // wrapper keeps the colon OUTSIDE the box but inside one flex child, so
+      // the line keeps a single gap before the value — same grammar as the
+      // display's `key:` span
+      <span className="jt-keywrap">
+        <input
+          ref={inRef}
+          className="jt-edit jt-key-edit"
+          value={draft}
+          spellCheck={false}
+          // mono font: content width IS the character count — the box hugs
+          // the key exactly as the label did (chrome pulled back by the
+          // negative margins), so the value's wrap column never moves
+          style={{ width: `calc(${Math.max(draft.length, 1)}ch + 10px)` }}
+          onChange={(e) => setDraft(e.target.value)}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
+            if (e.key === "Enter") {
+              refocusInspector(e.currentTarget);
+              if (draft && draft !== k) ctx.onRenameKey(parentPath, k, draft);
+              setEditing(false);
+            }
+            if (e.key === "Escape") {
+              refocusInspector(e.currentTarget);
+              setDraft(k);
+              setEditing(false);
+            }
+          }}
+          onBlur={() => {
             if (draft && draft !== k) ctx.onRenameKey(parentPath, k, draft);
             setEditing(false);
-          }
-          if (e.key === "Escape") {
-            refocusInspector(e.currentTarget);
-            setDraft(k);
-            setEditing(false);
-          }
-        }}
-        onBlur={() => {
-          if (draft && draft !== k) ctx.onRenameKey(parentPath, k, draft);
-          setEditing(false);
-        }}
-      />
+          }}
+        />
+        :
+      </span>
     );
   }
   return (
