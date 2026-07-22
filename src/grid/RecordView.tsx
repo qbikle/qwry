@@ -1,10 +1,11 @@
-// Record view (⇧Space) — the row peek's big sibling: a transposed single-row
-// modal (columns as rows: name / type icon / value) with prev/next row
-// navigation (‹ › buttons + ⌘↑/⌘↓) and IN-PLACE editing that stages through
-// the normal edits pipeline (same keys — staged dots appear in the grid
-// behind it). Read-only cells show their reason; truncated cells route to the
-// inspector (the grid value is only the 8KB prefix — editing it inline would
-// commit the prefix over the full value).
+// Record view (Space) — THE transposed single-row modal (columns as rows:
+// name / type icon / value) with prev/next row navigation (‹ › buttons +
+// ⌘↑/⌘↓) and IN-PLACE editing that stages through the normal edits pipeline
+// (same keys — staged dots appear in the grid behind it). Read-only cells
+// show their reason; truncated cells route to the inspector (the grid value
+// is only the 8KB prefix — editing it inline would commit the prefix over
+// the full value). Absorbed the old RowPeek (Space) — one row-view concept,
+// one gesture; two near-identical modals needed every guard fix twice.
 //
 // Dual-column DIFF mode (context menu "Compare 2 rows"): two value columns,
 // differing values tinted, identical values dimmed — viewing only.
@@ -196,6 +197,17 @@ export function RecordView({
         }}
         onKey={(e) => {
           if (diff) return;
+          // Space closes what Space opened (Quick Look grammar) — unless a
+          // focused control (nav button, editor) claims it for activation.
+          // Editors are safe by construction anyway: RvInlineEdit/ValuePop
+          // push their own overlay layer, so this handler isn't topmost then
+          if (e.key === " ") {
+            if ((e.target as HTMLElement).closest("button, select, textarea, input")) return;
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            onClose();
+            return;
+          }
           if (!e.metaKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
           e.preventDefault();
           e.stopImmediatePropagation();
@@ -212,12 +224,12 @@ export function RecordView({
             if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
           }}
         >
-          <div className="rowpeek-head">
-            <span className="rowpeek-title">
+          <div className="rv-head">
+            <span className="rv-title">
               {diff ? (
                 <>
                   Compare Rows {viewRows[0] + 1} · {(viewRows[1] ?? 0) + 1}{" "}
-                  <span className="rowpeek-of">
+                  <span className="rv-of">
                     {differCount} of {viewColLen} visible column{viewColLen === 1 ? "" : "s"}{" "}
                     differ
                   </span>
@@ -225,15 +237,15 @@ export function RecordView({
               ) : (
                 <>
                   Record — Row {viewRows[0] + 1}{" "}
-                  <span className="rowpeek-of">of {rowCount.toLocaleString()}</span>
+                  <span className="rv-of">of {rowCount.toLocaleString()}</span>
                 </>
               )}
             </span>
             {diff ? (
-              <span className="rowpeek-keys">viewing only · esc close</span>
+              <span className="rv-keys">viewing only · esc close</span>
             ) : (
               <span className="rv-nav">
-                <span className="rowpeek-keys">double-click value to edit · ⌘↑ ⌘↓ walk</span>
+                <span className="rv-keys">double-click value to edit · ⌘↑ ⌘↓ walk</span>
                 <button
                   className="rv-navbtn"
                   disabled={viewRows[0] <= 0}
@@ -253,7 +265,7 @@ export function RecordView({
               </span>
             )}
           </div>
-          <div className="rowpeek-body">
+          <div className="rv-body">
             {Array.from({ length: viewColLen }, (_, view) => {
               const i = colAt(view); // data index — everything below is data-keyed
               const c = statement.columns[i];
@@ -266,14 +278,14 @@ export function RecordView({
               const editable = !diff && !!meta?.editable && !truncated0;
 
               const label = (
-                <span className="rowpeek-col" title={tn}>
+                <span className="rv-col" title={tn}>
                   {glyph && (
-                    <span className="rowpeek-type" style={{ color: glyph.color }}>
+                    <span className="rv-type" style={{ color: glyph.color }}>
                       <glyph.Icon size={11} strokeWidth={2.2} />
                     </span>
                   )}
                   {c.name}
-                  {!diff && pe0 && <span className="rowpeek-dirty">✎</span>}
+                  {!diff && pe0 && <span className="rv-dirty">✎</span>}
                   {!diff && meta && !meta.editable && (
                     <span className="rv-lock" title={meta.reason ?? "read-only"}>
                       <Lock size={10} strokeWidth={2.2} />
@@ -285,7 +297,7 @@ export function RecordView({
               if (diff) {
                 const differs = mask?.[i] ?? false;
                 return (
-                  <div key={i} className="rowpeek-row rv-cmprow">
+                  <div key={i} className="rv-row rv-cmprow">
                     {label}
                     {[0, 1].map((side) => {
                       const v = effVal(side, i);
@@ -294,7 +306,7 @@ export function RecordView({
                       return (
                         <span
                           key={side}
-                          className={`rowpeek-val rv-side${differs ? " rv-diff" : " rv-same"}`}
+                          className={`rv-val rv-side${differs ? " rv-diff" : " rv-same"}`}
                         >
                           {/* same renderValue path as record mode — a staged
                               Set-DEFAULT must show DEFAULT, never lie as NULL */}
@@ -318,7 +330,7 @@ export function RecordView({
               const pretty = prettyCellValue(v, tn);
               const editingThis = edit?.col === i;
               return (
-                <div key={i} className={`rowpeek-row${pe0 ? " dirty" : ""}`}>
+                <div key={i} className={`rv-row${pe0 ? " dirty" : ""}`}>
                   {label}
                   {editingThis ? (
                     <RvInlineEdit
@@ -331,7 +343,7 @@ export function RecordView({
                     />
                   ) : (
                     <span
-                      className={`rowpeek-val${v === null ? " null" : ""}${pretty !== v ? " structured" : ""}${editable ? " editable" : ""}`}
+                      className={`rv-val${pretty !== v ? " structured" : ""}${editable ? " editable" : ""}`}
                       title={
                         editable
                           ? "Double-click to edit"
@@ -339,7 +351,7 @@ export function RecordView({
                             ? (meta.reason ?? undefined)
                             : undefined
                       }
-                      // double-click opens the editor (the grid/peek/inspector
+                      // double-click opens the editor (the grid/inspector
                       // convention); single click keeps the read-only-reason
                       // toggle and the truncated → inspector route
                       onClick={editable ? undefined : () => openEdit(i)}
@@ -352,7 +364,7 @@ export function RecordView({
                         </span>
                       )}
                       {editable && (
-                        <span className="rowpeek-pencil">
+                        <span className="rv-pencil">
                           <Pencil size={11} />
                         </span>
                       )}

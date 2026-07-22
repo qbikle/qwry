@@ -1,7 +1,6 @@
-// Pop-out single-value editor shared by the row peek and the record view —
+// Pop-out single-value editor shared by the record view and the draft band —
 // its own overlay-stack entry, so Esc closes IT first and the modal
-// underneath never moves. Also home of the shared display/stage helpers so
-// both transposed views render and stage values identically.
+// underneath never moves. Also home of the shared display/stage helpers.
 import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { popIn } from "../design/springs";

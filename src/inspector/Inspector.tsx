@@ -48,6 +48,9 @@ export function Inspector() {
   const fullValue = useInspector((s) => s.fullValue);
   const fullValueFor = useInspector((s) => s.fullValueFor);
   const fullValueError = useInspector((s) => s.fullValueError);
+  // hints yield below 280px. Boolean selector so rehydration and the resize
+  // handler's threshold-cross writes re-render, everything else stays quiet
+  const narrow = useInspector((s) => s.width < 280);
 
   const [mode, setMode] = useState<"auto" | "raw">("auto");
   const [editingText, setEditingText] = useState<string | null>(null);
@@ -215,7 +218,7 @@ export function Inspector() {
 
   if (!target || !stmtExists) {
     return (
-      <div className="inspector">
+      <div className={`inspector${narrow ? " narrow" : ""}`}>
         <div className="insp-top">
           <span className="insp-col muted">Inspector</span>
         </div>
@@ -280,7 +283,7 @@ export function Inspector() {
   };
 
   return (
-    <div className="inspector">
+    <div className={`inspector${narrow ? " narrow" : ""}`}>
       <div className="insp-top">
         <div className="insp-id">
           <span className="insp-col" title={colMeta?.name ?? `col ${target.col}`}>

@@ -17,7 +17,6 @@ import { qualify, qi } from "../lib/sqlIdent";
 import { useConnections } from "../stores/connections";
 import { useInspector } from "../stores/inspector";
 import { useSchema, type ColumnInfo } from "../stores/schema";
-import { RowPeek } from "./RowPeek";
 import { RecordView } from "./RecordView";
 import { LOSSY_NUMS, ValuePop } from "./ValuePop";
 import { FkPicker, preferredSessionId } from "./FkPicker";
@@ -703,12 +702,11 @@ export function Grid({
   }, [rawFilter, clientChain, colOrder, hiddenCols]);
   // rows identity changes too (stream flush mid-query): with a client
   // sort/filter active the view→data row map re-sorts under an open record
-  // view / row peek, whose held view rows would silently show different data
-  // rows. No remap active (rowOrder null) = append-only, both stay valid.
+  // view, whose held view rows would silently show different data rows.
+  // No remap active (rowOrder null) = append-only, it stays valid.
   useEffect(() => {
     if (!rowOrder) return;
     setRecord(null);
-    setPeekRow(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows]);
   // publish the match count for the status bar's "n of m" readout
@@ -857,8 +855,6 @@ export function Grid({
     kind: "text" | "bool" | "enum";
     enumLabels?: string[];
   } | null>(null);
-  /** transposed single-row viewer (Space) */
-  const [peekRow, setPeekRow] = useState<number | null>(null);
   // pop-out editor for a DRAFT cell — multiline pastes and duplicated rows
   // with multiline values can't live honestly in a one-line input
   // per-cell value-state menu (Set NULL / Set empty / Reset to DEFAULT)
@@ -866,7 +862,7 @@ export function Grid({
   const [draftPop, setDraftPop] = useState<{ col: string; dataC: number; text: string } | null>(
     null,
   );
-  /** record view (⇧Space): one view row = record mode, two = row diff */
+  /** record view (Space): one view row = record mode, two = row diff */
   const [record, setRecord] = useState<{ rows: [number] | [number, number] } | null>(null);
   /** value-distribution panel (header context menu) */
   const [histo, setHisto] = useState<{
@@ -1531,7 +1527,6 @@ export function Grid({
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (editing) return; // cell editor owns the keyboard
-      if (peekRow !== null) return; // row peek modal owns the keyboard
       if (record !== null) return; // record view modal owns the keyboard
       if (draftPop !== null) return; // draft-cell pop owns the keyboard (CM
       // targets are contenteditable — the tag check below never catches them)
@@ -1660,15 +1655,11 @@ export function Grid({
         setSelectionValue(null); // stage NULL over the selection (undoable)
         return;
       }
-      if (e.key === " " && sel.focus && !meta && e.shiftKey) {
-        // ⇧Space = record view (the peek's big sibling — editable, ⌘↑/⌘↓ nav)
+      if (e.key === " " && sel.focus && !meta) {
+        // Space = record view (⇧Space kept as an alias — it was the original
+        // binding; both routes land on the same modal)
         e.preventDefault();
         setRecord({ rows: [sel.focus.r] });
-        return;
-      }
-      if (e.key === " " && sel.focus && !meta) {
-        e.preventDefault();
-        setPeekRow((p) => (p === null ? sel.focus!.r : null));
         return;
       }
       if ((e.key === "Enter" || e.key === "F2") && sel.focus) {
@@ -1689,7 +1680,7 @@ export function Grid({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [copySelection, sel, viewLen, viewColLen, rowVirt, colVirt, startEdit, editing, peekRow, record, draftPop, fillDown, pasteIntoSelection, setSelectionValue, showDraft, cancelDraft],
+    [copySelection, sel, viewLen, viewColLen, rowVirt, colVirt, startEdit, editing, record, draftPop, fillDown, pasteIntoSelection, setSelectionValue, showDraft, cancelDraft],
   );
 
   // a result row is deletable iff exactly one source table has a locator
@@ -2254,12 +2245,11 @@ export function Grid({
         // over the grid selection
         const t = e.target as HTMLElement;
         const tag = t.tagName;
-        // paste events bubble across portals — a ⌘V inside the row peek /
-        // record view / draft pop (CodeMirror = contenteditable, invisible
-        // to tag checks) must never ALSO stage over the grid selection
+        // paste events bubble across portals — a ⌘V inside the record view /
+        // draft pop (CodeMirror = contenteditable, invisible to tag checks)
+        // must never ALSO stage over the grid selection
         if (
           editing ||
-          peekRow !== null ||
           record !== null ||
           draftPop !== null ||
           t.isContentEditable ||
@@ -2982,14 +2972,8 @@ export function Grid({
             },
             {
               kind: "item",
-              label: "Row Details",
-              hint: "space",
-              onSelect: () => sel.focus && setPeekRow(sel.focus.r),
-            },
-            {
-              kind: "item",
               label: "Open as Record",
-              hint: "⇧space",
+              hint: "space",
               onSelect: () => sel.focus && setRecord({ rows: [sel.focus.r] }),
             },
             ...(sel.rect && sel.rect.r1 - sel.rect.r0 === 1
@@ -3057,26 +3041,6 @@ export function Grid({
                 ] as MenuNode[])
               : []),
           ]}
-        />
-      )}
-
-      {peekRow !== null && (
-        <RowPeek
-          statement={statement}
-          viewRow={peekRow}
-          rowAt={rowAt}
-          colAt={colAt}
-          viewColLen={viewColLen}
-          rowCount={viewLen}
-          typeOf={colType}
-          editMetaOf={colEditMeta}
-          onStep={(dir) =>
-            setPeekRow((p) => (p === null ? p : Math.max(0, Math.min(viewLen - 1, p + dir))))
-          }
-          onClose={() => {
-            setPeekRow(null);
-            containerRef.current?.focus();
-          }}
         />
       )}
 

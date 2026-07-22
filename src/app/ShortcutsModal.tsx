@@ -36,7 +36,7 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
       ["Enter / F2 / type", "Edit cell"],
       ["Tab", "Commit + move right"],
       ["⌫", "Stage NULL"],
-      ["Space", "Row details"],
+      ["Space", "Open as record"],
       ["⌘D", "Fill down"],
       ["⌘Z / ⌘⇧Z", "Undo / redo staged edits"],
       ["⌘S", "Commit staged edits"],

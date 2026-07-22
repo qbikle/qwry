@@ -269,6 +269,9 @@ export function App() {
     const onMove = (me: MouseEvent) => {
       w = Math.max(220, Math.min(640, window.innerWidth - me.clientX));
       document.documentElement.style.setProperty("--inspector-w", `${w}px`);
+      // the inspector's narrow mode reads the STORE width — without this the
+      // hints would only hide/show on release, not live during the drag
+      if (w < 280 !== useInspector.getState().width < 280) useInspector.getState().setWidth(w);
     };
     const onUp = () => {
       setResizing(false);

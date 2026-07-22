@@ -220,6 +220,7 @@
   height: 28px;
 }
 .insp-editactions button {
+  white-space: nowrap;
   padding: 5px 12px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
@@ -247,6 +248,13 @@
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   opacity: 0.55;
+}
+/* narrow panel (store width < 280): shortcut hints yield, verbs stay.
+ * class comes from the width store, NOT a container query — container-type
+ * on any ancestor would make it the containing block for the fixed
+ * .insp-copy-backdrop, shrinking click-away to the panel */
+.inspector.narrow .insp-key {
+  display: none;
 }
 
 /* colorized JSON view/editor (CodeMirror) */
