@@ -31,7 +31,7 @@ export interface Tab {
   file_path?: string;
   /** exact text last read from / written to file_path — dirty dot = drift */
   file_saved_sql?: string;
-  /** file mtime at open/last save — ⌘⇧S compares before overwriting so an
+  /** file mtime at open/last save — ⇧⌘S compares before overwriting so an
    * external edit is never silently clobbered (session-only, like file_path) */
   file_mtime_ms?: number;
 }
@@ -54,7 +54,7 @@ interface TabsState {
   loaded: boolean;
   /** the last tabs_save failed — surfaced so persistence can never lie */
   saveError: boolean;
-  /** most-recently-closed first; ⌘⇧T pops */
+  /** most-recently-closed first; ⇧⌘T pops */
   closedStack: ClosedTab[];
 
   load: () => Promise<void>;
@@ -187,7 +187,7 @@ document.addEventListener("visibilitychange", () => {
 
 /** first-run tour — seeded once into a fresh appdb (no profiles, no tabs) */
 const WELCOME_SQL = `-- welcome to qwry
--- ⌘K palette · ⌘T new tab · ⌘↵ run the statement under the cursor
+-- ⌘K palette · ⌘T new tab · ⌘↩ run the statement under the cursor
 -- connect via the + in the rail, then try:
 SELECT now();
 `;
@@ -367,12 +367,12 @@ export const useTabs = create<TabsState>((set, get) => ({
       editorFocusSignal.current = true;
       if (!clean && diskChanged) {
         // dirty tab + changed file: keep the buffer AND the old baseline (so
-        // ⌘⇧S still prompts before clobbering the newer disk version) — but
+        // ⇧⌘S still prompts before clobbering the newer disk version) — but
         // say so instead of silently discarding the read
         void import("./danger").then(({ confirmDanger }) =>
           confirmDanger(
             "File Changed on Disk",
-            `${path}\n\nThe tab keeps your unsaved version — the newer disk contents were not loaded. ⌘⇧S will ask before overwriting them.`,
+            `${path}\n\nThe tab keeps your unsaved version. The newer disk contents were not loaded. ⇧⌘S will ask before overwriting them.`,
             "OK",
           ),
         );
@@ -418,7 +418,7 @@ export const useTabs = create<TabsState>((set, get) => ({
     const { tabs, activeId, closedStack, pinned } = get();
     // drop the closed tab's dedicated DB session(s)
     useConnections.getState().closeTabSessions(id);
-    // the tab's buffer time-machine dies with it (a ⌘⇧T restore gets a NEW id)
+    // the tab's buffer time-machine dies with it (a ⇧⌘T restore gets a NEW id)
     void bufferSnapshotsClear(id).catch(() => {});
     const closing = tabs.find((t) => t.id === id);
     const remember =
@@ -623,10 +623,10 @@ export const useTabs = create<TabsState>((set, get) => ({
       // reopen as a real table tab (re-runs the browse; adopts current conn)
       void import("./browser").then(({ useBrowser }) => useBrowser.getState().openTable(top.table!));
     } else {
-      // ⌘⇧T means "bring it back HERE" — newTab stamps the current profile;
+      // ⇧⌘T means "bring it back HERE" — newTab stamps the current profile;
       // the saved-query link survives so the restored tab still syncs
       get().newTab(top.sql, top.name, top.saved_id);
-      // a file-backed tab keeps its disk link (and dirty state) through ⌘⇧T
+      // a file-backed tab keeps its disk link (and dirty state) through ⇧⌘T
       if (top.file_path) {
         const id = get().activeId;
         set((s) => ({
@@ -713,7 +713,7 @@ useConnections.subscribe((s, prev) => {
 });
 
 // ---------------------------------------------------------------------------
-// .sql files on disk — File ▸ Open… ⌘O / File ▸ Save ⌘⇧S / window drops
+// .sql files on disk — File ▸ Open… ⌘O / File ▸ Save ⇧⌘S / window drops
 
 const MB = 1024 * 1024;
 const OPEN_CONFIRM_BYTES = 8 * MB;
@@ -730,7 +730,7 @@ export async function openFilePaths(paths: string[]): Promise<void> {
         const { confirmDanger } = await import("./danger");
         await confirmDanger(
           "File Too Large",
-          `${path}\nis ${fmtMb(stat.size)} — qwry can’t open files over 64 MB.`,
+          `${path}\nis ${fmtMb(stat.size)}. qwry can’t open files over 64 MB.`,
           "OK",
         );
         continue;
@@ -739,7 +739,7 @@ export async function openFilePaths(paths: string[]): Promise<void> {
         const { confirmDanger } = await import("./danger");
         const ok = await confirmDanger(
           "Large File",
-          `${path}\nis ${fmtMb(stat.size)} — the editor may be slow. Open anyway?`,
+          `${path}\nis ${fmtMb(stat.size)}. The editor may be slow. Open anyway?`,
           "Open",
         );
         if (!ok) continue;
@@ -792,7 +792,7 @@ export async function saveActiveToFile(): Promise<void> {
       const { confirmDanger } = await import("./danger");
       const ok = await confirmDanger(
         "File Changed on Disk",
-        `${dest}\nchanged on disk since you opened it — overwrite the newer version?`,
+        `${dest}\nchanged on disk since you opened it. Overwrite the newer version?`,
         "Overwrite",
       );
       if (!ok) return;

@@ -88,8 +88,8 @@ export function Kbd({ chord, caps = false }: { chord: string; caps?: boolean }) 
       </span>
     );
   }
-  // bare: glyphs run together (⇧⌘F); word keys need a joining space so
-  // "⌘Space" and "⌥ esc" stay readable
+  // bare: glyphs run together (⇧⌘F); word keys get a joining space before
+  // them ("⌘ Space", "⌥ esc") so glyph and word never fuse
   const text = glyphs.reduce(
     (acc, g) => acc + (acc !== "" && g.length > 1 ? " " : "") + g,
     "",

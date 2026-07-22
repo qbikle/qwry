@@ -54,6 +54,10 @@ impl PgSession {
         // the final statement, or the receiver hung up) — the resulting 57014
         // is then a successful completion, not an error
         let mut auto_cancelled = false;
+        // set when the cancel ladder failed outright and we killed our own
+        // connection instead — the resulting stream error (any error: the
+        // connection is dead, not the query) is likewise completion
+        let mut hard_aborted = false;
 
         for (i, span) in spans.iter().enumerate() {
             let index = i as u32;
@@ -121,7 +125,8 @@ impl PgSession {
                         // our own drain-stopping cancel: finish the statement
                         // as capped instead of surfacing a phantom error
                         if auto_cancelled
-                            && matches!(&mapped, DriverError::Db { code: Some(c), .. } if c == "57014")
+                            && (hard_aborted
+                                || matches!(&mapped, DriverError::Db { code: Some(c), .. } if c == "57014"))
                         {
                             if let Some(mut state) = st.take() {
                                 if !state.batch.is_empty() {
@@ -215,7 +220,27 @@ impl PgSession {
                                 && self.tx_state() == TxState::Idle
                             {
                                 auto_cancelled = true;
-                                let _ = self.token_cancel().await;
+                                // NOT the cancel() ladder: its busy-poll can
+                                // never observe this query dying because WE
+                                // hold the busy guard — it would escalate on
+                                // every capped result. Fire both tiers
+                                // directly (fresh connections, never this
+                                // session); only when BOTH fail did nothing
+                                // reach the server.
+                                if self.token_cancel().await.is_err()
+                                    && self.cancel_out_of_band().await.is_err()
+                                {
+                                    // draining a 10M-row result for minutes
+                                    // helps nobody. The guard above already
+                                    // established this is a read-only
+                                    // statement outside a tx — kill our own
+                                    // connection and resolve the stream error
+                                    // as the capped completion.
+                                    hard_aborted = true;
+                                    self.abort_connection_notify(
+                                        "connection closed to end a capped result. Cancel could not reach the server",
+                                    );
+                                }
                             }
                             continue; // drain without buffering
                         }

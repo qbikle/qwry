@@ -9,6 +9,7 @@ import { editKey, useEdits } from "../stores/edits";
 import { isArrayType, jsToPgArray, structuredValue } from "../inspector/format";
 import { JsonField } from "../inspector/JsonField";
 import { flashReadOnlyReason } from "./flashReason";
+import { Kbd } from "../design/Kbd";
 import "./grid.css";
 
 /** JSON.parse would silently round-trip 16+-digit ints through float64 —
@@ -55,7 +56,7 @@ export function stageCellDraft(a: {
       const parsed = JSON.parse(a.draft);
       if (isArr) {
         if (!Array.isArray(parsed)) {
-          return "this column is a Postgres array — provide a JSON array [ … ]";
+          return "this column is a Postgres array. Provide a JSON array [ … ]";
         }
         value = jsToPgArray(parsed);
       }
@@ -179,15 +180,19 @@ export function ValuePop({
         {err && <div className="valuepop-err">{err}</div>}
         <div className="valuepop-actions">
           {structured && (
-            <button className="valuepop-format" onClick={autoFormat} title="Pretty-print JSON">
+            <button
+              className="btnish valuepop-format"
+              onClick={autoFormat}
+              title="Pretty-print JSON"
+            >
               Format
             </button>
           )}
-          <button onClick={onClose}>
-            Cancel <span className="insp-key">esc</span>
+          <button className="btnish" onClick={onClose}>
+            Cancel <Kbd chord="esc" />
           </button>
-          <button className="primary" onClick={stage}>
-            Stage Edit <span className="insp-key">⌘↵</span>
+          <button className="btnish primary" onClick={stage}>
+            Stage Edit <Kbd chord="cmd+return" />
           </button>
         </div>
       </motion.div>

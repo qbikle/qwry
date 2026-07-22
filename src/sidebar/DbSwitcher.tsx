@@ -87,9 +87,9 @@ export function DbSwitcher({ profileId, dbname, name }: { profileId: string; dbn
   return (
     <div className="dbsw">
       <button className="sb-dbhead" onClick={() => void toggle()} title={`${name} · ${dbname}`} disabled={busy}>
-        <Database size={15} className="sb-db-icon" />
+        <Database size={16} className="sb-db-icon" />
         <span className="sb-db-name">{dbname || name}</span>
-        <ChevronDown size={13} className="sb-db-chev" />
+        <ChevronDown size={12} className="sb-db-chev" />
       </button>
       <ServerInfo profileId={profileId} />
       {open && <div className="dbsw-backdrop" onMouseDown={() => setOpen(false)} />}
@@ -111,7 +111,7 @@ export function DbSwitcher({ profileId, dbname, name }: { profileId: string; dbn
                 onClick={() => void pick(db)}
               >
                 <span className="dbsw-name">{db}</span>
-                {db === dbname && <Check size={13} />}
+                {db === dbname && <Check size={12} />}
               </button>
             ))
           )}

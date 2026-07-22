@@ -147,10 +147,10 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 close();
               }}
             >
-              <Play size={13} /> Run Query <kbd>⌘↵</kbd>
+              <Play size={12} /> Run Query <kbd>⌘↩</kbd>
             </Command.Item>
             <Command.Item onSelect={() => { useTabs.getState().newTab(); close(); }}>
-              <Plus size={13} /> New Tab <kbd>⌘T</kbd>
+              <Plus size={12} /> New Tab <kbd>⌘T</kbd>
             </Command.Item>
             <Command.Item
               onSelect={() => {
@@ -160,7 +160,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 close();
               }}
             >
-              <PanelRight size={13} /> Toggle Inspector <kbd>⌘I</kbd>
+              <PanelRight size={12} /> Toggle Inspector <kbd>⌘I</kbd>
             </Command.Item>
             <Command.Item
               onSelect={() => {
@@ -171,7 +171,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 close();
               }}
             >
-              <RefreshCw size={13} /> Refresh Schema <kbd>⌘R</kbd>
+              <RefreshCw size={12} /> Refresh Schema <kbd>⌘R</kbd>
             </Command.Item>
             <Command.Item
               value="save query bookmark"
@@ -180,7 +180,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 close();
               }}
             >
-              <Plus size={13} /> Save Query to Sidebar <kbd>⌘S</kbd>
+              <Plus size={12} /> Save Query to Sidebar <kbd>⌘S</kbd>
             </Command.Item>
             <Command.Item
               value="restore reopen closed tab"
@@ -189,7 +189,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 close();
               }}
             >
-              <Plus size={13} /> Reopen Closed Tab <kbd>⌘⇧T</kbd>
+              <Plus size={12} /> Reopen Closed Tab <kbd>⇧⌘T</kbd>
             </Command.Item>
             <Command.Item
               value="format sql beautify"
@@ -198,7 +198,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 close();
               }}
             >
-              <Wand2 size={13} /> Format SQL <kbd>⌘⇧F</kbd>
+              <Wand2 size={12} /> Format SQL <kbd>⇧⌘F</kbd>
             </Command.Item>
             <Command.Item
               value="settings preferences"
@@ -207,7 +207,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 close();
               }}
             >
-              <Settings size={13} /> Settings… <kbd>⌘,</kbd>
+              <Settings size={12} /> Settings… <kbd>⌘,</kbd>
             </Command.Item>
             <Command.Item
               value="query history panel search"
@@ -216,7 +216,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 close();
               }}
             >
-              <Clock size={13} /> Query History <kbd>⌘Y</kbd>
+              <Clock size={12} /> Query History <kbd>⌘Y</kbd>
             </Command.Item>
             <Command.Item
               value="disconnect current connection"
@@ -249,7 +249,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                   const ok = await confirmDanger(
                     `Disconnect ${name}?`,
                     `Closes every tab’s session on this connection${
-                      pending > 0 ? ` — ${pending} staged edit${pending === 1 ? "" : "s"} will be lost` : ""
+                      pending > 0 ? `. ${pending} staged edit${pending === 1 ? "" : "s"} will be lost` : ""
                     }. Open transactions roll back.`,
                     "Disconnect",
                   );
@@ -257,7 +257,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 })();
               }}
             >
-              <Database size={13} /> Disconnect Current Connection
+              <Database size={12} /> Disconnect Current Connection
             </Command.Item>
             <Command.Item
               value="clear history connection"
@@ -267,7 +267,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 close();
               }}
             >
-              <Clock size={13} /> Clear History for This Connection
+              <Clock size={12} /> Clear History for This Connection
             </Command.Item>
             <Command.Item
               value="clear history older than 7 days"
@@ -276,7 +276,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 close();
               }}
             >
-              <Clock size={13} /> Clear History Older than 7 Days
+              <Clock size={12} /> Clear History Older than 7 Days
             </Command.Item>
           </Command.Group>
 
@@ -293,7 +293,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                   close();
                 }}
               >
-                {t.kind === "table" ? <Table2 size={13} /> : <SquareTerminal size={13} />}
+                {t.kind === "table" ? <Table2 size={12} /> : <SquareTerminal size={12} />}
                 <span className={t.id === activeTabId ? "pal-tab-active" : ""}>{t.name}</span>
                 <span className="pal-detail">tab {i + 1}</span>
               </Command.Item>
@@ -308,7 +308,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                   close();
                 }}
               >
-                <X size={13} /> Close Current Tab <kbd>⌘W</kbd>
+                <X size={12} /> Close Current Tab <kbd>⌘W</kbd>
               </Command.Item>
             )}
           </Command.Group>
@@ -325,7 +325,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                     close();
                   }}
                 >
-                  <Bookmark size={13} />
+                  <Bookmark size={12} />
                   {q.name}
                   <span className="pal-detail">saved</span>
                 </Command.Item>
@@ -341,7 +341,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 close();
               }}
             >
-              <SwatchBook size={13} /> Customize Theme…
+              <SwatchBook size={12} /> Customize Theme…
             </Command.Item>
             {(
               [
@@ -358,8 +358,8 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                   close();
                 }}
               >
-                <Icon size={13} /> Mode: {label}
-                {mode === m && <Check size={13} className="pal-check" />}
+                <Icon size={12} /> Mode: {label}
+                {mode === m && <Check size={12} className="pal-check" />}
               </Command.Item>
             ))}
           </Command.Group>
@@ -377,7 +377,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                   value={`table ${t.schema}.${t.name}`}
                   onSelect={() => browseTable(t.table_oid)}
                 >
-                  <Table2 size={13} />
+                  <Table2 size={12} />
                   {t.schema === "public" ? t.name : `${t.schema}.${t.name}`}
                   <span className="pal-detail">{t.columns.length} cols</span>
                 </Command.Item>
@@ -407,7 +407,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                   })();
                 }}
               >
-                <Database size={13} />
+                <Database size={12} />
                 {p.name}
                 {p.is_prod && <span className="badge badge-danger">PROD</span>}
               </Command.Item>
@@ -422,7 +422,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                   value={`history ${h.id} ${h.sql.slice(0, 80)}`}
                   onSelect={() => loadHistory(h.sql)}
                 >
-                  <Clock size={13} />
+                  <Clock size={12} />
                   <span className="pal-sql">{h.sql.replace(/\s+/g, " ").slice(0, 90)}</span>
                   <span className="pal-detail">
                     {h.status !== "ok" && `${h.status} · `}

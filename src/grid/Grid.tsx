@@ -5,7 +5,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { copyCue } from "../lib/copyCue";
 import { invoke } from "@tauri-apps/api/core";
 import { useResults, type StatementState } from "../stores/results";
-import { ctidGuardPairs, editKey, useEdits } from "../stores/edits";
+import { ctidGuardPairs, editKey, TRUNCATED_LOCATOR_MSG, useEdits } from "../stores/edits";
 import * as ipc from "../ipc/commands";
 import type { EditabilityMap } from "../ipc/types";
 import { formatCells, parseTsv, type CopyFormat } from "./clipboard";
@@ -37,6 +37,7 @@ import {
 import { browseEffectiveChain, browseWhere, dispatchBrowseChain } from "./browseContract";
 import { hitKey, useFind } from "../stores/find";
 import { ContextMenu, type MenuNode } from "../app/overlay/ContextMenu";
+import { Kbd } from "../design/Kbd";
 import { useGridStats } from "../stores/gridStats";
 import { useGridFilter } from "../stores/gridFilter";
 import { useSettings } from "../stores/settings";
@@ -119,7 +120,7 @@ const Cell = memo(function Cell(p: {
     <div
       data-r={p.r}
       data-c={p.c}
-      className={`vgrid-cell${p.v === null ? " null" : ""}${p.selected ? " sel" : ""}${p.focused ? " focus" : ""}${p.dirty ? " dirty" : ""}${p.flash ? " flash" : ""}${p.warn ? " ctid-warn" : ""}${p.hit ? " find-hit" : ""}${p.curHit ? " find-cur" : ""}${p.num ? " num" : ""}`}
+      className={`vgrid-cell${p.v === null ? " null" : ""}${p.selected ? " active" : ""}${p.focused ? " focus" : ""}${p.dirty ? " dirty" : ""}${p.flash ? " flash" : ""}${p.warn ? " ctid-warn" : ""}${p.hit ? " find-hit" : ""}${p.curHit ? " find-cur" : ""}${p.num ? " num" : ""}`}
       style={{
         transform: `translate(${p.x}px, ${p.y}px)`,
         width: p.width,
@@ -200,8 +201,8 @@ function sortBtnTitle(s: {
   const solo = s.chainLen === 1 && s.dir !== null;
   const click = solo
     ? s.dir === "asc"
-      ? "Sorted ascending — click: flip to descending"
-      : "Sorted descending — click: clear sort"
+      ? "Sorted ascending · click: flip to descending"
+      : "Sorted descending · click: clear sort"
     : s.chainLen > 0
       ? "click: sort by this column only (asc, replaces the chain)"
       : "click: sort ascending";
@@ -212,7 +213,7 @@ function sortBtnTitle(s: {
         ? "⇧click: remove from sort chain"
         : "⇧click: add to sort chain (asc)";
   const alt = s.notNull
-    ? "⌥click: NULLS n/a — column is NOT NULL"
+    ? "⌥click: NULLS n/a · column is NOT NULL"
     : s.dir === null
       ? "⌥click: NULLS first/last (sorted columns only)"
       : s.nulls === undefined
@@ -335,7 +336,7 @@ function CellEditor({
             <button
               key={wire}
               autoFocus={wire === "t"}
-              className={draft === wire || draft === label ? "on" : ""}
+              className={draft === wire || draft === label ? "active" : ""}
               onClick={() => {
                 cancelled.current = true;
                 // commit the WIRE text ('t'/'f') — PG returns bools as t/f, so
@@ -347,7 +348,7 @@ function CellEditor({
             </button>
           ))}
           <button
-            className={draft === "" ? "on" : ""}
+            className={draft === "" ? "active" : ""}
             onClick={() => {
               cancelled.current = true;
               onNull();
@@ -414,7 +415,7 @@ function CellEditor({
       {kind !== "bool" && (
         <button
           className="vgrid-nullbtn"
-          title="Set NULL ⌘⇧⌫"
+          title="Set NULL ⇧⌘⌫"
           onMouseDown={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -899,7 +900,7 @@ export function Grid({
       if (!meta?.editable) {
         flashReadOnlyReason(
           editMap === "loading"
-            ? "editability still loading — try again in a moment"
+            ? "editability still loading, try again in a moment"
             : editMap === "unavailable" || !editMap
               ? "read-only: no editability metadata for this result"
               : `read-only: ${meta?.reason ?? "column is not editable"}`,
@@ -1005,7 +1006,7 @@ export function Grid({
         // clipboard content survives — never abandon without saying so
         // (flash is a store write, it outlives this component)
         copyBuildRun.current = null;
-        flashReadOnlyReason("copy cancelled — result changed before it finished");
+        flashReadOnlyReason("copy cancelled, result changed before it finished");
       }
     },
     [],
@@ -1038,7 +1039,7 @@ export function Grid({
       const truncFlash = () => {
         if (truncCount > 0)
           flashReadOnlyReason(
-            `${truncCount} truncated cell${truncCount === 1 ? "" : "s"} copied as 8KB prefix — open in the Inspector for full values`,
+            `${truncCount} truncated cell${truncCount === 1 ? "" : "s"} copied as 8KB prefix, open in the Inspector for full values`,
           );
       };
       // the selection rect is view-space — resolve through the sort/reorder
@@ -1607,7 +1608,7 @@ export function Grid({
         fillDown();
         return;
       }
-      // ⌘⇧D (discard staged edits) belongs to the window handler — fall through
+      // ⇧⌘D (discard staged edits) belongs to the window handler — fall through
 
       const moves: Record<string, [number, number]> = {
         ArrowUp: [-1, 0],
@@ -1709,7 +1710,7 @@ export function Grid({
       // a truncated locator cell is only the display prefix — a WHERE built
       // from it matches 0 rows and fails with a misleading message
       if (pkCols.some((pc) => statement.truncated.has(`${dataR}:${pc}`))) {
-        flashReadOnlyReason("locator value is truncated — cannot safely identify this row");
+        flashReadOnlyReason(TRUNCATED_LOCATOR_MSG);
         return;
       }
       const loc = pkCols.map((pc) => [pc, row[pc]] as [number, string | null]);
@@ -1762,7 +1763,7 @@ export function Grid({
       if (!outcome.committed) {
         // backend rolled the batch back (a locator matched ≠ 1 row) — nothing changed
         const msgs = [...new Set(outcome.results.filter((r) => !r.ok).map((r) => r.message).filter(Boolean))];
-        useEdits.setState({ lastError: `delete rolled back — ${msgs.join("; ")}` });
+        useEdits.setState({ lastError: `delete rolled back. ${msgs.join("; ")}` });
         return;
       }
       // re-run the exact query FIRST so the grid reflects the delete — run()'s
@@ -2059,8 +2060,8 @@ export function Grid({
           const inChain = cur.some((en) => en.key === name);
           flashReadOnlyReason(
             !inChain && browseTable?.pk.includes(name)
-              ? `${name} is the implicit PK tiebreaker (NOT NULL) — NULLS placement doesn't apply`
-              : `${name} is NOT NULL — NULLS FIRST/LAST would only slow the query`,
+              ? `${name} is the implicit PK tiebreaker (NOT NULL), NULLS placement doesn't apply`
+              : `${name} is NOT NULL, NULLS FIRST/LAST would only slow the query`,
           );
           return;
         }
@@ -2184,9 +2185,9 @@ export function Grid({
       return;
     }
     const note = jsonNoEquality(tn)
-      ? `json has no server-side equality — computed over ${rows.length.toLocaleString()} loaded rows`
+      ? `json has no server-side equality · computed over ${rows.length.toLocaleString()} loaded rows`
       : insertable
-        ? `no live session — computed over ${rows.length.toLocaleString()} loaded rows`
+        ? `no live session · computed over ${rows.length.toLocaleString()} loaded rows`
         : `loaded ${rows.length.toLocaleString()} rows only`;
     setHisto({ point, column: name, mode: { kind: "client", values, note } });
   };
@@ -2404,7 +2405,7 @@ export function Grid({
                     </span>
                   )}
                   <button
-                    className={`vgrid-sortbtn${sortDir ? " on" : ""}${sortDir === "desc" ? " desc" : ""}`}
+                    className={`vgrid-sortbtn${sortDir ? " active" : ""}${sortDir === "desc" ? " desc" : ""}`}
                     title={sortBtnTitle({
                       dir: sortDir,
                       chainLen: sortLen,
@@ -2428,7 +2429,7 @@ export function Grid({
                     {sortDir ? (
                       <ChevronUp size={12} strokeWidth={2.6} className="chev" />
                     ) : (
-                      <ChevronsUpDown size={11} strokeWidth={2} className="chev" />
+                      <ChevronsUpDown size={12} strokeWidth={2} className="chev" />
                     )}
                   </button>
                   <span
@@ -2506,9 +2507,9 @@ export function Grid({
               <div
                 className="vgrid-draft-corner"
                 style={{ width: ROWNUM_W, height: DRAFT_H }}
-                title="⌘↵ insert · esc cancel"
+                title="⌘↩ insert · esc cancel"
               >
-                <Plus size={13} />
+                <Plus size={12} />
               </div>
               {colVirt.getVirtualItems().map((vc) => {
                 const name = cols[colAt(vc.index)].name;
@@ -2540,15 +2541,15 @@ export function Grid({
                           className="vgrid-draft-input"
                           // a one-line input can't display newlines (WebKit
                           // strips them from .value, silently desyncing state)
-                          // — multiline drafts render a ⏎ preview, read-only,
-                          // and edit through the pop-out instead. An explicit
-                          // NULL/'' renders as the grid's chip; typing over
-                          // it replaces the state with text
+                          // — multiline drafts render a newline-glyph preview,
+                          // read-only, and edit through the pop-out instead. An
+                          // explicit NULL/'' renders as the grid's chip; typing
+                          // over it replaces the state with text
                           value={
                             cell.state
                               ? ""
                               : multiline
-                                ? cell.text.replace(/\r\n?|\n/g, "⏎")
+                                ? cell.text.replace(/\r\n?|\n/g, "⏎") // lint-ok: data marker, not the Return key
                                 : cell.text
                           }
                           // empty = DEFAULT, always — the placeholder shows
@@ -2558,7 +2559,7 @@ export function Grid({
                           readOnly={multiline}
                           title={
                             multiline
-                              ? "Multiline value — click to edit"
+                              ? "Multiline value, click to edit"
                               : `right-click: NULL${textFamily(draftMeta.get(name)?.type) ? " / empty" : ""} / DEFAULT${draftMeta.get(name)?.default ? ` · default = ${draftMeta.get(name)!.default}` : ""}`
                           }
                           onMouseDown={
@@ -2622,8 +2623,8 @@ export function Grid({
                           spellCheck={false}
                           onChange={(e) => setDraftCell(name, { text: e.target.value })}
                           onPaste={(e) => {
-                            // read-only multiline draft: the DOM holds the ⏎
-                            // preview, not the real text — edit in the pop-out
+                            // read-only multiline draft: the DOM holds the
+                            // preview glyphs, not the real text — edit in the pop-out
                             if (multiline) {
                               e.preventDefault();
                               setDraftPop({ col: name, dataC: colAt(vc.index), text: cell.text });
@@ -2937,7 +2938,7 @@ export function Grid({
           onClose={() => setMenu(null)}
           layerClassName="vgrid-menu-backdrop"
           items={[
-            { kind: "item", label: "Copy", hint: "⌘C", onSelect: () => copySelection("tsv") },
+            { kind: "item", label: "Copy", hint: <Kbd chord="cmd+c" />, onSelect: () => copySelection("tsv") },
             {
               kind: "submenu",
               label: "Copy As",
@@ -2967,13 +2968,13 @@ export function Grid({
             {
               kind: "item",
               label: "Find in Results…",
-              hint: "⌘F",
+              hint: <Kbd chord="cmd+f" />,
               onSelect: () => useFind.getState().openFind(),
             },
             {
               kind: "item",
               label: "Open as Record",
-              hint: "space",
+              hint: <Kbd chord="space" />,
               onSelect: () => sel.focus && setRecord({ rows: [sel.focus.r] }),
             },
             ...(sel.rect && sel.rect.r1 - sel.rect.r0 === 1
@@ -3013,7 +3014,7 @@ export function Grid({
                     label: "Set DEFAULT",
                     onSelect: () => setSelectionValue(null, true),
                   },
-                  { kind: "item", label: "Fill Down", hint: "⌘D", onSelect: fillDown },
+                  { kind: "item", label: "Fill Down", hint: <Kbd chord="cmd+d" />, onSelect: fillDown },
                 ] as MenuNode[])
               : []),
             ...(selectionHasPending
@@ -3082,7 +3083,7 @@ export function Grid({
               {
                 kind: "item",
                 label: "Set NULL",
-                hint: "⌥⌫",
+                hint: <Kbd chord="alt+delete" />,
                 disabled: !!m?.not_null,
                 onSelect: () =>
                   setDraftCell(draftMenu.col, { text: "", state: "null" }),
@@ -3125,7 +3126,7 @@ export function Grid({
               // parse = validation (invalid JSON fails HERE, not at commit);
               // compaction is display-only and skipped when the text carries
               // >2^53 ints — the JS round-trip would rewrite their digits, so
-              // the exact typed bytes stage instead (⏎ preview handles it)
+              // the exact typed bytes stage instead (the preview handles it)
               try {
                 const compact = JSON.stringify(JSON.parse(d));
                 if (!LOSSY_NUMS.test(d)) value = compact;

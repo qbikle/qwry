@@ -16,7 +16,7 @@
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  padding: 5px 10px;
+  padding: var(--row-y) var(--sp-2);
   border-radius: var(--radius-sm);
   color: var(--fg);
   cursor: pointer;
@@ -40,7 +40,7 @@
 }
 
 .ctx-item.disabled {
-  opacity: 0.45;
+  opacity: var(--o-disabled);
   cursor: default;
 }
 
@@ -49,14 +49,20 @@
 }
 
 .ctx-hint {
-  color: var(--fg-faint);
-  /* hints carry identifiers (column/CTE names) and shortcut glyphs — both are
-     data-register, both wear mono (WRITING.md: data never dresses as chrome) */
+  /* tier 2, not faint — hints carry column names and shortcuts the user
+     came to read (DESIGN.md rule 3). String hints are identifiers = data
+     register = mono; <Kbd> children override to the UI font (glyph register,
+     WRITING.md) at the item's label size. */
+  color: var(--fg-muted);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
 }
+.ctx-hint .kbd {
+  font-size: var(--text-sm);
+  color: inherit;
+}
 .ctx-item.hot .ctx-hint {
-  color: color-mix(in srgb, var(--accent-fg) 72%, transparent);
+  color: color-mix(in srgb, var(--accent-fg) 82%, transparent);
 }
 
 .ctx-arrow {
@@ -70,7 +76,7 @@
 
 .ctx-sep {
   height: 1px;
-  margin: 4px 6px;
+  margin: var(--sp-1) var(--sp-2);
   background: var(--border-strong);
 }
 
@@ -105,7 +111,7 @@
   border-color: var(--accent);
 }
 .ctx-empty {
-  padding: 6px 12px;
-  color: var(--fg-faint);
+  padding: var(--row-y) var(--sp-2);
+  color: var(--fg-muted);
   font-size: var(--text-sm);
 }

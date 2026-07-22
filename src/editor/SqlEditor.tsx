@@ -129,7 +129,7 @@ function docEqualsString(doc: Text, s: string): boolean {
   return pos === s.length;
 }
 
-/** subtle band over the statement the caret sits in — makes the ⌘↵ scope
+/** subtle band over the statement the caret sits in — makes the ⌘↩ scope
  * visible at a glance. Only drawn when the buffer holds 2+ statements. */
 const stmtScopeDeco = Decoration.line({ class: "cm-stmt-scope" });
 const stmtScopePlugin = ViewPlugin.fromClass(
@@ -295,7 +295,7 @@ export function SqlEditor() {
     };
 
     /** never-lose-work: a live draft about to be replaced by history text
-     * (⏎-restore, ⌥-walk leaving slot 0, a walk killed mid-cycle) joins the
+     * (↩-restore, ⌥-walk leaving slot 0, a walk killed mid-cycle) joins the
      * snapshot trail first — same trail the feature exists to provide. The
      * appdb layer dedupes, so a draft equal to the newest snapshot no-ops. */
     const parkDraft = (tabId: string | null, draft: string, newestSnap: string | undefined) => {
@@ -318,7 +318,7 @@ export function SqlEditor() {
       hasDiags = true;
       if (apply) {
         // the live draft is about to be overwritten through the store — park
-        // it in the trail FIRST so ⏎-restore can never lose a never-run draft
+        // it in the trail FIRST so ↩-restore can never lose a never-run draft
         parkDraft(
           useTabs.getState().activeId,
           t.draftState.doc.toString(),
@@ -485,7 +485,7 @@ export function SqlEditor() {
           },
         },
         {
-          // explain mirrors ⌘↵ scope: selection, else statement under caret
+          // explain mirrors ⌘↩ scope: selection, else statement under caret
           key: "Mod-e",
           run: (view) => {
             if (ttState) return true;
@@ -609,7 +609,7 @@ export function SqlEditor() {
         override: [qwryCompletion],
       }),
       stmtScopePlugin,
-      placeholder("SELECT …   —   ⌘↵ run statement · ⌘⇧↵ run all · ⌘K palette"),
+      placeholder("SELECT …   ⌘↩ run statement · ⇧⌘↩ run all · ⌘K palette"),
       qwryTheme(isDark),
       qwryHighlight,
       EditorView.updateListener.of((u) => {
@@ -706,7 +706,7 @@ export function SqlEditor() {
       if (editorFocusSignal.current) claimFocus();
     });
 
-    // toolbar Run/Explain read this so they honour the same scope as ⌘↵.
+    // toolbar Run/Explain read this so they honour the same scope as ⌘↩.
     // While time-traveling they see an empty target (run/explain no-op on
     // blank sql) — the mouse paths must not execute the VIEWED snapshot.
     editorRunText.current = () => (ttState ? { text: "", offset: 0 } : runTarget(view));
@@ -833,7 +833,7 @@ export function SqlEditor() {
           <span className="tt-pos">
             {tt.pos}/{tt.count}
           </span>
-          <span className="tt-hint">⏎ restores · esc returns · ⌃⌘←→ step</span>
+          <span className="tt-hint">↩ restores · esc returns · ⌃⌘←→ step</span>
         </div>
       )}
       {menu && (
@@ -845,7 +845,7 @@ export function SqlEditor() {
             {
               kind: "item",
               label: "Run",
-              hint: "⌘↵",
+              hint: "⌘↩",
               onSelect: () => {
                 const v = viewRef.current;
                 if (!v) return;
@@ -857,7 +857,7 @@ export function SqlEditor() {
             {
               kind: "item",
               label: "Format SQL",
-              hint: "⌘⇧F",
+              hint: "⇧⌘F",
               onSelect: () => {
                 const v = viewRef.current;
                 if (v) void formatDefault(v);
@@ -925,7 +925,7 @@ export function SqlEditor() {
                 }
               },
             },
-            { kind: "item", label: "Search Functions…", hint: "⌘⇧U", onSelect: () => setFnSearch(true) },
+            { kind: "item", label: "Search Functions…", hint: "⇧⌘U", onSelect: () => setFnSearch(true) },
             { kind: "sep" },
             {
               kind: "item",

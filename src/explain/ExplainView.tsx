@@ -65,7 +65,7 @@ export function ExplainView() {
             execution {executionMs.toFixed(1)}ms · planning {planningMs.toFixed(1)}ms
           </span>
         )}
-        <button className="icon-btn" title="Close esc" onClick={close}>
+        <button className="iconbtn" title="Close esc" onClick={close}>
           <X size={14} />
         </button>
       </div>

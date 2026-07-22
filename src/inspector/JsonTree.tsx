@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -80,22 +81,35 @@ function renameKeyIn(root: Json, parentPath: Path, oldKey: string, newKey: strin
   return setIn(root, parentPath, rebuilt);
 }
 
-/** coerce edited text back to the leaf's original primitive type */
+/** coerce edited text to a JSON value. TYPED grammar, not original-type-bound:
+ *  quotes always force a string (the universal escape hatch — '123', 'true');
+ *  bare true/false/null become their literals; bare numbers become numbers
+ *  ONLY when they round-trip exactly (43 → 43, but 007 / 1e5 / 1.50 stay
+ *  strings — an ID with leading zeros must never silently mutate to 7).
+ *  Number-typed leaves keep the looser legacy parse (1.50 → 1.5 there is the
+ *  expected numeric edit, not a type change). */
 function coerce(original: Json, text: string): { ok: true; value: Json } | { ok: false } {
+  const t = text.trim();
+  const quoted =
+    t.length >= 2 &&
+    ((t.startsWith("'") && t.endsWith("'")) || (t.startsWith('"') && t.endsWith('"')));
+  if (quoted) return { ok: true, value: t.slice(1, -1) };
   if (typeof original === "number") {
-    if (text.trim() === "") return { ok: false };
-    const n = Number(text);
+    if (t === "null") return { ok: true, value: null };
+    if (t === "") return { ok: false };
+    const n = Number(t);
     return Number.isNaN(n) ? { ok: false } : { ok: true, value: n };
   }
   if (typeof original === "boolean") {
-    const t = text.trim().toLowerCase();
-    if (t !== "true" && t !== "false") return { ok: false };
-    return { ok: true, value: t === "true" };
+    if (t === "true" || t === "false") return { ok: true, value: t === "true" };
+    if (t === "null") return { ok: true, value: null };
+    return { ok: false };
   }
-  if (original === null) {
-    if (text === "" || text.toLowerCase() === "null") return { ok: true, value: null };
-    return { ok: true, value: text };
-  }
+  // string and null originals share the typed grammar
+  if (t === "true" || t === "false") return { ok: true, value: t === "true" };
+  if (t === "null" || (original === null && text === "")) return { ok: true, value: null };
+  const n = Number(t);
+  if (t !== "" && Number.isFinite(n) && String(n) === t) return { ok: true, value: n };
   return { ok: true, value: text };
 }
 
@@ -142,33 +156,53 @@ function KeyLabel({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(k);
   const canEdit = ctx.editable && !isArrayItem;
+  const inRef = useRef<HTMLInputElement>(null);
+  // caret AFTER the key (autoFocus alone lands it engine-dependently)
+  useEffect(() => {
+    if (!editing) return;
+    const el = inRef.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [editing]);
 
   if (editing) {
     return (
-      <input
-        className="jt-edit jt-key-edit"
-        autoFocus
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
-          if (e.key === "Enter") {
-            refocusInspector(e.currentTarget);
+      // wrapper keeps the colon OUTSIDE the box but inside one flex child, so
+      // the line keeps a single gap before the value — same grammar as the
+      // display's `key:` span
+      <span className="jt-keywrap">
+        <input
+          ref={inRef}
+          className="jt-edit jt-key-edit"
+          value={draft}
+          spellCheck={false}
+          // mono font: content width IS the character count — the box hugs
+          // the key exactly as the label did (chrome pulled back by the
+          // negative margins), so the value's wrap column never moves
+          style={{ width: `calc(${Math.max(draft.length, 1)}ch + 10px)` }}
+          onChange={(e) => setDraft(e.target.value)}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
+            if (e.key === "Enter") {
+              refocusInspector(e.currentTarget);
+              if (draft && draft !== k) ctx.onRenameKey(parentPath, k, draft);
+              setEditing(false);
+            }
+            if (e.key === "Escape") {
+              refocusInspector(e.currentTarget);
+              setDraft(k);
+              setEditing(false);
+            }
+          }}
+          onBlur={() => {
             if (draft && draft !== k) ctx.onRenameKey(parentPath, k, draft);
             setEditing(false);
-          }
-          if (e.key === "Escape") {
-            refocusInspector(e.currentTarget);
-            setDraft(k);
-            setEditing(false);
-          }
-        }}
-        onBlur={() => {
-          if (draft && draft !== k) ctx.onRenameKey(parentPath, k, draft);
-          setEditing(false);
-        }}
-      />
+          }}
+        />
+        :
+      </span>
     );
   }
   return (
@@ -195,6 +229,32 @@ function Leaf({ value, path }: { value: Json; path: Path }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [err, setErr] = useState(false);
+  // hug-the-content mode, decided ONCE at open (a live threshold would flip
+  // the box to full-width mid-keystroke). 40ch ≈ a full row at the panel's
+  // 220px floor — anything longer wraps, so it takes the row instead
+  const [fit, setFit] = useState(true);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  // the editor wears the display's exact metrics (font, wrap, left edge), so
+  // it must also take the display's HEIGHT — a fixed one-line box collapsed a
+  // six-line wrapped value into a blind tail-scroll and jumped the whole tree
+  useLayoutEffect(() => {
+    if (!editing) return;
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = "0";
+    // +2: border-box height must include the 1px borders scrollHeight omits,
+    // or exact-fit content shows a one-line scrollbar sliver
+    el.style.height = `${Math.min(el.scrollHeight + 2, window.innerHeight * 0.4)}px`;
+  }, [editing, draft]);
+  // caret AFTER the value (autoFocus alone lands it engine-dependently)
+  useEffect(() => {
+    if (!editing) return;
+    const el = taRef.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [editing]);
 
   const cls =
     value === null
@@ -207,7 +267,9 @@ function Leaf({ value, path }: { value: Json; path: Path }) {
   const display = value === null ? "null" : typeof value === "string" ? value : JSON.stringify(value);
 
   const begin = () => {
-    setDraft(value === null ? "" : typeof value === "string" ? value : String(value));
+    const init = value === null ? "" : typeof value === "string" ? value : String(value);
+    setDraft(init);
+    setFit(!init.includes("\n") && init.length <= 40);
     setErr(false);
     setEditing(true);
   };
@@ -224,10 +286,13 @@ function Leaf({ value, path }: { value: Json; path: Path }) {
 
   if (editing) {
     return (
-      <input
-        className={`jt-edit${err ? " err" : ""}`}
-        autoFocus
+      <textarea
+        ref={taRef}
+        className={`jt-edit jt-edit-val${fit ? " fit" : ""}${err ? " err" : ""}`}
+        rows={1}
         value={draft}
+        spellCheck={false}
+        style={fit ? { width: `calc(${Math.max(draft.length, 1)}ch + 12px)` } : undefined}
         onChange={(e) => {
           setDraft(e.target.value);
           setErr(false);
@@ -235,9 +300,13 @@ function Leaf({ value, path }: { value: Json; path: Path }) {
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
-          if (e.key === "Enter") {
+          if (e.key === "Enter" && !e.altKey && !e.shiftKey) {
+            // Enter commits; ⌥/⇧-Enter inserts a real newline (grid grammar).
+            // preventDefault either way — a failed commit must keep the
+            // draft as typed, not gain the newline Enter would insert
+            e.preventDefault();
             // refocus only when the edit actually closes — an invalid value
-            // keeps the input (and its error state) focused
+            // keeps the editor (and its error state) focused
             const el = e.currentTarget;
             if (commit()) refocusInspector(el);
           }
@@ -267,7 +336,16 @@ function Leaf({ value, path }: { value: Json; path: Path }) {
       onClick={onClick}
       title={ctx.editable ? "click to edit · ⌥-click copies path" : "click to copy · ⌥-click for path"}
     >
-      {typeof value === "string" ? <Highlight text={display} /> : display}
+      {value === "" ? (
+        // an empty string renders zero characters = zero click target — the
+        // "" marker (data-state register, like the italic null) restores the
+        // way in for keys that don't have a value yet
+        <span className="jt-empty">""</span>
+      ) : typeof value === "string" ? (
+        <Highlight text={display} />
+      ) : (
+        display
+      )}
     </span>
   );
 }
@@ -420,7 +498,7 @@ function Node({
           className={`jt-line${isHit ? " jt-hit" : ""}`}
           onClick={() => setOpen(!open)}
         >
-          {effectiveOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+          {effectiveOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
           {keyEl}
           <span
             className="jt-brace"
@@ -566,13 +644,13 @@ export function JsonTree({
                   showing the previous query's count would be a lie */}
               {input !== query ? "…" : hits.length === 0 ? "0/0" : `${hitIdx + 1}/${hits.length}`}
             </span>
-            <button className="jt-nav" title="Previous ⇧⏎" onClick={() => step(-1)}>
+            <button className="iconbtn jt-nav" title="Previous ⇧↩" onClick={() => step(-1)}>
               <ArrowUp size={12} />
             </button>
-            <button className="jt-nav" title="Next ⏎" onClick={() => step(1)}>
+            <button className="iconbtn jt-nav" title="Next ↩" onClick={() => step(1)}>
               <ArrowDown size={12} />
             </button>
-            <button className="jt-nav" title="Clear" onClick={() => setInput("")}>
+            <button className="iconbtn jt-nav" title="Clear" onClick={() => setInput("")}>
               <X size={12} />
             </button>
           </>
@@ -580,7 +658,7 @@ export function JsonTree({
       </div>
       {query !== "" && result.capped && (
         <div className="jt-capnote">
-          search capped at {SEARCH_NODE_CAP.toLocaleString()} nodes — matches beyond may be
+          search capped at {SEARCH_NODE_CAP.toLocaleString()} nodes · matches beyond may be
           missing
         </div>
       )}

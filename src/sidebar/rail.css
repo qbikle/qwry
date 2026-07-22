@@ -4,8 +4,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 2px 0 6px;
+  gap: var(--sp-3);
+  padding: 2px 0 var(--sp-2);
 }
 
 .rail-list {
@@ -17,9 +17,10 @@
   min-height: 0;
   overflow-y: auto;
   /* horizontal padding gives the active ring + indicator bar room inside the
-     clip box — overflow-y:auto forces overflow-x to clip, so they must fit */
+     clip box — overflow-y:auto forces overflow-x to clip, so they must fit
+     (12px each side: 40px avatar + 4px ring stays inside the 66px rail) */
   overflow-x: hidden;
-  padding: 6px 11px;
+  padding: var(--sp-2) var(--sp-3);
   margin: 0;
   width: 100%;
   list-style: none;
@@ -68,11 +69,17 @@
   border: 1px solid var(--border);
   color: var(--fg-muted);
   cursor: pointer;
-  transition: color 150ms, background 150ms, border-color 150ms;
+  transition:
+    color var(--dur-quick) var(--ease-std),
+    background var(--dur-quick) var(--ease-std),
+    border-color var(--dur-quick) var(--ease-std);
 }
 .rail-home:hover {
   color: var(--fg);
   background: var(--bg-hover);
+}
+.rail-home:active {
+  transform: scale(0.97);
 }
 .rail-home.active {
   color: var(--accent);
@@ -137,4 +144,7 @@
   background: var(--bg-hover);
   border-style: solid;
   border-color: var(--accent);
+}
+.rail-add:active {
+  transform: scale(0.97);
 }

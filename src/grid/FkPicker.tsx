@@ -12,6 +12,7 @@ import * as ipc from "../ipc/commands";
 import { useResults } from "../stores/results";
 import { useConnections } from "../stores/connections";
 import { fkPickerSql, type FkPickTarget } from "./spelunkLogic";
+import { Kbd } from "../design/Kbd";
 import "./grid.css";
 
 const DEBOUNCE_MS = 200;
@@ -171,7 +172,9 @@ export function FkPicker({
                 ? `${target.schema === "public" ? "" : `${target.schema}.`}${target.table}`
                 : `${rows.length}${rows.length === 50 ? " (first 50)" : ""} row${rows.length === 1 ? "" : "s"} · ${target.refCol}`}
           </span>
-          <span className="fkpick-keys">↑↓ · ↩ pick · esc</span>
+          <span className="fkpick-keys">
+            <Kbd chord="up+down" /> · <Kbd chord="return" /> pick · <Kbd chord="esc" />
+          </span>
         </div>
       </motion.div>
     </AnchoredOverlay>

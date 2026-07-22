@@ -1,5 +1,14 @@
 import { create } from "zustand";
 import * as ipc from "../ipc/commands";
+import { terminatedSessions } from "./sessionFlags";
+
+/** app-ordered session death: mark BEFORE the IPC so an in-flight run's
+ * connection-closed rejection classifies as a cancel, not an error
+ * (spare-pool disposals skip this — spares never carry a visible run) */
+function dropSession(sid: string) {
+  terminatedSessions.add(sid);
+  void ipc.disconnect(sid);
+}
 import type { DriverError, Profile } from "../ipc/types";
 
 type ConnState = "disconnected" | "connecting" | "connected" | "error";
@@ -41,7 +50,7 @@ function bumpEpoch(id: string) {
 // actually ran + 1, instead of every visited tab.
 const spareSessions = new Map<string, string>();
 /** the replenish handshake in flight — ensureTabSession AWAITS and claims it
- * instead of starting a THIRD full handshake (connect → immediate ⌘↵ used to
+ * instead of starting a THIRD full handshake (connect → immediate ⌘↩ used to
  * pay the whole tunnel handshake again while the spare was mid-build) */
 const spareInflight = new Map<string, Promise<string | null>>();
 
@@ -193,11 +202,11 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
     dropSpare(id);
     set((s) => ({ connState: { ...s.connState, [id]: "disconnected" } }));
     const primary = get().sessions[id];
-    if (primary) void ipc.disconnect(primary);
+    if (primary) dropSession(primary);
     const prefix = `${id}::`;
     const keep: Record<string, string> = {};
     for (const [k, sid] of Object.entries(get().tabSessions)) {
-      if (k.startsWith(prefix)) void ipc.disconnect(sid);
+      if (k.startsWith(prefix)) dropSession(sid);
       else keep[k] = sid;
     }
     set((s) => {
@@ -260,7 +269,7 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
       replenishSpare(profileId);
       return spare;
     }
-    // no ready spare, but one is MID-HANDSHAKE (connect → immediate ⌘↵):
+    // no ready spare, but one is MID-HANDSHAKE (connect → immediate ⌘↩):
     // await and claim it instead of paying a second full handshake
     const building = spareInflight.get(profileId);
     if (building && get().sessions[profileId]) {
@@ -347,7 +356,7 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
     const suffix = `::${tabId}`;
     const sessions: Record<string, string> = {};
     for (const [k, sid] of Object.entries(get().tabSessions)) {
-      if (k.endsWith(suffix)) void ipc.disconnect(sid);
+      if (k.endsWith(suffix)) dropSession(sid);
       else sessions[k] = sid;
     }
     const txTabs: Record<string, boolean> = {};
@@ -366,7 +375,7 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
     // profile and its live tab sessions are untouched
     if (sessionId && spareSessions.get(profileId) === sessionId) {
       spareSessions.delete(profileId);
-      void ipc.disconnect(sessionId); // free the backend registry entry
+      dropSession(sessionId); // free the backend registry entry
       replenishSpare(profileId);
       return;
     }
@@ -375,7 +384,7 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
     // open transactions. The old profile-wide wipe silently orphaned them.
     if (sessionId && get().sessions[profileId] !== sessionId) {
       // a dead socket still occupies the backend session map until released
-      void ipc.disconnect(sessionId);
+      dropSession(sessionId);
       const entry = Object.entries(get().tabSessions).find(([, sid]) => sid === sessionId);
       if (!entry) return; // already forgotten (tab closed etc.)
       const [key] = entry;
@@ -398,7 +407,7 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
     // keepalives detect it, and the branch above reaps them one by one.
     dropSpare(profileId);
     const primary = get().sessions[profileId];
-    if (primary) void ipc.disconnect(primary);
+    if (primary) dropSession(primary);
     set((s) => ({
       sessions: (({ [profileId]: _gone, ...rest }) => rest)(s.sessions),
       connState: { ...s.connState, [profileId]: "disconnected" },
@@ -416,10 +425,10 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
     dropSpare(profileId);
     // close every live backend session for this profile (primary + per-tab)
     const primary = get().sessions[profileId];
-    if (primary) void ipc.disconnect(primary);
+    if (primary) dropSession(primary);
     const tabSessions: Record<string, string> = {};
     for (const [k, sid] of Object.entries(get().tabSessions)) {
-      if (k.startsWith(prefix)) void ipc.disconnect(sid);
+      if (k.startsWith(prefix)) dropSession(sid);
       else tabSessions[k] = sid;
     }
     const { [profileId]: _gone, ...sessions } = get().sessions;
@@ -470,7 +479,7 @@ async function connectInner(
     // the OLD identity — installing it would put the old host's session under
     // the new profile. Dispose it and let the caller's fresh attempt win.
     if (epochOf(profileId) !== epoch) {
-      void ipc.disconnect(sessionId);
+      dropSession(sessionId);
       return;
     }
     // a fresh primary connection invalidates any prior per-tab sessions for
@@ -480,7 +489,7 @@ async function connectInner(
     const txTabs: Record<string, boolean> = {};
     const writeTabs: Record<string, boolean> = {};
     for (const [k, sid] of Object.entries(get().tabSessions)) {
-      if (k.startsWith(prefix)) void ipc.disconnect(sid);
+      if (k.startsWith(prefix)) dropSession(sid);
       else tabSessions[k] = sid;
     }
     for (const [k, v] of Object.entries(get().txTabs)) {
@@ -506,7 +515,7 @@ async function connectInner(
     void import("./schema").then(({ useSchema }) =>
       useSchema.getState().fetch(profileId, sessionId),
     );
-    // build the standby session so the first ⌘↵ in ANY tab is instant
+    // build the standby session so the first ⌘↩ in ANY tab is instant
     replenishSpare(profileId);
   } catch (e) {
     // a stale attempt failing (the OLD host refusing) must not paint the new

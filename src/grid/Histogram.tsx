@@ -114,7 +114,7 @@ export function Histogram({
         if (((e as { code?: string | null }).code ?? null) === "42883") {
           setRes(bucketize(mode.fallbackValues));
           setFallbackNote(
-            `no server-side equality for this type — computed over ${mode.fallbackValues.length.toLocaleString()} loaded rows`,
+            `no server-side equality for this type · computed over ${mode.fallbackValues.length.toLocaleString()} loaded rows`,
           );
           return;
         }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { Clock, Pencil, Plus, TriangleAlert } from "lucide-react";
+import { Kbd } from "../design/Kbd";
 import { panelIn } from "../design/springs";
 import { confirmTxRollback, useConnections } from "../stores/connections";
 import { useTabs } from "../stores/tabs";
@@ -76,7 +77,7 @@ export function Dashboard() {
         <div className="dash-error">
           <TriangleAlert size={14} />
           <span>Couldn’t load saved connections: {profilesError}</span>
-          <button className="dash-error-retry" onClick={() => void loadProfiles()}>
+          <button className="btnish dash-error-retry" onClick={() => void loadProfiles()}>
             Retry
           </button>
         </div>
@@ -89,11 +90,11 @@ export function Dashboard() {
           <div className="dash-hero-sub">
             Connect to a PostgreSQL database to start querying.
           </div>
-          <button className="dash-hero-btn" onClick={() => editConnection(blankProfile())}>
-            <Plus size={15} /> Add Your First Connection
+          <button className="btnish primary dash-hero-btn" onClick={() => editConnection(blankProfile())}>
+            <Plus size={14} /> Add Your First Connection
           </button>
           <div className="dash-hero-hint">
-            <kbd>⌘K</kbd> opens the command palette anytime
+            <Kbd chord="cmd+k" caps /> opens the command palette anytime
           </div>
         </div>
       ) : (
@@ -123,14 +124,14 @@ export function Dashboard() {
                 </div>
                 <span className={`dash-state ${state}`} />
                 <button
-                  className="dash-edit"
+                  className="iconbtn dash-edit"
                   title="Edit connection"
                   onClick={(e) => {
                     e.stopPropagation();
                     editConnection(p);
                   }}
                 >
-                  <Pencil size={13} />
+                  <Pencil size={14} />
                 </button>
               </div>
             );
@@ -148,7 +149,7 @@ export function Dashboard() {
       {recent.length > 0 && (
         <div className="dash-recent">
           <div className="dash-recent-head">
-            <Clock size={13} /> Recent
+            <Clock size={12} /> Recent
           </div>
           {recent.map((row) => {
             const prof = profiles.find((p) => p.id === row.profile_id);
@@ -157,7 +158,7 @@ export function Dashboard() {
                 {prof && <Avatar profile={prof} index={profiles.indexOf(prof)} size={22} />}
                 <span className="dash-recent-sql">{row.sql.replace(/\s+/g, " ").trim()}</span>
                 <span className="dash-recent-meta">
-                  {prof?.name || prof?.host || "—"} · {relTime(row.ran_at)}
+                  {prof?.name || prof?.host || "—" /* em-ok absent-value marker */} · {relTime(row.ran_at)}
                 </span>
               </button>
             );

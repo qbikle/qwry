@@ -21,13 +21,13 @@
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: 10px var(--sp-2) 10px var(--sp-3);
+  padding: var(--sp-3) var(--sp-2) var(--sp-3) var(--sp-3);
   border-bottom: 1px solid var(--border);
 }
 .insp-id {
   display: flex;
   align-items: baseline;
-  gap: 7px;
+  gap: var(--sp-2);
   min-width: 0;
   flex: 1;
 }
@@ -47,7 +47,7 @@
   flex-shrink: 0;
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
-  padding: 1px 6px;
+  padding: 1px 6px; /* optical */ /* pill proportion */
   border-radius: var(--radius-pill);
   background: var(--accent-soft);
   color: var(--accent);
@@ -62,9 +62,9 @@
 .insp-chip {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 6px; /* optical */ /* icon gap, matches .btnish */
   margin: var(--sp-2) var(--sp-3) 0;
-  padding: 5px 8px;
+  padding: var(--sp-1) var(--sp-2);
   border-radius: var(--radius-sm);
   font-size: var(--text-xs);
   background: var(--bg-raised);
@@ -81,14 +81,9 @@
 .insp-chip.ro {
   color: var(--fg-faint);
 }
-.insp-chip-retry {
+/* skin comes from .linkish (tokens.css) — only the placement stays local */
+.insp-chip .insp-chip-retry {
   margin-left: auto;
-  background: none;
-  border: none;
-  color: var(--accent);
-  cursor: pointer;
-  font-size: var(--text-xs);
-  padding: 0;
 }
 
 /* icon toolbar */
@@ -99,24 +94,6 @@
   row-gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3) 0;
 }
-.insp-tool {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 28px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--fg-muted);
-  cursor: pointer;
-}
-.insp-tool:hover {
-  color: var(--fg);
-  border-color: var(--border-strong);
-  background: var(--bg-hover);
-}
-
 .insp-body {
   flex: 1;
   min-height: 0;
@@ -162,7 +139,7 @@
 }
 .insp-value.editable {
   cursor: text;
-  transition: border-color 120ms;
+  transition: border-color var(--dur-quick) var(--ease-std);
 }
 .insp-value.editable:hover {
   border-color: var(--border-strong);
@@ -219,41 +196,15 @@
 .insp-tools-actions button {
   height: 28px;
 }
+/* skin comes from .btnish (tokens.css) — verbs must not wrap mid-button */
 .insp-editactions button {
   white-space: nowrap;
-  padding: 5px 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-strong);
-  background: var(--bg-raised);
-  cursor: pointer;
-  font-size: var(--text-xs);
-  transition: background 120ms, border-color 120ms, color 120ms;
-}
-.insp-editactions button:hover:not(:disabled) {
-  border-color: var(--accent);
-}
-.insp-editactions button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-fg);
-}
-.insp-editactions button.primary:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-.insp-editactions button:disabled {
-  opacity: 0.5;
-}
-.insp-key {
-  margin-left: 5px;
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  opacity: 0.55;
 }
 /* narrow panel (store width < 280): shortcut hints yield, verbs stay.
  * class comes from the width store, NOT a container query — container-type
  * on any ancestor would make it the containing block for the fixed
  * .insp-copy-backdrop, shrinking click-away to the panel */
-.inspector.narrow .insp-key {
+.inspector.narrow .kbd {
   display: none;
 }
 
@@ -275,18 +226,103 @@
 .jsonfield:focus-within {
   border-color: var(--accent);
 }
+/* raw-fill + search: the CM editor owns its scroll (height-bound), so the
+ * search panel stays pinned while results scroll under it — the outer
+ * .jsonfield scrolling instead would carry the panel away (chrome that
+ * scrolls with content isn't chrome) */
+.insp-body.raw-fill .jsonfield .cm-editor {
+  height: 100%;
+}
+
+/* ⌘F search panel inside the raw view — same skin as the SQL editor's
+ * (editor.css .sql-editor .cm-panel.cm-search); duplicated because the two
+ * surfaces live in different lazy chunks and the inspector must not depend
+ * on the editor's CSS having loaded. Keep the values in lockstep. */
+.jsonfield .cm-panels {
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+}
+.jsonfield .cm-panel.cm-search {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-1) 28px var(--sp-1) var(--sp-2);
+}
+.jsonfield .cm-panel.cm-search input.cm-textfield {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  padding: 2px var(--sp-2);
+}
+.jsonfield .cm-panel.cm-search input.cm-textfield:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.jsonfield .cm-panel.cm-search .cm-button {
+  background: var(--bg-hover);
+  background-image: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-size: var(--text-xs);
+  padding: 2px var(--sp-2);
+  cursor: pointer;
+}
+.jsonfield .cm-panel.cm-search .cm-button:hover {
+  background: var(--bg-active);
+}
+.jsonfield .cm-panel.cm-search label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+.jsonfield .cm-panel.cm-search input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+.jsonfield .cm-panel.cm-search [name="close"] {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  font-size: var(--text-lg);
+  padding: 0 var(--sp-1);
+  cursor: pointer;
+}
+.jsonfield .cm-panel.cm-search [name="close"]:hover {
+  color: var(--fg);
+}
+.jsonfield .cm-searchMatch {
+  background: var(--warn-soft);
+}
+.jsonfield .cm-searchMatch-selected {
+  background: rgba(245, 166, 35, 0.32);
+  outline: 1px solid var(--warn);
+}
 
 /* split copy button */
 .insp-copy {
   position: relative;
   display: inline-flex;
 }
-.insp-copy-main {
+/* fused halves of the split button — must outrank .iconbtn.bordered */
+.insp-copy button.insp-copy-main {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
   border-right: none;
 }
-.insp-copy-caret {
+.insp-copy button.insp-copy-caret {
   width: 18px;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
@@ -312,7 +348,7 @@
   display: block;
   width: 100%;
   text-align: left;
-  padding: 5px 9px;
+  padding: var(--sp-1) var(--sp-2);
   border: none;
   border-radius: var(--radius-sm);
   background: none;
@@ -323,21 +359,14 @@
 .insp-copy-menu button:hover {
   background: var(--bg-hover);
 }
+.insp-copy-menu button:active {
+  background: var(--bg-active);
+}
 
+/* skin comes from .btnish — un-italic against the NULL display around it */
 .insp-null-edit {
   margin-left: var(--sp-2);
-  padding: 2px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-raised);
-  color: var(--fg-muted);
-  cursor: pointer;
-  font-size: var(--text-xs);
   font-style: normal;
-}
-.insp-null-edit:hover {
-  color: var(--fg);
-  border-color: var(--accent);
 }
 
 /* json tree */
@@ -356,12 +385,12 @@
   gap: 4px;
   cursor: pointer;
   border-radius: var(--radius-xs);
-  padding: 0 3px;
+  padding: 0 var(--sp-1);
 }
 /* chevrons re-center against the FIRST text line (line-height 1.6 × 12px) */
 .jt-line > svg {
   flex-shrink: 0;
-  margin-top: 4px;
+  margin-top: 4px; /* optical */ /* first-line recenter */
 }
 .jt-line .jt-key,
 .jt-line .jt-brace,
@@ -372,22 +401,23 @@
   background: var(--bg-hover);
 }
 
+/* leaf spacer mirrors the container chevron's width so keys align */
 .jt-pad {
-  width: 11px;
+  width: var(--icon-sm);
   flex-shrink: 0;
 }
 
 .jt-children {
-  margin-left: 14px;
+  margin-left: var(--sp-3);
   border-left: 1px solid var(--border);
-  padding-left: 6px;
+  padding-left: var(--sp-2);
 }
 
 /* explicit child-cap expander — capped children are never silently hidden */
 .jt-more {
   display: block;
   margin: 1px 0;
-  padding: 1px 6px;
+  padding: 1px var(--sp-2);
   background: none;
   border: none;
   border-radius: var(--radius-xs);
@@ -401,11 +431,14 @@
   background: var(--bg-hover);
   color: var(--fg);
 }
+.jt-more:active {
+  background: var(--bg-active);
+}
 
 /* honest note when the search walk hit its node cap */
 .jt-capnote {
-  padding: 2px 6px;
-  color: var(--fg-faint);
+  padding: 2px var(--sp-2);
+  color: var(--fg-muted);
   font-size: var(--text-xs);
 }
 
@@ -425,6 +458,10 @@
 .jt-null {
   color: var(--fg-faint);
   font-style: italic;
+}
+/* empty-string marker — data-state register, same tier as null */
+.jt-empty {
+  color: var(--fg-faint);
 }
 .jt-brace {
   color: var(--fg-faint);
@@ -453,9 +490,9 @@
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 6px; /* optical */ /* icon gap, matches .btnish */
   margin-bottom: var(--sp-2);
-  padding: 3px 6px;
+  padding: var(--sp-1) var(--sp-2);
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -480,23 +517,13 @@
 }
 .jt-hitcount {
   font-size: var(--text-xs);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
 }
-.jt-nav {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px;
-  background: none;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--fg-muted);
-  cursor: pointer;
-}
-.jt-nav:hover {
-  background: var(--bg-active);
-  color: var(--fg);
+/* skin comes from .iconbtn — the search bar is dense, so the box shrinks */
+.jt-search .jt-nav {
+  width: 18px;
+  height: 18px;
 }
 
 .jt-mark {
@@ -523,10 +550,14 @@
 }
 
 .jt-edit {
+  /* the negative-margin compensation pushes the border 1px into the
+     neighbor rows' boxes — positioned elements paint after normal-flow
+     siblings, so their hover backgrounds can never eat the border edge */
+  position: relative;
   background: var(--bg-panel);
   border: 1px solid var(--accent);
   border-radius: var(--radius-xs);
-  padding: 0 4px;
+  padding: 0 4px; /* optical */ /* compensated below — text must not shift */
   color: var(--fg);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
@@ -534,9 +565,52 @@
   user-select: text;
   min-width: 60px;
 }
+/* value editor (textarea): wears the DISPLAY's exact metrics — same font,
+   line-height, wrap, and left edge (border + padding pulled back by the
+   negative margin), so entering edit mode changes nothing but the border
+   appearing and the row below staying put. Height is JS-grown to the wrapped
+   content (Leaf's layout effect), capped at 40% of the window */
+.jt-edit:focus-visible {
+  /* the always-on accent border IS the focus treatment (the editor only
+     exists focused) — the global ring paints outside the box and sibling
+     hover backgrounds swallowed its edges by DOM paint order */
+  outline: none;
+}
+.jt-edit-val {
+  flex: 1 1 auto;
+  min-width: 60px;
+  /* LEFT-only compensation: a negative right margin pushed the border past
+     the scroller edge and it clipped — the text anchor only needs the left */
+  margin: -1px 0 -1px -5px; /* optical */ /* border 1 + padding 4 compensation */
+  resize: none;
+  overflow-y: auto;
+  font: inherit;
+  line-height: inherit;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+/* content-hugging variant (short single-line values of ANY type): width
+   rides the char count inline; the cap lets an edit that outgrows the row
+   wrap in place instead of overflowing */
+.jt-edit-val.fit {
+  flex: 0 1 auto;
+  max-width: 100%;
+}
 .jt-edit.err {
   border-color: var(--danger);
 }
+/* key editor: box hugs the key text (width set inline from the mono char
+   count), chrome pulled back so the text never shifts — the sibling value's
+   wrap column stays exactly where the display had it */
 .jt-key-edit {
+  color: var(--syn-prop);
+  flex: 0 0 auto;
+  min-width: 0;
+  margin: -1px -5px; /* optical */ /* border 1 + padding 4 compensation */
+}
+.jt-keywrap {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: baseline;
   color: var(--syn-prop);
 }

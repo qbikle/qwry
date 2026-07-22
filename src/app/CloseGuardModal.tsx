@@ -1,5 +1,6 @@
 import { motion } from "motion/react";
 import { popIn } from "../design/springs";
+import { Kbd } from "../design/Kbd";
 import { useCloseGuard } from "../stores/closeGuard";
 import { useTabs } from "../stores/tabs";
 import { useEdits } from "../stores/edits";
@@ -7,7 +8,7 @@ import { Modal } from "./overlay/Overlay";
 import "./app.css";
 
 /** confirm before closing a tab that has uncommitted cell edits (Esc/Enter =
- * keep · ⌘⌫ = discard & close · ⌘↵ = commit & close) or unsaved drift against
+ * keep · ⌘⌫ = discard & close · ⌘↩ = commit & close) or unsaved drift against
  * its backing .sql file (Esc/Enter = keep · ⌘⌫ = close anyway). Mac
  * destructive-confirm grammar: plain Enter is always the SAFE action; the
  * destructive one needs the ⌘⌫ chord (Postico convention). */
@@ -34,7 +35,7 @@ export function CloseGuardModal() {
       onClose={cancel}
       onKey={(e) => {
         // plain Enter = SAFE (keep the tab), ⌘⌫ = destructive (discard),
-        // ⌘↵ = commit & close — only while topmost.
+        // ⌘↩ = commit & close — only while topmost.
         if (e.key === "Enter") {
           e.preventDefault();
           e.stopImmediatePropagation();
@@ -52,7 +53,7 @@ export function CloseGuardModal() {
         <div className="cg-detail">
           {fileOnly ? (
             <>
-              “{tab?.name}” has unsaved changes to {fileName} — the text stays in qwry, but
+              “{tab?.name}” has unsaved changes to {fileName}. The text stays in qwry, but
               the file on disk keeps its old version. Close anyway?
             </>
           ) : (
@@ -66,16 +67,16 @@ export function CloseGuardModal() {
           )}
         </div>
         <div className="cg-actions">
-          <button onClick={cancel}>
-            Keep <span className="cg-key">⏎</span>
+          <button className="btnish" onClick={cancel}>
+            Keep <Kbd chord="return" />
           </button>
           {!fileOnly && (
-            <button className="cg-commit" onClick={() => void commit()}>
-              Commit and Close <span className="cg-key">⌘↵</span>
+            <button className="btnish primary" onClick={() => void commit()}>
+              Commit and Close <Kbd chord="cmd+return" />
             </button>
           )}
-          <button className="cg-discard" onClick={discard}>
-            {fileOnly ? "Close Anyway" : "Discard and Close"} <span className="cg-key">⌘⌫</span>
+          <button className="btnish danger" onClick={discard}>
+            {fileOnly ? "Close Anyway" : "Discard and Close"} <Kbd chord="cmd+delete" />
           </button>
         </div>
       </motion.div>

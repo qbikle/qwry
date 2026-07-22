@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { Clock } from "lucide-react";
 import { popIn } from "../design/springs";
+import { Kbd } from "../design/Kbd";
 import * as ipc from "../ipc/commands";
 import type { HistoryRow, HistoryStatus } from "../ipc/types";
 import { useConnections } from "../stores/connections";
@@ -195,7 +196,7 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
       <button
         key={`${r.id}${run.member ? "m" : ""}`}
         data-i={runIdx}
-        className={`history-row${runIdx === active ? " active" : ""}${run.member ? " member" : ""}`}
+        className={`history-row${runIdx === active ? " hot" : ""}${run.member ? " member" : ""}`}
         onClick={() => openRow(r)}
         onMouseMove={() => setActive(runIdx)}
       >
@@ -205,14 +206,14 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
             {run.size > 1 && (
               <span
                 role="button"
-                className={`history-xn${expanded.has(run.headId) ? " open" : ""}${run.hiddenErrs > 0 ? " has-err" : ""}`}
+                className={`history-xn${expanded.has(run.headId) ? " active" : ""}${run.hiddenErrs > 0 ? " has-err" : ""}`}
                 title={`${run.size} ${
                   // a status-chip filter can glue runs that were NOT adjacent
                   // in real history — don't claim "consecutive" there
                   statusFilter === "all"
                     ? "consecutive identical runs"
-                    : "identical runs (may be non-consecutive — the list is filtered)"
-                } — click to ${
+                    : "identical runs (may be non-consecutive, the list is filtered)"
+                } · click to ${
                   expanded.has(run.headId) ? "collapse" : "expand"
                 }${run.hiddenErrs > 0 ? ` · ${run.hiddenErrs} not ok` : ""}`}
                 onClick={(e) => {
@@ -274,7 +275,7 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
     >
       <motion.div className="history-panel" {...popIn}>
         <div className="history-head">
-          <Clock size={13} />
+          <Clock size={14} />
           <input
             autoFocus
             placeholder="Search query history…"
@@ -285,7 +286,7 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
         </div>
         <div className="history-chips">
           <button
-            className={`history-chip${profileFilter === null ? " on" : ""}`}
+            className={`history-chip${profileFilter === null ? " active" : ""}`}
             onClick={() => setProfileFilter(null)}
           >
             All
@@ -293,7 +294,7 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
           {profiles.map((p) => (
             <button
               key={p.id}
-              className={`history-chip${profileFilter === p.id ? " on" : ""}`}
+              className={`history-chip${profileFilter === p.id ? " active" : ""}`}
               onClick={() => setProfileFilter(profileFilter === p.id ? null : p.id)}
             >
               <span
@@ -307,7 +308,7 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
           {STATUS_FILTERS.map((s) => (
             <button
               key={s}
-              className={`history-chip${statusFilter === s ? " on" : ""}`}
+              className={`history-chip${statusFilter === s ? " active" : ""}`}
               onClick={() => setStatusFilter(s)}
             >
               {s !== "all" && (
@@ -324,7 +325,7 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
                 ? "Couldn’t load history"
                 : query || statusFilter !== "all" || profileFilter
                   ? "No matches"
-                  : "No queries yet — queries you run appear here"}
+                  : "No queries yet. Queries you run appear here"}
             </div>
           )}
           {items.map((it, i) =>
@@ -338,7 +339,9 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
           )}
         </div>
         <div className="history-foot">
-          ↑↓ navigate · →/← expand/collapse · ↵ open in new tab · esc close
+          <Kbd chord="up" />
+          <Kbd chord="down" /> navigate · <Kbd chord="right" />/<Kbd chord="left" /> expand/collapse
+          · <Kbd chord="return" /> open in new tab · <Kbd chord="esc" /> close
         </div>
       </motion.div>
     </Modal>

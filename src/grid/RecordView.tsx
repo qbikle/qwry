@@ -27,6 +27,7 @@ import type { ColumnEditMeta } from "../ipc/types";
 import { isArrayType } from "../inspector/format";
 import { JsonField } from "../inspector/JsonField";
 import { typeIcon } from "./typeIcon";
+import { Kbd } from "../design/Kbd";
 import { prettyCellValue, stageCellDraft, ValuePop } from "./ValuePop";
 import { diffMask } from "./spelunkLogic";
 import "./grid.css";
@@ -236,32 +237,39 @@ export function RecordView({
                 </>
               ) : (
                 <>
-                  Record — Row {viewRows[0] + 1}{" "}
+                  Record · Row {viewRows[0] + 1}{" "}
                   <span className="rv-of">of {rowCount.toLocaleString()}</span>
                 </>
               )}
             </span>
             {diff ? (
-              <span className="rv-keys">viewing only · esc close</span>
+              <span className="rv-keys">
+                viewing only · <Kbd chord="esc" /> close
+              </span>
             ) : (
               <span className="rv-nav">
-                <span className="rv-keys">double-click value to edit · ⌘↑ ⌘↓ walk</span>
-                <button
-                  className="rv-navbtn"
-                  disabled={viewRows[0] <= 0}
-                  title="Previous row ⌘↑"
-                  onClick={() => onStep(-1)}
-                >
-                  <ChevronLeft size={14} />
-                </button>
-                <button
-                  className="rv-navbtn"
-                  disabled={viewRows[0] >= rowCount - 1}
-                  title="Next row ⌘↓"
-                  onClick={() => onStep(1)}
-                >
-                  <ChevronRight size={14} />
-                </button>
+                <span className="rv-keys">
+                  double-click value to edit · <Kbd chord="cmd+up" /> <Kbd chord="cmd+down" />{" "}
+                  walk
+                </span>
+                <span className="rv-step">
+                  <button
+                    className="rv-navbtn"
+                    disabled={viewRows[0] <= 0}
+                    title="Previous Row ⌘↑"
+                    onClick={() => onStep(-1)}
+                  >
+                    <ChevronLeft size={14} />
+                  </button>
+                  <button
+                    className="rv-navbtn"
+                    disabled={viewRows[0] >= rowCount - 1}
+                    title="Next Row ⌘↓"
+                    onClick={() => onStep(1)}
+                  >
+                    <ChevronRight size={14} />
+                  </button>
+                </span>
               </span>
             )}
           </div>
@@ -281,14 +289,14 @@ export function RecordView({
                 <span className="rv-col" title={tn}>
                   {glyph && (
                     <span className="rv-type" style={{ color: glyph.color }}>
-                      <glyph.Icon size={11} strokeWidth={2.2} />
+                      <glyph.Icon size={12} strokeWidth={2.2} />
                     </span>
                   )}
                   {c.name}
                   {!diff && pe0 && <span className="rv-dirty">✎</span>}
                   {!diff && meta && !meta.editable && (
                     <span className="rv-lock" title={meta.reason ?? "read-only"}>
-                      <Lock size={10} strokeWidth={2.2} />
+                      <Lock size={12} strokeWidth={2.2} />
                     </span>
                   )}
                 </span>
@@ -314,7 +322,7 @@ export function RecordView({
                           {trunc && (
                             <span
                               className="vgrid-trunc"
-                              title="Truncated — the diff sees only the 8KB prefix"
+                              title="Truncated, the diff sees only the 8KB prefix"
                             >
                               {" "}…⧉ <span className="rv-trunchint">compared on 8KB prefix</span>
                             </span>
@@ -359,13 +367,13 @@ export function RecordView({
                     >
                       {renderValue(v, pretty, !!pe0?.useDefault)}
                       {truncated0 && (
-                        <span className="vgrid-trunc rv-truncbtn" title="Truncated — open the full value in the Inspector">
+                        <span className="vgrid-trunc rv-truncbtn" title="Truncated, open the full value in the Inspector">
                           {" "}…⧉
                         </span>
                       )}
                       {editable && (
                         <span className="rv-pencil">
-                          <Pencil size={11} />
+                          <Pencil size={12} />
                         </span>
                       )}
                     </span>
@@ -476,7 +484,18 @@ function RvInlineEdit({
 
   if (kind === "bool") {
     return (
-      <div className="vgrid-boolpick rv-edit" ref={rootRef}>
+      <div
+        className="vgrid-boolpick rv-edit"
+        ref={rootRef}
+        // ⇧⌘⌫ = NULL here too — the ∅ button advertises the chord, and the
+        // grid's own boolpick honors it (keyboard parity across both editors)
+        onKeyDown={(e) => {
+          if (e.key === "Backspace" && e.metaKey && e.shiftKey) {
+            e.preventDefault();
+            finish(onNull);
+          }
+        }}
+      >
         {(
           [
             ["t", "true"],
@@ -486,13 +505,13 @@ function RvInlineEdit({
           <button
             key={wire}
             autoFocus={wire === "t"}
-            className={draft === wire || draft === label ? "on" : ""}
+            className={draft === wire || draft === label ? "active" : ""}
             onClick={() => finish(() => onStage(wire))}
           >
             {label}
           </button>
         ))}
-        <button className={draft === "" ? "on" : ""} onClick={() => finish(onNull)}>
+        <button className={draft === "" ? "active" : ""} onClick={() => finish(onNull)}>
           NULL
         </button>
       </div>
@@ -508,6 +527,12 @@ function RvInlineEdit({
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
+            // ⇧⌘⌫ = stage NULL and close (the grid cell editor's chord)
+            if (e.key === "Backspace" && e.metaKey && e.shiftKey) {
+              e.preventDefault();
+              finish(onNull);
+              return;
+            }
             if (e.key === "Enter") {
               e.preventDefault();
               finish(() => onStage(draft));
@@ -524,7 +549,7 @@ function RvInlineEdit({
         </select>
         <button
           className="vgrid-nullbtn"
-          title="Set NULL"
+          title="Set NULL ⇧⌘⌫"
           onMouseDown={(e) => {
             e.preventDefault();
             finish(onNull);
@@ -545,6 +570,12 @@ function RvInlineEdit({
         spellCheck={false}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
+          // ⇧⌘⌫ = stage NULL and close (the grid cell editor's chord)
+          if (e.key === "Backspace" && e.metaKey && e.shiftKey) {
+            e.preventDefault();
+            finish(onNull);
+            return;
+          }
           // Enter stages; ⌥/⇧-Enter inserts a real newline (grid grammar)
           if (e.key === "Enter" && !e.altKey && !e.shiftKey) {
             e.preventDefault();
@@ -555,7 +586,7 @@ function RvInlineEdit({
       />
       <button
         className="vgrid-nullbtn"
-        title="Set NULL"
+        title="Set NULL ⇧⌘⌫"
         onMouseDown={(e) => {
           e.preventDefault();
           finish(onNull);

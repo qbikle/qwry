@@ -22,6 +22,20 @@ pub struct PgSession {
     /// with the same creds/address — cancel must never depend on the busy
     /// session's health
     cfg: tokio_postgres::Config,
+    /// control-lane config (SSH-tunneled sessions): same destination through
+    /// a SECOND ssh process, so cancel's new connection can't queue behind
+    /// data-lane row bytes (head-of-line blocking on one ssh TCP connection)
+    control_cfg: Option<tokio_postgres::Config>,
+    /// the control lane's raw address — token_cancel dials it directly
+    /// (CancelToken::cancel_query would redial the stored data-lane socket)
+    control_addr: Option<(String, u16)>,
+    /// on_close callback, shared with the connection task: exactly one taker
+    /// ever fires it, so a unilateral abort and a natural death cannot both
+    /// report the session's end
+    on_close: CloseNotifier,
+    /// set once abort_connection ran — disconnect skips the cancel ladder
+    /// for an already-dead connection instead of dialing for ~8s
+    aborted: std::sync::atomic::AtomicBool,
     /// server backend pid, captured at connect (pg_backend_pid()); target of
     /// pg_cancel_backend / pg_terminate_backend escalation
     backend_pid: AtomicI32,
@@ -44,6 +58,7 @@ pub struct PgSession {
 }
 
 type TxListener = Box<dyn Fn(TxState) + Send + Sync>;
+type CloseNotifier = std::sync::Arc<Mutex<Option<Box<dyn FnOnce(Option<String>) + Send>>>>;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum TlsChoice {
@@ -78,6 +93,17 @@ fn pg_config(
     );
     if profile.is_prod {
         opts.push_str(" -c default_transaction_read_only=on");
+    }
+    // sslmode=require must actually REQUIRE — tokio-postgres defaults to
+    // Prefer, which silently downgrades to plaintext when the server says N
+    match profile.sslmode.as_str() {
+        "require" => {
+            cfg.ssl_mode(tokio_postgres::config::SslMode::Require);
+        }
+        "disable" => {
+            cfg.ssl_mode(tokio_postgres::config::SslMode::Disable);
+        }
+        _ => {}
     }
     cfg.host(host)
         .port(port)
@@ -126,6 +152,8 @@ where
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
     let cancel = client.cancel_token();
+    let notifier: CloseNotifier = std::sync::Arc::new(Mutex::new(Some(on_close)));
+    let task_notifier = notifier.clone();
     let conn_handle = tokio::spawn(async move {
         let reason = loop {
             match futures_util::future::poll_fn(|cx| connection.poll_message(cx)).await {
@@ -143,7 +171,9 @@ where
                 None => break Some("connection closed by server".into()),
             }
         };
-        on_close(reason);
+        if let Some(f) = task_notifier.lock().ok().and_then(|mut slot| slot.take()) {
+            f(reason);
+        }
     });
     PgSession {
         client,
@@ -151,6 +181,10 @@ where
         tls,
         conn_handle,
         cfg,
+        control_cfg: None,
+        control_addr: None,
+        on_close: notifier,
+        aborted: std::sync::atomic::AtomicBool::new(false),
         backend_pid: AtomicI32::new(0),
         backend_start: Mutex::new(String::new()),
         server_version_num: AtomicI64::new(0),
@@ -164,21 +198,25 @@ where
 /// Connect to a profile. When `addr` is given (an SSH tunnel's local endpoint),
 /// it overrides the profile's host/port; dbname/user/sslmode still come from the
 /// profile. TLS uses a no-verify verifier, so the tunnel hostname mismatch is fine.
-/// `on_close` fires when the connection later dies (see `spawn_session`).
+/// `control_addr` is the tunnel's control-lane endpoint (a second ssh process):
+/// when given, cancel/terminate signals dial it instead of the congestible data
+/// lane. `on_close` fires when the connection later dies (see `spawn_session`).
 pub async fn connect(
     profile: &Profile,
     password: &str,
     addr: Option<(&str, u16)>,
+    control_addr: Option<(&str, u16)>,
     statement_timeout_ms: Option<u64>,
     on_notice: Box<dyn Fn(String, String) + Send>,
     on_close: Box<dyn FnOnce(Option<String>) + Send>,
 ) -> Result<PgSession> {
-    let cfg = pg_config(profile, password, addr, statement_timeout_ms.unwrap_or(300_000));
+    let timeout_ms = statement_timeout_ms.unwrap_or(300_000);
+    let cfg = pg_config(profile, password, addr, timeout_ms);
 
     let try_tls = profile.sslmode != "disable";
     let try_plain = profile.sslmode != "require";
 
-    let session = 'sess: {
+    let mut session = 'sess: {
         if try_tls {
             match cfg.connect(tls::connector()).await {
                 Ok((client, connection)) => {
@@ -207,6 +245,10 @@ pub async fn connect(
             .map_err(connect_err)?;
         spawn_session(client, connection, TlsChoice::Plain, cfg.clone(), on_notice, on_close)
     };
+    if let Some((host, port)) = control_addr {
+        session.control_cfg = Some(pg_config(profile, password, Some((host, port)), timeout_ms));
+        session.control_addr = Some((host.to_string(), port));
+    }
 
     // capture the backend identity now — cancel escalation targets it from a
     // fresh connection, so it must be known before any query can get stuck.
@@ -521,9 +563,47 @@ impl PgSession {
     }
 
     /// protocol-level cancel via the CancelToken (opens a new connection —
-    /// through a dead tunnel it would hang forever, hence the hard deadline)
+    /// through a dead tunnel it would hang forever, hence the hard deadline).
+    /// Tunneled sessions dial the CONTROL lane themselves and hand the stream
+    /// to `cancel_query_raw` — `cancel_query` would redial the stored
+    /// data-lane address, whose handshake queues behind buffered row bytes
+    /// when a bulk result saturates the tunnel.
     pub(crate) async fn token_cancel(&self) -> Result<()> {
         let token = self.cancel.clone();
+        // control lane first, on its OWN short budget — a half-dead lane
+        // (local listener still accepts, remote channel gone) must fail over
+        // to the data lane instead of eating the whole deadline or committing
+        // to an EPIPE once the local dial succeeded
+        if let Some((host, port)) = self.control_addr.clone() {
+            let attempt = async {
+                let stream = tokio::net::TcpStream::connect((host.as_str(), port))
+                    .await
+                    .map_err(|_| ())?;
+                match self.tls {
+                    TlsChoice::Plain => token
+                        .cancel_query_raw(stream, tokio_postgres::NoTls)
+                        .await
+                        .map_err(|_| ()),
+                    TlsChoice::Tls => {
+                        use tokio_postgres::tls::MakeTlsConnect;
+                        let mut mk = tls::connector();
+                        let connector = match MakeTlsConnect::<
+                            tokio::net::TcpStream,
+                        >::make_tls_connect(&mut mk, &host)
+                        {
+                            Ok(c) => c,
+                            Err(e) => match e {}, // Infallible
+                        };
+                        token.cancel_query_raw(stream, connector).await.map_err(|_| ())
+                    }
+                }
+            };
+            if let Ok(Ok(())) =
+                tokio::time::timeout(std::time::Duration::from_millis(700), attempt).await
+            {
+                return Ok(());
+            }
+        }
         let fut = async {
             match self.tls {
                 TlsChoice::Plain => token.cancel_query(tokio_postgres::NoTls).await,
@@ -606,36 +686,113 @@ impl PgSession {
             .map_err(|e| DriverError::Internal(format!("terminate failed: {e}")))
     }
 
+    /// Runs a control statement on a one-shot connection. Tunneled sessions
+    /// go through the CONTROL lane (its own ssh process — a saturated data
+    /// lane can't starve the handshake); if the control lane itself is
+    /// unreachable, fall back to the data lane rather than not signaling.
     async fn run_on_fresh_connection(&self, sql: &str) -> Result<()> {
-        let cfg = self.cfg.clone();
-        let deadline = std::time::Duration::from_secs(5);
-        let run = async {
-            match self.tls {
-                TlsChoice::Tls => {
-                    let (client, conn) = cfg.connect(tls::connector()).await.map_err(connect_err)?;
-                    let h = tokio::spawn(async move {
-                        let _ = conn.await;
-                    });
-                    let res = client.simple_query(sql).await.map_err(map_pg_err);
-                    h.abort();
-                    res.map(|_| ())
-                }
-                TlsChoice::Plain => {
-                    let (client, conn) =
-                        cfg.connect(tokio_postgres::NoTls).await.map_err(connect_err)?;
-                    let h = tokio::spawn(async move {
-                        let _ = conn.await;
-                    });
-                    let res = client.simple_query(sql).await.map_err(map_pg_err);
-                    h.abort();
-                    res.map(|_| ())
-                }
+        // the control attempt gets its OWN sub-deadline: a half-dead lane
+        // (local listener accepts, remote forward black-holed) must not eat
+        // the whole budget and starve the data-lane retry
+        if let Some(ctrl) = &self.control_cfg {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                signal_over(ctrl, self.tls, sql),
+            )
+            .await
+            {
+                Ok(Ok(())) => return Ok(()),
+                // transport-level connect failure or sub-timeout: the lane is
+                // dead — retry on the data lane. A server-sent refusal or a
+                // query error would only repeat there, so those return.
+                Ok(Err((true, _))) | Err(_) => {}
+                Ok(Err((false, e))) => return Err(e),
             }
-        };
-        match tokio::time::timeout(deadline, run).await {
-            Ok(res) => res,
+        }
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            signal_over(&self.cfg, self.tls, sql),
+        )
+        .await
+        {
+            Ok(res) => res.map_err(|(_, e)| e),
             Err(_) => Err(DriverError::Internal("timed out opening the control connection".into())),
         }
+    }
+
+    /// Hard client-side kill: abort the connection driver task, so every
+    /// in-flight query on this session errors out NOW ("connection closed")
+    /// instead of draining the wire to completion. Silent — on_close is
+    /// disarmed first (the disconnect path already removed the session and
+    /// must not emit a death event for it).
+    pub fn abort_connection(&self) {
+        self.aborted.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Ok(mut slot) = self.on_close.lock() {
+            slot.take();
+        }
+        self.conn_handle.abort();
+    }
+
+    /// true once the connection was unilaterally killed — cancel ladders
+    /// against it are pointless dialing
+    pub fn is_aborted(&self) -> bool {
+        self.aborted.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// `abort_connection`, but fire on_close (frontend `session-closed`)
+    /// first — for unilateral kills (terminate tier, row-cap abort) where
+    /// the UI must learn the session is gone so it can flip the status dot
+    /// and rebuild lazily. The shared notifier guarantees a racing natural
+    /// death and this abort report at most once between them.
+    pub fn abort_connection_notify(&self, reason: &str) {
+        self.aborted.store(true, std::sync::atomic::Ordering::Relaxed);
+        let cb = self.on_close.lock().ok().and_then(|mut slot| slot.take());
+        self.conn_handle.abort();
+        if let Some(f) = cb {
+            f(Some(reason.to_string()));
+        }
+    }
+}
+
+/// one-shot signal connection for the cancel/terminate escalation. The bool
+/// in the error is true when the CONNECTION failed at the transport level
+/// (lane unreachable / timed out) — the caller may retry on another lane;
+/// false means the server answered (auth refusal, query error) and a retry
+/// elsewhere would only repeat it.
+async fn signal_over(
+    cfg: &tokio_postgres::Config,
+    tls_choice: TlsChoice,
+    sql: &str,
+) -> std::result::Result<(), (bool, DriverError)> {
+    match tls_choice {
+        TlsChoice::Tls => match cfg.connect(tls::connector()).await {
+            Ok((client, conn)) => {
+                let h = tokio::spawn(async move {
+                    let _ = conn.await;
+                });
+                let res = client
+                    .simple_query(sql)
+                    .await
+                    .map_err(|e| (false, map_pg_err(e)));
+                h.abort();
+                res.map(|_| ())
+            }
+            Err(e) => Err((e.as_db_error().is_none(), connect_err(e))),
+        },
+        TlsChoice::Plain => match cfg.connect(tokio_postgres::NoTls).await {
+            Ok((client, conn)) => {
+                let h = tokio::spawn(async move {
+                    let _ = conn.await;
+                });
+                let res = client
+                    .simple_query(sql)
+                    .await
+                    .map_err(|e| (false, map_pg_err(e)));
+                h.abort();
+                res.map(|_| ())
+            }
+            Err(e) => Err((e.as_db_error().is_none(), connect_err(e))),
+        },
     }
 }
 

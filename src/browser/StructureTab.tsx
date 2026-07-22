@@ -41,7 +41,7 @@ function CopyBtn({ text, id, copied, onCopied }: {
 }) {
   return (
     <button
-      className="icon-btn st-copy"
+      className="iconbtn st-copy"
       title="Copy DDL"
       onClick={() => {
         void writeText(text).then(() => {
@@ -105,7 +105,7 @@ export function StructureTab({ table }: { table: TableInfo }) {
     neverScanned(ix) && !ix.is_unique;
 
   const act = stats?.activity ?? null;
-  const num = (n: number | null | undefined) => (n == null ? "—" : n.toLocaleString());
+  const num = (n: number | null | undefined) => (n == null ? "—" : n.toLocaleString()); // em-ok absent-value marker
 
   // live columns win over the (possibly stale) snapshot the tab carries
   const cols = stats
@@ -228,7 +228,7 @@ export function StructureTab({ table }: { table: TableInfo }) {
                   <tr key={ix.name}>
                     <td className="st-name">{ix.name}</td>
                     <td className="st-num">{ix.size_pretty}</td>
-                    <td className="st-num">{ix.scans == null ? "—" : ix.scans.toLocaleString()}</td>
+                    <td className="st-num">{ix.scans == null ? "—" /* em-ok absent-value marker */ : ix.scans.toLocaleString()}</td>
                     <td className="st-flags">
                       {ix.is_primary && <span className="badge badge-accent">PK</span>}
                       {ix.is_unique && !ix.is_primary && (
@@ -237,14 +237,14 @@ export function StructureTab({ table }: { table: TableInfo }) {
                       {dropCandidate(ix) ? (
                         <span
                           className="badge badge-warn"
-                          title="idx_scan = 0 and nothing depends on it — a candidate for dropping (stats since last reset)"
+                          title="idx_scan = 0 and nothing depends on it, a candidate for dropping (stats since last reset)"
                         >
                           never scanned
                         </span>
                       ) : neverScanned(ix) ? (
                         <span
                           className="badge badge-dim"
-                          title="idx_scan = 0 (stats since last reset) — but this index enforces uniqueness, so scan count is irrelevant to its role"
+                          title="idx_scan = 0 (stats since last reset), but this index enforces uniqueness, so scan count is irrelevant to its role"
                         >
                           never scanned
                         </span>

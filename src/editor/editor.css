@@ -43,8 +43,8 @@
 .tab {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 6px 4px 12px;
+  gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-2) var(--sp-1) var(--sp-3);
   border-radius: var(--radius-md) var(--radius-md) 0 0;
   color: var(--fg-muted);
   font-size: var(--text-sm);
@@ -89,7 +89,7 @@
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
-  margin-right: 6px;
+  margin-right: var(--sp-1);
   color: var(--fg-faint);
 }
 .tab.active .tab-icon {
@@ -99,7 +99,7 @@
 .tab-tx {
   width: 8px;
   height: 8px;
-  margin-right: 6px;
+  margin-right: var(--sp-1);
   border-radius: 50%;
   background: var(--warn);
   flex-shrink: 0;
@@ -111,7 +111,7 @@
   background: var(--bg-raised);
   border: 1px solid var(--accent);
   border-radius: var(--radius-xs);
-  padding: 1px 5px;
+  padding: 1px var(--sp-1);
   font-size: var(--text-sm);
   outline: none;
   user-select: text;
@@ -156,20 +156,10 @@
 .tab:hover .tab-close.dirty .tc-dot { display: none; }
 .tab:hover .tab-close.dirty .tc-x { display: grid; }
 
+/* .iconbtn provides the skin — layout only here */
 .tab-new {
-  display: inline-flex;
-  padding: 4px;
-  margin-left: 4px;
-  border: none;
-  background: none;
-  border-radius: var(--radius-sm);
-  color: var(--fg-faint);
-  cursor: pointer;
+  margin-left: var(--sp-1);
   flex-shrink: 0;
-}
-.tab-new:hover {
-  background: var(--bg-hover);
-  color: var(--fg);
 }
 
 .sql-editor-wrap {
@@ -191,7 +181,7 @@
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: 4px 12px;
+  padding: var(--sp-1) var(--sp-3);
   background: var(--bg-raised);
   border: 1px solid var(--accent);
   border-radius: var(--radius-md);
@@ -214,7 +204,7 @@
 }
 /* the viewed snapshot reads slightly ghosted — it isn't the live buffer */
 .tt-viewing .cm-editor {
-  opacity: 0.92;
+  opacity: 0.92; /* optical */
 }
 
 /* editor context menu */
@@ -240,7 +230,7 @@
   justify-content: space-between;
   gap: var(--sp-3);
   text-align: left;
-  padding: 5px 10px;
+  padding: var(--row-y) var(--sp-2);
   background: none;
   border: none;
   border-radius: var(--radius-sm);
@@ -276,7 +266,7 @@
 
 .fn-search input {
   width: 100%;
-  padding: 10px 14px;
+  padding: var(--sp-3) var(--sp-4);
   background: transparent;
   border: none;
   border-bottom: 1px solid var(--border);
@@ -295,16 +285,16 @@
   display: flex;
   align-items: baseline;
   gap: var(--sp-2);
-  padding: 4px 10px;
+  padding: var(--sp-1) var(--sp-2);
   border-radius: var(--radius-sm);
   cursor: pointer;
   overflow: hidden;
 }
-.fn-item.sel {
+.fn-item.hot {
   background: var(--accent);
 }
-.fn-item.sel .fn-name,
-.fn-item.sel .fn-sig {
+.fn-item.hot .fn-name,
+.fn-item.hot .fn-sig {
   color: var(--accent-fg);
 }
 
@@ -318,7 +308,7 @@
 .fn-sig {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -326,7 +316,7 @@
 
 .fn-empty {
   padding: var(--sp-3);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   text-align: center;
 }
 
@@ -339,45 +329,52 @@
   user-select: text;
 }
 
-.qb-explain {
-  padding: 4px 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-strong);
-  background: var(--bg-raised);
+/* Explain is .btnish — muted-by-default is its one delta (secondary action) */
+.qb-bar .qb-explain {
   color: var(--fg-muted);
-  cursor: pointer;
   font-weight: 500;
 }
-.qb-explain:hover:not(:disabled) {
+.qb-bar .qb-explain:hover:not(:disabled) {
   color: var(--fg);
-  border-color: var(--accent);
-}
-.qb-explain:disabled {
-  opacity: 0.4;
-  cursor: default;
 }
 
-.qb-run,
+/* Run is .btnish.primary; Cancel keeps a soft-danger tint — a filled .danger
+   would shout for the whole life of every query (annotated species exception) */
 .qb-cancel {
-  padding: 4px 14px;
+  display: inline-grid;
+  padding: 5px 12px; /* optical */
   border-radius: var(--radius-sm);
-  border: none;
-  cursor: pointer;
-  font-weight: 500;
-}
-
-.qb-run {
-  background: var(--accent);
-  color: var(--accent-fg);
-}
-.qb-run:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.qb-cancel {
+  border: 1px solid transparent;
   background: var(--danger-soft);
   color: var(--danger);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--dur-quick), transform var(--dur-quick);
+}
+.qb-cancel:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 24%, transparent);
+}
+.qb-cancel:active:not(:disabled) {
+  transform: scale(0.97);
+}
+/* Cancel / Cancelling… stack in one grid cell so the button holds the wider
+   label's width for the whole run — no layout jump when the swap happens */
+.qb-cancel .qb-cancel-face {
+  grid-area: 1 / 1;
+  justify-self: center;
+  white-space: nowrap;
+}
+.qb-cancel .qb-cancel-face[data-hidden] {
+  visibility: hidden;
+}
+.qb-bar .qb-run {
+  font-weight: 500;
+}
+/* shortcut glyphs ride the button's own color (filled accent / danger tint
+   would swallow the default tier-2 gray) */
+.qb-cancel .kbd {
+  color: color-mix(in srgb, currentColor 78%, transparent);
 }
 
 /* ---- @codemirror/search panel (⌘F find/replace) ---- */
@@ -393,8 +390,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
-  padding: 5px 26px 5px 8px;
+  gap: var(--sp-1);
+  padding: var(--sp-1) 28px var(--sp-1) var(--sp-2);
 }
 .sql-editor .cm-panel.cm-search input.cm-textfield {
   background: var(--bg-panel);
@@ -403,7 +400,7 @@
   color: var(--fg);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
-  padding: 2px 6px;
+  padding: 2px var(--sp-2);
 }
 .sql-editor .cm-panel.cm-search input.cm-textfield:focus {
   outline: none;
@@ -416,7 +413,7 @@
   border-radius: var(--radius-sm);
   color: var(--fg);
   font-size: var(--text-xs);
-  padding: 2px 8px;
+  padding: 2px var(--sp-2);
   cursor: pointer;
 }
 .sql-editor .cm-panel.cm-search .cm-button:hover {
@@ -425,7 +422,7 @@
 .sql-editor .cm-panel.cm-search label {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--sp-1);
   color: var(--fg-muted);
   font-size: var(--text-xs);
 }
@@ -440,7 +437,7 @@
   border: none;
   color: var(--fg-muted);
   font-size: var(--text-lg);
-  padding: 0 4px;
+  padding: 0 var(--sp-1);
   cursor: pointer;
 }
 .sql-editor .cm-panel.cm-search [name="close"]:hover {
@@ -460,8 +457,8 @@
 /* persistence-failure warning in the tab strip */
 .tab-save-warn {
   align-self: center;
-  margin-left: 4px;
-  padding: 1px 7px;
+  margin-left: var(--sp-1);
+  padding: 1px var(--sp-2);
   border-radius: var(--radius-sm);
   background: var(--danger-soft);
   color: var(--danger);
@@ -470,11 +467,11 @@
 }
 
 /* tab drag-reorder */
-.tab.dragging { opacity: 0.45; }
+.tab.dragging { opacity: var(--o-disabled); }
 .tab.drop-before { box-shadow: inset 2px 0 0 var(--accent); }
 .tab.drop-after { box-shadow: inset -2px 0 0 var(--accent); }
 
-/* the statement ⌘↵ would run — only shown in multi-statement buffers */
+/* the statement ⌘↩ would run — only shown in multi-statement buffers */
 .cm-stmt-scope {
   /* background-IMAGE: composes with .cm-activeLine's background-color
      instead of fighting it in the cascade */
@@ -502,8 +499,8 @@
   height: 20px;
   margin-right: 1px;
   flex-shrink: 0;
-  opacity: 0.85;
-  transition: opacity 0.12s, filter 0.12s, transform 0.12s;
+  opacity: 0.85; /* optical */
+  transition: opacity var(--dur-quick), filter var(--dur-quick), transform var(--dur-quick);
 }
 .tab-pin-glyph:hover {
   opacity: 1;
@@ -517,17 +514,17 @@
   background: var(--bg-raised);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  padding: 10px 12px;
+  padding: var(--sp-3);
   box-shadow: var(--shadow-md);
   font-size: var(--text-xs);
 }
 .pin-info-head {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--sp-2);
   font-weight: 600;
   color: var(--fg);
-  margin-bottom: 6px;
+  margin-bottom: var(--sp-2);
 }
 .pin-info-dot {
   width: 8px;
@@ -538,7 +535,7 @@
 .pin-info-row {
   display: flex;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--sp-3);
   color: var(--fg-muted);
   padding: 1px 0;
 }
@@ -549,19 +546,19 @@
   text-overflow: ellipsis;
 }
 .pin-info-sql {
-  margin-top: 5px;
+  margin-top: var(--sp-1);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .pin-info-hint {
-  margin-top: 7px;
-  padding-top: 6px;
+  margin-top: var(--sp-2);
+  padding-top: var(--sp-2);
   border-top: 1px solid var(--border);
   font-size: var(--text-2xs);
   line-height: 1.5;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }

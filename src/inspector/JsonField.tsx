@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { EditorState, Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { json } from "@codemirror/lang-json";
+import { closeSearchPanel, search, searchKeymap, searchPanelOpen } from "@codemirror/search";
 import { qwryHighlight } from "../editor/theme";
 import "./inspector.css";
 
@@ -27,6 +28,8 @@ export function JsonField({
   value,
   readOnly,
   autoFocus,
+  searchable,
+  onView,
   onChange,
   onSave,
   onCancel,
@@ -35,6 +38,13 @@ export function JsonField({
   readOnly?: boolean;
   /** focus on mount with the caret AFTER the value */
   autoFocus?: boolean;
+  /** opt-in ⌘F: CM search panel + keymap (the editor's own machinery).
+   *  OFF by default — RecordView/ValuePop instances must not grow a second
+   *  ⌘F claim inside modals. Constant per call site (read once at mount). */
+  searchable?: boolean;
+  /** observe the live EditorView (null on unmount) — lets the owner open
+   *  the search panel from a shell-level ⌘F without reaching into the DOM */
+  onView?: (view: EditorView | null) => void;
   onChange?: (v: string) => void;
   onSave?: () => void;
   onCancel?: () => void;
@@ -47,6 +57,8 @@ export function JsonField({
   onSaveRef.current = onSave;
   const onCancelRef = useRef(onCancel);
   onCancelRef.current = onCancel;
+  const onViewRef = useRef(onView);
+  onViewRef.current = onView;
 
   useEffect(() => {
     if (!host.current) return;
@@ -66,13 +78,27 @@ export function JsonField({
               },
               {
                 key: "Escape",
-                run: () => {
-                  onCancelRef.current?.();
-                  return true;
+                run: (v) => {
+                  // layered close: an open search panel absorbs the first Esc
+                  if (searchPanelOpen(v.state)) {
+                    closeSearchPanel(v);
+                    return true;
+                  }
+                  if (onCancelRef.current) {
+                    onCancelRef.current();
+                    return true;
+                  }
+                  // no cancel handler: decline. In modal contexts escStack
+                  // claims Escape at window capture before CM ever sees it,
+                  // so this path only matters for future non-overlay hosts
+                  return false;
                 },
               },
             ]),
           ),
+          // the editor's own find machinery (search({top}) + searchKeymap) —
+          // ⌘F/⌘G/Esc behave identically to the SQL editor's panel
+          ...(searchable ? [search({ top: true }), keymap.of(searchKeymap)] : []),
           json(),
           qwryHighlight,
           EditorView.lineWrapping,
@@ -86,11 +112,13 @@ export function JsonField({
       }),
     });
     viewRef.current = view;
+    onViewRef.current?.(view);
     if (autoFocus && !readOnly) {
       view.focus();
       view.dispatch({ selection: { anchor: view.state.doc.length } });
     }
     return () => {
+      onViewRef.current?.(null);
       view.destroy();
       viewRef.current = null;
     };

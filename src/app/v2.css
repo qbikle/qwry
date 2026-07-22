@@ -14,41 +14,71 @@
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  padding: 0 var(--sp-3) 0 82px; /* clear the traffic lights */
+  /* left inset clears the macOS traffic lights */
+  padding: 0 var(--sp-3) 0 82px; /* optical */
   gap: var(--sp-2);
 }
 
 .v2-breadcrumb {
   margin-right: auto;
   font-size: var(--text-sm);
-  color: var(--fg-muted);
+  /* neutral glass gray (lighter in dark, darker in light) — inactive
+     segments; the ACTIVE segment stays full --fg via .crumb-strong */
+  color: var(--fg-glass, var(--fg-muted));
   font-weight: 550;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
 }
-
-.v2-tool {
-  display: inline-flex;
-  margin-left: calc(-1 * var(--sp-2) + 2px); /* tools sit as a tight pair */
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 24px;
-  border-radius: var(--radius-sm);
-  background: none;
-  border: none;
-  color: var(--fg-muted);
-  cursor: pointer;
+/* GLASS surface (high transparency only — [data-glassy] from the settings
+   slider): the backdrop is the wallpaper, not a theme color — a same-theme
+   halo guarantees contrast on opposing backdrops (light theme over a dark
+   desktop) and vanishes on matching ones */
+:root[data-glassy] .v2-breadcrumb {
+  text-shadow:
+    0 1px 2px color-mix(in srgb, var(--bg-app) 85%, transparent),
+    0 0 10px color-mix(in srgb, var(--bg-app) 70%, transparent);
 }
-.v2-tool:hover {
+
+/* glass-context iconbtn variant (DESIGN.md rule 3 note), active only under
+   [data-glassy]: buttons on high-transparency titlebar glass carry a
+   translucent theme chip — fg alone can't guarantee contrast over an
+   arbitrary wallpaper. At low transparency the theme wash IS the surface and
+   the bare ghost look stays. Scoped under .v2-titlebar to out-specific the
+   .iconbtn base (tokens.css loads last); iconbtn's opaque bg-hover/bg-active
+   already read on glass, so only rest + .active need it */
+.v2-tool {
+  margin-left: calc(-1 * var(--sp-2) + 2px); /* tools sit as a tight pair */
+}
+:root[data-glassy] .v2-titlebar .v2-tool {
+  background: color-mix(in srgb, var(--bg-panel) 72%, transparent);
+  border: 1px solid var(--card-border);
+}
+:root[data-glassy] .v2-titlebar .v2-tool:hover:not(:disabled) {
   background: var(--bg-hover);
-  color: var(--fg);
+}
+:root[data-glassy] .v2-titlebar .v2-tool.active {
+  background:
+    linear-gradient(var(--accent-soft), var(--accent-soft)),
+    color-mix(in srgb, var(--bg-panel) 72%, transparent);
+}
+
+/* the prod chip's soft tints have the same glass problem — re-seat each
+   state's tint on the translucent theme chip (gradient layers above color) */
+:root[data-glassy] .v2-titlebar .prod-chip.locked {
+  background:
+    linear-gradient(color-mix(in srgb, var(--ok) 12%, transparent), color-mix(in srgb, var(--ok) 12%, transparent)),
+    color-mix(in srgb, var(--bg-panel) 72%, transparent);
+}
+:root[data-glassy] .v2-titlebar .prod-chip.unlocked {
+  background:
+    linear-gradient(color-mix(in srgb, var(--danger) 14%, transparent), color-mix(in srgb, var(--danger) 14%, transparent)),
+    color-mix(in srgb, var(--bg-panel) 72%, transparent);
 }
 .v2-breadcrumb .crumb-sep {
-  color: var(--fg-faint);
-  margin: 0 6px;
+  color: color-mix(in srgb, var(--fg-glass, var(--fg-faint)) 55%, transparent);
+  margin: 0 var(--sp-1);
 }
 .v2-breadcrumb .crumb-strong {
   color: var(--fg);
@@ -124,8 +154,8 @@
   /* width animates the open/close so the main card reflows in lockstep;
      margin cancels the flex gutter when collapsed (no empty strip) */
   transition:
-    width 240ms cubic-bezier(0.22, 0.61, 0.36, 1),
-    margin-left 240ms cubic-bezier(0.22, 0.61, 0.36, 1);
+    width var(--dur-slow) var(--ease-std),
+    margin-left var(--dur-slow) var(--ease-std);
 }
 .inspector-card.resizing {
   transition: none;
@@ -151,7 +181,7 @@
   display: flex;
   align-items: center;
   border-bottom: 1px solid var(--border);
-  padding-right: 6px;
+  padding-right: var(--sp-2);
 }
 .sb-dbhead {
   display: flex;
@@ -159,7 +189,7 @@
   gap: var(--sp-2);
   flex: 1;
   min-width: 0;
-  padding: 10px var(--sp-3);
+  padding: var(--sp-3) var(--sp-3);
   border: none;
   background: none;
   color: var(--fg);
@@ -211,7 +241,7 @@
   justify-content: space-between;
   gap: var(--sp-2);
   width: 100%;
-  padding: 6px 9px;
+  padding: var(--row-y) var(--sp-2);
   border: none;
   border-radius: var(--radius-sm);
   background: none;
@@ -232,8 +262,8 @@
   white-space: nowrap;
 }
 .dbsw-msg {
-  padding: 8px 10px;
-  color: var(--fg-faint);
+  padding: var(--sp-2) var(--sp-2);
+  color: var(--fg-muted);
   font-size: var(--text-sm);
 }
 
@@ -276,8 +306,7 @@
   z-index: 7;
 }
 .inspector-resize:hover {
-  background: var(--accent);
-  opacity: 0.35;
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 /* sidebar width drag handle (right edge) */
@@ -299,11 +328,9 @@
   height: 8px;
   border-radius: 50%;
   background: var(--conn-color, var(--accent));
-  margin-right: 7px;
+  margin-right: var(--sp-2);
   flex-shrink: 0;
 }
-
-.v2-tool.on { color: var(--accent); }
 
 .v2-breadcrumb + .v2-tool,
 .prod-chip + .v2-tool {

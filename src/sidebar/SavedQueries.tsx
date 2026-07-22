@@ -105,7 +105,7 @@ export function SavedQueries() {
       </div>
       {expanded && queries.length > 8 && (
         <div className="saved-search">
-          <Search size={11} />
+          <Search size={12} />
           <input
             placeholder="Filter saved…"
             value={filter}
@@ -140,7 +140,7 @@ export function SavedQueries() {
               setMenu({ x: e.clientX, y: e.clientY, q });
             }}
           >
-            <Bookmark size={13} />
+            <Bookmark size={12} />
             {renaming === q.id ? (
               <input
                 autoFocus
@@ -168,7 +168,7 @@ export function SavedQueries() {
             )}
             <span className="pl-item-actions">
               <button
-                className="icon-btn"
+                className="iconbtn"
                 title="Rename"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -179,7 +179,7 @@ export function SavedQueries() {
                 <Pencil size={12} />
               </button>
               <button
-                className="icon-btn"
+                className="iconbtn"
                 title="Delete"
                 onClick={(e) => {
                   e.stopPropagation();

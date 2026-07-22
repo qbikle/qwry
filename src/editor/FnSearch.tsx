@@ -92,7 +92,7 @@ export function FnSearch({ view, onClose }: { view: EditorView; onClose: () => v
             <div
               key={`${f.schema}.${f.name}.${i}`}
               data-i={i}
-              className={`fn-item${i === selected ? " sel" : ""}`}
+              className={`fn-item${i === selected ? " hot" : ""}`}
               onMouseDown={(e) => {
                 e.preventDefault();
                 insert(f);

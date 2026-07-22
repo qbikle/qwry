@@ -30,7 +30,7 @@ export function confirmDanger(
 
 /** confirm whose detail can be UPDATED while it's open — the no-WHERE prompt
  * opens immediately with "estimating…" and streams planner estimates in
- * (blocking the modal on an EXPLAIN that may be lock-stuck made ⌘↵ hang).
+ * (blocking the modal on an EXPLAIN that may be lock-stuck made ⌘↩ hang).
  * `update` silently no-ops once this prompt is resolved or displaced. */
 export function confirmDangerLive(
   title: string,

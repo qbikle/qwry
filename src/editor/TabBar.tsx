@@ -35,10 +35,10 @@ export function TabBar() {
     return {
       color: origin?.color ?? "var(--accent)",
       label: origin
-        ? `Pinned — ${origin.name || origin.host}`
+        ? `Pinned · ${origin.name || origin.host}`
         : t.profile_id === null
           ? "Pinned"
-          : "Pinned — origin connection deleted",
+          : "Pinned · origin connection deleted",
     };
   };
   const savedQueries = useSaved((s) => s.queries);
@@ -258,7 +258,7 @@ export function TabBar() {
                   onMouseDown={(e) => e.stopPropagation()}
                   onDoubleClick={(e) => e.stopPropagation()}
                 >
-                  <Pin size={10} className="tab-pin" />
+                  <Pin size={12} className="tab-pin" />
                 </span>
               )}
               <span className="tab-icon" title={t.kind === "table" ? "Table" : "Query"}>
@@ -274,9 +274,9 @@ export function TabBar() {
             className={`tab-close${isDirty(t) ? " dirty" : ""}`}
             title={
               fileDirty(t)
-                ? "Buffer differs from the file on disk — ⌘⇧S saves it · click to close"
+                ? "Buffer differs from the file on disk · ⇧⌘S saves it · click to close"
                 : savedDirty(t)
-                  ? "Buffer differs from the saved query — ⌘S updates it · click to close"
+                  ? "Buffer differs from the saved query · ⌘S updates it · click to close"
                   : "Close ⌘W"
             }
             onClick={(e) => {
@@ -285,19 +285,24 @@ export function TabBar() {
             }}
           >
             <span className="tc-x">
-              <X size={11} />
+              <X size={12} />
             </span>
             <span className="tc-dot" />
           </button>
         </div>
       ))}
-      <button ref={newBtnRef} className="tab-new" title="New tab ⌘T" onClick={() => newTab()}>
-        <Plus size={13} />
+      <button
+        ref={newBtnRef}
+        className="tab-new iconbtn"
+        title="New tab ⌘T"
+        onClick={() => newTab()}
+      >
+        <Plus size={12} />
       </button>
       {saveError && (
         <span
           className="tab-save-warn"
-          title="Saving tabs to disk is failing — your query text may not survive a restart. Retrying automatically."
+          title="Saving tabs to disk is failing. Your query text may not survive a restart. Retrying automatically."
         >
           ⚠ not saving
         </span>

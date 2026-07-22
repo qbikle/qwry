@@ -39,7 +39,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 4px;
+  padding: var(--row-y-dense) var(--sp-1);
   color: var(--fg-muted);
   font-size: var(--text-sm);
   font-weight: 600;
@@ -60,8 +60,8 @@
 .tree-table {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: var(--row-y-dense) 4px var(--row-y-dense) 18px;
+  gap: 6px; /* optical */ /* icon gap, matches .btnish */
+  padding: var(--row-y-dense) 4px var(--row-y-dense) 18px; /* optical */ /* indent ladder pegs to the 18px twist */
   border-radius: var(--radius-sm);
   color: var(--fg-muted);
   font-size: var(--text-sm);
@@ -91,13 +91,13 @@
 
 /* partitions nested under their parent */
 .tree-table.nested {
-  padding-left: 34px;
+  padding-left: 34px; /* optical */ /* indent ladder */
 }
 .tree-parts {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: var(--row-y-dense) 4px var(--row-y-dense) 34px;
+  padding: var(--row-y-dense) 4px var(--row-y-dense) 34px; /* optical */ /* indent ladder */
   border-radius: var(--radius-sm);
   color: var(--fg-faint);
   font-size: var(--text-xs);
@@ -113,7 +113,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 4px;
+  padding: var(--row-y-dense) var(--sp-1);
   color: var(--fg-muted);
   font-size: var(--text-xs);
   font-weight: 600;
@@ -137,7 +137,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: var(--row-y-dense) 4px var(--row-y-dense) 18px;
+  padding: var(--row-y-dense) 4px var(--row-y-dense) 18px; /* optical */ /* indent ladder */
   border-radius: var(--radius-sm);
   color: var(--fg-faint);
   font-size: var(--text-xs);
@@ -157,8 +157,8 @@
 .tree-obj {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: var(--row-y-dense) 8px var(--row-y-dense) 34px;
+  gap: 6px; /* optical */ /* icon gap, matches .btnish */
+  padding: var(--row-y-dense) 8px var(--row-y-dense) 34px; /* optical */ /* indent ladder */
   font-size: var(--text-xs);
   cursor: pointer;
   border-radius: var(--radius-sm);
@@ -167,7 +167,7 @@
   background: var(--bg-panel);
 }
 .tree-obj.ext {
-  padding-left: 18px;
+  padding-left: 18px; /* optical */ /* indent ladder */
 }
 .tree-obj-icon {
   flex-shrink: 0;
@@ -210,45 +210,25 @@
   color: var(--danger);
 }
 .tree-error-msg {
-  margin: 6px 0;
+  margin: var(--sp-2) 0;
   color: var(--fg-muted);
   font-size: var(--text-xs);
   white-space: pre-wrap;
   word-break: break-word;
 }
-.tree-retry {
-  padding: 5px 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--bg-raised);
-  color: var(--fg);
-  font-size: var(--text-xs);
-  cursor: pointer;
-  transition: background 120ms, border-color 120ms, color 120ms;
-}
-.tree-retry:hover {
-  background: var(--bg-hover);
-}
 
-/* table expand → column list */
-.tree-twist {
-  display: grid;
-  place-items: center;
+/* table expand → column list — skin comes from .iconbtn, box stays 18px so
+   dense rows keep their height */
+.tree-table .tree-twist {
   width: 18px;
   height: 18px;
   margin-left: -4px;
-  border: none;
-  background: transparent;
-  color: var(--fg-faint);
-  cursor: pointer;
-  padding: 0;
   flex-shrink: 0;
 }
-.tree-twist:hover { color: var(--fg); }
 .tree-col {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 6px; /* optical */ /* icon gap, matches .btnish */
   padding: var(--row-y-dense) 8px var(--row-y-dense) 44px;
   font-size: var(--text-xs);
   cursor: pointer;

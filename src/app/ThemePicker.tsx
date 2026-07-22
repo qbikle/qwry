@@ -94,8 +94,8 @@ export function ThemePicker() {
       <motion.div className="tp-modal" {...popIn}>
         <div className="tp-head">
           <span className="tp-title">Theme</span>
-          <button className="tp-x" onClick={close}>
-            <X size={15} />
+          <button className="tp-x iconbtn" onClick={close}>
+            <X size={14} />
           </button>
         </div>
 
@@ -125,7 +125,7 @@ export function ThemePicker() {
                 <span className="tp-dot" style={{ background: sw.accent }} />
                 <span className="tp-name">{p.name}</span>
                 <span
-                  className="tp-action"
+                  className="tp-action iconbtn"
                   title={p.custom ? "Edit theme" : "Duplicate to a custom theme"}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -161,12 +161,12 @@ export function ThemePicker() {
             </div>
             <div className="tp-create-actions">
               {draft.editingId && (
-                <button className="tp-del-btn" onClick={del}>
-                  <Trash2 size={13} /> Delete
+                <button className="tp-del-btn btnish" onClick={del}>
+                  <Trash2 size={14} /> Delete
                 </button>
               )}
-              <button onClick={() => setDraft(null)}>Cancel</button>
-              <button className="primary" onClick={save} disabled={!draft.name.trim()}>
+              <button className="btnish" onClick={() => setDraft(null)}>Cancel</button>
+              <button className="btnish primary" onClick={save} disabled={!draft.name.trim()}>
                 {draft.editingId ? "Save" : "Create"}
               </button>
             </div>

@@ -32,11 +32,11 @@ const DELIMS: { d: string; label: string }[] = [
 ];
 
 const NULL_SENTENCE: Record<ImportNullMode, string> = {
-  empty: "empty fields import as NULL (the CSV convention) — a quoted \"\" is empty too",
+  empty: "empty fields import as NULL (the CSV convention). A quoted \"\" is empty too",
   literal:
-    "fields spelled NULL (any case) import as NULL — quoted \"NULL\" is also treated as NULL; quoting cannot be honored. Empty fields stay ''",
+    "fields spelled NULL (any case) import as NULL. Quoted \"NULL\" is also treated as NULL; quoting cannot be honored. Empty fields stay ''",
   custom: "fields equal to the token import as NULL; empty fields stay ''",
-  none: "nothing becomes NULL — empty fields import as ''",
+  none: "nothing becomes NULL. Empty fields import as ''",
 };
 
 /** the import binds to the BROWSE TAB's own session and the profile its rows
@@ -68,7 +68,7 @@ function errText(e: unknown): { message: string; code: string | null } {
   const code = err?.code ?? null;
   if (code === "25006") {
     return {
-      message: `${message} — this is a production connection in safe mode; unlock writes for this tab first`,
+      message: `${message}. This is a production connection in safe mode; unlock writes for this tab first`,
       code,
     };
   }
@@ -230,7 +230,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
   const runPhase = async (mode: "validate" | "commit") => {
     const ctx = browseSession();
     if (!ctx) {
-      setRunError("browse session unavailable — refresh the table first");
+      setRunError("browse session unavailable. Refresh the table first");
       return;
     }
     sessionRef.current = ctx.sessionId;
@@ -257,7 +257,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
         setCommitReport(null);
         setRunError(null);
         setStatNotice(
-          "the file changed on disk after validate — re-validated against the current file",
+          "the file changed on disk after validate, so it was re-validated against the current file",
         );
         return;
       }
@@ -311,14 +311,14 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
     >
       <motion.div className="imp-panel" {...popIn}>
         <div className="imp-head">
-          <FileUp size={13} />
+          <FileUp size={14} />
           <span className="imp-title">
-            Import CSV — {table.schema !== "public" ? `${table.schema}.` : ""}
+            Import CSV · {table.schema !== "public" ? `${table.schema}.` : ""}
             {table.name}
           </span>
           <span
             className="imp-conn"
-            title="The connection this import writes to — the browse tab’s session, never the rail selection"
+            title="This import writes to the browse tab’s session, never the rail selection"
           >
             {connName ?? "no session"}
           </span>
@@ -326,7 +326,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
             {["File", "Columns", "Import"].map((label, i) => (
               <button
                 key={label}
-                className={`imp-step${step === i + 1 ? " on" : ""}`}
+                className={`imp-step${step === i + 1 ? " active" : ""}`}
                 disabled={(i + 1 === 2 && !preview) || (i + 1 === 3 && mappedCount === 0) || running}
                 onClick={() => setStep((i + 1) as 1 | 2 | 3)}
               >
@@ -334,7 +334,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
               </button>
             ))}
           </div>
-          <button className="icon-btn" title="Close" onClick={() => !running && onClose()}>
+          <button className="iconbtn" title="Close" onClick={() => !running && onClose()}>
             <X size={14} />
           </button>
         </div>
@@ -343,7 +343,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
           <div className="imp-body">
             {!path ? (
               <button className="imp-drop" onClick={() => void pickFile()}>
-                <FileUp size={18} />
+                <FileUp size={16} />
                 <span>Choose a CSV or TSV File…</span>
               </button>
             ) : (
@@ -352,7 +352,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                   <span className="imp-filename" title={path}>
                     {fileName}
                   </span>
-                  <button className="imp-link" onClick={() => void pickFile()}>
+                  <button className="linkish" onClick={() => void pickFile()}>
                     Change
                   </button>
                   <span className="imp-spacer" />
@@ -369,7 +369,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                     {DELIMS.map((o) => (
                       <button
                         key={o.label}
-                        className={preview?.delimiter === o.d ? "on" : ""}
+                        className={preview?.delimiter === o.d ? "active" : ""}
                         onClick={() => {
                           invalidateRuns();
                           void loadPreview(path, o.d);
@@ -418,12 +418,12 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                 )}
                 {headerish && (
                   <div className="imp-warn">
-                    <AlertTriangle size={11} /> Row 1 looks like a header — its fields match{" "}
+                    <AlertTriangle size={12} /> Row 1 looks like a header. Its fields match{" "}
                     {table.name} column names. Did you mean to enable “Header Row”?
                   </div>
                 )}
                 <div className="imp-note">
-                  Encoding: UTF-8 only — a non-UTF-8 byte is a per-row error, never silently
+                  Encoding: UTF-8 only. A non-UTF-8 byte is a per-row error, never silently
                   re-encoded.
                 </div>
               </>
@@ -446,13 +446,13 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                   <span className="imp-sample" title={preview.rows[0]?.[i] ?? ""}>
                     {preview.rows[0]?.[i] ?? ""}
                   </span>
-                  <ArrowRight size={11} className="imp-arrow" />
+                  <ArrowRight size={12} className="imp-arrow" />
                   <select
                     className={mapping[i] ? "" : "imp-skip"}
                     value={mapping[i] ?? ""}
                     onChange={(e) => setMap(i, e.target.value || null)}
                   >
-                    <option value="">— skip —</option>
+                    <option value="">{"— skip —" /* em-ok absent-value marker */}</option>
                     {insertable.map((c) => (
                       <option key={c.name} value={c.name}>
                         {c.name} ({c.type}
@@ -471,7 +471,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
             )}
             {unmappedRequired.length > 0 && (
               <div className="imp-warn">
-                <AlertTriangle size={11} /> NOT NULL without a default — rows will fail unless a
+                <AlertTriangle size={12} /> NOT NULL without a default. Rows will fail unless a
                 trigger fills them: {unmappedRequired.map((c) => c.name).join(", ")}
               </div>
             )}
@@ -481,7 +481,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                 {(["empty", "literal", "custom", "none"] as ImportNullMode[]).map((m) => (
                   <button
                     key={m}
-                    className={nullMode === m ? "on" : ""}
+                    className={nullMode === m ? "active" : ""}
                     onClick={() => {
                       setNullMode(m);
                       invalidateRuns();
@@ -510,16 +510,16 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
           <div className="imp-body">
             {statNotice && (
               <div className="imp-warn">
-                <AlertTriangle size={11} /> {statNotice}
+                <AlertTriangle size={12} /> {statNotice}
               </div>
             )}
             {indeterminate && !running && (
               <div className="imp-warn">
-                <AlertTriangle size={11} />{" "}
+                <AlertTriangle size={12} />{" "}
                 {commitReport?.errors[0]?.message ??
-                  "connection lost during COMMIT — the import may or may not have been applied; verify the row count before retrying"}
+                  "connection lost during COMMIT. The import may or may not have been applied; verify the row count before retrying"}
                 <button
-                  className="imp-link"
+                  className="linkish"
                   onClick={() => invalidateRuns() /* forces a fresh validate */}
                 >
                   Validate Again
@@ -534,7 +534,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                       // batch — say so instead of freezing the bar at 100%
                       progress && progress.total > 0 && progress.processed >= progress.total
                       ? "Locating failed rows…"
-                      : "Validating — dry run, always rolls back…"
+                      : "Validating · dry run, always rolls back…"
                     : "Importing…"}
                   {progress && (
                     <span className="imp-total">
@@ -558,7 +558,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
             {runError && !running && (
               <div className="imp-error">
                 {runError}
-                <button className="imp-link" onClick={() => void runPhase("validate")}>
+                <button className="linkish" onClick={() => void runPhase("validate")}>
                   Validate Again
                 </button>
               </div>
@@ -575,12 +575,12 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                 <div className="imp-summary">
                   {commitReport && !commitReport.committed ? (
                     <span className="imp-fail">
-                      <AlertTriangle size={12} /> import failed — the transaction rolled back,
+                      <AlertTriangle size={12} /> import failed. The transaction rolled back,
                       nothing was written
                     </span>
                   ) : issues.errors.length === 0 ? (
                     <span className="imp-ok">
-                      <CheckCircle2 size={12} /> dry run clean —{" "}
+                      <CheckCircle2 size={12} /> dry run clean ·{" "}
                       {issues.total_rows.toLocaleString()} rows ready
                     </span>
                   ) : (
@@ -588,7 +588,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                       <AlertTriangle size={12} /> {issues.errors.length}
                       {issues.more_errors ? "+" : ""} bad row
                       {issues.errors.length === 1 && !issues.more_errors ? "" : "s"} of{" "}
-                      {issues.total_rows.toLocaleString()} — nothing was written
+                      {issues.total_rows.toLocaleString()} · nothing was written
                     </span>
                   )}
                 </div>
@@ -597,7 +597,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                     {issues.errors.map((e, i) => (
                       <div className="imp-issue" key={i}>
                         <span className="imp-issue-row">
-                          {e.row > 0 ? `row ${e.row}` : "—"}
+                          {e.row > 0 ? `row ${e.row}` : "—" /* em-ok absent-value marker */}
                           {e.line > 0 ? ` · line ${e.line}` : ""}
                         </span>
                         <span className="imp-issue-msg">{e.message}</span>
@@ -605,7 +605,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                     ))}
                     {issues.more_errors && (
                       <div className="imp-issue imp-issue-more">
-                        …and possibly more — stopped at {issues.errors.length}
+                        …and possibly more, stopped at {issues.errors.length}
                       </div>
                     )}
                   </div>
@@ -628,19 +628,19 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
           )}
           {step < 3 ? (
             <button
-              className="btnish imp-primary"
+              className="btnish primary"
               disabled={(step === 1 && !preview) || (step === 2 && mappedCount === 0)}
               onClick={() => setStep((step + 1) as 2 | 3)}
             >
               {step === 2 && mappedCount === 0 ? "Map a Column" : "Next"}
             </button>
           ) : done ? (
-            <button className="btnish imp-primary" onClick={onClose}>
+            <button className="btnish primary" onClick={onClose}>
               Done
             </button>
           ) : (
             <button
-              className="btnish imp-primary"
+              className="btnish primary"
               disabled={!canCommit}
               onClick={() => void runPhase("commit")}
             >

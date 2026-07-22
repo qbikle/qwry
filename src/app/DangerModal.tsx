@@ -1,5 +1,6 @@
 import { motion } from "motion/react";
 import { popIn } from "../design/springs";
+import { Kbd } from "../design/Kbd";
 import { useDanger } from "../stores/danger";
 import { Modal } from "./overlay/Overlay";
 import "./app.css";
@@ -34,11 +35,11 @@ export function DangerModal() {
         <div className="danger-title">⚠ {prompt.title}</div>
         <pre className="danger-detail">{prompt.detail}</pre>
         <div className="danger-actions">
-          <button autoFocus onClick={() => resolve(false)}>
-            Cancel <span className="danger-key">⏎</span>
+          <button autoFocus className="btnish" onClick={() => resolve(false)}>
+            Cancel <Kbd chord="return" />
           </button>
-          <button className="danger-go" onClick={() => resolve(true)}>
-            {prompt.confirmLabel} <span className="danger-key">⌘⌫</span>
+          <button className="btnish danger" onClick={() => resolve(true)}>
+            {prompt.confirmLabel} <Kbd chord="cmd+delete" />
           </button>
         </div>
       </motion.div>

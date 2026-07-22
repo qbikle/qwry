@@ -1,5 +1,5 @@
 /** Client-side statement spans — mirrors the Rust splitter's token rules
- * (strings, quoted idents, dollar-quotes, comments) so ⌘↵ can run just the
+ * (strings, quoted idents, dollar-quotes, comments) so ⌘↩ can run just the
  * statement under the caret. Spans are [from, to) char offsets into `src`. */
 export interface StmtSpan {
   from: number;

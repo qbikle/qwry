@@ -23,10 +23,12 @@ Every interactive control belongs to exactly one species. The species are:
 |---|---|---|
 | Action button | `.btnish` / `.btn` (tokens.css) | `.primary` filled accent, `.danger` filled danger — ONE idea of each |
 | Icon button | `.iconbtn` (tokens.css) | ghost by default; `.iconbtn-lg` 28px box; `.bordered` for standalone toolbars |
-| Segmented control | `.seg` track + `.seg > button` | raised track, 2px gap, active = accent-soft |
-| Chip / pill toggle | `.chipish` | radius-pill, border, active = accent-soft |
+| Segmented control | recipe (no base class yet) | panel-inset bordered track, 2px gap, hover bg-hover, active = accent-soft; view-tab variants may keep neutral bg-active active (annotated). Extracting `.seg` is ledgered |
+| Chip / pill toggle | recipe (no base class yet) | radius-pill, border, active = accent-soft; `.chipish` extraction ledgered |
 | Dashed ghost (add/create) | existing dashed pattern | bg none, dashed border-strong → hover accent |
 | Link button | `.linkish` | accent text + hover accent-soft fill — NEVER feedback-free |
+| Soft-danger button | recipe | danger-soft fill + danger text, for cancel/delete inside busy toolbars where filled `.danger` would shout (qb-cancel, tp-del-btn); full state matrix mandatory |
+| Stepper (joined pair) | segmented-pair recipe | shared border, hairline divider, radius split, ghost-until-hover (CopySplit, rv-step) |
 | Menu row | ContextMenu / cmdk styles | highlight = accent fill, `.hot` |
 | List row / card | per-surface | hover = bg-hover minimum |
 
@@ -59,6 +61,13 @@ Load-bearing enabled information never sits at tier 3 — faint tells the user
 "this doesn't matter". Raw `opacity` never fakes a tier (it mutates child
 icons and backgrounds too); legal opacity values are 0 and 1 (reveal
 patterns) and `var(--o-disabled)`. Anything else is `/* optical */`.
+
+**Glass surfaces**: content sitting directly on the vibrancy glass (titlebar,
+gutters) cannot trust the fg ramp — the backdrop is the user's wallpaper at a
+user-set transparency. Such content carries its own surface: buttons/chips get
+a translucent theme underlay (`color-mix(var(--bg-panel) ~72%, transparent)`,
+tints layered above via gradient), text gets a same-theme halo shadow that
+vanishes on matching backdrops. Contrast must survive ANY wallpaper.
 
 ## Rule 4 — The 4px grid
 

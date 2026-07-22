@@ -4,7 +4,7 @@
 // handlers and stacked menus stay coherent. Mouse + keyboard both work.
 //
 //   ↑/↓ move · → / Enter open submenu or activate · ← close submenu · Esc close
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "motion/react";
 import { ChevronRight } from "lucide-react";
@@ -17,7 +17,9 @@ export type MenuNode =
   | {
       kind: "item";
       label: string;
-      hint?: string;
+      /** identifier hints stay strings (mono, data register); shortcut hints
+       *  pass <Kbd chord=…/> (UI font, glyph register) — WRITING.md split */
+      hint?: ReactNode;
       danger?: boolean;
       disabled?: boolean;
       onSelect: () => void;
@@ -196,7 +198,7 @@ export function ContextMenu({
                   )}
                   {isSub && (
                     <span className="ctx-arrow">
-                      <ChevronRight size={13} />
+                      <ChevronRight size={12} />
                     </span>
                   )}
                 </div>

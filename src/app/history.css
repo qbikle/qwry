@@ -4,8 +4,8 @@
 .history-chips {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 7px 10px;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
   scrollbar-width: none;
@@ -17,8 +17,8 @@
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 2px 9px;
+  gap: var(--sp-1);
+  padding: 2px var(--sp-2);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-pill);
   background: transparent;
@@ -30,12 +30,15 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.history-chip:hover:not(.on) {
+.history-chip:hover:not(.active) {
   color: var(--fg);
   background: var(--bg-hover);
   border-color: var(--border-strong);
 }
-.history-chip.on {
+.history-chip:active {
+  transform: scale(0.97);
+}
+.history-chip.active {
   background: var(--accent-soft);
   border-color: var(--accent);
   color: var(--accent);
@@ -51,12 +54,12 @@
   width: 1px;
   height: 14px;
   background: var(--border-strong);
-  margin: 0 3px;
+  margin: 0 var(--sp-1);
 }
 
 /* day dividers */
 .history-day {
-  padding: 8px 8px 3px;
+  padding: var(--sp-2) var(--sp-2) var(--sp-1);
   font-size: var(--text-2xs);
   font-weight: 700;
   color: var(--fg-faint);
@@ -68,7 +71,7 @@
 .history-sqlline {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   min-width: 0;
 }
 .history-sqlline .history-sql {
@@ -83,11 +86,17 @@
   color: var(--accent);
   background: var(--accent-soft);
   border-radius: var(--radius-pill);
-  padding: 0 7px;
+  padding: 0 var(--sp-2);
   line-height: 1.6;
   cursor: pointer;
 }
-.history-xn.open {
+.history-xn:hover {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+.history-xn:active {
+  transform: scale(0.97);
+}
+.history-xn.active {
   background: var(--bg-active);
   color: var(--fg-muted);
 }
@@ -99,7 +108,7 @@
 /* expanded members: indented under their group head, meta only */
 .history-row.member {
   width: calc(100% - 16px);
-  margin-left: 16px;
+  margin-left: var(--sp-4);
   border-left: 2px solid var(--border);
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
