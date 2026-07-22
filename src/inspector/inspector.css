@@ -226,6 +226,90 @@
 .jsonfield:focus-within {
   border-color: var(--accent);
 }
+/* raw-fill + search: the CM editor owns its scroll (height-bound), so the
+ * search panel stays pinned while results scroll under it — the outer
+ * .jsonfield scrolling instead would carry the panel away (chrome that
+ * scrolls with content isn't chrome) */
+.insp-body.raw-fill .jsonfield .cm-editor {
+  height: 100%;
+}
+
+/* ⌘F search panel inside the raw view — same skin as the SQL editor's
+ * (editor.css .sql-editor .cm-panel.cm-search); duplicated because the two
+ * surfaces live in different lazy chunks and the inspector must not depend
+ * on the editor's CSS having loaded. Keep the values in lockstep. */
+.jsonfield .cm-panels {
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+}
+.jsonfield .cm-panel.cm-search {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-1) 28px var(--sp-1) var(--sp-2);
+}
+.jsonfield .cm-panel.cm-search input.cm-textfield {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  padding: 2px var(--sp-2);
+}
+.jsonfield .cm-panel.cm-search input.cm-textfield:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.jsonfield .cm-panel.cm-search .cm-button {
+  background: var(--bg-hover);
+  background-image: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-size: var(--text-xs);
+  padding: 2px var(--sp-2);
+  cursor: pointer;
+}
+.jsonfield .cm-panel.cm-search .cm-button:hover {
+  background: var(--bg-active);
+}
+.jsonfield .cm-panel.cm-search label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+.jsonfield .cm-panel.cm-search input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+.jsonfield .cm-panel.cm-search [name="close"] {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  font-size: var(--text-lg);
+  padding: 0 var(--sp-1);
+  cursor: pointer;
+}
+.jsonfield .cm-panel.cm-search [name="close"]:hover {
+  color: var(--fg);
+}
+.jsonfield .cm-searchMatch {
+  background: var(--warn-soft);
+}
+.jsonfield .cm-searchMatch-selected {
+  background: rgba(245, 166, 35, 0.32);
+  outline: 1px solid var(--warn);
+}
 
 /* split copy button */
 .insp-copy {

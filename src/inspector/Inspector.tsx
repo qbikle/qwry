@@ -1,4 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { openSearchPanel } from "@codemirror/search";
+import type { EditorView } from "@codemirror/view";
 import {
   ChevronDown,
   Code,
@@ -64,6 +66,29 @@ export function Inspector() {
   const [mode, setMode] = useState<"auto" | "raw">("auto");
   const [editingText, setEditingText] = useState<string | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  // the raw-mode JsonField's live CM view — non-null EXACTLY while raw mode
+  // shows a searchable field, which is the whole mode gate for the ⌘F claim
+  const rawViewRef = useRef<EditorView | null>(null);
+  // ⌘F in raw mode: JsonTree (which owns the tree-mode claim) is unmounted
+  // here, so the shell mirrors its exact gates — open inspector, focus
+  // within the panel, nobody upstream claimed the event. When the CM itself
+  // has focus its own searchKeymap handles ⌘F first (defaultPrevented).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      if (!(e.metaKey && !e.shiftKey && e.key.toLowerCase() === "f")) return;
+      const view = rawViewRef.current;
+      if (!view) return;
+      if (!useInspector.getState().open) return;
+      const within = (el: unknown) =>
+        el instanceof Element && !!el.closest(".inspector-fixed");
+      if (!within(e.target) && !within(document.activeElement)) return;
+      e.preventDefault();
+      openSearchPanel(view);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
   const [rawDraft, setRawDraft] = useState<string | null>(null);
   const [jsonError, setJsonError] = useState<string | null>(null);
   const editSeq = useInspector((s) => s.editSeq);
@@ -467,6 +492,10 @@ export function Inspector() {
             <JsonField
               value={rawDraft ?? pretty}
               readOnly={!structuredEditable}
+              searchable
+              onView={(v) => {
+                rawViewRef.current = v;
+              }}
               onChange={(v) => {
                 setRawDraft(v);
                 clearValidateTimer();
