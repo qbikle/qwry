@@ -24,7 +24,7 @@ data chrome, and consistency within the app outranks literal compliance.
 | Tooltips (fragment) | Sentence case | no period | `Double-click to edit` |
 | Tooltips/alerts (full sentence) | Sentence case | period | `Staged changes are not written to the database and will be lost.` |
 | Status/feedback lines | Sentence case, lowercase-lead ok for terse notes | no period | `copy cancelled`, `12 rows · 3.1 ms` |
-| Errors | Sentence case | no period unless multi-sentence | `couldn't establish a session — check the connection` |
+| Errors | Sentence case | no period unless multi-sentence | `couldn't establish a session. Check the connection` |
 | Placeholders | Sentence case or literal value | no period | `Filter tables…`, `nextval('t_id_seq')` |
 | Empty states | Sentence case | no period | `No columns match` |
 
@@ -47,10 +47,39 @@ data chrome, and consistency within the app outranks literal compliance.
 5. **One term per concept, app-wide** — see the terminology table. Synonyms
    read as different features.
 6. **Typography register**: real `…` and `⌘⇧⌥⌃` glyphs (never `Cmd+`),
-   em-dash `—` for asides, `·` for metadata separators, typographic quotes in
-   prose (straight quotes only inside SQL/code). "and" over `&` everywhere
-   except space-tight compact labels (chip/group-header width limits, e.g.
-   `PK & Time`); placeholders and dialog text are prose — always "and".
+   `·` for metadata separators, typographic quotes in prose (straight quotes
+   only inside SQL/code). "and" over `&` everywhere except space-tight compact
+   labels (chip/group-header width limits, e.g. `PK & Time`); placeholders and
+   dialog text are prose — always "and".
+7. **No em dashes in UI strings.** Interface text splits the thought instead:
+   two sentences, a comma, or `·` for status fragments. `couldn't establish a
+   session — check the connection` becomes `couldn't establish a session.
+   Check the connection`. The em dash reads editorial, not interface — Apple
+   UI strings never carry it. Docs, comments, and commits keep it (rule
+   applies only to user-visible strings, like everything here). Amended
+   2026-07-22: earlier revisions of THIS rule sanctioned `—` for asides; that
+   was wrong for the UI register.
+
+## Shortcut glyph register (rendering law — pairs with DESIGN.md rule 7)
+
+Shortcut symbols are characters of the UI font, not icons and not mono.
+All rendering routes through `<Kbd>` (src/design/Kbd.tsx); hand-typed chords
+in JSX are a lint error.
+
+1. **Font**: `--font-ui` (SF Pro), same optical size as the label or one step
+   below — never `--font-mono`, never smaller-and-faded. (Identifiers in the
+   hint slot STAY mono — they are data. A hint may carry both registers side
+   by side.)
+2. **Modifier order**: ⌃ ⌥ ⇧ ⌘ — always. `⇧⌘F`, never `⌘⇧F`, never `⌘+Shift+F`.
+   Key letter last, uppercase, no separators.
+3. **Canonical codepoints**: ⌘ ⇧ ⌥ ⌃, return ↩ (U+21A9, never ↵/⏎), enter ⌅,
+   delete ⌫, forward-delete ⌦, tab ⇥, arrows ↑↓←→, page ⇞⇟. House deviations,
+   deliberate: `esc` stays the lowercase word (⎋ is obscure), Space stays the
+   word `Space`.
+4. **Contrast**: tier 2 (`--fg-muted`) — shortcuts are secondary information,
+   never faint (faint = disabled register).
+5. **Costume by surface**: menus and buttons get bare glyphs; teaching
+   surfaces (cheatsheet, empty states) get one keycap per key.
 
 ## Terminology (canonical → banned synonyms)
 

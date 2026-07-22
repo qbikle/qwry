@@ -55,9 +55,13 @@
   --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.45);
   --backdrop: rgba(0, 0, 0, 0.45);
 
-  /* motion */
+  /* motion — the whole CSS vocabulary (DESIGN.md rule 6): two durations, one
+     standard curve, one spring. 120ms was already the de-facto standard (11
+     raw uses); the token now matches it instead of competing at 150ms */
   --ease-spring: cubic-bezier(0.2, 0.9, 0.3, 1.2);
-  --dur-quick: 150ms;
+  --ease-std: cubic-bezier(0.2, 0, 0, 1);
+  --dur-quick: 120ms;
+  --dur-slow: 240ms;
 
   /* search-match highlight */
   --hl-bg: #f5a623;
@@ -78,7 +82,16 @@
   --sp-2: 8px;
   --sp-3: 12px;
   --sp-4: 16px;
+  --sp-5: 20px;
   --sp-6: 24px;
+
+  /* icon trio (DESIGN.md rule 5): sm dense lists/menus · md toolbars · lg headers */
+  --icon-sm: 12px;
+  --icon-md: 14px;
+  --icon-lg: 16px;
+
+  /* the one disabled look (DESIGN.md rule 2) */
+  --o-disabled: 0.55;
 
   --radius-xs: 4px;
   --radius-sm: 6px;
@@ -238,7 +251,7 @@ textarea:focus-visible,
 
 /* a disabled control must LOOK disabled — several surfaces had no rule */
 button:disabled {
-  opacity: 0.55;
+  opacity: var(--o-disabled);
   cursor: default;
 }
 
@@ -248,14 +261,90 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 12px;
+  padding: 5px 12px; /* optical */
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
   background: var(--bg-raised);
   color: var(--fg);
   font-size: var(--text-xs);
   cursor: pointer;
-  transition: background 120ms, border-color 120ms, color 120ms;
+  transition: background var(--dur-quick), border-color var(--dur-quick), color var(--dur-quick);
 }
 .btnish:hover, .btn:hover { border-color: var(--accent); }
 .btnish:active, .btn:active { transform: scale(0.97); }
+/* the ONE primary and the ONE danger (DESIGN.md rule 1) */
+.btnish.primary, .btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+.btnish.primary:hover:not(:disabled), .btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
+.btnish.danger, .btn.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--danger-fg);
+}
+.btnish.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) { filter: brightness(1.08); }
+
+/* the one icon-button skin (DESIGN.md rule 1) — ghost 22px box by default;
+   .iconbtn-lg = 28px toolbar tier; .bordered = standalone-toolbar look */
+.iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: background var(--dur-quick), color var(--dur-quick);
+}
+.iconbtn:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg); }
+.iconbtn:active:not(:disabled) { background: var(--bg-active); }
+.iconbtn.active { color: var(--accent); background: var(--accent-soft); }
+.iconbtn-lg { width: 28px; height: 28px; }
+.iconbtn.bordered { border: 1px solid var(--border); background: var(--bg-raised); }
+.iconbtn.bordered:hover:not(:disabled) { border-color: var(--border-strong); background: var(--bg-hover); }
+
+/* the one link-button skin — accent text with real feedback (DESIGN.md rule 8:
+   feedback-free text buttons read as static text) */
+.linkish {
+  background: none;
+  border: none;
+  padding: 1px 4px;
+  margin: -1px -4px;
+  border-radius: var(--radius-xs);
+  color: var(--accent);
+  cursor: pointer;
+  font-size: inherit;
+  transition: background var(--dur-quick);
+}
+.linkish:hover:not(:disabled) { background: var(--accent-soft); }
+.linkish:active:not(:disabled) { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+
+/* shortcut glyphs (WRITING.md glyph register / DESIGN.md rule 7) — UI font,
+   tier-2 contrast, label-adjacent size. Rendered only via <Kbd>. */
+.kbd {
+  font-family: var(--font-ui);
+  font-size: 0.92em;
+  color: var(--fg-muted);
+  letter-spacing: 0.02em;
+}
+/* keycap costume — teaching surfaces only (cheatsheet, empty states) */
+.kbd-cap {
+  display: inline-flex;
+  justify-content: center;
+  min-width: 22px;
+  padding: 1px 6px;
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px; /* optical */
+}
+.kbd-caps { display: inline-flex; gap: 3px; }
