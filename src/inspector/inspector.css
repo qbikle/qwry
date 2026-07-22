@@ -465,13 +465,29 @@
   background: var(--bg-panel);
   border: 1px solid var(--accent);
   border-radius: var(--radius-xs);
-  padding: 0 4px;
+  padding: 0 4px; /* optical */ /* compensated below — text must not shift */
   color: var(--fg);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   outline: none;
   user-select: text;
   min-width: 60px;
+}
+/* value editor (textarea): wears the DISPLAY's exact metrics — same font,
+   line-height, wrap, and left edge (border + padding pulled back by the
+   negative margin), so entering edit mode changes nothing but the border
+   appearing and the row below staying put. Height is JS-grown to the wrapped
+   content (Leaf's layout effect), capped at 40% of the window */
+.jt-edit-val {
+  flex: 1 1 auto;
+  min-width: 60px;
+  margin: -1px -5px; /* optical */ /* border 1 + padding 4 compensation */
+  resize: none;
+  overflow-y: auto;
+  font: inherit;
+  line-height: inherit;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 .jt-edit.err {
   border-color: var(--danger);

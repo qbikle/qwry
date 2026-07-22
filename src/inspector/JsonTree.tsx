@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -195,6 +196,28 @@ function Leaf({ value, path }: { value: Json; path: Path }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [err, setErr] = useState(false);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  // the editor wears the display's exact metrics (font, wrap, left edge), so
+  // it must also take the display's HEIGHT — a fixed one-line box collapsed a
+  // six-line wrapped value into a blind tail-scroll and jumped the whole tree
+  useLayoutEffect(() => {
+    if (!editing) return;
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = "0";
+    // +2: border-box height must include the 1px borders scrollHeight omits,
+    // or exact-fit content shows a one-line scrollbar sliver
+    el.style.height = `${Math.min(el.scrollHeight + 2, window.innerHeight * 0.4)}px`;
+  }, [editing, draft]);
+  // caret AFTER the value (autoFocus alone lands it engine-dependently)
+  useEffect(() => {
+    if (!editing) return;
+    const el = taRef.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [editing]);
 
   const cls =
     value === null
@@ -224,10 +247,12 @@ function Leaf({ value, path }: { value: Json; path: Path }) {
 
   if (editing) {
     return (
-      <input
-        className={`jt-edit${err ? " err" : ""}`}
-        autoFocus
+      <textarea
+        ref={taRef}
+        className={`jt-edit jt-edit-val${err ? " err" : ""}`}
+        rows={1}
         value={draft}
+        spellCheck={false}
         onChange={(e) => {
           setDraft(e.target.value);
           setErr(false);
@@ -235,9 +260,13 @@ function Leaf({ value, path }: { value: Json; path: Path }) {
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
-          if (e.key === "Enter") {
+          if (e.key === "Enter" && !e.altKey && !e.shiftKey) {
+            // Enter commits; ⌥/⇧-Enter inserts a real newline (grid grammar).
+            // preventDefault either way — a failed commit must keep the
+            // draft as typed, not gain the newline Enter would insert
+            e.preventDefault();
             // refocus only when the edit actually closes — an invalid value
-            // keeps the input (and its error state) focused
+            // keeps the editor (and its error state) focused
             const el = e.currentTarget;
             if (commit()) refocusInspector(el);
           }
