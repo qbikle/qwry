@@ -5,6 +5,16 @@ rules. A string that follows its register reads polished; strings that drift
 between registers read amateur even when each is individually fine. This file
 is law, same as tokens.css — check every new string against it.
 
+The register table maps onto Apple HIG's two capitalization styles: HIG
+title-style = the Title Case control registers (menus, buttons, titles, tabs);
+HIG sentence-style = the prose registers (descriptions, tooltips, alerts,
+status). The same feature name legitimately appears in both casings — register
+is orthogonal to identity (`Open as Record` the menu item, "Open as record"
+the cheatsheet description). Deliberate HIG deviations — the lowercase status
+register, data-state markers (`NULL`, `∅ empty`, `auto`), in-place mono
+shortcut hints — are a documented system, not drift; HIG has no register for
+data chrome, and consistency within the app outranks literal compliance.
+
 ## Registers
 
 | Register | Casing | Punctuation | Examples |
