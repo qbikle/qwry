@@ -462,6 +462,10 @@
 }
 
 .jt-edit {
+  /* the negative-margin compensation pushes the border 1px into the
+     neighbor rows' boxes — positioned elements paint after normal-flow
+     siblings, so their hover backgrounds can never eat the border edge */
+  position: relative;
   background: var(--bg-panel);
   border: 1px solid var(--accent);
   border-radius: var(--radius-xs);
