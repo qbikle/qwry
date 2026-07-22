@@ -49,14 +49,20 @@
 }
 
 .ctx-hint {
-  color: var(--fg-faint);
-  /* hints carry identifiers (column/CTE names) and shortcut glyphs — both are
-     data-register, both wear mono (WRITING.md: data never dresses as chrome) */
+  /* tier 2, not faint — hints carry column names and shortcuts the user
+     came to read (DESIGN.md rule 3). String hints are identifiers = data
+     register = mono; <Kbd> children override to the UI font (glyph register,
+     WRITING.md) at the item's label size. */
+  color: var(--fg-muted);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
 }
+.ctx-hint .kbd {
+  font-size: var(--text-sm);
+  color: inherit;
+}
 .ctx-item.hot .ctx-hint {
-  color: color-mix(in srgb, var(--accent-fg) 72%, transparent);
+  color: color-mix(in srgb, var(--accent-fg) 82%, transparent);
 }
 
 .ctx-arrow {
