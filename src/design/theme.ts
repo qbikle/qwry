@@ -7,6 +7,10 @@
 let glassAlpha = 0.55;
 export function setGlassAlpha(a: number) {
   glassAlpha = Math.max(0, Math.min(1, a));
+  // below ~half wash the wallpaper dominates the glass and theme fg can't be
+  // trusted on it — titlebar content switches to self-surfaced chips/halo
+  // (v2.css rules scoped on this attribute; DESIGN.md rule 3 glass clause)
+  document.documentElement.toggleAttribute("data-glassy", glassAlpha < 0.5);
 }
 
 export type Mode = "system" | "dark" | "light";
@@ -254,6 +258,9 @@ function deriveAnchors(p: Palette, dark: boolean): Record<string, string> {
   v["--fg"] = fg;
   v["--fg-muted"] = mix(fg, bg, 0.4);
   v["--fg-faint"] = mix(fg, bg, 0.62);
+  // glass text (titlebar breadcrumb): NEUTRAL gray, untinted — it sits on the
+  // wallpaper glass, not a themed surface, so the hue-tinted muted reads dirty
+  v["--fg-glass"] = dark ? "hsl(0, 0%, 78%)" : "hsl(0, 0%, 27%)";
   v["--accent"] = primary;
   v["--accent-soft"] = withAlpha(primary, dark ? 0.18 : 0.14);
   v["--accent-fg"] = accentFg(primary);
@@ -318,6 +325,7 @@ export function buildVars(p: Palette, dark: boolean): Record<string, string> {
     v["--fg"] = hsl(H, 16 * T, 93);
     v["--fg-muted"] = hsl(H, 10 * T, 64);
     v["--fg-faint"] = hsl(H, 9 * T, 44);
+    v["--fg-glass"] = "hsl(0, 0%, 78%)";
     v["--card-border"] = "rgba(255, 255, 255, 0.06)";
     v["--card-highlight"] = "rgba(255, 255, 255, 0.05)";
     v["--avatar-ring"] = "rgba(255, 255, 255, 0.16)";
@@ -349,6 +357,7 @@ export function buildVars(p: Palette, dark: boolean): Record<string, string> {
     v["--fg"] = hsl(H, 22 * T, 14);
     v["--fg-muted"] = hsl(H, 12 * T, 38);
     v["--fg-faint"] = hsl(H, 12 * T, 60);
+    v["--fg-glass"] = "hsl(0, 0%, 27%)";
     v["--card-border"] = hsla(H, 40 * T, 30, 0.1);
     v["--card-highlight"] = "rgba(255, 255, 255, 0.6)";
     v["--avatar-ring"] = hsla(H, 30 * T, 30, 0.2);

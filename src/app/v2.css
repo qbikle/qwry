@@ -22,36 +22,43 @@
 .v2-breadcrumb {
   margin-right: auto;
   font-size: var(--text-sm);
-  color: var(--fg-muted);
+  /* neutral glass gray (lighter in dark, darker in light) — inactive
+     segments; the ACTIVE segment stays full --fg via .crumb-strong */
+  color: var(--fg-glass, var(--fg-muted));
   font-weight: 550;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
-  /* GLASS surface: the backdrop is the wallpaper, not a theme color — a
-     same-theme halo guarantees contrast on opposing backdrops (light theme
-     over a dark desktop) and vanishes on matching ones */
+}
+/* GLASS surface (high transparency only — [data-glassy] from the settings
+   slider): the backdrop is the wallpaper, not a theme color — a same-theme
+   halo guarantees contrast on opposing backdrops (light theme over a dark
+   desktop) and vanishes on matching ones */
+:root[data-glassy] .v2-breadcrumb {
   text-shadow:
     0 1px 2px color-mix(in srgb, var(--bg-app) 85%, transparent),
     0 0 10px color-mix(in srgb, var(--bg-app) 70%, transparent);
 }
 
-/* glass-context iconbtn variant (DESIGN.md rule 3 note): buttons on the
-   titlebar glass carry a translucent theme chip — fg alone can't guarantee
-   contrast over an arbitrary wallpaper. Scoped under .v2-titlebar to
-   out-specific the .iconbtn base (tokens.css loads last); iconbtn's opaque
-   bg-hover/bg-active already read on glass, so only rest + .active need it */
+/* glass-context iconbtn variant (DESIGN.md rule 3 note), active only under
+   [data-glassy]: buttons on high-transparency titlebar glass carry a
+   translucent theme chip — fg alone can't guarantee contrast over an
+   arbitrary wallpaper. At low transparency the theme wash IS the surface and
+   the bare ghost look stays. Scoped under .v2-titlebar to out-specific the
+   .iconbtn base (tokens.css loads last); iconbtn's opaque bg-hover/bg-active
+   already read on glass, so only rest + .active need it */
 .v2-tool {
   margin-left: calc(-1 * var(--sp-2) + 2px); /* tools sit as a tight pair */
 }
-.v2-titlebar .v2-tool {
+:root[data-glassy] .v2-titlebar .v2-tool {
   background: color-mix(in srgb, var(--bg-panel) 72%, transparent);
   border: 1px solid var(--card-border);
 }
-.v2-titlebar .v2-tool:hover:not(:disabled) {
+:root[data-glassy] .v2-titlebar .v2-tool:hover:not(:disabled) {
   background: var(--bg-hover);
 }
-.v2-titlebar .v2-tool.active {
+:root[data-glassy] .v2-titlebar .v2-tool.active {
   background:
     linear-gradient(var(--accent-soft), var(--accent-soft)),
     color-mix(in srgb, var(--bg-panel) 72%, transparent);
@@ -59,18 +66,18 @@
 
 /* the prod chip's soft tints have the same glass problem — re-seat each
    state's tint on the translucent theme chip (gradient layers above color) */
-.v2-titlebar .prod-chip.locked {
+:root[data-glassy] .v2-titlebar .prod-chip.locked {
   background:
     linear-gradient(color-mix(in srgb, var(--ok) 12%, transparent), color-mix(in srgb, var(--ok) 12%, transparent)),
     color-mix(in srgb, var(--bg-panel) 72%, transparent);
 }
-.v2-titlebar .prod-chip.unlocked {
+:root[data-glassy] .v2-titlebar .prod-chip.unlocked {
   background:
     linear-gradient(color-mix(in srgb, var(--danger) 14%, transparent), color-mix(in srgb, var(--danger) 14%, transparent)),
     color-mix(in srgb, var(--bg-panel) 72%, transparent);
 }
 .v2-breadcrumb .crumb-sep {
-  color: var(--fg-faint);
+  color: color-mix(in srgb, var(--fg-glass, var(--fg-faint)) 55%, transparent);
   margin: 0 var(--sp-1);
 }
 .v2-breadcrumb .crumb-strong {
