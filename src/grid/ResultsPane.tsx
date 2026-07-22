@@ -24,6 +24,7 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
   const activeTab = useResults((s) => s.active);
   const setActive = useResults((s) => s.setActiveStatement);
   const running = useResults((s) => s.running);
+  const cancelling = useResults((s) => s.cancelling);
   const connecting = useResults((s) => s.connecting);
   const totalMs = useResults((s) => s.totalMs);
   const globalError = useResults((s) => s.globalError);
@@ -130,11 +131,14 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
       )}
       <div className="status-bar">
         {!running && !connecting && <RerunBtn />}
-        {running && <span className="status-running">⏳ running</span>}
+        {running && (
+          <span className="status-running">{cancelling ? "⏳ cancelling" : "⏳ running"}</span>
+        )}
         {running && browser && (
           // browse tabs have no QueryBox — this is their only cancel affordance
           <button
             className="status-link linkish"
+            disabled={cancelling}
             onClick={() => void useResults.getState().cancel()}
           >
             Cancel <Kbd chord="cmd+period" />

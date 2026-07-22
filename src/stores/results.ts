@@ -2,6 +2,7 @@ import { create } from "zustand";
 import * as ipc from "../ipc/commands";
 import type { ColumnMeta, DriverError, QueryEvent } from "../ipc/types";
 import { headToken } from "../editor/statements";
+import { terminatedSessions } from "./sessionFlags";
 import { useConnections } from "./connections";
 import { useTabs } from "./tabs";
 
@@ -25,6 +26,10 @@ interface TabResult {
   statements: StatementState[];
   activeStatement: number;
   running: boolean;
+  /** cancel requested for the in-flight run — instant feedback while the
+   * backend cancel ladder works; clears when the cancel IPC settles or the
+   * run itself settles, whichever comes first */
+  cancelling: boolean;
   /** establishing this tab's DB session (first run in a fresh tab) */
   connecting: boolean;
   totalMs: number | null;
@@ -46,6 +51,7 @@ const blankTab = (): TabResult => ({
   statements: [],
   activeStatement: 0,
   running: false,
+  cancelling: false,
   connecting: false,
   totalMs: null,
   executedSql: null,
@@ -118,7 +124,7 @@ const runInflight = new Set<string>();
 
 /** sessions the user force-terminated (last cancel tier) — their run's
  * connection-closed rejection is a cancel, not an error */
-const terminatedSessions = new Set<string>();
+
 
 /** statement heads that change the schema (real statement boundaries; heads
  * read past leading comments) */
@@ -321,6 +327,7 @@ export const useResults = create<ResultsState>((set, get) => ({
       statements: [],
       activeStatement: 0,
       running: true,
+      cancelling: false,
       totalMs: null,
       executedSql: sql,
       executedOffset: sqlOverride === undefined ? 0 : offset,
@@ -470,19 +477,39 @@ export const useResults = create<ResultsState>((set, get) => ({
       }
     } finally {
       terminatedSessions.delete(sessionId);
-      writeTab(set, tabId, { running: false });
+      // a successful cancel ends the run — the flag dies with it
+      writeTab(set, tabId, { running: false, cancelling: false });
       runInflight.delete(tabId);
     }
   },
 
   cancel: async () => {
+    // captured at entry (LESSONS #3) — the flag must land on the tab whose
+    // run is being cancelled even if the user switches tabs mid-flight
+    const tabId = get().active;
     const sessionId = get().executedSessionId;
-    if (!sessionId) return;
+    if (!tabId || !sessionId) return;
+    // already cancelling → no-op; repeated ⌘. must not stack cancel IPCs
+    if ((get().byTab[tabId] ?? blankTab()).cancelling) return;
+    writeTab(set, tabId, { cancelling: true });
+    // clear scoped to THIS run's session — a late-settling cancel from an
+    // earlier run must never release a newer run's flag
+    const clearCancelling = () =>
+      writeTab(set, tabId, (t) =>
+        t.executedSessionId === sessionId ? { cancelling: false } : {},
+      );
     try {
       // escalating cancel: CancelToken, then pg_cancel_backend over a fresh
       // control connection if the query didn't die — driver-side
       await ipc.cancel(sessionId);
+      // deliberately NOT cleared on success: over a congested tunnel the
+      // dead query's 57014 still has to drain through the buffered rows —
+      // the run's finally clears the flag when the run truly settles.
+      // Clearing here flickered the button back to Cancel mid-death.
     } catch (e) {
+      // a failed cancel leaves the run running — release the flag so the
+      // user can retry or escalate through the terminate confirm below
+      clearCancelling();
       const conns = useConnections.getState();
       const entry = Object.entries(conns.tabSessions).find(([, sid]) => sid === sessionId);
       // the terminated session's OWN profile — teardown must never touch the

@@ -341,6 +341,7 @@
 /* Run is .btnish.primary; Cancel keeps a soft-danger tint — a filled .danger
    would shout for the whole life of every query (annotated species exception) */
 .qb-cancel {
+  display: inline-grid;
   padding: 5px 12px; /* optical */
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
@@ -351,11 +352,21 @@
   cursor: pointer;
   transition: background var(--dur-quick), transform var(--dur-quick);
 }
-.qb-cancel:hover {
+.qb-cancel:hover:not(:disabled) {
   background: color-mix(in srgb, var(--danger) 24%, transparent);
 }
-.qb-cancel:active {
+.qb-cancel:active:not(:disabled) {
   transform: scale(0.97);
+}
+/* Cancel / Cancelling… stack in one grid cell so the button holds the wider
+   label's width for the whole run — no layout jump when the swap happens */
+.qb-cancel .qb-cancel-face {
+  grid-area: 1 / 1;
+  justify-self: center;
+  white-space: nowrap;
+}
+.qb-cancel .qb-cancel-face[data-hidden] {
+  visibility: hidden;
 }
 .qb-bar .qb-run {
   font-weight: 500;

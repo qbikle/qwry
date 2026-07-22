@@ -15,6 +15,7 @@ export function QueryBox() {
   const run = useResults((s) => s.run);
   const cancel = useResults((s) => s.cancel);
   const running = useResults((s) => s.running);
+  const cancelling = useResults((s) => s.cancelling);
   const connecting = useResults((s) => s.connecting);
 
   return (
@@ -34,8 +35,15 @@ export function QueryBox() {
           Explain <Kbd chord="cmd+e" />
         </button>
         {running ? (
-          <button className="qb-cancel" onClick={() => cancel()}>
-            Cancel <Kbd chord="cmd+period" />
+          // both faces stay mounted stacked in one grid cell — the button is
+          // as wide as the wider label, so Cancel → Cancelling… can't jump
+          <button className="qb-cancel" onClick={() => cancel()} disabled={cancelling}>
+            <span className="qb-cancel-face" data-hidden={cancelling || undefined}>
+              Cancel <Kbd chord="cmd+period" />
+            </span>
+            <span className="qb-cancel-face" data-hidden={!cancelling || undefined}>
+              Cancelling…
+            </span>
           </button>
         ) : connecting ? (
           <button className="qb-run btnish primary" disabled>

@@ -247,13 +247,17 @@ pub async fn connect(
         })
     };
 
-    // through an SSH tunnel when the profile has one, else direct
+    // through an SSH tunnel when the profile has one, else direct. Cancel and
+    // terminate signals ride the tunnel's control lane (a second ssh process)
+    // when it spawned — a bulk result saturating the data lane can no longer
+    // starve the cancel handshake.
     let session = if crate::tunnel::tunnel_host(&profile).is_some() {
         let tunnel = state.ensure_tunnel(&profile).await?;
         driver::postgres::connect(
             &profile,
             &password,
             Some(("127.0.0.1", tunnel.local_port)),
+            tunnel.control_port.map(|p| ("127.0.0.1", p)),
             statement_timeout_ms,
             on_notice,
             on_close,
@@ -263,6 +267,7 @@ pub async fn connect(
         driver::postgres::connect(
             &profile,
             &password,
+            None,
             None,
             statement_timeout_ms,
             on_notice,
@@ -323,10 +328,12 @@ pub async fn test_connection(
     let start = std::time::Instant::now();
     let session = if crate::tunnel::tunnel_host(&profile).is_some() {
         let tunnel = state.ensure_tunnel(&profile).await?;
+        // no control lane: the probe runs one SELECT and never cancels
         driver::postgres::connect(
             &profile,
             &password,
             Some(("127.0.0.1", tunnel.local_port)),
+            None,
             None,
             Box::new(|_, _| {}),
             Box::new(|_| {}),
@@ -336,6 +343,7 @@ pub async fn test_connection(
         driver::postgres::connect(
             &profile,
             &password,
+            None,
             None,
             None,
             Box::new(|_, _| {}),
@@ -415,11 +423,19 @@ pub async fn table_stats(
 pub async fn disconnect(state: State<'_, AppState>, session_id: String) -> Result<()> {
     // a running query keeps its own Arc alive past removal — cancel it
     // best-effort so the server stops burning through it (cancel itself is
-    // deadline-bounded, so a dead tunnel can't hang the disconnect)
+    // deadline-bounded, so a dead tunnel can't hang the disconnect), then
+    // hard-abort the connection: even when every cancel tier failed, the
+    // in-flight execute must error out NOW, not drain to completion on a
+    // session the app already forgot
     let session = state.sessions.lock().unwrap().remove(&session_id);
     session_profiles().lock().unwrap().remove(&session_id);
     if let Some(s) = session {
-        let _ = s.cancel().await;
+        // an already-aborted connection (terminate tier, cap hard-abort) has
+        // nothing left to cancel — skip ~8s of pointless dialing
+        if !s.is_aborted() {
+            let _ = s.cancel().await;
+        }
+        s.abort_connection();
     }
     Ok(())
 }
@@ -708,13 +724,18 @@ pub async fn session_info(state: State<'_, AppState>, session_id: String) -> Res
 }
 
 /// pg_terminate_backend over a fresh control connection — the last cancel
-/// tier. Only ever run on explicit user action.
+/// tier. Only ever run on explicit user action. The tier's contract is
+/// "this session is dead, fresh one next run": whether or not the server-side
+/// terminate landed, the local connection is hard-aborted so nothing keeps
+/// draining, and on_close reports the death (session-closed → status dot).
 #[tauri::command]
 pub async fn terminate_backend(state: State<'_, AppState>, session_id: String) -> Result<()> {
     let session = state
         .session(&session_id)
         .ok_or(driver::DriverError::NoSession)?;
-    session.terminate_backend().await
+    let res = session.terminate_backend().await;
+    session.abort_connection_notify("session terminated");
+    res
 }
 
 #[tauri::command]
