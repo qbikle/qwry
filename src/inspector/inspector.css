@@ -375,6 +375,10 @@
   color: var(--fg-faint);
   font-style: italic;
 }
+/* empty-string marker — data-state register, same tier as null */
+.jt-empty {
+  color: var(--fg-faint);
+}
 .jt-brace {
   color: var(--fg-faint);
 }

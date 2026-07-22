@@ -336,7 +336,16 @@ function Leaf({ value, path }: { value: Json; path: Path }) {
       onClick={onClick}
       title={ctx.editable ? "click to edit · ⌥-click copies path" : "click to copy · ⌥-click for path"}
     >
-      {typeof value === "string" ? <Highlight text={display} /> : display}
+      {value === "" ? (
+        // an empty string renders zero characters = zero click target — the
+        // "" marker (data-state register, like the italic null) restores the
+        // way in for keys that don't have a value yet
+        <span className="jt-empty">""</span>
+      ) : typeof value === "string" ? (
+        <Highlight text={display} />
+      ) : (
+        display
+      )}
     </span>
   );
 }
