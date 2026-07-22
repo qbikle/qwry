@@ -62,6 +62,13 @@ Load-bearing enabled information never sits at tier 3 — faint tells the user
 icons and backgrounds too); legal opacity values are 0 and 1 (reveal
 patterns) and `var(--o-disabled)`. Anything else is `/* optical */`.
 
+**Glass surfaces**: content sitting directly on the vibrancy glass (titlebar,
+gutters) cannot trust the fg ramp — the backdrop is the user's wallpaper at a
+user-set transparency. Such content carries its own surface: buttons/chips get
+a translucent theme underlay (`color-mix(var(--bg-panel) ~72%, transparent)`,
+tints layered above via gradient), text gets a same-theme halo shadow that
+vanishes on matching backdrops. Contrast must survive ANY wallpaper.
+
 ## Rule 4 — The 4px grid
 
 Spacing (padding, margin, gap) comes from `--sp-*` or a named token

@@ -28,11 +28,46 @@
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
+  /* GLASS surface: the backdrop is the wallpaper, not a theme color — a
+     same-theme halo guarantees contrast on opposing backdrops (light theme
+     over a dark desktop) and vanishes on matching ones */
+  text-shadow:
+    0 1px 2px color-mix(in srgb, var(--bg-app) 85%, transparent),
+    0 0 10px color-mix(in srgb, var(--bg-app) 70%, transparent);
 }
 
-/* .iconbtn.iconbtn-lg provides the skin — layout only here */
+/* glass-context iconbtn variant (DESIGN.md rule 3 note): buttons on the
+   titlebar glass carry a translucent theme chip — fg alone can't guarantee
+   contrast over an arbitrary wallpaper. Scoped under .v2-titlebar to
+   out-specific the .iconbtn base (tokens.css loads last); iconbtn's opaque
+   bg-hover/bg-active already read on glass, so only rest + .active need it */
 .v2-tool {
   margin-left: calc(-1 * var(--sp-2) + 2px); /* tools sit as a tight pair */
+}
+.v2-titlebar .v2-tool {
+  background: color-mix(in srgb, var(--bg-panel) 72%, transparent);
+  border: 1px solid var(--card-border);
+}
+.v2-titlebar .v2-tool:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+.v2-titlebar .v2-tool.active {
+  background:
+    linear-gradient(var(--accent-soft), var(--accent-soft)),
+    color-mix(in srgb, var(--bg-panel) 72%, transparent);
+}
+
+/* the prod chip's soft tints have the same glass problem — re-seat each
+   state's tint on the translucent theme chip (gradient layers above color) */
+.v2-titlebar .prod-chip.locked {
+  background:
+    linear-gradient(color-mix(in srgb, var(--ok) 12%, transparent), color-mix(in srgb, var(--ok) 12%, transparent)),
+    color-mix(in srgb, var(--bg-panel) 72%, transparent);
+}
+.v2-titlebar .prod-chip.unlocked {
+  background:
+    linear-gradient(color-mix(in srgb, var(--danger) 14%, transparent), color-mix(in srgb, var(--danger) 14%, transparent)),
+    color-mix(in srgb, var(--bg-panel) 72%, transparent);
 }
 .v2-breadcrumb .crumb-sep {
   color: var(--fg-faint);
