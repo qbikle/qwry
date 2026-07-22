@@ -491,7 +491,9 @@
 .jt-edit-val {
   flex: 1 1 auto;
   min-width: 60px;
-  margin: -1px -5px; /* optical */ /* border 1 + padding 4 compensation */
+  /* LEFT-only compensation: a negative right margin pushed the border past
+     the scroller edge and it clipped — the text anchor only needs the left */
+  margin: -1px 0 -1px -5px; /* optical */ /* border 1 + padding 4 compensation */
   resize: none;
   overflow-y: auto;
   font: inherit;
@@ -499,9 +501,11 @@
   white-space: pre-wrap;
   word-break: break-all;
 }
-/* content-hugging variant (non-strings): width rides the char count inline */
+/* content-hugging variant (short single-line values of ANY type): width
+   rides the char count inline; the cap lets an edit that outgrows the row
+   wrap in place instead of overflowing */
 .jt-edit-val.fit {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   max-width: 100%;
 }
 .jt-edit.err {

@@ -81,22 +81,35 @@ function renameKeyIn(root: Json, parentPath: Path, oldKey: string, newKey: strin
   return setIn(root, parentPath, rebuilt);
 }
 
-/** coerce edited text back to the leaf's original primitive type */
+/** coerce edited text to a JSON value. TYPED grammar, not original-type-bound:
+ *  quotes always force a string (the universal escape hatch — '123', 'true');
+ *  bare true/false/null become their literals; bare numbers become numbers
+ *  ONLY when they round-trip exactly (43 → 43, but 007 / 1e5 / 1.50 stay
+ *  strings — an ID with leading zeros must never silently mutate to 7).
+ *  Number-typed leaves keep the looser legacy parse (1.50 → 1.5 there is the
+ *  expected numeric edit, not a type change). */
 function coerce(original: Json, text: string): { ok: true; value: Json } | { ok: false } {
+  const t = text.trim();
+  const quoted =
+    t.length >= 2 &&
+    ((t.startsWith("'") && t.endsWith("'")) || (t.startsWith('"') && t.endsWith('"')));
+  if (quoted) return { ok: true, value: t.slice(1, -1) };
   if (typeof original === "number") {
-    if (text.trim() === "") return { ok: false };
-    const n = Number(text);
+    if (t === "null") return { ok: true, value: null };
+    if (t === "") return { ok: false };
+    const n = Number(t);
     return Number.isNaN(n) ? { ok: false } : { ok: true, value: n };
   }
   if (typeof original === "boolean") {
-    const t = text.trim().toLowerCase();
-    if (t !== "true" && t !== "false") return { ok: false };
-    return { ok: true, value: t === "true" };
+    if (t === "true" || t === "false") return { ok: true, value: t === "true" };
+    if (t === "null") return { ok: true, value: null };
+    return { ok: false };
   }
-  if (original === null) {
-    if (text === "" || text.toLowerCase() === "null") return { ok: true, value: null };
-    return { ok: true, value: text };
-  }
+  // string and null originals share the typed grammar
+  if (t === "true" || t === "false") return { ok: true, value: t === "true" };
+  if (t === "null" || (original === null && text === "")) return { ok: true, value: null };
+  const n = Number(t);
+  if (t !== "" && Number.isFinite(n) && String(n) === t) return { ok: true, value: n };
   return { ok: true, value: text };
 }
 
@@ -216,6 +229,10 @@ function Leaf({ value, path }: { value: Json; path: Path }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [err, setErr] = useState(false);
+  // hug-the-content mode, decided ONCE at open (a live threshold would flip
+  // the box to full-width mid-keystroke). 40ch ≈ a full row at the panel's
+  // 220px floor — anything longer wraps, so it takes the row instead
+  const [fit, setFit] = useState(true);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   // the editor wears the display's exact metrics (font, wrap, left edge), so
@@ -250,7 +267,9 @@ function Leaf({ value, path }: { value: Json; path: Path }) {
   const display = value === null ? "null" : typeof value === "string" ? value : JSON.stringify(value);
 
   const begin = () => {
-    setDraft(value === null ? "" : typeof value === "string" ? value : String(value));
+    const init = value === null ? "" : typeof value === "string" ? value : String(value);
+    setDraft(init);
+    setFit(!init.includes("\n") && init.length <= 40);
     setErr(false);
     setEditing(true);
   };
@@ -266,10 +285,6 @@ function Leaf({ value, path }: { value: Json; path: Path }) {
   };
 
   if (editing) {
-    // strings wrap and take the row (flex: 1); numbers/bools/null never wrap,
-    // so their box hugs the content by mono char count (the key-editor law) —
-    // a full-row editor around `43` read as excessive chrome
-    const fit = typeof value !== "string";
     return (
       <textarea
         ref={taRef}
