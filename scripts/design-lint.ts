@@ -51,8 +51,17 @@ for (const path of walk(SRC)) {
   if (!isCss && !isTsx) continue;
   const lines = readFileSync(path, "utf8").split("\n");
 
+  // block-comment tracker (/* … */ spans lines; JSX comments are {/* … */})
+  let inBlock = false;
   lines.forEach((line, i) => {
     const n = i + 1;
+    const wasInBlock = inBlock;
+    if (inBlock) {
+      if (line.includes("*/")) inBlock = false;
+    } else {
+      const open = line.lastIndexOf("/*");
+      if (open !== -1 && line.indexOf("*/", open) === -1) inBlock = true;
+    }
 
     if (isCss) {
       if (line.includes("/* optical */")) return;
@@ -81,17 +90,25 @@ for (const path of walk(SRC)) {
     if (isTsx) {
       if (line.includes("lint-ok")) return;
       const code = line.trim();
-      const isComment = code.startsWith("//") || code.startsWith("*") || code.startsWith("/*");
+      const isComment =
+        wasInBlock ||
+        code.startsWith("//") ||
+        code.startsWith("*") ||
+        code.startsWith("/*") ||
+        code.startsWith("{/*") ||
+        (line.includes("/*") && line.indexOf("/*") < line.indexOf("—") && line.includes("—"));
       // glyph register: order + codepoints (comments too — they teach the next reader)
       if (BAD_ORDER.test(line)) add("glyph-order", rel, n, line);
       if (BAD_RETURN.test(line)) add("glyph-codepoint", rel, n, line);
-      // WRITING.md rule 7: no em dashes in UI strings (comments exempt)
+      // WRITING.md rule 7: no em dashes in UI strings (comments exempt).
+      // Any non-comment dash is flagged — JSX text continuation lines carry
+      // no quote/angle marker (a real miss shipped that way), and TS code
+      // can't legally contain — outside strings, so the only false positive
+      // is a trailing // comment, excluded by position
       if (!isComment && line.includes("—") && !line.includes("em-ok")) {
-        // only flag when the dash sits inside a string/JSX text, approximated
-        // as: line contains a quote/backtick or JSX closing angle before it
         const idx = line.indexOf("—");
-        const before = line.slice(0, idx);
-        if (/["'`>]/.test(before)) add("em-dash", rel, n, line);
+        const cmt = line.indexOf("//");
+        if (cmt === -1 || cmt > idx) add("em-dash", rel, n, line);
       }
       // rule 5: icon trio
       if (!ICON_EXEMPT_FILES.has(rel)) {

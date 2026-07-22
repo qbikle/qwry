@@ -1,9 +1,10 @@
 import { useConnections } from "../stores/connections";
 import { useResults } from "../stores/results";
+import { Kbd } from "../design/Kbd";
 import { SqlEditor, editorRunText } from "./SqlEditor";
 import "./editor.css";
 
-/** selection if any, else statement under caret — matches ⌘↵ */
+/** selection if any, else statement under caret — matches ⌘↩ */
 const runTarget = () => editorRunText.current?.();
 
 export function QueryBox() {
@@ -22,7 +23,7 @@ export function QueryBox() {
       <div className="qb-bar">
         {connectError && <span className="qb-conn-error">{connectError.message}</span>}
         <button
-          className="qb-explain"
+          className="qb-explain btnish"
           onClick={() =>
             void import("../stores/explain").then(({ useExplain }) =>
               useExplain.getState().run(runTarget()?.text),
@@ -30,26 +31,26 @@ export function QueryBox() {
           }
           disabled={!connected || !sql.trim()}
         >
-          Explain ⌘E
+          Explain <Kbd chord="cmd+e" />
         </button>
         {running ? (
           <button className="qb-cancel" onClick={() => cancel()}>
-            Cancel ⌘.
+            Cancel <Kbd chord="cmd+period" />
           </button>
         ) : connecting ? (
-          <button className="qb-run" disabled>
+          <button className="qb-run btnish primary" disabled>
             Connecting…
           </button>
         ) : (
           <button
-            className="qb-run"
+            className="qb-run btnish primary"
             onClick={() => {
               const t = runTarget();
               void run(t?.text, t?.offset);
             }}
             disabled={!connected || !sql.trim()}
           >
-            Run ⌘↵
+            Run <Kbd chord="cmd+return" />
           </button>
         )}
       </div>

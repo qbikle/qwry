@@ -6,6 +6,7 @@ import { useEdits } from "../stores/edits";
 import { useConnections } from "../stores/connections";
 import { useResults } from "../stores/results";
 import { Modal } from "../app/overlay/Overlay";
+import { Kbd } from "../design/Kbd";
 import "./grid.css";
 
 export function EditPreview() {
@@ -46,7 +47,7 @@ export function EditPreview() {
       <motion.div className="ep-modal" {...popIn}>
         <div className="ep-title">
           Commit {preview.statements.length} Change
-          {preview.statements.length === 1 ? "" : "s"} — runs in one transaction
+          {preview.statements.length === 1 ? "" : "s"} · runs in one transaction
         </div>
         {originPid && (
           // always shown, same-profile included — the moment of consequence
@@ -69,6 +70,7 @@ export function EditPreview() {
         )}
         <div className="ep-actions">
           <button
+            className="btnish"
             disabled={preview.statements.length === 0}
             onClick={() => {
               void writeText(preview.statements.join(";\n") + ";").then(() => {
@@ -79,9 +81,17 @@ export function EditPreview() {
           >
             {copied ? "Copied ✓" : "Copy SQL"}
           </button>
-          <button onClick={closePreview}>Cancel esc</button>
-          <button className="primary" disabled={!canCommit} onClick={() => void commit()}>
-            {committing ? "Committing…" : "Commit ⏎"}
+          <button className="btnish" onClick={closePreview}>
+            Cancel <Kbd chord="esc" />
+          </button>
+          <button className="btnish primary" disabled={!canCommit} onClick={() => void commit()}>
+            {committing ? (
+              "Committing…"
+            ) : (
+              <>
+                Commit <Kbd chord="return" />
+              </>
+            )}
           </button>
         </div>
       </motion.div>

@@ -31,34 +31,25 @@
   font-size: var(--text-lg);
   font-weight: 650;
 }
-.tp-x {
-  display: inline-flex;
-  border: none;
-  background: none;
-  color: var(--fg-muted);
-  cursor: pointer;
-  padding: 2px;
-  border-radius: var(--radius-sm);
-}
-.tp-x:hover {
-  background: var(--bg-hover);
-  color: var(--fg);
-}
+/* close button is .iconbtn — no local skin */
 
+/* segmented control (DESIGN.md rule 1): panel-inset track, 2px gap,
+   active = accent-soft — keep in lockstep with .settings-seg */
 .tp-modes {
   display: flex;
-  gap: 3px;
-  background: var(--bg-raised);
-  border-radius: var(--radius-md);
-  padding: 3px;
+  gap: 2px; /* optical */
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px;
 }
 .tp-mode {
   flex: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 6px 8px;
+  gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-2);
   border: none;
   background: transparent;
   color: var(--fg-muted);
@@ -70,8 +61,11 @@
   color: var(--fg);
   background: var(--bg-hover);
 }
-.tp-mode.active {
+.tp-mode:active {
   background: var(--bg-active);
+}
+.tp-mode.active {
+  background: var(--accent-soft);
   color: var(--fg);
 }
 
@@ -85,9 +79,9 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--sp-2);
   min-height: 48px;
-  padding: 11px 34px 11px 12px; /* right room for the corner badge/action */
+  padding: var(--sp-3) 36px var(--sp-3) var(--sp-3); /* right room for the corner badge/action */
   border-radius: var(--radius-inner);
   border: 1.5px solid transparent;
   cursor: pointer;
@@ -97,6 +91,9 @@
 }
 .tp-swatch:hover {
   transform: translateY(-1px);
+}
+.tp-swatch:active {
+  transform: scale(0.97);
 }
 .tp-swatch.active {
   border-color: currentColor;
@@ -118,35 +115,36 @@
   white-space: nowrap;
 }
 
-/* hover action (edit / duplicate) — bottom-right corner */
-.tp-action {
+/* hover action (edit / duplicate) — bottom-right corner. Rides .iconbtn for
+   shape/states; scrim colors stay local so it reads on ANY swatch color
+   (specificity beats .iconbtn's own hover/active — tokens.css loads last) */
+.tp-swatch .tp-action {
   position: absolute;
-  bottom: 6px;
-  right: 7px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: var(--radius-sm);
+  bottom: var(--sp-1);
+  right: var(--sp-1);
   background: rgba(0, 0, 0, 0.28);
   color: #fff;
   opacity: 0;
-  transition: opacity 130ms;
+  transition: opacity var(--dur-quick) var(--ease-std);
 }
-.tp-swatch:hover .tp-action {
+.tp-swatch:hover .tp-action,
+.tp-action:focus-visible {
   opacity: 1;
 }
-.tp-action:hover {
+.tp-swatch .tp-action:hover:not(:disabled) {
   background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+}
+.tp-swatch .tp-action:active:not(:disabled) {
+  background: rgba(0, 0, 0, 0.6);
 }
 
 .tp-new {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 9px;
+  gap: var(--sp-1);
+  padding: var(--sp-2);
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-inner);
   background: none;
@@ -157,6 +155,9 @@
 .tp-new:hover {
   color: var(--fg);
   border-color: var(--accent);
+}
+.tp-new:active {
+  background: var(--accent-soft);
 }
 
 .tp-create {
@@ -172,7 +173,7 @@
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 6px 9px;
+  padding: var(--row-y) var(--sp-2);
   color: var(--fg);
   outline: none;
   user-select: text;
@@ -201,60 +202,36 @@
   position: absolute;
   inset: 0;
 }
+/* buttons are .btnish (+ .primary) — layout + the delete tint only */
 .tp-create-actions {
   display: flex;
   justify-content: flex-end;
   gap: var(--sp-2);
 }
-.tp-create-actions button {
-  padding: 5px 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-strong);
-  background: var(--bg-panel);
-  color: var(--fg);
-  cursor: pointer;
-  font-size: var(--text-xs);
-  transition: background 120ms, border-color 120ms, color 120ms;
-}
-.tp-create-actions button:hover:not(:disabled):not(.tp-del-btn) {
-  border-color: var(--accent);
-}
-.tp-create-actions button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-fg);
-}
-.tp-create-actions button.primary:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-.tp-create-actions button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
+/* soft-danger tint: a filled .danger would shout on every edit — the delete
+   action rests quiet and fills only on hover (annotated species exception) */
 .tp-create-actions .tp-del-btn {
   margin-right: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
   color: var(--danger);
   border-color: transparent;
   background: var(--danger-soft);
 }
-.tp-create-actions .tp-del-btn:hover {
+.tp-create-actions .tp-del-btn:hover:not(:disabled) {
   background: var(--danger);
+  border-color: var(--danger);
   color: var(--danger-fg);
 }
 
 .tp-foot {
   font-size: var(--text-xs);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   text-align: center;
 }
 
 .tp-colors {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: var(--sp-2);
 }
 .tp-colorrow {
   display: flex;

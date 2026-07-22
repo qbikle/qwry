@@ -179,7 +179,7 @@ interface BrowserState extends BrowseTab {
   commitDraft: () => Promise<void>;
 }
 
-/** in-flight commit guards, per tab — a second ⌘↵ during the insert round
+/** in-flight commit guards, per tab — a second ⌘↩ during the insert round
  * trip must not fire a second identical INSERT */
 const draftCommitting = new Set<string>();
 
@@ -677,7 +677,7 @@ export const useBrowser = create<BrowserState>((set, get) => ({
           if (code === "57014" || code === "57P01") return;
           const message = `couldn't load more rows: ${
             (e as { message?: string }).message ?? String(e)
-          } — refresh to retry`;
+          }. Refresh to retry`;
           writeBrowse(set, tabId, { paginationBroken: message });
           // surface on the tab's results banner (globalError renders above
           // the loaded rows without replacing them)
@@ -822,7 +822,7 @@ async function commitDraftInner(
       .map(([n]) => n);
     if (gone.length > 0) {
       writeBrowse(set, tabId, {
-        draftError: `column${gone.length === 1 ? "" : "s"} changed or removed since this tab opened (${gone.join(", ")}) — reopen the table`,
+        draftError: `column${gone.length === 1 ? "" : "s"} changed or removed since this tab opened (${gone.join(", ")}). Reopen the table`,
       });
       return;
     }

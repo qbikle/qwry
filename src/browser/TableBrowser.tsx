@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { menuIn } from "../design/springs";
-import { FileUp, Plus, RefreshCw, X } from "lucide-react";
+import { Copy, FileUp, Plus, RefreshCw, X } from "lucide-react";
+import { Kbd } from "../design/Kbd";
 import { copyCue } from "../lib/copyCue";
 import { overlayOpen } from "../app/overlay/escStack";
 import {
@@ -88,15 +89,15 @@ export function TableBrowser() {
         </div>
         {(table.kind === "r" || table.kind === "p") && (
           <button
-            className="icon-btn"
+            className="iconbtn"
             title="Import CSV…"
             onClick={() => setImportOpen(true)}
           >
-            <FileUp size={13} />
+            <FileUp size={14} />
           </button>
         )}
         <button
-          className="icon-btn"
+          className="iconbtn"
           title="Refresh"
           onClick={() => {
             // Structure shows table_stats, not the data query — refresh THAT
@@ -115,10 +116,10 @@ export function TableBrowser() {
           }}
           disabled={running}
         >
-          <RefreshCw size={13} className={running ? "spin" : ""} />
+          <RefreshCw size={14} className={running ? "spin" : ""} />
         </button>
         <button
-          className="icon-btn"
+          className="iconbtn"
           title="Close tab ⌘W"
           onClick={() => activeId && requestClose(activeId)}
         >
@@ -434,7 +435,7 @@ function FilterRow({
         ))}
       </select>
       {valueEditor()}
-      <button className="icon-btn" onClick={onRemove}>
+      <button className="iconbtn" onClick={onRemove}>
         <X size={12} />
       </button>
     </div>
@@ -454,7 +455,7 @@ function RawWhere() {
       <textarea
         rows={2}
         spellCheck={false}
-        title="Runs as written — ⌘↵ or blur applies"
+        title="Runs as written. ⌘↩ or blur applies"
         placeholder="status = 'paid' AND created_at > now() - interval '7 days'"
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
@@ -492,7 +493,11 @@ function WherePreview({ text }: { text: string }) {
     >
       <span className="tb-wherekw">WHERE</span>
       <span className="tb-wheresql">{text}</span>
-      {copied && <span className="tb-wherecopied">copied</span>}
+      {copied ? (
+        <span className="tb-wherecopied">copied</span>
+      ) : (
+        <Copy size={12} className="tb-wherecopy" />
+      )}
     </div>
   );
 }
@@ -539,10 +544,10 @@ function FilterBar() {
         {canInsert && (
           <button
             className={`tb-addrow${draftRow ? " active" : ""}`}
-            title={draftRow ? "Close the Add Row band ⌘⇧I" : "Add Row ⌘⇧I"}
+            title={draftRow ? "Close the Add Row band ⇧⌘I" : "Add Row ⇧⌘I"}
             onClick={() => (draftRow ? cancelDraft() : beginDraft())}
           >
-            <Plus size={12} /> Add Row <kbd className="tb-key">⌘⇧I</kbd>
+            <Plus size={12} /> Add Row <Kbd chord="shift+cmd+i" />
           </button>
         )}
         {whereMode === "builder" && (
@@ -573,7 +578,7 @@ function FilterBar() {
           title={
             whereMode === "raw"
               ? "Back to the filter builder"
-              : "Raw WHERE — write the predicate yourself"
+              : "Raw WHERE. Write the predicate yourself"
           }
           onClick={() => setWhereMode(whereMode === "raw" ? "builder" : "raw")}
         >
@@ -650,14 +655,14 @@ function BrowseFooter({
       {counting ? (
         <span className="tbf-count tbf-counting">
           counting…
-          <button className="tbf-x" title="Cancel count" onClick={cancelExactCount}>
-            <X size={10} />
+          <button className="iconbtn tbf-x" title="Cancel count" onClick={cancelExactCount}>
+            <X size={12} />
           </button>
         </span>
       ) : exactCount != null ? (
         <button
           className="tbf-count tbf-exact"
-          title="Exact count over the current WHERE — click to re-count"
+          title="Exact count over the current WHERE. Click to re-count"
           onClick={() => void runExactCount()}
         >
           {exactCount.toLocaleString()} rows{whereActive ? " · filtered" : ""}
@@ -667,7 +672,7 @@ function BrowseFooter({
           className="tbf-count"
           title={
             (est
-              ? "Planner estimate (reltuples) for the whole table — not exact."
+              ? "Planner estimate (reltuples) for the whole table, not exact."
               : "No estimate available.") +
             " Click to run SELECT count(*)" +
             (whereActive ? " over the current WHERE." : ".")
@@ -679,18 +684,18 @@ function BrowseFooter({
       )}
       {countError && (
         <span className="tbf-counterr" title={countError}>
-          count failed — {countError.length > 60 ? `${countError.slice(0, 60)}…` : countError}
+          count failed · {countError.length > 60 ? `${countError.slice(0, 60)}…` : countError}
         </span>
       )}
       <span className="tbf-spacer" />
       {jumpOffset > 0 && (
         <span
           className="tbf-jumpchip"
-          title="The result starts at this row (⌘L) — × returns to the top"
+          title="The result starts at this row (⌘L). × returns to the top"
         >
           from row {(jumpOffset + 1).toLocaleString()}
-          <button className="tbf-x" onClick={clearJump}>
-            <X size={10} />
+          <button className="iconbtn tbf-x" title="Back to the top" onClick={clearJump}>
+            <X size={12} />
           </button>
         </span>
       )}
@@ -861,9 +866,9 @@ function SortSelect() {
                         title={
                           notNull
                             ? k.nulls
-                              ? `${k.column} is NOT NULL — this NULLS override does nothing but wreck the query plan. Click to clear.`
-                              : `${k.column} is NOT NULL — there are no NULLs to place (an override would only wreck the query plan)`
-                            : "NULLS placement — auto follows the direction (ASC ⇒ last, DESC ⇒ first)"
+                              ? `${k.column} is NOT NULL. This NULLS override does nothing but wreck the query plan. Click to clear.`
+                              : `${k.column} is NOT NULL. There are no NULLs to place (an override would only wreck the query plan)`
+                            : "NULLS placement. Auto follows the direction (ASC ⇒ last, DESC ⇒ first)"
                         }
                         onClick={() => {
                           if (gated) return;
@@ -885,14 +890,14 @@ function SortSelect() {
                           );
                         }}
                       >
-                        {gated ? "∅ —" : k.nulls ? `∅ ${k.nulls}` : "∅ auto"}
+                        {gated ? "∅ —" /* em-ok absent-value marker */ : k.nulls ? `∅ ${k.nulls}` : "∅ auto"}
                       </button>
                       <button
                         className="tbs-mini"
                         title="Remove sort key"
                         onClick={() => setSortChain(sortChain.filter((_, j) => j !== i))}
                       >
-                        <X size={10} />
+                        <X size={12} />
                       </button>
                     </div>
                   );

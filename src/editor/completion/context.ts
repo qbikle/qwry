@@ -8,15 +8,15 @@ import type { EditorState } from "@codemirror/state";
 export type Clause =
   | "select"
   | "from"
-  | "join" // immediately after JOIN keyword — expecting a table
+  | "join" // immediately after JOIN keyword, expecting a table
   | "on"
   | "where"
   | "group"
   | "having"
   | "order"
   | "set"
-  | "into" // after INSERT INTO — expecting a table
-  | "update" // after UPDATE — expecting a table
+  | "into" // after INSERT INTO, expecting a table
+  | "update" // after UPDATE, expecting a table
   | "values"
   | "returning"
   | "start"; // beginning of a statement

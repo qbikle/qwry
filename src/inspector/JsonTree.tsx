@@ -420,7 +420,7 @@ function Node({
           className={`jt-line${isHit ? " jt-hit" : ""}`}
           onClick={() => setOpen(!open)}
         >
-          {effectiveOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+          {effectiveOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
           {keyEl}
           <span
             className="jt-brace"
@@ -566,13 +566,13 @@ export function JsonTree({
                   showing the previous query's count would be a lie */}
               {input !== query ? "…" : hits.length === 0 ? "0/0" : `${hitIdx + 1}/${hits.length}`}
             </span>
-            <button className="jt-nav" title="Previous ⇧⏎" onClick={() => step(-1)}>
+            <button className="iconbtn jt-nav" title="Previous ⇧↩" onClick={() => step(-1)}>
               <ArrowUp size={12} />
             </button>
-            <button className="jt-nav" title="Next ⏎" onClick={() => step(1)}>
+            <button className="iconbtn jt-nav" title="Next ↩" onClick={() => step(1)}>
               <ArrowDown size={12} />
             </button>
-            <button className="jt-nav" title="Clear" onClick={() => setInput("")}>
+            <button className="iconbtn jt-nav" title="Clear" onClick={() => setInput("")}>
               <X size={12} />
             </button>
           </>
@@ -580,7 +580,7 @@ export function JsonTree({
       </div>
       {query !== "" && result.capped && (
         <div className="jt-capnote">
-          search capped at {SEARCH_NODE_CAP.toLocaleString()} nodes — matches beyond may be
+          search capped at {SEARCH_NODE_CAP.toLocaleString()} nodes · matches beyond may be
           missing
         </div>
       )}

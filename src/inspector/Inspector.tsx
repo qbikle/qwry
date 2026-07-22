@@ -15,6 +15,7 @@ import { ctidGuardPairs, editKey, useEdits } from "../stores/edits";
 import { useInspector } from "../stores/inspector";
 import { useResults } from "../stores/results";
 import { useSchema } from "../stores/schema";
+import { Kbd } from "../design/Kbd";
 import { JsonTree } from "./JsonTree";
 import { JsonField } from "./JsonField";
 import { isArrayType, jsToPgArray } from "./format";
@@ -26,11 +27,19 @@ function CopySplit({ raw, pretty }: { raw: string; pretty: string }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="insp-copy">
-      <button className="insp-tool insp-copy-main" title="Copy formatted" onClick={() => void copyCue(pretty)}>
+      <button
+        className="iconbtn iconbtn-lg bordered insp-copy-main"
+        title="Copy formatted"
+        onClick={() => void copyCue(pretty)}
+      >
         <Copy size={14} />
       </button>
-      <button className="insp-tool insp-copy-caret" title="Copy options" onClick={() => setOpen((o) => !o)}>
-        <ChevronDown size={11} />
+      <button
+        className="iconbtn iconbtn-lg bordered insp-copy-caret"
+        title="Copy options"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <ChevronDown size={12} />
       </button>
       {open && <div className="insp-copy-backdrop" onMouseDown={() => setOpen(false)} />}
       {open && (
@@ -263,7 +272,7 @@ export function Inspector() {
       const parsed = JSON.parse(rawDraft);
       if (isArr) {
         if (!Array.isArray(parsed)) {
-          setJsonError("this column is a Postgres array — provide a JSON array [ … ]");
+          setJsonError("this column is a Postgres array. Provide a JSON array [ … ]");
           return;
         }
         stage(jsToPgArray(parsed));
@@ -306,7 +315,7 @@ export function Inspector() {
       )}
       {pendingEdit && (
         <div className="insp-chip pend">
-          <Pencil size={12} /> Pending edit{pendingEdit.useDefault ? " · SET DEFAULT" : ""} — ⌘S to
+          <Pencil size={12} /> Pending edit{pendingEdit.useDefault ? " · SET DEFAULT" : ""} · ⌘S to
           commit
         </div>
       )}
@@ -315,12 +324,12 @@ export function Inspector() {
           {fullValueError ? (
             <>
               full value fetch failed: {fullValueError}
-              <button className="insp-chip-retry" onClick={() => setRetrySeq((s) => s + 1)}>
+              <button className="linkish insp-chip-retry" onClick={() => setRetrySeq((s) => s + 1)}>
                 Retry
               </button>
             </>
           ) : editMap === "unavailable" || (editMeta && editMeta.table_oid === 0) ? (
-            "showing first 8KB — full value unavailable · result not mapped to a table"
+            "showing first 8KB · full value unavailable · result not mapped to a table"
           ) : (
             "Loading full value… editing disabled until loaded"
           )}
@@ -328,7 +337,7 @@ export function Inspector() {
       )}
       {lossyNums && (
         <div className="insp-chip warn">
-          <TriangleAlert size={12} /> numbers beyond JS precision — tree editing off, use raw mode
+          <TriangleAlert size={12} /> numbers beyond JS precision · tree editing off, use raw mode
         </div>
       )}
 
@@ -337,9 +346,9 @@ export function Inspector() {
           {truncated && !fullLoaded ? (
             // copying now would ship the 8KB prefix as if it were the value
             <button
-              className="insp-tool"
+              className="iconbtn iconbtn-lg bordered"
               disabled
-              title="Copy disabled — only the first 8KB is loaded (full value unavailable for this result)"
+              title="Copy disabled. Only the first 8KB is loaded (full value unavailable for this result)"
             >
               <Copy size={14} />
             </button>
@@ -347,7 +356,7 @@ export function Inspector() {
             <>
               <CopySplit raw={value} pretty={pretty} />
               <button
-                className="insp-tool"
+                className="iconbtn iconbtn-lg bordered"
                 title={mode === "auto" ? "Raw JSON" : "Tree"}
                 onClick={() => setMode(mode === "auto" ? "raw" : "auto")}
               >
@@ -356,27 +365,36 @@ export function Inspector() {
               {mode === "raw" && rawDirty && (
                 <div className="insp-editactions insp-tools-actions">
                   <button
+                    className="btnish"
                     onClick={() => {
                       clearValidateTimer();
                       setRawDraft(null);
                       setJsonError(null);
                     }}
                   >
-                    Discard <span className="insp-key">esc</span>
+                    Discard <Kbd chord="esc" />
                   </button>
-                  <button className="primary" disabled={!!jsonError} onClick={saveRaw}>
-                    Stage Edit <span className="insp-key">⌘↵</span>
+                  <button className="btnish primary" disabled={!!jsonError} onClick={saveRaw}>
+                    Stage Edit <Kbd chord="cmd+return" />
                   </button>
                 </div>
               )}
             </>
           ) : (
             <>
-              <button className="insp-tool" title="Copy" onClick={() => void copyCue(value)}>
+              <button
+                className="iconbtn iconbtn-lg bordered"
+                title="Copy"
+                onClick={() => void copyCue(value)}
+              >
                 <Copy size={14} />
               </button>
               {canEdit && (
-                <button className="insp-tool" title="Edit value" onClick={() => setEditingText(value)}>
+                <button
+                  className="iconbtn iconbtn-lg bordered"
+                  title="Edit value"
+                  onClick={() => setEditingText(value)}
+                >
                   <Pencil size={14} />
                 </button>
               )}
@@ -401,7 +419,7 @@ export function Inspector() {
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                  // ⌘↵ is also the Run accelerator — claim it or staging
+                  // ⌘↩ is also the Run accelerator — claim it or staging
                   // could ALSO run the active statement
                   e.preventDefault();
                   const shell = e.currentTarget.closest(".inspector-fixed") as HTMLElement | null;
@@ -419,17 +437,17 @@ export function Inspector() {
               autoFocus
             />
             <div className="insp-editactions">
-              <button onClick={() => setEditingText(null)}>
-                Cancel <span className="insp-key">esc</span>
+              <button className="btnish" onClick={() => setEditingText(null)}>
+                Cancel <Kbd chord="esc" />
               </button>
               <button
-                className="primary"
+                className="btnish primary"
                 onClick={() => {
                   stage(editingText);
                   setEditingText(null);
                 }}
               >
-                Stage Edit <span className="insp-key">⌘↵</span>
+                Stage Edit <Kbd chord="cmd+return" />
               </button>
             </div>
           </div>
@@ -437,7 +455,7 @@ export function Inspector() {
           <div className="insp-null">
             {pendingEdit?.useDefault ? "DEFAULT" : "NULL"}
             {editMeta?.editable && (
-              <button className="insp-null-edit" onClick={() => setEditingText("")}>
+              <button className="btnish insp-null-edit" onClick={() => setEditingText("")}>
                 Set Value
               </button>
             )}

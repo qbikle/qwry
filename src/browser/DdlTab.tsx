@@ -51,7 +51,7 @@ export function DdlTab({ table }: { table: TableInfo }) {
           {table.schema}.{table.name}
         </span>
         <button
-          className="icon-btn"
+          className="iconbtn"
           title="Copy DDL"
           disabled={!ddl}
           onClick={() => {
@@ -62,7 +62,7 @@ export function DdlTab({ table }: { table: TableInfo }) {
             });
           }}
         >
-          {copied ? <Check size={13} /> : <Copy size={13} />}
+          {copied ? <Check size={14} /> : <Copy size={14} />}
         </button>
       </div>
       {error ? (

@@ -33,7 +33,7 @@ interface TabEdits {
   maps: Record<number, EditabilityMap | "loading" | "unavailable">;
   pending: Record<string, PendingEdit>;
   flash: Set<string>;
-  /** snapshots of `pending` for ⌘Z/⌘⇧Z over STAGED edits (not DB state) */
+  /** snapshots of `pending` for ⌘Z/⇧⌘Z over STAGED edits (not DB state) */
   undoStack: Record<string, PendingEdit>[];
   redoStack: Record<string, PendingEdit>[];
 }
@@ -94,7 +94,7 @@ interface EditsState extends TabEdits {
   openPreview: () => Promise<void>;
   closePreview: () => void;
   commit: () => Promise<void>;
-  /** apply the offered revert through the verified pipeline (⌘⇧Z / click) */
+  /** apply the offered revert through the verified pipeline (⇧⌘Z / click) */
   undoLastCommit: () => Promise<void>;
   clearUndoOffer: () => void;
 }
@@ -174,7 +174,7 @@ export function ctidGuardPairs(
 }
 
 export const TRUNCATED_LOCATOR_MSG =
-  "locator value is truncated — cannot safely identify this row";
+  "locator value is truncated. Cannot safely identify this row";
 
 /** group pending edits into RowEdit payloads for one statement (active tab).
  * `used[i]` is the PendingEdit behind `rowEdits[i]` — results from the backend
@@ -581,7 +581,7 @@ export const useEdits = create<EditsState>((set, get) => ({
     // was replaced meanwhile, PK locators would be built from the NEW query's
     // rows at the OLD map's column positions. Abort instead.
     if (useResults.getState().byTab[tabId]?.executedSql !== sql) {
-      set({ committing: false, lastError: "result set changed — commit aborted" });
+      set({ committing: false, lastError: "result set changed, commit aborted" });
       return;
     }
 
@@ -675,15 +675,15 @@ export const useEdits = create<EditsState>((set, get) => ({
       } else {
         // backend rolled the whole statement batch back (a row matched ≠ 1)
         const msgs = [...new Set(outcome.results.map((r) => r.message).filter(Boolean))];
-        errs.push(`rolled back — ${msgs.join("; ")}`);
+        errs.push(`rolled back. ${msgs.join("; ")}`);
       }
     }
     if (skipped > 0) {
-      errs.push(`${skipped} edit${skipped === 1 ? "" : "s"} skipped (no editability info) — still staged`);
+      errs.push(`${skipped} edit${skipped === 1 ? "" : "s"} skipped (no editability info), still staged`);
     }
     if (truncatedLocators > 0) {
       errs.push(
-        `${truncatedLocators} edit${truncatedLocators === 1 ? "" : "s"} skipped — ${TRUNCATED_LOCATOR_MSG}`,
+        `${truncatedLocators} edit${truncatedLocators === 1 ? "" : "s"} skipped. ${TRUNCATED_LOCATOR_MSG}`,
       );
     }
     // clear ONLY what actually committed — even when a later statement failed;
@@ -724,7 +724,7 @@ export const useEdits = create<EditsState>((set, get) => ({
           preview: {
             statements: all,
             error: null,
-            notice: "schema changed — review the updated SQL before committing",
+            notice: "schema changed. Review the updated SQL before committing",
           },
           lastError: errs.length > 0 ? errs.join(" · ") : null,
         });
@@ -732,7 +732,7 @@ export const useEdits = create<EditsState>((set, get) => ({
         set({
           committing: false,
           preview: { statements: [], error: errMsg(e) },
-          lastError: errs.length > 0 ? errs.join(" · ") : "schema changed — commit rolled back",
+          lastError: errs.length > 0 ? errs.join(" · ") : "schema changed, commit rolled back",
         });
       }
       return;
@@ -755,7 +755,7 @@ export const useEdits = create<EditsState>((set, get) => ({
     const live = useConnections.getState().tabSessions[skey(offer.profileId, offer.tabId)];
     if (live !== offer.sessionId) {
       setUndoOffer(null);
-      set({ lastError: "undo unavailable — connection changed since the commit" });
+      set({ lastError: "undo unavailable. The connection changed since the commit" });
       return;
     }
     set({ undoing: true });

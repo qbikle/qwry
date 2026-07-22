@@ -198,7 +198,7 @@ export function ContextMenu({
                   )}
                   {isSub && (
                     <span className="ctx-arrow">
-                      <ChevronRight size={13} />
+                      <ChevronRight size={12} />
                     </span>
                   )}
                 </div>

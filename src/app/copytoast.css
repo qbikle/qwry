@@ -5,14 +5,14 @@
   transform: translateX(-50%);
   z-index: 45; /* above content, below the overlay stack (50+) */
   pointer-events: none;
-  padding: 5px 12px;
+  padding: 5px 12px; /* optical */
   border-radius: var(--radius-pill);
   background: var(--bg-raised);
   border: 1px solid var(--border-strong);
   box-shadow: var(--shadow-pop);
   color: var(--fg);
   font-size: var(--text-xs);
-  animation: copy-toast-in 140ms ease-out;
+  animation: copy-toast-in var(--dur-quick) var(--ease-std);
 }
 .copy-toast.err {
   color: var(--danger);

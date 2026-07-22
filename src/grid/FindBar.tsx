@@ -1,5 +1,5 @@
 // ⌘F bar over the loaded result rows — same chrome/keys as JsonTree's search
-// (⏎/⇧⏎ next/prev · Esc close · match count). Scoped honestly to loaded rows.
+// (↩/⇧↩ next/prev · esc close · match count). Scoped honestly to loaded rows.
 import { useEffect, useRef } from "react";
 import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import type { StatementState } from "../stores/results";
@@ -88,22 +88,22 @@ export function FindBar({ stmt }: { stmt: StatementState }) {
         }}
       />
       <span className="find-count">{count}</span>
-      <button className="find-btn" title="Previous ⇧⏎" onClick={() => step(-1)}>
-        <ChevronUp size={13} />
+      <button className="find-btn iconbtn" title="Previous ⇧↩" onClick={() => step(-1)}>
+        <ChevronUp size={12} />
       </button>
-      <button className="find-btn" title="Next ⏎" onClick={() => step(1)}>
-        <ChevronDown size={13} />
+      <button className="find-btn iconbtn" title="Next ↩" onClick={() => step(1)}>
+        <ChevronDown size={12} />
       </button>
       {stmt.capped && (
         <span
           className="find-capped"
-          title={`Result capped — find only sees the ${stmt.rows.length.toLocaleString()} loaded rows of ${stmt.rowCount.toLocaleString()}`}
+          title={`Result capped. Find only sees the ${stmt.rows.length.toLocaleString()} loaded rows of ${stmt.rowCount.toLocaleString()}`}
         >
           loaded {stmt.rows.length.toLocaleString()} of {stmt.rowCount.toLocaleString()} rows
         </span>
       )}
-      <button className="find-btn" title="Close esc" onClick={close}>
-        <X size={13} />
+      <button className="find-btn iconbtn" title="Close esc" onClick={close}>
+        <X size={12} />
       </button>
     </div>
   );

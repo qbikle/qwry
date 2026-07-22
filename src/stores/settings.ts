@@ -33,7 +33,7 @@ interface SettingsState {
   statementTimeoutSecs: number;
   setStatementTimeoutSecs: (n: number) => void;
 
-  /** default ⌘⇧F style — id into FORMAT_PRESETS */
+  /** default ⇧⌘F style — id into FORMAT_PRESETS */
   formatPreset: string;
   setFormatPreset: (id: string) => void;
   /** keyword/type case applied by every preset */

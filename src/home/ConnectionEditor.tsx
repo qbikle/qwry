@@ -4,6 +4,7 @@ import * as ipc from "../ipc/commands";
 import { confirmTxRollback, useConnections } from "../stores/connections";
 import type { Profile } from "../ipc/types";
 import { Avatar, AVATAR_ICONS, AVATAR_PALETTE } from "../sidebar/avatar";
+import { Kbd } from "../design/Kbd";
 import { looksLikeDsn, parseDsn } from "./dsn";
 import "./home.css";
 
@@ -181,11 +182,11 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
               {Object.entries(AVATAR_ICONS).map(([name, Icon]) => (
                 <button
                   key={name}
-                  className={`ce-icon${p.glyph === `icon:${name}` ? " active" : ""}`}
+                  className={`iconbtn iconbtn-lg bordered ce-icon${p.glyph === `icon:${name}` ? " active" : ""}`}
                   title={name}
                   onClick={() => field("glyph", `icon:${name}`)}
                 >
-                  <Icon size={15} />
+                  <Icon size={14} />
                 </button>
               ))}
             </div>
@@ -294,7 +295,7 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
         {testResult &&
           (testResult.ok ? (
             <div className="ce-test-ok">
-              <ShieldCheck size={13} />
+              <ShieldCheck size={12} />
               {testResult.version} · {Math.round(testResult.ms)}ms
               {testResult.tls ? " · TLS" : " · no TLS"}
             </div>
@@ -304,13 +305,13 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
       </div>
 
       <div className="ce-actions">
-        <button className="ce-test" disabled={!valid || testing} onClick={() => void testConn()}>
-          {testing ? <Loader2 size={13} className="spin" /> : <Zap size={13} />}
+        <button className="btnish ce-test" disabled={!valid || testing} onClick={() => void testConn()}>
+          {testing ? <Loader2 size={14} className="spin" /> : <Zap size={14} />}
           {testing ? "Testing…" : "Test"}
         </button>
         {!isNew && (
           <button
-            className={`ce-del${armed ? " armed" : ""}`}
+            className={`btnish danger ce-del${armed ? " armed" : ""}`}
             onClick={() => {
               if (armed) {
                 void (async () => {
@@ -327,14 +328,14 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
             <Trash2 size={14} /> {armed ? "Confirm Delete" : "Delete"}
           </button>
         )}
-        <button className="ce-cancel" onClick={requestCancel}>
-          Cancel <span className="ce-key">esc</span>
+        <button className="btnish ce-cancel" onClick={requestCancel}>
+          Cancel <Kbd chord="esc" />
         </button>
-        <button disabled={!valid} onClick={() => void save(false)}>
-          {saving ? "Saving…" : "Save"} <span className="ce-key">⌘S</span>
+        <button className="btnish" disabled={!valid} onClick={() => void save(false)}>
+          {saving ? "Saving…" : "Save"} <Kbd chord="cmd+s" />
         </button>
-        <button className="primary" disabled={!valid} onClick={() => void save(true)}>
-          Save and Connect <span className="ce-key">⌘↵</span>
+        <button className="btnish primary" disabled={!valid} onClick={() => void save(true)}>
+          Save and Connect <Kbd chord="cmd+return" />
         </button>
       </div>
     </div>

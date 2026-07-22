@@ -149,7 +149,7 @@ function applyToBuffer(view: EditorView, transform: (src: string) => string): bo
 }
 
 /** format with a specific preset (context-menu submenu). sql-formatter is
- * loaded on first use — it's ~an eighth of the whole bundle and ⌘⇧F is rare;
+ * loaded on first use — it's ~an eighth of the whole bundle and ⇧⌘F is rare;
  * the buffer snapshot is taken AFTER the load so a keystroke typed during the
  * import is never clobbered by a format of stale text */
 export async function formatWithPreset(view: EditorView, presetId: string): Promise<void> {
@@ -157,7 +157,7 @@ export async function formatWithPreset(view: EditorView, presetId: string): Prom
   applyToBuffer(view, (src) => format(src, buildOptions(presetId)));
 }
 
-/** ⌘⇧F / menu — the user's default preset */
+/** ⇧⌘F / menu — the user's default preset */
 export function formatDefault(view: EditorView): Promise<void> {
   return formatWithPreset(view, useSettings.getState().formatPreset);
 }

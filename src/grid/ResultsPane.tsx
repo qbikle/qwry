@@ -15,6 +15,7 @@ import { EditPreview } from "./EditPreview";
 import { FindBar } from "./FindBar";
 import { lastErrorKind } from "./flashReason";
 import { Grid } from "./Grid";
+import { Kbd } from "../design/Kbd";
 import "./grid.css";
 
 export function ResultsPane({ browser = false }: { browser?: boolean }) {
@@ -52,7 +53,8 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
           "Loading table…"
         ) : (
           <span>
-            Run a query to see results · <kbd>⌘↵</kbd> runs the statement under the caret
+            Run a query to see results · <Kbd chord="cmd+return" caps /> runs the statement
+            under the caret
           </span>
         )}
       </div>
@@ -132,10 +134,10 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
         {running && browser && (
           // browse tabs have no QueryBox — this is their only cancel affordance
           <button
-            className="status-link"
+            className="status-link linkish"
             onClick={() => void useResults.getState().cancel()}
           >
-            Cancel ⌘.
+            Cancel <Kbd chord="cmd+period" />
           </button>
         )}
         {connecting && !running && <span className="status-running">🔌 connecting…</span>}
@@ -175,7 +177,7 @@ function OriginBanner() {
     >
       <span className="origin-banner-dot" />
       <span className="origin-banner-text">
-        rows from <strong>{originName}</strong> — edits &amp; imports commit there · Run executes
+        rows from <strong>{originName}</strong> · edits and imports commit there · Run executes
         on <strong>{railName}</strong>
       </span>
     </div>
@@ -216,13 +218,13 @@ function QuickFilter() {
     useGridFilter.getState().setText(local);
   };
   return (
-    <span className={`status-qf${open ? " on" : ""}`}>
+    <span className={`status-qf${open ? " active" : ""}`}>
       <button
         className="status-qf-btn"
         title={open ? "Clear quick filter" : "Quick-filter loaded rows"}
         onClick={() => useGridFilter.getState().setOpen(!open)}
       >
-        {open ? <X size={11} /> : <ListFilter size={11} />}
+        {open ? <X size={12} /> : <ListFilter size={12} />}
       </button>
       {open && (
         <input
@@ -262,7 +264,7 @@ function ZeroRows({
         {browser && (
           <>
             {stmt.ms != null && " · "}
-            <kbd>⌘⇧I</kbd> adds a row
+            <Kbd chord="shift+cmd+i" caps /> adds a row
           </>
         )}
       </div>
@@ -294,7 +296,7 @@ function RowCount({
       </span>
     );
   if (browser && stmt.done && n >= limit)
-    return <span>first {n.toLocaleString()} rows — scroll for more</span>;
+    return <span>first {n.toLocaleString()} rows · scroll for more</span>;
   if (browser && stmt.done) return <span>all {n.toLocaleString()} rows</span>;
   return <span>{n.toLocaleString()} rows</span>;
 }
@@ -339,7 +341,7 @@ function RerunBtn() {
         void st.run(executedSql, st.executedOffset);
       }}
     >
-      <RotateCw size={11} />
+      <RotateCw size={12} />
     </button>
   );
 }
@@ -382,11 +384,11 @@ function TxChip() {
     <span className="status-tx">
       TX OPEN
       <button
-        className="status-link danger"
+        className="status-link linkish danger"
         // tokio-postgres serializes on the single session connection — a
         // ROLLBACK behind a running query would silently queue ("frozen app")
         disabled={running}
-        title={running ? "Waiting for the running query — cancel it first (⌘.)" : "Roll back this tab’s open transaction"}
+        title={running ? "Waiting for the running query. Cancel it first (⌘.)" : "Roll back this tab’s open transaction"}
         onClick={() => void rollback()}
       >
         ROLLBACK
@@ -406,7 +408,7 @@ function PendingEditsStatus() {
   // inverse-SQL undo offer belongs to the tab (and session) that committed
   const offer = undoOffer && undoOffer.tabId === activeTab ? undoOffer : null;
 
-  // ⌘⇧Z while the offer is visible. defaultPrevented yields to the grid's
+  // ⇧⌘Z while the offer is visible. defaultPrevented yields to the grid's
   // staged-edit redo and the editor's text redo — the toast only claims the
   // chord when nothing focused wanted it.
   useEffect(() => {
@@ -450,12 +452,18 @@ function PendingEditsStatus() {
             ✓ {offer.description}
           </span>
           <button
-            className="status-link"
+            className="status-link linkish"
             disabled={undoing}
-            title="Revert this commit through the verified pipeline — a stale undo rolls back"
+            title="Revert this commit through the verified pipeline. A stale undo rolls back"
             onClick={() => void useEdits.getState().undoLastCommit()}
           >
-            {undoing ? "Undoing…" : "Undo ⌘⇧Z"}
+            {undoing ? (
+              "Undoing…"
+            ) : (
+              <>
+                Undo <Kbd chord="shift+cmd+z" />
+              </>
+            )}
           </button>
         </>
       )}
@@ -464,11 +472,11 @@ function PendingEditsStatus() {
           <span className="status-edit-count">
             ✎ {count} pending edit{count === 1 ? "" : "s"}
           </span>
-          <button className="status-link" onClick={() => void openPreview()}>
-            Commit ⌘S
+          <button className="status-link linkish" onClick={() => void openPreview()}>
+            Commit <Kbd chord="cmd+s" />
           </button>
-          <button className="status-link danger" onClick={discardAll}>
-            Discard ⌘⇧D
+          <button className="status-link linkish danger" onClick={discardAll}>
+            Discard <Kbd chord="shift+cmd+d" />
           </button>
         </>
       )}

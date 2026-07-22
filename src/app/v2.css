@@ -14,7 +14,8 @@
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  padding: 0 var(--sp-3) 0 82px; /* clear the traffic lights */
+  /* left inset clears the macOS traffic lights */
+  padding: 0 var(--sp-3) 0 82px; /* optical */
   gap: var(--sp-2);
 }
 
@@ -29,26 +30,13 @@
   pointer-events: none;
 }
 
+/* .iconbtn.iconbtn-lg provides the skin — layout only here */
 .v2-tool {
-  display: inline-flex;
   margin-left: calc(-1 * var(--sp-2) + 2px); /* tools sit as a tight pair */
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 24px;
-  border-radius: var(--radius-sm);
-  background: none;
-  border: none;
-  color: var(--fg-muted);
-  cursor: pointer;
-}
-.v2-tool:hover {
-  background: var(--bg-hover);
-  color: var(--fg);
 }
 .v2-breadcrumb .crumb-sep {
   color: var(--fg-faint);
-  margin: 0 6px;
+  margin: 0 var(--sp-1);
 }
 .v2-breadcrumb .crumb-strong {
   color: var(--fg);
@@ -124,8 +112,8 @@
   /* width animates the open/close so the main card reflows in lockstep;
      margin cancels the flex gutter when collapsed (no empty strip) */
   transition:
-    width 240ms cubic-bezier(0.22, 0.61, 0.36, 1),
-    margin-left 240ms cubic-bezier(0.22, 0.61, 0.36, 1);
+    width var(--dur-slow) var(--ease-std),
+    margin-left var(--dur-slow) var(--ease-std);
 }
 .inspector-card.resizing {
   transition: none;
@@ -151,7 +139,7 @@
   display: flex;
   align-items: center;
   border-bottom: 1px solid var(--border);
-  padding-right: 6px;
+  padding-right: var(--sp-2);
 }
 .sb-dbhead {
   display: flex;
@@ -159,7 +147,7 @@
   gap: var(--sp-2);
   flex: 1;
   min-width: 0;
-  padding: 10px var(--sp-3);
+  padding: var(--sp-3) var(--sp-3);
   border: none;
   background: none;
   color: var(--fg);
@@ -211,7 +199,7 @@
   justify-content: space-between;
   gap: var(--sp-2);
   width: 100%;
-  padding: 6px 9px;
+  padding: var(--row-y) var(--sp-2);
   border: none;
   border-radius: var(--radius-sm);
   background: none;
@@ -232,8 +220,8 @@
   white-space: nowrap;
 }
 .dbsw-msg {
-  padding: 8px 10px;
-  color: var(--fg-faint);
+  padding: var(--sp-2) var(--sp-2);
+  color: var(--fg-muted);
   font-size: var(--text-sm);
 }
 
@@ -276,8 +264,7 @@
   z-index: 7;
 }
 .inspector-resize:hover {
-  background: var(--accent);
-  opacity: 0.35;
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 /* sidebar width drag handle (right edge) */
@@ -299,11 +286,9 @@
   height: 8px;
   border-radius: 50%;
   background: var(--conn-color, var(--accent));
-  margin-right: 7px;
+  margin-right: var(--sp-2);
   flex-shrink: 0;
 }
-
-.v2-tool.on { color: var(--accent); }
 
 .v2-breadcrumb + .v2-tool,
 .prod-chip + .v2-tool {

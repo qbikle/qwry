@@ -72,7 +72,7 @@ export function ConnectionRail() {
         title="Connections home"
         onClick={() => setHome("dashboard")}
       >
-        <House size={18} />
+        <House size={16} />
       </button>
 
       <Reorder.Group axis="y" values={items} onReorder={setItems} className="rail-list">
@@ -117,7 +117,7 @@ export function ConnectionRail() {
       </Reorder.Group>
 
       <button className="rail-add" title="New connection" onClick={() => editConnection(blankProfile())}>
-        <Plus size={18} />
+        <Plus size={16} />
       </button>
 
       {menu && (

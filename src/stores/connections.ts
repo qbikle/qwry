@@ -41,7 +41,7 @@ function bumpEpoch(id: string) {
 // actually ran + 1, instead of every visited tab.
 const spareSessions = new Map<string, string>();
 /** the replenish handshake in flight — ensureTabSession AWAITS and claims it
- * instead of starting a THIRD full handshake (connect → immediate ⌘↵ used to
+ * instead of starting a THIRD full handshake (connect → immediate ⌘↩ used to
  * pay the whole tunnel handshake again while the spare was mid-build) */
 const spareInflight = new Map<string, Promise<string | null>>();
 
@@ -260,7 +260,7 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
       replenishSpare(profileId);
       return spare;
     }
-    // no ready spare, but one is MID-HANDSHAKE (connect → immediate ⌘↵):
+    // no ready spare, but one is MID-HANDSHAKE (connect → immediate ⌘↩):
     // await and claim it instead of paying a second full handshake
     const building = spareInflight.get(profileId);
     if (building && get().sessions[profileId]) {
@@ -506,7 +506,7 @@ async function connectInner(
     void import("./schema").then(({ useSchema }) =>
       useSchema.getState().fetch(profileId, sessionId),
     );
-    // build the standby session so the first ⌘↵ in ANY tab is instant
+    // build the standby session so the first ⌘↩ in ANY tab is instant
     replenishSpare(profileId);
   } catch (e) {
     // a stale attempt failing (the OLD host refusing) must not paint the new

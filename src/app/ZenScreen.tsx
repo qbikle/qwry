@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { prefersReducedMotion } from "../design/springs";
+import { Kbd } from "../design/Kbd";
 import "./app.css";
 
 /** quotes + small thoughts for the zero-tab zen screen — DB-flavored calm */
@@ -21,7 +22,7 @@ const THOUGHTS = [
   "Zero tabs. Zero pending edits. Inner peace.",
   "Even a LEFT JOIN keeps what matters on the left.",
   "Breathe in. VACUUM FULL. Breathe out.",
-  "There is no cloud — just someone else’s Postgres.",
+  "There is no cloud — just someone else’s Postgres.", // em-ok: quotation, editorial voice by design
   "Your indexes are only as good as your WHERE clauses.",
   "A slow query is a story about your data waiting to be read.",
   "SELECT calm FROM chaos WHERE focus IS NOT NULL;",
@@ -179,14 +180,14 @@ export function ZenScreen() {
         <div className="zen-keys">
           {(
             [
-              ["⌘T", "new tab"],
-              ["⌘K", "command palette"],
-              ["⌘Y", "query history"],
-              ["⌘?", "all shortcuts"],
+              ["cmd+t", "new tab"],
+              ["cmd+k", "command palette"],
+              ["cmd+y", "query history"],
+              ["cmd+?", "all shortcuts"],
             ] as const
-          ).map(([k, label]) => (
-            <div key={k} className="zen-key-row">
-              <kbd>{k}</kbd>
+          ).map(([chord, label]) => (
+            <div key={chord} className="zen-key-row">
+              <Kbd chord={chord} />
               <span>{label}</span>
             </div>
           ))}

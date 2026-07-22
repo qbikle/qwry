@@ -52,7 +52,7 @@ export function SettingsModal() {
             {MODES.map((m) => (
               <button
                 key={m.id}
-                className={mode === m.id ? "on" : ""}
+                className={mode === m.id ? "active" : ""}
                 onClick={() => setMode(m.id)}
               >
                 {m.label}
@@ -80,7 +80,7 @@ export function SettingsModal() {
         <div className="settings-row">
           <span className="settings-label">Theme</span>
           <button
-            className="settings-btn"
+            className="settings-btn btnish"
             onClick={() => {
               setOpen(false);
               useUI.getState().openThemePicker();
@@ -92,11 +92,11 @@ export function SettingsModal() {
         <div className="settings-row">
           <span className="settings-label">UI Zoom</span>
           <div className="settings-stepper">
-            <button onClick={() => zoomBy(-1)} aria-label="Zoom Out">
+            <button className="iconbtn bordered" onClick={() => zoomBy(-1)} aria-label="Zoom Out">
               <Minus size={12} />
             </button>
             <span>{uiZoom}%</span>
-            <button onClick={() => zoomBy(1)} aria-label="Zoom In">
+            <button className="iconbtn bordered" onClick={() => zoomBy(1)} aria-label="Zoom In">
               <Plus size={12} />
             </button>
           </div>
@@ -106,11 +106,19 @@ export function SettingsModal() {
         <div className="settings-row">
           <span className="settings-label">Font Size</span>
           <div className="settings-stepper">
-            <button onClick={() => setFontSize(fontSize - 1)} aria-label="Decrease Font Size">
+            <button
+              className="iconbtn bordered"
+              onClick={() => setFontSize(fontSize - 1)}
+              aria-label="Decrease Font Size"
+            >
               <Minus size={12} />
             </button>
             <span>{fontSize}px</span>
-            <button onClick={() => setFontSize(fontSize + 1)} aria-label="Increase Font Size">
+            <button
+              className="iconbtn bordered"
+              onClick={() => setFontSize(fontSize + 1)}
+              aria-label="Increase Font Size"
+            >
               <Plus size={12} />
             </button>
           </div>
@@ -128,11 +136,19 @@ export function SettingsModal() {
         <div className="settings-row">
           <span className="settings-label">Font Size</span>
           <div className="settings-stepper">
-            <button onClick={() => setGridFontSize(gridFontSize - 1)} aria-label="Decrease Font Size">
+            <button
+              className="iconbtn bordered"
+              onClick={() => setGridFontSize(gridFontSize - 1)}
+              aria-label="Decrease Font Size"
+            >
               <Minus size={12} />
             </button>
             <span>{gridFontSize}px</span>
-            <button onClick={() => setGridFontSize(gridFontSize + 1)} aria-label="Increase Font Size">
+            <button
+              className="iconbtn bordered"
+              onClick={() => setGridFontSize(gridFontSize + 1)}
+              aria-label="Increase Font Size"
+            >
               <Plus size={12} />
             </button>
           </div>
@@ -143,7 +159,7 @@ export function SettingsModal() {
             {(["compact", "normal", "comfortable"] as const).map((d) => (
               <button
                 key={d}
-                className={gridDensity === d ? "on" : ""}
+                className={gridDensity === d ? "active" : ""}
                 onClick={() => setGridDensity(d)}
               >
                 {d === "compact" ? "Compact" : d === "normal" ? "Normal" : "Roomy"}
@@ -163,7 +179,7 @@ export function SettingsModal() {
           >
             {FORMAT_PRESETS.map((p) => (
               <option key={p.id} value={p.id} title={p.blurb}>
-                {p.label} — {p.blurb}
+                {p.label} · {p.blurb}
               </option>
             ))}
           </select>
@@ -174,7 +190,7 @@ export function SettingsModal() {
             {(["upper", "lower", "preserve"] as const).map((c) => (
               <button
                 key={c}
-                className={keywordCase === c ? "on" : ""}
+                className={keywordCase === c ? "active" : ""}
                 onClick={() => setKeywordCase(c)}
               >
                 {c === "upper" ? "UPPER" : c === "lower" ? "lower" : "As-is"}

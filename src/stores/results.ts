@@ -112,7 +112,7 @@ function writeTab(
 }
 
 /** synchronous per-tab run guard — `running` only flips true AFTER the
- * confirm prompts, so a second ⌘↵ during a modal would overwrite the danger
+ * confirm prompts, so a second ⌘↩ during a modal would overwrite the danger
  * resolver and orphan the first invocation */
 const runInflight = new Set<string>();
 
@@ -222,7 +222,7 @@ export const useResults = create<ResultsState>((set, get) => ({
       // "Loading table…" forever once the connect toast expires
       writeTab(set, tabId, {
         globalError: {
-          message: "couldn’t establish a session — check the connection",
+          message: "couldn’t establish a session. Check the connection",
           position: null,
           code: null,
         },
@@ -502,7 +502,7 @@ export const useResults = create<ResultsState>((set, get) => ({
       const ok = await confirmDanger(
         "Cancel Didn’t Stop the Query",
         `${msg}\n\nTerminate the server-side query (pg_terminate_backend) and force-disconnect this tab’s session? A fresh session is created on the next run.${
-          inTx ? "\n\nThis tab has an open transaction — it will be rolled back." : ""
+          inTx ? "\n\nThis tab has an open transaction. It will be rolled back." : ""
         }`,
         "Terminate and Disconnect",
       );

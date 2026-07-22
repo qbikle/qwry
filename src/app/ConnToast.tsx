@@ -64,7 +64,7 @@ export function ConnToast() {
     <AnimatePresence>
       {!error && !closed && warn && (
         <motion.div className="conn-toast" {...popIn}>
-          <TriangleAlert size={15} className="conn-toast-icon" />
+          <TriangleAlert size={16} className="conn-toast-icon" />
           <div className="conn-toast-body">
             <div className="conn-toast-title">Some saved data couldn’t be loaded</div>
             <div className="conn-toast-msg">
@@ -72,29 +72,29 @@ export function ConnToast() {
               couldn’t be read and {warn.skipped === 1 ? "was" : "were"} skipped
             </div>
           </div>
-          <button className="conn-toast-close" title="Dismiss" onClick={() => setWarn(null)}>
+          <button className="conn-toast-close iconbtn" title="Dismiss" onClick={() => setWarn(null)}>
             <X size={14} />
           </button>
         </motion.div>
       )}
       {!error && closed && (
         <motion.div className="conn-toast" {...popIn}>
-          <TriangleAlert size={15} className="conn-toast-icon" />
+          <TriangleAlert size={16} className="conn-toast-icon" />
           <div className="conn-toast-body">
             <div className="conn-toast-title">
               Connection lost
-              {closedProfile ? ` — ${closedProfile.name || closedProfile.host}` : ""}
+              {closedProfile ? ` · ${closedProfile.name || closedProfile.host}` : ""}
             </div>
             <div className="conn-toast-msg">{closed.reason}</div>
           </div>
-          <button className="conn-toast-close" title="Dismiss" onClick={clearClosedToast}>
+          <button className="conn-toast-close iconbtn" title="Dismiss" onClick={clearClosedToast}>
             <X size={14} />
           </button>
         </motion.div>
       )}
       {error && (
         <motion.div className="conn-toast" {...popIn}>
-          <TriangleAlert size={15} className="conn-toast-icon" />
+          <TriangleAlert size={16} className="conn-toast-icon" />
           <div className="conn-toast-body">
             <div className="conn-toast-title">
               Couldn’t connect{profile ? ` to ${profile.name || profile.host}` : ""}
@@ -103,7 +103,7 @@ export function ConnToast() {
           </div>
           {profile && (
             <button
-              className="conn-toast-action"
+              className="conn-toast-action btnish"
               onClick={() => {
                 clearError();
                 editConnection(profile);
@@ -112,7 +112,7 @@ export function ConnToast() {
               Edit
             </button>
           )}
-          <button className="conn-toast-close" title="Dismiss" onClick={clearError}>
+          <button className="conn-toast-close iconbtn" title="Dismiss" onClick={clearError}>
             <X size={14} />
           </button>
         </motion.div>

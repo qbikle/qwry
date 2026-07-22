@@ -157,14 +157,14 @@ export function App() {
     else document.documentElement.style.removeProperty("--conn-color");
   }, [activeProfile?.color, connected]);
 
-  // window title mirrors the active connection ("qwry — profile · db") for
+  // window title mirrors the active connection ("qwry · profile · db") for
   // Mission Control / ⌘-tab / Dock; plain "qwry" on home. Debounced a tick so
   // rail-switch churn writes once. Never credentials — name/host + db only.
   const titleProfile = connected && !homeMode ? activeProfile : null;
   const titleName = titleProfile ? titleProfile.name || titleProfile.host : null;
   const titleDb = titleProfile?.dbname ?? null;
   useEffect(() => {
-    const title = titleName ? `qwry — ${titleName} · ${titleDb}` : "qwry";
+    const title = titleName ? `qwry · ${titleName} · ${titleDb}` : "qwry";
     const t = window.setTimeout(() => {
       void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
         getCurrentWindow().setTitle(title),
@@ -430,7 +430,7 @@ export function App() {
             break;
           }
           // File ▸ Open… / Save — ids reserved for the native menu items
-          // (lib.rs); the ⌘O/⌘⇧S window shortcuts below work regardless
+          // (lib.rs); the ⌘O/⇧⌘S window shortcuts below work regardless
           case "open-file":
             void openSqlFileDialog();
             break;
@@ -450,7 +450,7 @@ export function App() {
           }
           case "run-all":
             // the store sql holds the PARKED draft while time-traveling —
-            // running it would execute invisible text (⌘⇧↵ in the editor is
+            // running it would execute invisible text (⇧⌘↩ in the editor is
             // swallowed there; the menu path must match)
             if (editorTimeTraveling.current) break;
             void useResults.getState().run(useConnections.getState().sql, 0);
@@ -542,7 +542,7 @@ export function App() {
       if (e.defaultPrevented) return;
       // ⌘? is non-destructive and useful FROM a modal — the only shortcut
       // exempt from the overlay guard below (the menu path isn't gated either).
-      // WebKit reports the UNSHIFTED key while ⌘ is held, so ⌘⇧/ arrives as
+      // WebKit reports the UNSHIFTED key while ⌘ is held, so ⌘⇧/ arrives as // lint-ok: physical key order, not the chord's canonical name
       // key="/" — match both spellings or the binding never fires on macOS.
       if (e.metaKey && (e.key === "?" || (e.key === "/" && e.shiftKey))) {
         e.preventDefault();
@@ -551,7 +551,7 @@ export function App() {
       }
       // UI zoom works everywhere, modals included (view-level, harmless) —
       // fallback for the View-menu accelerators. WebKit reports the unshifted
-      // key with ⌘ held, so classic ⌘⇧= (aka ⌘+) arrives as "=".
+      // key with ⌘ held, so classic ⌘⇧= (aka ⌘+) arrives as "=". // lint-ok: physical key order, not the chord's canonical name
       if (e.metaKey && !e.altKey && (e.key === "=" || e.key === "+")) {
         e.preventDefault();
         zoomBy(1);
@@ -623,7 +623,7 @@ export function App() {
         e.preventDefault();
         useTabs.getState().selectByIndex(Number(e.key) - 1);
       }
-      // ⌘⇧F = Format SQL everywhere, as the palette advertises — inside the
+      // ⇧⌘F = Format SQL everywhere, as the palette advertises — inside the
       // editor CodeMirror's own Prec.highest binding claims it first
       if (e.metaKey && e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
         e.preventDefault();
@@ -649,7 +649,7 @@ export function App() {
           useFind.getState().openFind();
         }
       }
-      // ⌘G / ⌘⇧G step find-in-results matches while the bar is open
+      // ⌘G / ⇧⌘G step find-in-results matches while the bar is open
       if (e.metaKey && e.key.toLowerCase() === "g" && useFind.getState().open) {
         e.preventDefault();
         useFind.getState().step(e.shiftKey ? -1 : 1);
@@ -737,7 +737,7 @@ export function App() {
           title={
             railProd
               ? "Connected to production"
-              : `This tab’s rows and writes target production — ${chipName}`
+              : `This tab’s rows and writes target production · ${chipName}`
           }
         />
       )}
@@ -757,30 +757,30 @@ export function App() {
             className={`prod-chip ${writeUnlocked ? "unlocked" : "locked"}`}
             title={
               writeUnlocked
-                ? `Writes enabled on this tab’s ${chipName} session — click to re-lock`
-                : `Production safe mode: this tab’s ${chipName} session is read-only at the server — click to enable writes`
+                ? `Writes enabled on this tab’s ${chipName} session. Click to re-lock`
+                : `Production safe mode: this tab’s ${chipName} session is read-only at the server. Click to enable writes`
             }
             onClick={() => void toggleProdWrites()}
           >
-            {writeUnlocked ? <LockOpen size={10} /> : <Lock size={10} />}
+            {writeUnlocked ? <LockOpen size={12} /> : <Lock size={12} />}
             {/* foreign origin wears its name — a bare PROD would read as the rail */}
             {originProd ? `PROD · ${chipName}` : "PROD"}
             {writeUnlocked ? " · WRITES ON" : " · READ-ONLY"}
           </button>
         )}
         <button
-          className="v2-tool"
+          className="v2-tool iconbtn iconbtn-lg"
           title="Theme"
           onClick={() => useUI.getState().openThemePicker()}
         >
-          <SwatchBook size={15} />
+          <SwatchBook size={14} />
         </button>
         <button
-          className={`v2-tool${inspectorOpen ? " on" : ""}`}
+          className={`v2-tool iconbtn iconbtn-lg${inspectorOpen ? " active" : ""}`}
           title="Inspector ⌘I"
           onClick={() => useInspector.getState().toggle()}
         >
-          <PanelRight size={15} />
+          <PanelRight size={14} />
         </button>
       </div>
 

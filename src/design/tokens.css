@@ -214,8 +214,8 @@ textarea::placeholder {
      whose animation carries STATE (cell-flash commit cue) define their own
      static replacement under this query */
   *:not(.spin), *::before, *::after {
-    transition-duration: 0.01ms !important;
-    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important; /* optical */ /* a11y reduced-motion kill */
+    animation-duration: 0.01ms !important; /* optical */
   }
 }
 
@@ -227,7 +227,7 @@ textarea::placeholder {
   display: inline-block;
   font-size: var(--text-2xs);
   font-weight: 700;
-  padding: 1px 5px;
+  padding: 1px 5px; /* optical */ /* badge proportion */
   border-radius: var(--radius-xs);
   line-height: 1.4;
 }
@@ -260,7 +260,7 @@ button:disabled {
 .btnish, .btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 6px; /* optical */ /* icon-label gap */
   padding: 5px 12px; /* optical */
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
@@ -338,7 +338,7 @@ button:disabled {
   display: inline-flex;
   justify-content: center;
   min-width: 22px;
-  padding: 1px 6px;
+  padding: 1px 6px; /* optical */ /* keycap proportion */
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   color: var(--fg-muted);
@@ -348,3 +348,9 @@ button:disabled {
   border-radius: 5px; /* optical */
 }
 .kbd-caps { display: inline-flex; gap: 3px; }
+/* on filled primary/danger the tier-2 gray drowns — the glyph rides the
+   fill's ink, one step quieter than the label */
+.btnish.primary .kbd, .btn.primary .kbd,
+.btnish.danger .kbd, .btn.danger .kbd {
+  color: color-mix(in srgb, currentColor 75%, transparent);
+}

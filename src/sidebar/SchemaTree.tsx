@@ -48,19 +48,19 @@ function fuzzyMatch(needle: string, hay: string): boolean {
 // filter keystroke was pure churn (React elements are immutable; reuse is safe)
 const SCHEMA_OPEN = <ChevronDown size={12} />;
 const SCHEMA_CLOSED = <ChevronRight size={12} />;
-const TWIST_OPEN = <ChevronDown size={11} />;
-const TWIST_CLOSED = <ChevronRight size={11} />;
-const VIEW_ICON = <Eye size={13} className="tree-icon view" />;
-const TABLE_ICON = <Table2 size={13} className="tree-icon" />;
-const MATVIEW_ICON = <Layers size={13} className="tree-icon matview" />;
-const PARTITIONED_ICON = <Grid2x2 size={13} className="tree-icon partitioned" />;
-const FOREIGN_ICON = <Globe size={13} className="tree-icon foreign" />;
+const TWIST_OPEN = <ChevronDown size={12} />;
+const TWIST_CLOSED = <ChevronRight size={12} />;
+const VIEW_ICON = <Eye size={12} className="tree-icon view" />;
+const TABLE_ICON = <Table2 size={12} className="tree-icon" />;
+const MATVIEW_ICON = <Layers size={12} className="tree-icon matview" />;
+const PARTITIONED_ICON = <Grid2x2 size={12} className="tree-icon partitioned" />;
+const FOREIGN_ICON = <Globe size={12} className="tree-icon foreign" />;
 const FUNC_ICON = <FunctionSquare size={12} className="tree-obj-icon func" />;
 const SEQ_ICON = <ListOrdered size={12} className="tree-obj-icon seq" />;
 const ENUM_ICON = <ListChecks size={12} className="tree-obj-icon enum" />;
 const EXT_ICON = <Puzzle size={12} className="tree-obj-icon ext" />;
-const PIN_ICON = <Pin size={11} className="tree-pin-glyph" />;
-const PK_ICON = <KeyRound size={9} className="tree-col-pk" />;
+const PIN_ICON = <Pin size={12} className="tree-pin-glyph" />;
+const PK_ICON = <KeyRound size={12} className="tree-col-pk" />;
 
 /** relkind → glyph: matview/foreign/partitioned read differently at a glance */
 function tableIcon(kind: TableInfo["kind"]) {
@@ -167,7 +167,7 @@ const TableRow = memo(function TableRow(p: {
       onContextMenu={(e) => p.onMenu(e, t)}
     >
       <button
-        className="tree-twist"
+        className="iconbtn tree-twist"
         title="Columns"
         onClick={(e) => {
           e.stopPropagation(); // expand, don't browse
@@ -657,7 +657,7 @@ export function SchemaTree({ profileId }: { profileId: string }) {
         <div className="tree-msg tree-error">
           <div>Schema load failed:</div>
           <div className="tree-error-msg">{error}</div>
-          <button className="tree-retry" onClick={retry}>
+          <button className="btnish" onClick={retry}>
             Retry
           </button>
         </div>
@@ -793,7 +793,7 @@ export function SchemaTree({ profileId }: { profileId: string }) {
           // filter no-match is a dead end without a way back — offer it
           <div className="tree-empty">
             <span>No tables match “{filterInput}”</span>
-            <button className="tree-retry" onClick={() => setFilterInput("")}>
+            <button className="btnish" onClick={() => setFilterInput("")}>
               Clear Filter
             </button>
           </div>

@@ -71,17 +71,17 @@ export function ServerInfo({ profileId }: { profileId: string }) {
 
   const tlsText =
     tls === null
-      ? "—"
+      ? "—" // em-ok
       : tls
         ? "TLS"
         : sslmode === "prefer"
-          ? "TLS off — server skipped encryption"
+          ? "TLS off · server skipped encryption"
           : "TLS off";
 
   return (
     <>
-      <button className="sb-info-btn" title="Server info" onClick={() => setOpen(true)}>
-        <Info size={13} />
+      <button className="iconbtn sb-info-btn" title="Server info" onClick={() => setOpen(true)}>
+        <Info size={14} />
       </button>
       {open && (
         <Modal label="Server Info" onClose={() => setOpen(false)}>
@@ -97,7 +97,7 @@ export function ServerInfo({ profileId }: { profileId: string }) {
                   <div key={label} className="srvinfo-row">
                     <span className="srvinfo-label">{label}</span>
                     <span className="srvinfo-value" title={rows[i] ?? ""}>
-                      {i === 0 ? (rows[i] ?? "").split(" on ")[0] : (rows[i] ?? "—")}
+                      {i === 0 ? (rows[i] ?? "").split(" on ")[0] : (rows[i] ?? "—") /* em-ok */}
                     </span>
                   </div>
                 ))}
