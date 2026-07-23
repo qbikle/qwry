@@ -158,10 +158,6 @@
   color: var(--fg-muted);
   cursor: pointer;
 }
-.imp-check input {
-  accent-color: var(--accent);
-  cursor: pointer;
-}
 .imp-preview {
   overflow: auto;
   max-height: 250px;

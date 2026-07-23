@@ -243,6 +243,81 @@
   color: var(--danger-fg);
 }
 
+/* scope row — System Settings layout: label, ⓘ, switch pushed right. Only
+   the switch toggles (macOS: the label is a name, not a hit target) */
+.tp-scope {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-1);
+  font-size: var(--text-sm);
+  color: var(--fg);
+}
+.tp-scope .switch {
+  margin-left: auto;
+}
+/* instant hover tooltip — WKWebView's native title is slow and unreliable */
+.tp-scope-info {
+  position: relative;
+  display: inline-flex;
+  color: var(--fg-muted);
+  cursor: help;
+}
+.tp-scope-info:hover {
+  color: var(--fg);
+}
+.tp-scope-info .tp-tip {
+  position: absolute;
+  bottom: calc(100% + var(--sp-1));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  width: 260px;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--fg-muted);
+  text-align: left;
+  white-space: normal;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--dur-quick) var(--ease-std),
+    visibility var(--dur-quick) var(--ease-std);
+  z-index: 1;
+}
+.tp-scope-info .tp-tip b {
+  color: var(--fg);
+  font-weight: 600;
+}
+.tp-scope-info:hover .tp-tip {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* owner dots — which connections hold this theme (per-connection mode).
+   Absolute overlay: appearing dots never move the card's content */
+.tp-who {
+  position: absolute;
+  top: var(--sp-1);
+  right: var(--sp-1);
+  display: flex;
+  gap: 3px; /* optical */
+}
+.tp-who i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.35);
+}
+
 .tp-foot {
   font-size: var(--text-xs);
   color: var(--fg-muted);

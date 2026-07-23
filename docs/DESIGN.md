@@ -31,6 +31,7 @@ Every interactive control belongs to exactly one species. The species are:
 | Stepper (joined pair) | segmented-pair recipe | shared border, hairline divider, radius split, ghost-until-hover (CopySplit, rv-step) |
 | Menu row | ContextMenu / cmdk styles | highlight = accent fill, `.hot` |
 | List row / card | per-surface | hover = bg-hover minimum |
+| Switch | `.switch` (tokens.css), rendered via `<Switch>` | macOS toggle for feature/setting rows; hidden native checkbox is the truth (role=switch, :has-derived states, spring knob). Native checkboxes remain the species for selection within content (filter rows, lists, CM search panels) |
 
 A new control joins a species or gets a new row in this table in the same PR.
 Re-authoring a species locally (13 copies of the action button, 23 of the

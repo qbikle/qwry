@@ -5,6 +5,7 @@ import { confirmTxRollback, useConnections } from "../stores/connections";
 import type { Profile } from "../ipc/types";
 import { Avatar, AVATAR_ICONS, AVATAR_PALETTE } from "../sidebar/avatar";
 import { Kbd } from "../design/Kbd";
+import { Switch } from "../design/Switch";
 import { looksLikeDsn, parseDsn } from "./dsn";
 import "./home.css";
 
@@ -243,7 +244,7 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
             </label>
           </div>
           <label className="ce-check">
-            <input type="checkbox" checked={p.is_prod} onChange={(e) => field("is_prod", e.target.checked)} />
+            <Switch checked={p.is_prod} onChange={(on) => field("is_prod", on)} />
             Production Connection
           </label>
         </div>
@@ -251,12 +252,11 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
         {/* ssh tunnel */}
         <div className="ce-section">
           <label className="ce-check">
-            <input
-              type="checkbox"
+            <Switch
               checked={tunnel}
-              onChange={(e) => {
-                setTunnel(e.target.checked);
-                if (!e.target.checked) field("ssh_host", null);
+              onChange={(on) => {
+                setTunnel(on);
+                if (!on) field("ssh_host", null);
               }}
             />
             SSH Tunnel
