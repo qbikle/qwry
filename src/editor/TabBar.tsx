@@ -158,7 +158,7 @@ export function TabBar() {
       },
       {
         kind: "item",
-        label: "Rename",
+        label: "Rename…",
         onSelect: () => {
           setRenaming(id);
           setDraft(t.name);
