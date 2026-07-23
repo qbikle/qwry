@@ -9,7 +9,7 @@ import { useInspector } from "../stores/inspector";
 import { openFilePaths, openSqlFileDialog, saveActiveToFile, useTabs } from "../stores/tabs";
 import { blankProfile, ConnectionRail } from "../sidebar/ConnectionRail";
 import { editorFormat, editorRunText, editorTimeTraveling } from "../editor/editorBus";
-import { openTxCount, skey } from "../stores/connections";
+import { skey } from "../stores/connections";
 import { overlayOpen } from "./overlay/escStack";
 import { useSettings, zoomBy, zoomReset } from "../stores/settings";
 import { SettingsModal } from "./SettingsModal";
@@ -337,49 +337,12 @@ export function App() {
     );
 
     // quit/close flow shared by the menu's Quit (⌘Q) and the window close
-    // button: flush the debounced tab persist so the last keystrokes hit disk,
-    // guard uncommitted cell edits / a half-typed draft row, then destroy.
+    // button — the ceremony itself lives in stores/exitGuard so the
+    // updater's relaunch runs the SAME flush + confirm (a relaunch is a
+    // process death too).
     const requestQuit = async () => {
-      const { flushTabs } = await import("../stores/tabs");
-      await flushTabs();
-      const [{ useEdits }, { useBrowser, draftHasContent }] = await Promise.all([
-        import("../stores/edits"),
-        import("../stores/browser"),
-      ]);
-      const dirty = Object.values(useEdits.getState().byTab).reduce(
-        (n, t) => n + Object.keys(t.pending).length,
-        0,
-      );
-      const draft = Object.values(useBrowser.getState().byTab).some((t) =>
-        draftHasContent(t.draftRow),
-      );
-      // open transactions roll back on quit — that loss needs the same
-      // confirm as staged edits, never a silent rollback
-      const txn = useConnections
-        .getState()
-        .profiles.reduce((n, p) => n + openTxCount(p.id), 0);
-      if (dirty > 0 || draft || txn > 0) {
-        const { confirmDanger } = await import("../stores/danger");
-        const ok = await confirmDanger(
-          dirty > 0
-            ? `Quit with ${dirty} Uncommitted Edit${dirty === 1 ? "" : "s"}?`
-            : draft
-              ? "Quit with an Unfinished New Row?"
-              : `Quit with ${txn} Open Transaction${txn === 1 ? "" : "s"}?`,
-          [
-            dirty > 0 || draft
-              ? "Staged changes are not written to the database and will be lost."
-              : null,
-            txn > 0
-              ? `Open transaction${txn === 1 ? "" : "s"} on ${txn} tab${txn === 1 ? "" : "s"} will be rolled back.`
-              : null,
-          ]
-            .filter(Boolean)
-            .join("\n"),
-          "Quit",
-        );
-        if (!ok) return; // keep the app open
-      }
+      const { prepareExit } = await import("../stores/exitGuard");
+      if (!(await prepareExit("Quit"))) return; // keep the app open
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       void getCurrentWindow().destroy(); // bypasses onCloseRequested
     };

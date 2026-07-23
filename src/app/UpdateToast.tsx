@@ -35,6 +35,12 @@ export function UpdateToast() {
                 </div>
               </>
             )}
+            {phase === "installed" && (
+              <>
+                <div className="conn-toast-title">Update installed</div>
+                <div className="conn-toast-msg">restart qwry to finish</div>
+              </>
+            )}
             {phase === "error" && (
               <>
                 <div className="conn-toast-title">Update failed</div>
@@ -48,7 +54,11 @@ export function UpdateToast() {
             </button>
           )}
           {phase !== "downloading" && (
-            <button className="conn-toast-close iconbtn" title="Later" onClick={dismiss}>
+            <button
+              className="conn-toast-close iconbtn"
+              title={phase === "available" ? "Later" : "Dismiss"}
+              onClick={dismiss}
+            >
               <X size={14} />
             </button>
           )}
