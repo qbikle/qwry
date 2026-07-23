@@ -8,6 +8,7 @@ import {
   setGlassAlpha,
   type Mode,
   type Palette,
+  connectionPalette,
 } from "../design/theme";
 
 export type { Mode } from "../design/theme";
@@ -56,6 +57,10 @@ interface SettingsState {
   mode: Mode;
   /** active palette id (curated or custom) */
   paletteId: string;
+  matchConnection: boolean;
+  connAccent: string | null;
+  setMatchConnection: (on: boolean) => void;
+  setConnAccent: (c: string | null) => void;
   /** user-created palettes */
   customThemes: Palette[];
   /** resolved render mode after applying system pref */
@@ -117,6 +122,7 @@ function sanitizeSettings(persisted: unknown, current: SettingsState): SettingsS
     mode: pick(p.mode, ["system", "dark", "light"] as const, current.mode),
     paletteId:
       typeof p.paletteId === "string" && p.paletteId !== "" ? p.paletteId : DEFAULT_PALETTE,
+    matchConnection: typeof p.matchConnection === "boolean" ? p.matchConnection : false,
     customThemes: Array.isArray(p.customThemes)
       ? p.customThemes.map(sanitizePalette).filter((t): t is Palette => t !== null)
       : current.customThemes,
@@ -162,15 +168,27 @@ export const useSettings = create<SettingsState>()(
 
       mode: "dark",
       paletteId: DEFAULT_PALETTE,
+      matchConnection: false,
+      /** the ACTIVE connection's avatar color (runtime only, pushed by the
+       * connections store) — the Match Connection seed */
+      connAccent: null,
       customThemes: [],
       resolved: "dark",
 
       setMode: (mode) => set({ mode, resolved: resolveDark(mode) ? "dark" : "light" }),
-      setPalette: (paletteId) => set({ paletteId }),
+      // picking a palette turns Match Connection off — mutual exclusion by
+      // structure, the picker card and palettes are one radio group
+      setPalette: (paletteId) => set({ paletteId, matchConnection: false }),
+      setMatchConnection: (on) => set({ matchConnection: on }),
+      setConnAccent: (connAccent) => set({ connAccent }),
       addCustomTheme: (p) =>
         set((s) => ({
           customThemes: [...s.customThemes.filter((c) => c.id !== p.id), p],
           paletteId: p.id,
+          // authoring a theme IS choosing it — leaving Match Connection on
+          // made Save appear to do nothing (the radio invariant, as in
+          // setPalette above)
+          matchConnection: false,
         })),
       removeCustomTheme: (id) =>
         set((s) => ({
@@ -194,6 +212,7 @@ export const useSettings = create<SettingsState>()(
         glassAlpha: s.glassAlpha,
         mode: s.mode,
         paletteId: s.paletteId,
+        matchConnection: s.matchConnection,
         customThemes: s.customThemes,
       }),
     },
@@ -206,7 +225,13 @@ export function allPalettes(): Palette[] {
 }
 
 function currentPalette(): Palette {
-  const { paletteId } = useSettings.getState();
+  const { paletteId, matchConnection, connAccent } = useSettings.getState();
+  // Match Connection: derive from the active connection's color; with no
+  // live connection (home, disconnected) fall back to the chosen palette
+  if (matchConnection && connAccent) {
+    const derived = connectionPalette(connAccent);
+    if (derived) return derived;
+  }
   return allPalettes().find((p) => p.id === paletteId) ?? PALETTES[0];
 }
 
@@ -285,7 +310,9 @@ if (typeof window !== "undefined") {
       s.mode !== prev.mode ||
       s.paletteId !== prev.paletteId ||
       s.customThemes !== prev.customThemes ||
-      s.glassAlpha !== prev.glassAlpha;
+      s.glassAlpha !== prev.glassAlpha ||
+      s.matchConnection !== prev.matchConnection ||
+      (s.matchConnection && s.connAccent !== prev.connAccent);
     const zoomChanged = s.uiZoom !== prev.uiZoom;
     prev = s;
     if (themeChanged) apply();

@@ -54,8 +54,14 @@ toolbars, headers) get a FIXED height sized to their tallest state — content
 swaps inside the reserved space. Hover/state reveals occupy layout
 (`visibility`/`opacity`, never `display`) when the revealed element is taller
 or wider than its siblings. Inline text that changes with state reserves the
-widest face (the Cancelling… stacked-grid precedent). An interaction that
-moves its own container is a broken contract with the user's eyes.
+widest face (the Cancelling… stacked-grid precedent). Scope: this binds
+WITHIN-mode state swaps (hover, progress, mid-interaction flips); a
+transition BETWEEN modes (idle→running, view→edit) may reflow its own
+inline controls — reserving the widest face across modes turns everyday
+chrome into dead space (the fat-Run lesson). Preferred resolution when a
+control should stay constant across modes: EQUALIZE the faces by copy
+first (trim the long face), then reserve — the qb action slot precedent. An interaction that moves its
+own container is a broken contract with the user's eyes.
 
 ## Rule 3 — Contrast tiers are semantic
 

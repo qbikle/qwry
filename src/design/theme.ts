@@ -159,6 +159,41 @@ function adjustAccent(accent: string, mode: "dark" | "light") {
   };
 }
 
+export const CONN_MATCH_ID = "conn-match";
+
+/** shortest wheel distance between two hues */
+function hueDist(a: number, b: number): number {
+  const d = Math.abs(a - b) % 360;
+  return d > 180 ? 360 - d : d;
+}
+
+/** steer a hue out of the danger band (reds, ~345–15°): the accent must
+ * never wear the danger register's color — Run reading as Delete is a
+ * data-safety failure, not a taste call. Exits to the nearer safe edge. */
+function steerFromDanger(h: number): number {
+  if (hueDist(h, 0) > 15) return h;
+  return hueDist(h, 335) <= hueDist(h, 25) ? 335 : 25;
+}
+
+/** Match Connection: the active connection's avatar color seeds the accent
+ * over a PURE NEUTRAL surface ramp (tint 0) — the app quietly wears the
+ * connection's identity without surfaces shifting hue per connection */
+export function connectionPalette(color: string): Palette | null {
+  // profile.color comes from appdb and never crossed sanitizePalette's HEX6
+  // moat — malformed hex once expanded to NaN CSS vars and bricked the UI,
+  // so an invalid seed declines and the caller falls back to the palette
+  if (!isHex(color)) return null;
+  const { h, s: sat, l } = hexToHsl(color);
+  const sh = steerFromDanger(h);
+  return {
+    id: CONN_MATCH_ID,
+    name: "Match Connection",
+    accent: hsl(sh, sat, l),
+    hue: sh,
+    tint: 0,
+  };
+}
+
 /** a custom theme defined by explicit anchor colours */
 export function isAnchors(p: Palette): boolean {
   return !!(p.bg && p.fg && p.primary);
