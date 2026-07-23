@@ -5,6 +5,7 @@ import { FORMAT_PRESETS } from "../editor/format";
 import { useSettings, zoomBy, type Mode } from "../stores/settings";
 import { useUI } from "../stores/ui";
 import { Modal } from "./overlay/Overlay";
+import { Switch } from "../design/Switch";
 import "./app.css";
 
 const MODES: { id: Mode; label: string }[] = [
@@ -125,11 +126,11 @@ export function SettingsModal() {
         </div>
         <label className="settings-row settings-check">
           <span className="settings-label">Wrap Long Lines</span>
-          <input type="checkbox" checked={wrapLines} onChange={toggleWrapLines} />
+          <Switch checked={wrapLines} onChange={() => toggleWrapLines()} />
         </label>
         <label className="settings-row settings-check">
           <span className="settings-label">Functions in Autocomplete</span>
-          <input type="checkbox" checked={fnInComplete} onChange={toggleFnInComplete} />
+          <Switch checked={fnInComplete} onChange={() => toggleFnInComplete()} />
         </label>
 
         <div className="settings-section">Results Grid</div>

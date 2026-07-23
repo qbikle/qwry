@@ -200,7 +200,6 @@
 }
 .settings-label { color: var(--fg-muted); }
 .settings-check { cursor: pointer; }
-.settings-check input { accent-color: var(--accent); cursor: pointer; }
 /* segmented control (DESIGN.md rule 1): panel-inset track, 2px gap,
    active = accent-soft — keep in lockstep with .tp-modes */
 .settings-seg {

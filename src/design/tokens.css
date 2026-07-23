@@ -325,6 +325,77 @@ button:disabled {
 .linkish:hover:not(:disabled) { background: var(--accent-soft); }
 .linkish:active:not(:disabled) { background: color-mix(in srgb, var(--accent) 24%, transparent); }
 
+/* switch — macOS-style toggle for feature/setting rows (rendered only via
+   <Switch>). A hidden native checkbox is the truth: role=switch, Space
+   toggles, label clicks associate; every visual state derives from the
+   input through :has(). Checkboxes remain the species for selection within
+   content (filter rows, lists). */
+.switch {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 32px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--bg-active);
+  border: 1px solid var(--border);
+  transition:
+    background var(--dur-quick) var(--ease-std),
+    border-color var(--dur-quick) var(--ease-std),
+    filter var(--dur-quick) var(--ease-std);
+}
+.switch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.switch input:disabled {
+  cursor: default;
+}
+.switch-knob {
+  position: absolute;
+  top: 1px; /* optical */
+  left: 1px; /* optical */
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  transition:
+    left var(--dur-quick) var(--ease-spring),
+    width var(--dur-quick) var(--ease-spring);
+}
+.switch:hover:has(input:not(:disabled)) {
+  filter: brightness(1.08);
+}
+.switch:has(input:checked) {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.switch:has(input:checked) .switch-knob {
+  left: 13px; /* optical */
+}
+/* macOS press stretch — the knob grows while held and springs on release */
+.switch:has(input:active:not(:disabled)) .switch-knob {
+  width: 19px; /* optical */
+}
+.switch:has(input:checked:active:not(:disabled)) .switch-knob {
+  left: 10px; /* optical */
+}
+.switch:has(input:disabled) {
+  opacity: var(--o-disabled);
+}
+/* the input is invisible, so its focus ring renders on the track */
+.switch:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 /* shortcut glyphs (WRITING.md glyph register / DESIGN.md rule 7) — UI font,
    tier-2 contrast, label-adjacent size. Rendered only via <Kbd>. */
 .kbd {

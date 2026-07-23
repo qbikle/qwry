@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { AlertTriangle, ArrowRight, CheckCircle2, FileUp, X } from "lucide-react";
 import { popIn } from "../design/springs";
+import { Switch } from "../design/Switch";
 import { Modal } from "../app/overlay/Overlay";
 import * as ipc from "../ipc/commands";
 import type {
@@ -380,11 +381,10 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                     ))}
                   </div>
                   <label className="imp-check">
-                    <input
-                      type="checkbox"
+                    <Switch
                       checked={preview?.has_header ?? false}
-                      onChange={(e) => {
-                        headerOverride.current = e.target.checked;
+                      onChange={(on) => {
+                        headerOverride.current = on;
                         invalidateRuns();
                         void loadPreview(path, preview?.delimiter ?? null);
                       }}

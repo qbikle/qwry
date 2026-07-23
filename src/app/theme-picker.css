@@ -243,7 +243,8 @@
   color: var(--danger-fg);
 }
 
-/* scope row — same checkbox species as the Settings modal rows */
+/* scope row — switch species; the ⓘ lives OUTSIDE the label so reading the
+   tooltip can never flip the setting */
 .tp-scope {
   display: flex;
   align-items: center;
@@ -251,10 +252,11 @@
   padding: 0 var(--sp-1);
   font-size: var(--text-sm);
   color: var(--fg);
-  cursor: pointer;
 }
-.tp-scope input {
-  accent-color: var(--accent);
+.tp-scope-lab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
   cursor: pointer;
 }
 .tp-scope-info {

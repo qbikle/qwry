@@ -9,6 +9,7 @@ import { avatarColor } from "../design/avatarColor";
 import type { Profile } from "../ipc/types";
 import { useUI } from "../stores/ui";
 import { Modal } from "./overlay/Overlay";
+import { Switch } from "../design/Switch";
 import "./theme-picker.css";
 
 const MODES: [Mode, string, typeof Moon][] = [
@@ -219,20 +220,18 @@ export function ThemePicker() {
           </button>
         )}
 
-        <label className="tp-scope">
-          <input
-            type="checkbox"
-            checked={themeEverywhere}
-            onChange={(e) => setThemeEverywhere(e.target.checked)}
-          />
-          <span>One Theme Everywhere</span>
+        <div className="tp-scope">
+          <label className="tp-scope-lab">
+            <Switch checked={themeEverywhere} onChange={setThemeEverywhere} />
+            <span>One Theme Everywhere</span>
+          </label>
           <span
             className="tp-scope-info"
             title="On: the current theme applies to every connection. Off: each connection keeps its own theme. Connections without one follow the app theme."
           >
             <Info size={14} />
           </span>
-        </label>
+        </div>
 
         <div className="tp-foot">
           Custom themes pick exact colors; the opposite light/dark variant is generated
