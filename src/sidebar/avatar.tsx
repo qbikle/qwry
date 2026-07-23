@@ -17,6 +17,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { Profile } from "../ipc/types";
+import { avatarColor } from "../design/avatarColor";
+export { AVATAR_PALETTE, avatarColor } from "../design/avatarColor";
 import "./avatar.css";
 
 /** readable glyph colour for a given avatar background */
@@ -46,20 +48,6 @@ export const AVATAR_ICONS: Record<string, LucideIcon> = {
   rocket: Rocket,
   anchor: Anchor,
 };
-
-// fallback palette when a profile has no custom colour
-export const AVATAR_PALETTE = [
-  "#5b8cff",
-  "#3ecf8e",
-  "#f5a623",
-  "#ff5c69",
-  "#c792ea",
-  "#22b8cf",
-  "#ff8a65",
-];
-
-export const avatarColor = (p: Profile, i = 0) =>
-  p.color || AVATAR_PALETTE[i % AVATAR_PALETTE.length];
 
 export const autoInitial = (p: Profile) =>
   (p.name.trim()[0] || p.host[0] || "?").toUpperCase();

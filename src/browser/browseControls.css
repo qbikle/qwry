@@ -172,9 +172,13 @@
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: 2px var(--sp-3);
+  /* FIXED height sized to the tallest state (22px iconbtn inside the
+     counting/jump chips) — the strip must never resize when a chip
+     appears (stable-chrome law, DESIGN rule 2) */
+  height: 28px;
+  padding: 0 var(--sp-3);
   border-top: 1px solid var(--border);
-  font-size: var(--text-2xs);
+  font-size: var(--text-xs);
   font-family: var(--font-mono);
   color: var(--fg-muted);
 }

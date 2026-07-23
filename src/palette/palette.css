@@ -36,6 +36,14 @@
   color: var(--fg);
   user-select: text;
 }
+/* underline-style input: the underline is the focus treatment — kill the
+   global ring (bare outline:none loses to input:focus-visible) */
+.pal [cmdk-input]:focus-visible {
+  outline: none;
+}
+.pal [cmdk-input]:focus {
+  border-bottom-color: var(--accent);
+}
 
 .pal [cmdk-list] {
   overflow-y: auto;
@@ -93,12 +101,15 @@
 /* shortcut glyphs: UI font, tier 2 (WRITING.md glyph register) */
 .pal kbd {
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  height: 20px; /* matches the .kbd-cap geometry — one boxed-hint height */
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   color: var(--fg-muted);
   background: var(--bg-active);
   border-radius: var(--radius-xs);
-  padding: 1px 6px; /* optical */
+  padding: 0 6px; /* optical */
 }
 .pal [cmdk-item][data-selected="true"] kbd {
   background: color-mix(in srgb, var(--accent-fg) 20%, transparent);

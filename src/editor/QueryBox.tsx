@@ -34,24 +34,36 @@ export function QueryBox() {
         >
           Explain <Kbd chord="cmd+e" />
         </button>
-        {running ? (
-          // both faces stay mounted stacked in one grid cell — the button is
-          // as wide as the wider label, so Cancel → Cancelling… can't jump
-          <button className="qb-cancel" onClick={() => cancel()} disabled={cancelling}>
+        {/* ONE action slot, constant size across every mode: all faces stay
+            mounted stacked in a grid cell, and the faces are EQUALIZED by
+            copy ("Cancelling"/"Connecting" drop the progress … — a width-
+            over-register call, scoped here) so the reservation costs ~1ch
+            instead of a fat button. Explain never moves; the button never
+            resizes; only its skin changes with state. */}
+        <span className="qb-action-slot">
+          <button
+            className="qb-cancel"
+            data-off={!running || undefined}
+            onClick={() => cancel()}
+            disabled={cancelling}
+          >
             <span className="qb-cancel-face" data-hidden={cancelling || undefined}>
               Cancel <Kbd chord="cmd+period" />
             </span>
             <span className="qb-cancel-face" data-hidden={!cancelling || undefined}>
-              Cancelling…
+              Cancelling
             </span>
           </button>
-        ) : connecting ? (
-          <button className="qb-run btnish primary" disabled>
-            Connecting…
-          </button>
-        ) : (
           <button
             className="qb-run btnish primary"
+            data-off={running || !connecting || undefined}
+            disabled
+          >
+            Connecting
+          </button>
+          <button
+            className="qb-run btnish primary"
+            data-off={running || connecting || undefined}
             onClick={() => {
               const t = runTarget();
               void run(t?.text, t?.offset);
@@ -60,7 +72,7 @@ export function QueryBox() {
           >
             Run <Kbd chord="cmd+return" />
           </button>
-        )}
+        </span>
       </div>
     </div>
   );

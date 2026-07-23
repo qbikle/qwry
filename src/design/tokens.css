@@ -336,9 +336,14 @@ button:disabled {
 /* keycap costume — teaching surfaces only (cheatsheet, empty states) */
 .kbd-cap {
   display: inline-flex;
+  align-items: center;
   justify-content: center;
-  min-width: 22px;
-  padding: 1px 6px; /* optical */ /* keycap proportion */
+  /* SQUARE base: height = min-width, so single glyphs (⌘, ↩) read as
+     keycaps, not landscape chips; multi-char keys (esc, F2) grow wide
+     naturally from the padding */
+  height: 20px;
+  min-width: 20px;
+  padding: 0 5px; /* optical */ /* keycap proportion */
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   color: var(--fg-muted);

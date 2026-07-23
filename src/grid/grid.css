@@ -127,8 +127,13 @@
 /* status bar */
 .status-bar {
   display: flex;
+  align-items: center;
   gap: var(--sp-4);
-  padding: var(--row-y-dense) var(--sp-3);
+  /* FIXED height sized to the tallest children (20px rerun/filter buttons;
+     the ⏳ emoji line-box) — running/counting states must swap content, not
+     resize the strip (stable-chrome law, DESIGN rule 2) */
+  height: 24px;
+  padding: 0 var(--sp-3);
   border-top: 1px solid var(--border);
   color: var(--fg-muted);
   font-size: var(--text-xs);

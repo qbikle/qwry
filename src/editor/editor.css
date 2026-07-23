@@ -23,6 +23,9 @@
   gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-3);
   border-top: 1px solid var(--border);
+  /* between-mode face swaps share .btnish metrics today — the floor makes
+     that structural instead of coincidental (rule 2 strips clause) */
+  min-height: 28px;
 }
 
 /* tab bar */
@@ -274,6 +277,14 @@
   font-size: var(--text-lg);
   user-select: text;
 }
+/* underline-style input: the underline is the focus treatment — kill the
+   global ring (bare outline:none loses to input:focus-visible) */
+.fn-search input:focus-visible {
+  outline: none;
+}
+.fn-search input:focus {
+  border-bottom-color: var(--accent);
+}
 
 .fn-list {
   max-height: 320px;
@@ -358,7 +369,22 @@
 .qb-cancel:active:not(:disabled) {
   transform: scale(0.97);
 }
-/* Cancel / Cancelling… stack in one grid cell so the button holds the wider
+/* the action slot: every mode's face stays mounted in one grid cell, so the
+   button is one constant size (faces are copy-equalized, see QueryBox) and
+   Explain never shifts. Hidden faces take no clicks and leave the a11y tree */
+.qb-action-slot {
+  display: inline-grid;
+}
+.qb-action-slot > * {
+  grid-area: 1 / 1;
+  /* faces stretch to the slot's reserved width — center their labels so the
+     ~1ch of reservation slack splits evenly instead of pooling on the right */
+  justify-content: center;
+}
+.qb-action-slot > [data-off] {
+  visibility: hidden;
+}
+/* Cancel / Cancelling stack in one grid cell so the button holds the wider
    label's width for the whole run — no layout jump when the swap happens */
 .qb-cancel .qb-cancel-face {
   grid-area: 1 / 1;
@@ -495,8 +521,10 @@
 .tab-pin-glyph {
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  /* 18px = the tab-close box — a taller child grew the whole TAB STRIP by
+     2px the moment the first tab was pinned (stable-chrome, rule 2) */
+  width: 18px;
+  height: 18px;
   margin-right: 1px;
   flex-shrink: 0;
   opacity: 0.85; /* optical */

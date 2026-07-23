@@ -556,3 +556,21 @@ export async function confirmTxRollback(
     confirmLabel,
   );
 }
+
+// ---- Match Connection theming feed ---------------------------------------
+// Push the ACTIVE connection's avatar color into settings; the theme engine
+// re-derives when the toggle is on. One-way import (connections → settings,
+// avatarColor is pure data); pushes only on real color changes so the theme
+// subscription stays quiet otherwise.
+import { avatarColor } from "../design/avatarColor";
+import { useSettings } from "./settings";
+
+let lastConnAccent: string | null = null;
+useConnections.subscribe((s) => {
+  const p = s.activeProfileId ? s.profiles.find((x) => x.id === s.activeProfileId) : null;
+  const connected = !!p && s.connState[p.id] === "connected";
+  const c = connected && p ? avatarColor(p, s.profiles.indexOf(p)) : null;
+  if (c === lastConnAccent) return;
+  lastConnAccent = c;
+  useSettings.getState().setConnAccent(c);
+});

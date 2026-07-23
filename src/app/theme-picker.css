@@ -89,6 +89,27 @@
   overflow: hidden;
   transition: transform var(--dur-quick) var(--ease-spring);
 }
+/* Match Connection card: neutral surface, live dot(s) — connected shows the
+   ACTIVE connection's color, disconnected previews the rotation */
+.tp-swatch.tp-match {
+  background: var(--bg-raised);
+  color: var(--fg);
+}
+/* the universal "any connection" wheel — one dot, every hue; connected
+   swaps it for the live connection color */
+.tp-dot.rainbow {
+  background: conic-gradient(
+    from 0deg,
+    #e05563,
+    #e5a94f,
+    #54b96a,
+    #22b8cf,
+    #5b7cfa,
+    #c792ea,
+    #e05563
+  );
+}
+
 .tp-swatch:hover {
   transform: translateY(-1px);
 }

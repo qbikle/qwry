@@ -33,6 +33,9 @@ export function ThemePicker() {
   const setMode = useSettings((s) => s.setMode);
   const paletteId = useSettings((s) => s.paletteId);
   const setPalette = useSettings((s) => s.setPalette);
+  const matchConnection = useSettings((s) => s.matchConnection);
+  const setMatchConnection = useSettings((s) => s.setMatchConnection);
+  const connAccent = useSettings((s) => s.connAccent);
   const resolved = useSettings((s) => s.resolved);
   const addCustomTheme = useSettings((s) => s.addCustomTheme);
   const removeCustomTheme = useSettings((s) => s.removeCustomTheme);
@@ -112,9 +115,20 @@ export function ThemePicker() {
         </div>
 
         <div className="tp-grid">
+          <button
+            className={`tp-swatch tp-match${matchConnection ? " active" : ""}`}
+            title="Derive the theme from the active connection's color. Falls back to the selected palette when disconnected."
+            onClick={() => setMatchConnection(true)}
+          >
+            <span
+              className={`tp-dot${connAccent ? "" : " rainbow"}`}
+              style={connAccent ? { background: connAccent } : undefined}
+            />
+            <span className="tp-name">Match Connection</span>
+          </button>
           {palettes.map((p) => {
             const sw = swatch(p, dark);
-            const active = p.id === paletteId;
+            const active = p.id === paletteId && !matchConnection;
             return (
               <button
                 key={p.id}
