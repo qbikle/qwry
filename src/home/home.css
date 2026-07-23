@@ -221,6 +221,12 @@
 .ce-name:focus {
   border-color: var(--accent);
 }
+/* underline-style input: the accent underline IS the focus treatment — the
+   global focus-visible ring double-chromed it with a sharp box (bare
+   outline:none loses to input:focus-visible on specificity) */
+.ce-name:focus-visible {
+  outline: none;
+}
 
 .ce-colors {
   display: flex;
