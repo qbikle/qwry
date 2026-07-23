@@ -62,7 +62,7 @@ export function SavedQueries() {
     { kind: "item", label: "Open", onSelect: () => open(q) },
     {
       kind: "item",
-      label: "Rename",
+      label: "Rename…",
       onSelect: () => {
         setRenaming(q.id);
         setDraft(q.name);
@@ -169,7 +169,7 @@ export function SavedQueries() {
             <span className="pl-item-actions">
               <button
                 className="iconbtn"
-                title="Rename"
+                title="Rename…"
                 onClick={(e) => {
                   e.stopPropagation();
                   setRenaming(q.id);
