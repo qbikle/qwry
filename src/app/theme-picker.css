@@ -266,12 +266,14 @@
 .tp-scope-info:hover {
   color: var(--fg);
 }
-.tp-scope-info::after {
-  content: attr(data-tip);
+.tp-scope-info .tp-tip {
   position: absolute;
   bottom: calc(100% + var(--sp-1));
   left: 50%;
   transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
   width: 260px;
   padding: var(--sp-2) var(--sp-3);
   background: var(--bg-raised);
@@ -280,7 +282,7 @@
   box-shadow: var(--shadow-lg);
   font-size: var(--text-xs);
   line-height: 1.5;
-  color: var(--fg);
+  color: var(--fg-muted);
   text-align: left;
   white-space: normal;
   pointer-events: none;
@@ -291,7 +293,11 @@
     visibility var(--dur-quick) var(--ease-std);
   z-index: 1;
 }
-.tp-scope-info:hover::after {
+.tp-scope-info .tp-tip b {
+  color: var(--fg);
+  font-weight: 600;
+}
+.tp-scope-info:hover .tp-tip {
   opacity: 1;
   visibility: visible;
 }

@@ -222,12 +222,17 @@ export function ThemePicker() {
 
         <div className="tp-scope">
           <span>One Theme Everywhere</span>
-          <span
-            className="tp-scope-info"
-            aria-label="On: the current theme applies to every connection. Off: each connection keeps its own theme. Connections without one follow the app theme."
-            data-tip="On: the current theme applies to every connection. Off: each connection keeps its own theme. Connections without one follow the app theme."
-          >
+          <span className="tp-scope-info">
             <Info size={14} />
+            <span className="tp-tip" role="tooltip">
+              <span>
+                <b>On:</b> the current theme applies to every connection.
+              </span>
+              <span>
+                <b>Off:</b> each connection keeps its own theme. Connections without one
+                follow the app theme.
+              </span>
+            </span>
           </span>
           <Switch
             checked={themeEverywhere}
