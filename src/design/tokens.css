@@ -100,7 +100,7 @@
   --radius-lg: 12px;
 
   /* v0.2 floating-card shell */
-  --rail-w: 66px;
+  --rail-w: 56px; /* 8px pad · 40px avatar · 8px pad — ring (+4px) keeps 4px air inside the clip */
   --gutter: 9px;
   --radius-panel: 14px;
   --radius-inner: 10px;
