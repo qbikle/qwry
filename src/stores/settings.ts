@@ -145,6 +145,7 @@ function sanitizeSettings(persisted: unknown, current: SettingsState): SettingsS
   const customThemes = Array.isArray(p.customThemes)
     ? p.customThemes.map(sanitizePalette).filter((t): t is Palette => t !== null)
     : current.customThemes;
+  const knownPalettes = new Set([...PALETTES, ...customThemes].map((t) => t.id));
   return {
     ...current,
     fnInComplete: typeof p.fnInComplete === "boolean" ? p.fnInComplete : current.fnInComplete,
@@ -166,26 +167,34 @@ function sanitizeSettings(persisted: unknown, current: SettingsState): SettingsS
     uiZoom: finite(p.uiZoom, ZOOM_MIN, ZOOM_MAX, current.uiZoom),
     glassAlpha: finite(p.glassAlpha, 0, 1, current.glassAlpha),
     mode: pick(p.mode, ["system", "dark", "light"] as const, current.mode),
+    // a paletteId pointing at a palette that no longer exists (corrupt custom
+    // theme, version downgrade) would leave the picker with ZERO active cards
+    // while the app silently wears the fallback — degrade to the default
     paletteId:
-      typeof p.paletteId === "string" && p.paletteId !== "" ? p.paletteId : DEFAULT_PALETTE,
+      typeof p.paletteId === "string" && knownPalettes.has(p.paletteId)
+        ? p.paletteId
+        : DEFAULT_PALETTE,
     matchConnection: typeof p.matchConnection === "boolean" ? p.matchConnection : false,
     themeEverywhere: typeof p.themeEverywhere === "boolean" ? p.themeEverywhere : true,
-    connThemes: sanitizeConnThemes(p.connThemes, customThemes),
+    connThemes: sanitizeConnThemes(p.connThemes, knownPalettes),
     customThemes,
   };
 }
 
-/** map entries must hold a palette id that still exists — stale or garbage
- * entries drop (the connection just follows the app theme again) */
-function sanitizeConnThemes(raw: unknown, customThemes: Palette[]): Record<string, ConnThemeChoice> {
+/** map entries whose palette no longer exists fall back to the default
+ * palette, keeping the per-connection intent — same outcome as deleting the
+ * custom theme in-app (removeCustomTheme). Malformed shapes drop. */
+function sanitizeConnThemes(raw: unknown, known: Set<string>): Record<string, ConnThemeChoice> {
   if (typeof raw !== "object" || raw === null) return {};
-  const known = new Set([...PALETTES, ...customThemes].map((t) => t.id));
   const out: Record<string, ConnThemeChoice> = {};
   for (const [profileId, v] of Object.entries(raw as Record<string, unknown>)) {
     if (typeof v !== "object" || v === null) continue;
     const { paletteId, match } = v as Record<string, unknown>;
-    if (typeof paletteId !== "string" || !known.has(paletteId)) continue;
-    out[profileId] = { paletteId, match: match === true };
+    if (typeof paletteId !== "string") continue;
+    out[profileId] = {
+      paletteId: known.has(paletteId) ? paletteId : DEFAULT_PALETTE,
+      match: match === true,
+    };
   }
   return out;
 }
