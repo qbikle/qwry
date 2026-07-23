@@ -243,8 +243,8 @@
   color: var(--danger-fg);
 }
 
-/* scope row — switch species; the ⓘ lives OUTSIDE the label so reading the
-   tooltip can never flip the setting */
+/* scope row — System Settings layout: label, ⓘ, switch pushed right. Only
+   the switch toggles (macOS: the label is a name, not a hit target) */
 .tp-scope {
   display: flex;
   align-items: center;
@@ -253,20 +253,47 @@
   font-size: var(--text-sm);
   color: var(--fg);
 }
-.tp-scope-lab {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-2);
-  cursor: pointer;
-}
-.tp-scope-info {
+.tp-scope .switch {
   margin-left: auto;
+}
+/* instant hover tooltip — WKWebView's native title is slow and unreliable */
+.tp-scope-info {
+  position: relative;
   display: inline-flex;
   color: var(--fg-muted);
   cursor: help;
 }
 .tp-scope-info:hover {
   color: var(--fg);
+}
+.tp-scope-info::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + var(--sp-1));
+  left: 50%;
+  transform: translateX(-50%);
+  width: 260px;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--fg);
+  text-align: left;
+  white-space: normal;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--dur-quick) var(--ease-std),
+    visibility var(--dur-quick) var(--ease-std);
+  z-index: 1;
+}
+.tp-scope-info:hover::after {
+  opacity: 1;
+  visibility: visible;
 }
 
 /* owner dots — which connections hold this theme (per-connection mode).
