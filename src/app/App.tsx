@@ -24,6 +24,7 @@ import { DangerModal } from "./DangerModal";
 import { CloseGuardModal } from "./CloseGuardModal";
 import { ConnToast } from "./ConnToast";
 import { CopyToast } from "./CopyToast";
+import { UpdateToast } from "./UpdateToast";
 import { useExplain } from "../stores/explain";
 import { useCloseGuard } from "../stores/closeGuard";
 import { useFind } from "../stores/find";
@@ -897,6 +898,7 @@ export function App() {
       <CloseGuardModal />
       <ConnToast />
       <CopyToast />
+      <UpdateToast />
     </div>
   );
 }

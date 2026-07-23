@@ -106,6 +106,17 @@
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
 }
+/* update toast wears the conn-toast layout with an accent skin; a live
+   connection error outranks it in the same corner */
+.conn-toast.update-toast {
+  border-color: var(--accent);
+  z-index: 999;
+}
+.update-toast-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--accent);
+}
 .conn-toast-icon {
   flex-shrink: 0;
   margin-top: 1px;

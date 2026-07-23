@@ -192,6 +192,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // remembers window size/position across launches (saves on close/move).
         // VISIBLE is excluded: the window is created hidden and the frontend
         // shows it after first paint — restoring visibility here would flash

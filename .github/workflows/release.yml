@@ -1,0 +1,38 @@
+# Release + auto-update feed.
+# Ritual: bump "version" in src-tauri/tauri.conf.json → tag vX.Y.Z → push tag.
+# This builds the app, signs the updater artifact (minisign — secrets
+# TAURI_SIGNING_PRIVATE_KEY[_PASSWORD]), and publishes a GitHub Release with
+# the .dmg, the .app.tar.gz + .sig, and latest.json (the updater endpoint).
+# NOTE: the repo must be public for the endpoint to serve without auth.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+      - name: install frontend deps
+        run: bun install
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "qwry ${{ github.ref_name }}"
+          releaseBody: "See the session log in docs/ROADMAP.md for what changed."
+          releaseDraft: false
+          prerelease: false
