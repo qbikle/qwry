@@ -665,7 +665,7 @@ function BrowseFooter({
           title="Exact count over the current WHERE. Click to re-count"
           onClick={() => void runExactCount()}
         >
-          {exactCount.toLocaleString()} rows{whereActive ? " · filtered" : ""}
+          {exactCount.toLocaleString()} rows · exact{whereActive ? " · filtered" : ""}
         </button>
       ) : (
         <button
@@ -679,7 +679,7 @@ function BrowseFooter({
           }
           onClick={() => void runExactCount()}
         >
-          {est ? `≈ ${est} rows${whereActive ? " in table" : ""}` : "Count Rows"}
+          {est ? `${est} rows${whereActive ? " in table" : ""} · approx` : "Count Rows"}
         </button>
       )}
       {countError && (

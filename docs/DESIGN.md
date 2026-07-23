@@ -49,6 +49,14 @@ hand feels. Disabled = `opacity: var(--o-disabled)` (one value app-wide, no
 more .4/.45/.5/.55). `outline: none` is legal only when the same block
 defines a replacement focus treatment.
 
+**Stable chrome**: state never resizes chrome. Strips (status bars, footers,
+toolbars, headers) get a FIXED height sized to their tallest state — content
+swaps inside the reserved space. Hover/state reveals occupy layout
+(`visibility`/`opacity`, never `display`) when the revealed element is taller
+or wider than its siblings. Inline text that changes with state reserves the
+widest face (the Cancelling… stacked-grid precedent). An interaction that
+moves its own container is a broken contract with the user's eyes.
+
 ## Rule 3 — Contrast tiers are semantic
 
 | tier | token | meaning |

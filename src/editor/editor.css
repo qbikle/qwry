@@ -368,6 +368,19 @@
 .qb-cancel .qb-cancel-face[data-hidden] {
   visibility: hidden;
 }
+/* the whole ACTION slot (Run ⌘↩ / Connecting… / Cancel) is one grid cell:
+   all three faces stay mounted, hidden faces keep their width, so the slot
+   is always as wide as the widest state and Explain never shifts sideways
+   across idle → connecting → running (stable-chrome, rule 2) */
+.qb-action-slot {
+  display: inline-grid;
+}
+.qb-action-slot > * {
+  grid-area: 1 / 1;
+}
+.qb-action-slot > [data-off] {
+  visibility: hidden;
+}
 .qb-bar .qb-run {
   font-weight: 500;
 }
@@ -495,8 +508,10 @@
 .tab-pin-glyph {
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  /* 18px = the tab-close box — a taller child grew the whole TAB STRIP by
+     2px the moment the first tab was pinned (stable-chrome, rule 2) */
+  width: 18px;
+  height: 18px;
   margin-right: 1px;
   flex-shrink: 0;
   opacity: 0.85; /* optical */

@@ -42,11 +42,16 @@
 }
 
 .pl-item-actions {
-  display: none;
-  gap: 2px;
-}
-.pl-item:hover .pl-item-actions {
   display: flex;
+  gap: 2px;
+  /* occupies layout even hidden — the 22px iconbtns are taller than the
+     text line, and a display reveal GREW the row on hover (stable-chrome
+     law, DESIGN rule 2). focus-within = the keyboard route in */
+  visibility: hidden;
+}
+.pl-item:hover .pl-item-actions,
+.pl-item:focus-within .pl-item-actions {
+  visibility: visible;
 }
 
 

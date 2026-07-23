@@ -34,10 +34,17 @@ export function QueryBox() {
         >
           Explain <Kbd chord="cmd+e" />
         </button>
-        {running ? (
-          // both faces stay mounted stacked in one grid cell — the button is
-          // as wide as the wider label, so Cancel → Cancelling… can't jump
-          <button className="qb-cancel" onClick={() => cancel()} disabled={cancelling}>
+        {/* all three action states stay mounted in one grid slot — the slot
+            is as wide as the widest face, so Explain never shifts sideways
+            across idle → connecting → running. visibility:hidden faces take
+            no clicks and leave the a11y tree */}
+        <span className="qb-action-slot">
+          <button
+            className="qb-cancel"
+            data-off={!running || undefined}
+            onClick={() => cancel()}
+            disabled={cancelling}
+          >
             <span className="qb-cancel-face" data-hidden={cancelling || undefined}>
               Cancel <Kbd chord="cmd+period" />
             </span>
@@ -45,13 +52,16 @@ export function QueryBox() {
               Cancelling…
             </span>
           </button>
-        ) : connecting ? (
-          <button className="qb-run btnish primary" disabled>
-            Connecting…
-          </button>
-        ) : (
           <button
             className="qb-run btnish primary"
+            data-off={running || !connecting || undefined}
+            disabled
+          >
+            Connecting…
+          </button>
+          <button
+            className="qb-run btnish primary"
+            data-off={running || connecting || undefined}
             onClick={() => {
               const t = runTarget();
               void run(t?.text, t?.offset);
@@ -60,7 +70,7 @@ export function QueryBox() {
           >
             Run <Kbd chord="cmd+return" />
           </button>
-        )}
+        </span>
       </div>
     </div>
   );
