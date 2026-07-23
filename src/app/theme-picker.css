@@ -95,9 +95,19 @@
   background: var(--bg-raised);
   color: var(--fg);
 }
-.tp-match-dots {
-  display: inline-flex;
-  gap: 4px;
+/* the universal "any connection" wheel — one dot, every hue; connected
+   swaps it for the live connection color */
+.tp-dot.rainbow {
+  background: conic-gradient(
+    from 0deg,
+    #e05563,
+    #e5a94f,
+    #54b96a,
+    #22b8cf,
+    #5b7cfa,
+    #c792ea,
+    #e05563
+  );
 }
 
 .tp-swatch:hover {

@@ -4,7 +4,6 @@ import { Copy, Monitor, Moon, Pencil, Plus, Sun, Trash2, X } from "lucide-react"
 import { popIn } from "../design/springs";
 import { useSettings, type Mode } from "../stores/settings";
 import { anchorsOf, PALETTES, swatch, type Palette } from "../design/theme";
-import { AVATAR_PALETTE } from "../design/avatarColor";
 import { useUI } from "../stores/ui";
 import { Modal } from "./overlay/Overlay";
 import "./theme-picker.css";
@@ -121,13 +120,10 @@ export function ThemePicker() {
             title="Derive the theme from the active connection's color. Falls back to the selected palette when disconnected."
             onClick={() => setMatchConnection(true)}
           >
-            <span className="tp-match-dots">
-              {(connAccent ? [connAccent] : AVATAR_PALETTE.slice(0, 4)).map(
-                (c, i) => (
-                  <span key={i} className="tp-dot" style={{ background: c }} />
-                ),
-              )}
-            </span>
+            <span
+              className={`tp-dot${connAccent ? "" : " rainbow"}`}
+              style={connAccent ? { background: connAccent } : undefined}
+            />
             <span className="tp-name">Match Connection</span>
           </button>
           {palettes.map((p) => {
