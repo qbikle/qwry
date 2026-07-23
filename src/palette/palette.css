@@ -36,6 +36,14 @@
   color: var(--fg);
   user-select: text;
 }
+/* underline-style input: the underline is the focus treatment — kill the
+   global ring (bare outline:none loses to input:focus-visible) */
+.pal [cmdk-input]:focus-visible {
+  outline: none;
+}
+.pal [cmdk-input]:focus {
+  border-bottom-color: var(--accent);
+}
 
 .pal [cmdk-list] {
   overflow-y: auto;

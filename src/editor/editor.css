@@ -274,6 +274,14 @@
   font-size: var(--text-lg);
   user-select: text;
 }
+/* underline-style input: the underline is the focus treatment — kill the
+   global ring (bare outline:none loses to input:focus-visible) */
+.fn-search input:focus-visible {
+  outline: none;
+}
+.fn-search input:focus {
+  border-bottom-color: var(--accent);
+}
 
 .fn-list {
   max-height: 320px;
