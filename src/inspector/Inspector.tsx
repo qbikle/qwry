@@ -256,7 +256,12 @@ export function Inspector() {
         <div className="insp-top">
           <span className="insp-col muted">Inspector</span>
         </div>
-        <div className="insp-empty">Select a cell to inspect</div>
+        <div className="insp-empty">
+          <span>Select a cell to inspect</span>
+          <span className="insp-empty-hint">
+            <Kbd chord="cmd+i" caps /> toggles this panel
+          </span>
+        </div>
       </div>
     );
   }

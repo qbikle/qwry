@@ -9,11 +9,20 @@
 
 .insp-empty {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: var(--sp-2);
   flex: 1;
   color: var(--fg-faint);
   font-size: var(--text-sm);
+}
+.insp-empty-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
 }
 
 /* header */
