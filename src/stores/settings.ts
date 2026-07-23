@@ -61,6 +61,18 @@ interface SettingsState {
   connAccent: string | null;
   setMatchConnection: (on: boolean) => void;
   setConnAccent: (c: string | null) => void;
+  /** one theme everywhere (default) vs per-connection themes */
+  themeEverywhere: boolean;
+  /** per-connection theme choices, sparse — an absent entry follows the app
+   * theme, so turning the toggle off changes nothing until a pick lands */
+  connThemes: Record<string, ConnThemeChoice>;
+  /** the active workspace's profile id (runtime only, pushed by the
+   * connections store) — the per-connection theme scope key */
+  activeConnId: string | null;
+  setThemeEverywhere: (on: boolean) => void;
+  setActiveConnId: (id: string | null) => void;
+  /** a deleted profile's theme dies with it */
+  dropConnTheme: (profileId: string) => void;
   /** user-created palettes */
   customThemes: Palette[];
   /** resolved render mode after applying system pref */
@@ -70,6 +82,37 @@ interface SettingsState {
   setPalette: (id: string) => void;
   addCustomTheme: (p: Palette) => void;
   removeCustomTheme: (id: string) => void;
+}
+
+/** one theme decision — a palette, or Match Connection with the palette as
+ * its disconnected fallback */
+export interface ConnThemeChoice {
+  paletteId: string;
+  match: boolean;
+}
+
+/** the choice the current scope resolves to: the active connection's entry
+ * when per-connection themes are on, the app theme otherwise */
+export function themeChoice(
+  s: Pick<
+    SettingsState,
+    "themeEverywhere" | "activeConnId" | "connThemes" | "paletteId" | "matchConnection"
+  >,
+): ConnThemeChoice {
+  if (!s.themeEverywhere && s.activeConnId) {
+    const entry = s.connThemes[s.activeConnId];
+    if (entry) return entry;
+  }
+  return { paletteId: s.paletteId, match: s.matchConnection };
+}
+
+/** route a pick to the scope it belongs to — the active connection's map
+ * entry when per-connection themes are on, the app theme fields otherwise */
+function scopedChoice(s: SettingsState, choice: ConnThemeChoice): Partial<SettingsState> {
+  if (!s.themeEverywhere && s.activeConnId) {
+    return { connThemes: { ...s.connThemes, [s.activeConnId]: choice } };
+  }
+  return { paletteId: choice.paletteId, matchConnection: choice.match };
 }
 
 function systemDark(): boolean {
@@ -99,6 +142,9 @@ function sanitizeSettings(persisted: unknown, current: SettingsState): SettingsS
     string,
     unknown
   >;
+  const customThemes = Array.isArray(p.customThemes)
+    ? p.customThemes.map(sanitizePalette).filter((t): t is Palette => t !== null)
+    : current.customThemes;
   return {
     ...current,
     fnInComplete: typeof p.fnInComplete === "boolean" ? p.fnInComplete : current.fnInComplete,
@@ -123,10 +169,25 @@ function sanitizeSettings(persisted: unknown, current: SettingsState): SettingsS
     paletteId:
       typeof p.paletteId === "string" && p.paletteId !== "" ? p.paletteId : DEFAULT_PALETTE,
     matchConnection: typeof p.matchConnection === "boolean" ? p.matchConnection : false,
-    customThemes: Array.isArray(p.customThemes)
-      ? p.customThemes.map(sanitizePalette).filter((t): t is Palette => t !== null)
-      : current.customThemes,
+    themeEverywhere: typeof p.themeEverywhere === "boolean" ? p.themeEverywhere : true,
+    connThemes: sanitizeConnThemes(p.connThemes, customThemes),
+    customThemes,
   };
+}
+
+/** map entries must hold a palette id that still exists — stale or garbage
+ * entries drop (the connection just follows the app theme again) */
+function sanitizeConnThemes(raw: unknown, customThemes: Palette[]): Record<string, ConnThemeChoice> {
+  if (typeof raw !== "object" || raw === null) return {};
+  const known = new Set([...PALETTES, ...customThemes].map((t) => t.id));
+  const out: Record<string, ConnThemeChoice> = {};
+  for (const [profileId, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v !== "object" || v === null) continue;
+    const { paletteId, match } = v as Record<string, unknown>;
+    if (typeof paletteId !== "string" || !known.has(paletteId)) continue;
+    out[profileId] = { paletteId, match: match === true };
+  }
+  return out;
 }
 
 function resolveDark(mode: Mode): boolean {
@@ -177,23 +238,51 @@ export const useSettings = create<SettingsState>()(
 
       setMode: (mode) => set({ mode, resolved: resolveDark(mode) ? "dark" : "light" }),
       // picking a palette turns Match Connection off — mutual exclusion by
-      // structure, the picker card and palettes are one radio group
-      setPalette: (paletteId) => set({ paletteId, matchConnection: false }),
-      setMatchConnection: (on) => set({ matchConnection: on }),
+      // structure, the picker card and palettes are one radio group (per
+      // scope: the pick routes through scopedChoice)
+      setPalette: (paletteId) => set((s) => scopedChoice(s, { paletteId, match: false })),
+      setMatchConnection: (on) =>
+        set((s) => scopedChoice(s, { paletteId: themeChoice(s).paletteId, match: on })),
       setConnAccent: (connAccent) => set({ connAccent }),
+      themeEverywhere: true,
+      connThemes: {},
+      activeConnId: null,
+      // turning the toggle ON promotes whatever is on screen to the app
+      // theme; the map stays dormant so turning it back OFF restores every
+      // assignment
+      setThemeEverywhere: (on) =>
+        set((s) => {
+          if (!on) return { themeEverywhere: false };
+          const c = themeChoice(s);
+          return { themeEverywhere: true, paletteId: c.paletteId, matchConnection: c.match };
+        }),
+      setActiveConnId: (activeConnId) => set({ activeConnId }),
+      dropConnTheme: (profileId) =>
+        set((s) => {
+          if (!(profileId in s.connThemes)) return {};
+          const { [profileId]: _gone, ...connThemes } = s.connThemes;
+          return { connThemes };
+        }),
       addCustomTheme: (p) =>
         set((s) => ({
           customThemes: [...s.customThemes.filter((c) => c.id !== p.id), p],
-          paletteId: p.id,
           // authoring a theme IS choosing it — leaving Match Connection on
           // made Save appear to do nothing (the radio invariant, as in
           // setPalette above)
-          matchConnection: false,
+          ...scopedChoice(s, { paletteId: p.id, match: false }),
         })),
       removeCustomTheme: (id) =>
         set((s) => ({
           customThemes: s.customThemes.filter((c) => c.id !== id),
           paletteId: s.paletteId === id ? DEFAULT_PALETTE : s.paletteId,
+          // connections holding the deleted theme fall back to the default
+          // palette (their per-connection intent survives, the theme doesn't)
+          connThemes: Object.fromEntries(
+            Object.entries(s.connThemes).map(([k, v]) => [
+              k,
+              v.paletteId === id ? { ...v, paletteId: DEFAULT_PALETTE } : v,
+            ]),
+          ),
         })),
     }),
     {
@@ -213,6 +302,8 @@ export const useSettings = create<SettingsState>()(
         mode: s.mode,
         paletteId: s.paletteId,
         matchConnection: s.matchConnection,
+        themeEverywhere: s.themeEverywhere,
+        connThemes: s.connThemes,
         customThemes: s.customThemes,
       }),
     },
@@ -225,14 +316,15 @@ export function allPalettes(): Palette[] {
 }
 
 function currentPalette(): Palette {
-  const { paletteId, matchConnection, connAccent } = useSettings.getState();
+  const s = useSettings.getState();
+  const choice = themeChoice(s);
   // Match Connection: derive from the active connection's color; with no
   // live connection (home, disconnected) fall back to the chosen palette
-  if (matchConnection && connAccent) {
-    const derived = connectionPalette(connAccent);
+  if (choice.match && s.connAccent) {
+    const derived = connectionPalette(s.connAccent);
     if (derived) return derived;
   }
-  return allPalettes().find((p) => p.id === paletteId) ?? PALETTES[0];
+  return allPalettes().find((p) => p.id === choice.paletteId) ?? PALETTES[0];
 }
 
 /* UI zoom (⌘+/⌘−/⌘0) scales the CHROME: the px-based --text-* tokens are
@@ -312,7 +404,11 @@ if (typeof window !== "undefined") {
       s.customThemes !== prev.customThemes ||
       s.glassAlpha !== prev.glassAlpha ||
       s.matchConnection !== prev.matchConnection ||
-      (s.matchConnection && s.connAccent !== prev.connAccent);
+      s.themeEverywhere !== prev.themeEverywhere ||
+      s.connThemes !== prev.connThemes ||
+      // workspace switches restyle only when per-connection themes are live
+      (!s.themeEverywhere && s.activeConnId !== prev.activeConnId) ||
+      (themeChoice(s).match && s.connAccent !== prev.connAccent);
     const zoomChanged = s.uiZoom !== prev.uiZoom;
     prev = s;
     if (themeChanged) apply();

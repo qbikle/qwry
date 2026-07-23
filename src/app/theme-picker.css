@@ -243,6 +243,46 @@
   color: var(--danger-fg);
 }
 
+/* scope row — same checkbox species as the Settings modal rows */
+.tp-scope {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-1);
+  font-size: var(--text-sm);
+  color: var(--fg);
+  cursor: pointer;
+}
+.tp-scope input {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.tp-scope-info {
+  margin-left: auto;
+  display: inline-flex;
+  color: var(--fg-muted);
+  cursor: help;
+}
+.tp-scope-info:hover {
+  color: var(--fg);
+}
+
+/* owner dots — which connections hold this theme (per-connection mode).
+   Absolute overlay: appearing dots never move the card's content */
+.tp-who {
+  position: absolute;
+  top: var(--sp-1);
+  right: var(--sp-1);
+  display: flex;
+  gap: 3px; /* optical */
+}
+.tp-who i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.35);
+}
+
 .tp-foot {
   font-size: var(--text-xs);
   color: var(--fg-muted);

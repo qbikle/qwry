@@ -1,9 +1,12 @@
 import { useState } from "react";
 import { motion } from "motion/react";
-import { Copy, Monitor, Moon, Pencil, Plus, Sun, Trash2, X } from "lucide-react";
+import { Copy, Info, Monitor, Moon, Pencil, Plus, Sun, Trash2, X } from "lucide-react";
 import { popIn } from "../design/springs";
-import { useSettings, type Mode } from "../stores/settings";
+import { themeChoice, useSettings, type Mode } from "../stores/settings";
 import { anchorsOf, PALETTES, swatch, type Palette } from "../design/theme";
+import { useConnections } from "../stores/connections";
+import { avatarColor } from "../design/avatarColor";
+import type { Profile } from "../ipc/types";
 import { useUI } from "../stores/ui";
 import { Modal } from "./overlay/Overlay";
 import "./theme-picker.css";
@@ -36,6 +39,11 @@ export function ThemePicker() {
   const matchConnection = useSettings((s) => s.matchConnection);
   const setMatchConnection = useSettings((s) => s.setMatchConnection);
   const connAccent = useSettings((s) => s.connAccent);
+  const themeEverywhere = useSettings((s) => s.themeEverywhere);
+  const setThemeEverywhere = useSettings((s) => s.setThemeEverywhere);
+  const connThemes = useSettings((s) => s.connThemes);
+  const activeConnId = useSettings((s) => s.activeConnId);
+  const profiles = useConnections((s) => s.profiles);
   const resolved = useSettings((s) => s.resolved);
   const addCustomTheme = useSettings((s) => s.addCustomTheme);
   const removeCustomTheme = useSettings((s) => s.removeCustomTheme);
@@ -46,6 +54,24 @@ export function ThemePicker() {
   if (!open) return null;
   const dark = resolved === "dark";
   const palettes = [...PALETTES, ...customThemes];
+  // the radio group reflects the scope a pick would land in — the active
+  // connection's choice when per-connection themes are on, the app theme
+  // otherwise
+  const choice = themeChoice({
+    themeEverywhere,
+    activeConnId,
+    connThemes,
+    paletteId,
+    matchConnection,
+  });
+  // per-connection mode: each themed connection stamps its color on its card
+  const ownersOf = (id: string | null): typeof profiles => {
+    if (themeEverywhere) return [];
+    return profiles.filter((pr) => {
+      const e = connThemes[pr.id];
+      return e && (id === null ? e.match : !e.match && e.paletteId === id);
+    });
+  };
 
   const openCreate = () => {
     const b = dark ? BASE_DARK : BASE_LIGHT;
@@ -116,7 +142,7 @@ export function ThemePicker() {
 
         <div className="tp-grid">
           <button
-            className={`tp-swatch tp-match${matchConnection ? " active" : ""}`}
+            className={`tp-swatch tp-match${choice.match ? " active" : ""}`}
             title="Derive the theme from the active connection's color. Falls back to the selected palette when disconnected."
             onClick={() => setMatchConnection(true)}
           >
@@ -125,10 +151,11 @@ export function ThemePicker() {
               style={connAccent ? { background: connAccent } : undefined}
             />
             <span className="tp-name">Match Connection</span>
+            <OwnerDots owners={ownersOf(null)} all={profiles} />
           </button>
           {palettes.map((p) => {
             const sw = swatch(p, dark);
-            const active = p.id === paletteId && !matchConnection;
+            const active = p.id === choice.paletteId && !choice.match;
             return (
               <button
                 key={p.id}
@@ -138,6 +165,7 @@ export function ThemePicker() {
               >
                 <span className="tp-dot" style={{ background: sw.accent }} />
                 <span className="tp-name">{p.name}</span>
+                <OwnerDots owners={ownersOf(p.id)} all={profiles} />
                 <span
                   className="tp-action iconbtn"
                   title={p.custom ? "Edit theme" : "Duplicate to a custom theme"}
@@ -191,11 +219,39 @@ export function ThemePicker() {
           </button>
         )}
 
+        <label className="tp-scope">
+          <input
+            type="checkbox"
+            checked={themeEverywhere}
+            onChange={(e) => setThemeEverywhere(e.target.checked)}
+          />
+          <span>One Theme Everywhere</span>
+          <span
+            className="tp-scope-info"
+            title="On: the current theme applies to every connection. Off: each connection keeps its own theme. Connections without one follow the app theme."
+          >
+            <Info size={14} />
+          </span>
+        </label>
+
         <div className="tp-foot">
           Custom themes pick exact colors; the opposite light/dark variant is generated
           automatically. Hover to edit or duplicate.
         </div>
       </motion.div>
     </Modal>
+  );
+}
+
+/** which connections hold this theme — the pick-landed-here feedback while
+ * per-connection themes are on */
+function OwnerDots({ owners, all }: { owners: Profile[]; all: Profile[] }) {
+  if (owners.length === 0) return null;
+  return (
+    <span className="tp-who">
+      {owners.slice(0, 3).map((pr) => (
+        <i key={pr.id} style={{ background: avatarColor(pr, all.indexOf(pr)) }} />
+      ))}
+    </span>
   );
 }

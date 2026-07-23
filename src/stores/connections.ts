@@ -231,6 +231,7 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
     await get().loadProfiles();
     // SchemaTree's persisted table pins die with the profile too
     localStorage.removeItem(`qwry.pins.${id}`);
+    useSettings.getState().dropConnTheme(id);
     // its workspace dies with it (pinned tabs survive as orphans)
     void import("./tabs").then(({ useTabs }) => useTabs.getState().purgeProfileTabs(id));
   },
@@ -566,7 +567,14 @@ import { avatarColor } from "../design/avatarColor";
 import { useSettings } from "./settings";
 
 let lastConnAccent: string | null = null;
+let lastActiveConn: string | null = null;
 useConnections.subscribe((s) => {
+  // per-connection themes key on the workspace identity, connected or not —
+  // a disconnected workspace still shows that connection's UI
+  if (s.activeProfileId !== lastActiveConn) {
+    lastActiveConn = s.activeProfileId;
+    useSettings.getState().setActiveConnId(s.activeProfileId);
+  }
   const p = s.activeProfileId ? s.profiles.find((x) => x.id === s.activeProfileId) : null;
   const connected = !!p && s.connState[p.id] === "connected";
   const c = connected && p ? avatarColor(p, s.profiles.indexOf(p)) : null;
