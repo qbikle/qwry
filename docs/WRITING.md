@@ -37,7 +37,9 @@ data chrome, and consistency within the app outranks literal compliance.
    DDL, NULL, DEFAULT, Postgres.
 2. **The ellipsis is a contract.** `…` (the character, never `...`) on a
    control means "opens further UI that needs input before acting". No `…`
-   means it acts immediately. Both directions are binding.
+   means it acts immediately. Both directions are binding. (Owner-verified
+   against Apple's own apps 2026-07-24 — Safari Settings AutoFill "Edit…",
+   System Settings "Details…"; the HIG rule is current, keep it.)
 3. **No parentheticals in labels.** `Copy (no password)` is a code comment in
    a label costume. Name the object: `Copy URL` / `Copy URL with Password`.
    Qualifiers live in tooltips or hints, never parens.
