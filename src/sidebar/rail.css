@@ -16,11 +16,12 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  /* horizontal padding gives the active ring + indicator bar room inside the
-     clip box — overflow-y:auto forces overflow-x to clip, so they must fit
-     (12px each side: 40px avatar + 4px ring stays inside the 66px rail) */
+  /* horizontal padding gives the active ring room inside the clip box —
+     overflow-y:auto forces overflow-x to clip, so it must fit: 8px each
+     side = the ring's 4px overhang + 4px air (one grid unit) in the 56px
+     rail. Below 8 the ring visually fuses with the rail edge */
   overflow-x: hidden;
-  padding: var(--sp-2) var(--sp-3);
+  padding: var(--sp-2);
   margin: 0;
   width: 100%;
   list-style: none;
