@@ -407,8 +407,12 @@
 /* teaching-surface keycap — same costume as .kbd-cap (tokens.css), widened
    so the chord column aligns; UI font, tier 2, heavier bottom edge */
 .keys-row kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px; /* the .kbd-cap square-base height — one cap geometry app-wide */
   min-width: 72px;
-  padding: 1px 6px; /* optical */
+  padding: 0 6px; /* optical */
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   color: var(--fg-muted);
@@ -416,7 +420,6 @@
   border: 1px solid var(--border);
   border-bottom-width: 2px;
   border-radius: 5px; /* optical */
-  text-align: center;
   flex-shrink: 0;
 }
 

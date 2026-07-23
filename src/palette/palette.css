@@ -101,12 +101,15 @@
 /* shortcut glyphs: UI font, tier 2 (WRITING.md glyph register) */
 .pal kbd {
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  height: 20px; /* matches the .kbd-cap geometry — one boxed-hint height */
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   color: var(--fg-muted);
   background: var(--bg-active);
   border-radius: var(--radius-xs);
-  padding: 1px 6px; /* optical */
+  padding: 0 6px; /* optical */
 }
 .pal [cmdk-item][data-selected="true"] kbd {
   background: color-mix(in srgb, var(--accent-fg) 20%, transparent);
