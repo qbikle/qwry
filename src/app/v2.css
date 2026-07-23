@@ -63,6 +63,15 @@
     linear-gradient(var(--accent-soft), var(--accent-soft)),
     color-mix(in srgb, var(--bg-panel) 72%, transparent);
 }
+/* NOT glassy: the theme wash is the surface, so the active tool drops the
+   boxy accent chip — the ICON alone carries the accent. The chip returns
+   under [data-glassy], where the button must bring its own surface */
+:root:not([data-glassy]) .v2-titlebar .v2-tool.active {
+  background: transparent;
+}
+:root:not([data-glassy]) .v2-titlebar .v2-tool.active:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
 
 /* the prod chip's soft tints have the same glass problem — re-seat each
    state's tint on the translucent theme chip (gradient layers above color) */

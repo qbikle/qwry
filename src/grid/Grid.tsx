@@ -456,6 +456,14 @@ function CellEditor({
   );
 }
 
+/** browse tabs: horizontal scroll survives the reload-remount cycle — sort/
+ * filter/page re-runs clear the results while streaming, unmounting the
+ * grid, and a fresh scroller teleported the user back to column one. The
+ * viewport belongs to the user (LESSONS: one scroll authority); vertical
+ * deliberately resets (a new order reads from the top). Module map, not
+ * state: it must outlive the unmount. */
+const browseScrollLeft = new Map<string, number>();
+
 export function Grid({
   statement,
   insertable = false,
@@ -465,6 +473,19 @@ export function Grid({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!insertable) return;
+    // the grid is keyed by tab, so the active tab at mount IS this grid's tab
+    const tabId = useResults.getState().active;
+    const el = scrollRef.current;
+    if (!tabId || !el) return;
+    const saved = browseScrollLeft.get(tabId);
+    if (saved) el.scrollLeft = saved; // clamps to content width natively
+    return () => {
+      browseScrollLeft.set(tabId, el.scrollLeft);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [insertable]);
   const gridDensity = useSettings((s) => s.gridDensity);
   const ROW_H = DENSITY_ROW_H[gridDensity];
   useLayoutEffect(() => {
