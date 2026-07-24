@@ -16,6 +16,8 @@
     "clipboard-manager:allow-read-text",
     "core:window:allow-destroy",
     "core:window:allow-close",
-    "dialog:default"
+    "dialog:default",
+    "updater:default",
+    "process:default"
   ]
 }
