@@ -19,6 +19,9 @@ interface UpdaterState {
   version: string | null;
   /** 0..1 while downloading; total size can be unknown → stays 0 */
   progress: number;
+  /** download finished, local unpack + swap running (the eventless tail of
+   * downloadAndInstall) — the bar holds full and pulses */
+  installing: boolean;
   error: string | null;
   dismiss: () => void;
   install: () => Promise<void>;
@@ -38,6 +41,7 @@ export const useUpdater = create<UpdaterState>()((set, get) => ({
   phase: "idle",
   version: null,
   progress: 0,
+  installing: false,
   error: null,
 
   dismiss: () => {
@@ -67,14 +71,18 @@ export const useUpdater = create<UpdaterState>()((set, get) => ({
     // swap-and-close it, and the toast's Later sits ABOVE the dialog
     if (pending !== u) return;
     const gen = ++installGen;
-    set({ phase: "downloading", progress: 0, error: null });
+    set({ phase: "downloading", progress: 0, installing: false, error: null });
     let watchdog: ReturnType<typeof setTimeout> | undefined;
     const armWatchdog = () => {
       clearTimeout(watchdog);
       watchdog = setTimeout(() => {
         if (gen !== installGen) return;
         installGen++;
-        set({ phase: "error", error: "download stalled. Check the connection and try again" });
+        set({
+          phase: "error",
+          installing: false,
+          error: "download stalled. Check the connection and try again",
+        });
       }, STALL_MS);
     };
     armWatchdog();
@@ -88,6 +96,8 @@ export const useUpdater = create<UpdaterState>()((set, get) => ({
         else if (e.event === "Progress") {
           got += e.data.chunkLength;
           if (total > 0) set({ progress: Math.min(got / total, 1) });
+        } else if (e.event === "Finished") {
+          set({ progress: 1, installing: true });
         }
       });
       clearTimeout(watchdog);
@@ -114,7 +124,7 @@ export const useUpdater = create<UpdaterState>()((set, get) => ({
       }
     } catch (e) {
       clearTimeout(watchdog);
-      if (gen === installGen) set({ phase: "error", error: String(e) });
+      if (gen === installGen) set({ phase: "error", installing: false, error: String(e) });
     }
   },
 }));
