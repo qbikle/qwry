@@ -5,8 +5,23 @@
 // back, and never silently).
 import { openTxCount, useConnections } from "./connections";
 
-/** true = clear to exit; false = the user kept the app's state alive */
-export async function prepareExit(verb: "Quit" | "Update"): Promise<boolean> {
+/** what a process death would cost right now — returned on confirm so a
+ * second guard can auto-pass when nothing new appeared in between */
+export interface ExitCensus {
+  dirty: number;
+  draft: boolean;
+  txn: number;
+}
+
+/** census = clear to exit (the user confirmed, or nothing to lose);
+ * null = the user kept the app's state alive. Pass a prior confirmed
+ * census to re-prompt ONLY if the stakes grew since — confirming a loss
+ * doesn't discard anything, so an unchanged census must not re-ask the
+ * identical question. */
+export async function prepareExit(
+  verb: "Quit" | "Update",
+  prior?: ExitCensus | null,
+): Promise<ExitCensus | null> {
   const { flushTabs } = await import("./tabs");
   await flushTabs();
   const [{ useEdits }, { useBrowser, draftHasContent }] = await Promise.all([
@@ -21,9 +36,13 @@ export async function prepareExit(verb: "Quit" | "Update"): Promise<boolean> {
     draftHasContent(t.draftRow),
   );
   const txn = useConnections.getState().profiles.reduce((n, p) => n + openTxCount(p.id), 0);
-  if (dirty === 0 && !draft && txn === 0) return true;
+  const census: ExitCensus = { dirty, draft, txn };
+  if (dirty === 0 && !draft && txn === 0) return census;
+  if (prior && dirty <= prior.dirty && (prior.draft || !draft) && txn <= prior.txn) {
+    return census;
+  }
   const { confirmDanger } = await import("./danger");
-  return confirmDanger(
+  const ok = await confirmDanger(
     dirty > 0
       ? `${verb} with ${dirty} Uncommitted Edit${dirty === 1 ? "" : "s"}?`
       : draft
@@ -41,4 +60,5 @@ export async function prepareExit(verb: "Quit" | "Update"): Promise<boolean> {
       .join("\n"),
     verb,
   );
+  return ok ? census : null;
 }

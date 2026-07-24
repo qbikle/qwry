@@ -60,8 +60,12 @@ export const useUpdater = create<UpdaterState>()((set, get) => ({
     // the tab persist, confirm staged-edit/draft/transaction loss) BEFORE
     // the download, so declining costs nothing
     const { prepareExit } = await import("./exitGuard");
-    if (!(await prepareExit("Update"))) return;
+    const confirmed = await prepareExit("Update");
+    if (!confirmed) return;
     if (get().phase === "downloading") return; // re-read after the await
+    // the handle may have died during the guard dialog: a 4h check can
+    // swap-and-close it, and the toast's Later sits ABOVE the dialog
+    if (pending !== u) return;
     const gen = ++installGen;
     set({ phase: "downloading", progress: 0, error: null });
     let watchdog: ReturnType<typeof setTimeout> | undefined;
@@ -89,11 +93,14 @@ export const useUpdater = create<UpdaterState>()((set, get) => ({
       clearTimeout(watchdog);
       // installed on disk from here down — never offer this version again
       dismissedVersion = u.version;
-      pending = null;
+      // an orphan must never null a handle it doesn't own: after a stall
+      // the 4h check may have re-armed pending with a FRESH handle
+      if (pending === u) pending = null;
       if (gen !== installGen) return; // stalled-out orphan finished: no surprise relaunch
-      // the user may have staged NEW work during the download — re-guard.
-      // Clean state resolves silently; declined = installed, runs next launch
-      if (!(await prepareExit("Update"))) {
+      // re-guard before the relaunch, but only for work staged DURING the
+      // download — the first confirm discarded nothing, so an unchanged
+      // census auto-passes instead of re-asking the identical question
+      if (!(await prepareExit("Update", confirmed))) {
         set({ phase: "installed" });
         return;
       }
