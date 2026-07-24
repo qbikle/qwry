@@ -167,7 +167,7 @@
 }
 @keyframes update-bar-pulse {
   50% {
-    opacity: 0.55;
+    opacity: 0.55; /* optical */ /* breath depth, decoration not a contrast tier */
   }
 }
 .conn-toast-icon {
