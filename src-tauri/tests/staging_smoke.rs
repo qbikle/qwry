@@ -29,7 +29,7 @@ async fn staging_connect_and_query() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|_| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -90,7 +90,7 @@ async fn staging_introspect() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|_| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -149,7 +149,7 @@ async fn staging_edit_pipeline() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|_| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -241,7 +241,7 @@ async fn staging_matched_rollback() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|_| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -358,7 +358,7 @@ async fn staging_statement_at_a_time() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|_| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -485,7 +485,7 @@ async fn staging_streaming_and_cancel() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|_| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -595,7 +595,7 @@ async fn staging_prod_read_only() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|_| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -656,7 +656,7 @@ async fn staging_table_ddl() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|_| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
     let ddl = session
@@ -720,7 +720,7 @@ async fn staging_batched_and_hinted_paths() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, Box::new(|_, _| {}), Box::new(|_| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -953,6 +953,7 @@ async fn connect_db2(id: &str) -> qwry_lib::driver::postgres::PgSession {
     postgres::connect(
         &test_profile(id, db2()),
         &env("QWRY_TEST_PASSWORD"),
+        None,
         None,
         None,
         Box::new(|_, _| {}),
@@ -1707,6 +1708,7 @@ async fn staging_introspect_catalog_cache_roundtrip() {
     let session = postgres::connect(
         &profile,
         &env("QWRY_TEST_PASSWORD"),
+        None,
         None,
         None,
         Box::new(|_, _| {}),
@@ -2475,6 +2477,7 @@ async fn staging_undo_prod_locked() {
     let locked = postgres::connect(
         &profile,
         &env("QWRY_TEST_PASSWORD"),
+        None,
         None,
         None,
         Box::new(|_, _| {}),

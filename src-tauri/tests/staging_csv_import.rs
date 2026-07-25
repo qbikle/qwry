@@ -43,6 +43,7 @@ async fn connect(id: &str) -> postgres::PgSession {
         &env("QWRY_TEST_PASSWORD"),
         None,
         None,
+        None,
         Box::new(|_, _| {}),
         Box::new(|_| {}),
     )
