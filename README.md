@@ -1,6 +1,12 @@
 # qwry
 
-A fast, local PostgreSQL client for macOS. Tauri 2 (Rust core) · React 19 · CodeMirror 6. ~15 MB app, ~6 MB dmg, no telemetry, no account, no cloud.
+A fast, local PostgreSQL client for macOS: keyboard-first, no telemetry, no account, no cloud.
+
+<sub>Tauri 2 (Rust core) · React 19 · CodeMirror 6 · ~15 MB app · ~6 MB dmg</sub>
+
+<p align="center">
+  <img src="docs/screenshots/editor.png" alt="qwry SQL editor with schema-aware completion and a streaming result grid" width="900">
+</p>
 
 Two invariants govern every feature:
 
@@ -20,16 +26,55 @@ Two invariants govern every feature:
 
 Beyond those: FROM-scoped SQL completion with FK-aware `JOIN … ON` suggestions, per-tab dedicated connections (real `BEGIN`/`COMMIT` isolation with a transaction chip), out-of-band query cancel that a stuck session can't block, structure tab with constraints/indexes/triggers/per-table stats, multi-column sort with NULLS control, filter builder with a raw-WHERE escape hatch that shows you the SQL it built, CSV import wizard with dry-run validation and per-row error reporting, first-class JSON tree editing, `.sql` file open/save, searchable per-connection history, ⌘K palette, EXPLAIN ANALYZE visualizer, SSH tunnels via your system `ssh`, Keychain-stored credentials, and a theme engine with curated palettes.
 
-## Screenshots
+## A closer look
 
-<!-- captured by the maintainer; files live in docs/screenshots/ -->
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/histogram.png" alt="Distinct-value histogram from a column header menu">
+      <br><sub><b>Value distribution</b>: one menu click turns any column into a counted, percentaged breakdown of the whole result.</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/record-view.png" alt="Record view: transposed single-row inspector">
+      <br><sub><b>Record view</b>: ⇧Space flips a row into a transposed inspector with FK/PK badges and prev/next.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/structure.png" alt="Structure tab: columns, constraints, indexes, triggers, stats">
+      <br><sub><b>Structure</b>: columns, constraints, indexes (with size + scan counts), triggers, and per-table stats.</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/explain.png" alt="EXPLAIN ANALYZE plan tree with node heat">
+      <br><sub><b>EXPLAIN ANALYZE</b>: the plan as a tree, each node heat-shaded by its share of total time.</sub>
+    </td>
+  </tr>
+</table>
 
-<!-- ![Home dashboard: connection cards with recent activity](docs/screenshots/dashboard.png) (capture pending) -->
-<!-- ![SQL editor with scoped completion and a streaming result grid](docs/screenshots/editor.png) (capture pending) -->
-<!-- ![Record view: transposed single-row inspector with prev/next](docs/screenshots/record-view.png) (capture pending) -->
-<!-- ![Structure tab: constraints, indexes, triggers, table stats](docs/screenshots/structure.png) (capture pending) -->
-<!-- ![Distinct-value histogram from a column header menu](docs/screenshots/histogram.png) (capture pending) -->
-<!-- ![CSV import wizard: column mapping and dry-run validation](docs/screenshots/import.png) (capture pending) -->
+## More views
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/dashboard.png" alt="Connections home with recent query activity">
+      <br><sub><b>Connections</b>: saved connections and searchable recent activity.</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/table.png" alt="Table browser with add-row, filter, and sort">
+      <br><sub><b>Table browser</b>: keyset-paginated browse with add-row, filter builder, and sort.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/import.png" alt="CSV import wizard: column mapping and dry-run validation">
+      <br><sub><b>CSV import</b>: column mapping, type checks, and a dry run before anything is written.</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/light.png" alt="qwry in its light theme">
+      <br><sub><b>Light theme</b>: the full theme engine, light and dark, with curated palettes.</sub>
+    </td>
+  </tr>
+</table>
 
 ## Install
 
@@ -76,4 +121,4 @@ PostgreSQL only for now (the driver trait is in place for SQLite/MySQL later). m
 
 ## License
 
-TBD, license not yet chosen. <!-- maintainer: pick one before publishing (MIT / Apache-2.0 dual is the common Rust-ecosystem default) and replace this section -->
+Released under the [MIT License](LICENSE). Copyright (c) 2026 Manish Gudewar.
