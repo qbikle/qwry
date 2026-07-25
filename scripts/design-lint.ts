@@ -1,7 +1,7 @@
-// design-lint — enforcement for docs/DESIGN.md (rule 10) and the WRITING.md
+// design-lint: enforcement for docs/DESIGN.md (rule 10) and the WRITING.md
 // glyph/em-dash registers. Warning mode by default (prints the census);
 // --enforce exits 1 on any violation. Escape hatches: `/* optical */` on a
-// CSS line, `// em-ok` on a TSX line, and the allowlists below — every
+// CSS line, `// em-ok` on a TSX line, and the allowlists below; every
 // escape is a reviewable design decision, not silence.
 //
 // Run: bun scripts/design-lint.ts [--enforce]
@@ -12,13 +12,13 @@ import { join } from "node:path";
 const SRC = join(import.meta.dir, "..", "src");
 const ENFORCE = process.argv.includes("--enforce");
 
-// DESIGN.md rule 5 — the icon trio (+ documented exceptions)
+// DESIGN.md rule 5: the icon trio (+ documented exceptions)
 const ICON_SIZES = new Set([12, 14, 16]);
 const ICON_EXCEPTIONS = new Set([22, 40, 44, 64]); // avatars/logos
 // grid data-register type glyphs (11px) are exempted per-file:
 const ICON_EXEMPT_FILES = new Set(["grid/typeIcon.tsx"]);
 
-// DESIGN.md rule 4 — 4px grid; 1–2px hairlines/micro-gaps legal
+// DESIGN.md rule 4: 4px grid; 1–2px hairlines/micro-gaps legal
 const gridOk = (px: number) => px <= 2 || px % 4 === 0;
 
 type Finding = { rule: string; file: string; line: number; text: string };
@@ -79,7 +79,7 @@ for (const path of walk(SRC)) {
         if (v !== 0 && v !== 1) add("opacity", rel, n, line);
       }
       if (/opacity\s*:\s*var\(/.test(line)) {
-        // token form — legal, and the regex above can't match it anyway
+        // token form: legal, and the regex above can't match it anyway
       }
       // rule 6: transition literals bypass the duration tokens
       if (TRANSITION.test(line) && DUR_LITERAL.test(line) && !line.includes("var(--dur")) {
@@ -97,13 +97,13 @@ for (const path of walk(SRC)) {
         code.startsWith("/*") ||
         code.startsWith("{/*") ||
         (line.includes("/*") && line.indexOf("/*") < line.indexOf("—") && line.includes("—"));
-      // glyph register: order + codepoints (comments too — they teach the next reader)
+      // glyph register: order + codepoints (comments too; they teach the next reader)
       if (BAD_ORDER.test(line)) add("glyph-order", rel, n, line);
       if (BAD_RETURN.test(line)) add("glyph-codepoint", rel, n, line);
       // WRITING.md rule 7: no em dashes in UI strings (comments exempt).
-      // Any non-comment dash is flagged — JSX text continuation lines carry
+      // Any non-comment dash is flagged: JSX text continuation lines carry
       // no quote/angle marker (a real miss shipped that way), and TS code
-      // can't legally contain — outside strings, so the only false positive
+      // can't legally contain an em dash outside strings, so the only false positive
       // is a trailing // comment, excluded by position
       if (!isComment && line.includes("—") && !line.includes("em-ok")) {
         const idx = line.indexOf("—");

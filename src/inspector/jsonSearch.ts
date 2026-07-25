@@ -1,4 +1,4 @@
-// Pure search/cap logic for JsonTree — extracted so it stays testable without
+// Pure search/cap logic for JsonTree, extracted so it stays testable without
 // the component (and so the render layer can't accidentally grow O(n) work).
 
 export type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
@@ -25,13 +25,13 @@ export interface CapWindowResult {
   mode: "prefix" | "hit";
 }
 
-/** block anchor for a hit-revealed window — stable within a CHILD_CAP block,
+/** block anchor for a hit-revealed window: stable within a CHILD_CAP block,
  * so stepping between nearby hits doesn't remount the slice */
 export const hitBase = (hitIndex: number) => Math.floor(hitIndex / CHILD_CAP) * CHILD_CAP;
 
 /** which children to render. Without a hit (or with one inside the prefix)
  * this is the plain [0, shown) cap. A hit BEYOND the prefix re-windows to a
- * bounded CHILD_CAP slice around the hit — never the whole prefix up to it
+ * bounded CHILD_CAP slice around the hit, never the whole prefix up to it
  * (revealing hit 40,000 must mount ~CHILD_CAP nodes, not 40,001).
  * prevExtra/nextExtra are transient expander growth of the hit window; they
  * only apply while the cursor stays in the same block, so "show next" during
@@ -63,7 +63,7 @@ export interface SearchResult {
   visible: Set<string>;
   forceOpen: Set<string>;
   hits: string[];
-  /** the walk stopped at the node cap — matches beyond it are missing */
+  /** the walk stopped at the node cap: matches beyond it are missing */
   capped: boolean;
 }
 

@@ -1,4 +1,4 @@
-// Connection identity colors — pure data, importable from stores and design
+// Connection identity colors: pure data, importable from stores and design
 // code without dragging component modules (lucide, css) into their graphs.
 import type { Profile } from "../ipc/types";
 
@@ -12,7 +12,7 @@ export const AVATAR_PALETTE = [
   "#ff8a65",
 ];
 
-/** stable slot from the profile id — index-derived slots meant deleting or
+/** stable slot from the profile id: index-derived slots meant deleting or
  * reordering an UNRELATED profile shifted this one's color, which under
  * Match Connection retinted the whole app (action at a distance). The hash
  * pins a colorless profile's identity for its lifetime. */

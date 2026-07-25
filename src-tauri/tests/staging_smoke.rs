@@ -1,6 +1,8 @@
-//! Live smoke test against the user's staging DB. Ignored by default; run with:
-//!   source ~/.claude/.env.claude && cargo test --test staging_smoke -- --ignored
-//! using QWRY_TEST_HOST/USER/PASSWORD/DB env vars.
+//! Live smoke test against a disposable PostgreSQL database you control,
+//! never production. Ignored by default; run with:
+//!   cargo test --test staging_smoke -- --ignored
+//! using the QWRY_TEST_HOST / QWRY_TEST_USER / QWRY_TEST_PASSWORD /
+//! QWRY_TEST_DB env vars (QWRY_TEST_DB2 for the fixture-creating suites).
 
 use qwry_lib::driver::{postgres, Profile};
 
@@ -368,7 +370,7 @@ async fn staging_statement_at_a_time() {
         .await
         .expect("setup");
 
-    // 1) autocommit semantics: a statement before an error REALLY committed —
+    // 1) autocommit semantics: a statement before an error REALLY committed;
     //    the old whole-buffer implicit transaction would have rolled it back
     let buffer = "INSERT INTO qwry_stmt_test VALUES (1, 'kept'); SELEC oops";
     let mut events: Vec<QueryEvent> = Vec::new();
@@ -522,7 +524,7 @@ async fn staging_streaming_and_cancel() {
 
     // ROW_CAP auto-cancel: a capped SELECT as the LAST statement must complete
     // WITHOUT error (the driver cancels its own drain and swallows the 57014).
-    // pg_sleep per row keeps the query genuinely running so the cancel lands —
+    // pg_sleep per row keeps the query genuinely running so the cancel lands;
     // with instant queries the cancel legitimately races and the full drain
     // completes normally (both paths are valid; both must return Ok+capped).
     let mut events: Vec<QueryEvent> = Vec::new();
@@ -572,7 +574,7 @@ async fn staging_streaming_and_cancel() {
     );
 }
 
-/// prod safe-mode: an is_prod profile's session starts server-side read-only —
+/// prod safe-mode: an is_prod profile's session starts server-side read-only,
 /// writes error until the per-session unlock, and re-lock restores the guard
 #[tokio::test]
 #[ignore]
@@ -624,7 +626,7 @@ async fn staging_prod_read_only() {
         .await
         .expect("relock");
     // NB: INSERT into an EXISTING temp table is allowed in a read-only txn
-    // (per PG semantics) — probe with CREATE TEMP, which is not
+    // (per PG semantics); probe with CREATE TEMP, which is not
     let err = session
         .execute_simple("CREATE TEMP TABLE qwry_ro_probe2(x int)")
         .await
@@ -633,8 +635,8 @@ async fn staging_prod_read_only() {
     assert!(msg.contains("read-only"), "expected read-only error after relock, got: {msg}");
 }
 
-/// DDL reconstruction — sanity: CREATE TABLE with columns, PK constraint,
-/// secondary indexes come back for a real staging table
+/// DDL reconstruction sanity check: CREATE TABLE with columns, PK constraint,
+/// secondary indexes come back for a real table in the test database
 #[tokio::test]
 #[ignore]
 async fn staging_table_ddl() {
@@ -671,11 +673,11 @@ async fn staging_table_ddl() {
 /// hint equals the derived preview plus the attname guards hint-fed plans
 /// carry; (3) a multi-row edit commits through the batched path with per-row
 /// verification; (4) a deliberately STALE mapping (wrong column name) errors
-/// and rolls back EVERYTHING — no partial writes; (5) a stale PK locator
+/// and rolls back EVERYTHING (no partial writes); (5) a stale PK locator
 /// under a hint → matched≠1 → full rollback; (6) delete_rows batched path
 /// (mixed stale → rollback; valid → commit).
 /// hinted plans AND attname-verification guards plus one relname identity
-/// probe into the inner (FOR UPDATE) WHERE — strip each guard predicate to
+/// probe into the inner (FOR UPDATE) WHERE; strip each guard predicate to
 /// compare the shared core against a derived (guard-free) plan. Guard shapes:
 /// ` AND (SELECT attname FROM pg_attribute WHERE …) = 'name'`
 /// ` AND (SELECT relname FROM pg_class WHERE …) = 'name'`
@@ -835,7 +837,7 @@ async fn staging_batched_and_hinted_paths() {
 
     // (4) STALE mapping: column 'a' renamed to a nonexistent name in the hint.
     // The generated UPDATE hits 42703; the whole batch (including the row that
-    // would have succeeded) must roll back — zero partial writes.
+    // would have succeeded) must roll back: zero partial writes.
     let stale_names = |att: i16| -> Option<String> {
         match att {
             1 => Some("id".into()),
@@ -921,7 +923,7 @@ async fn staging_batched_and_hinted_paths() {
 // ---------------------------------------------------------------------------
 // v0.7.0-bedrock additions. Fixture-creating tests run against a SECOND
 // staging db (QWRY_TEST_DB2, required) inside a dedicated qwry_test
-// schema — never public. Fixtures are dropped at each test's end.
+// schema, never public. Fixtures are dropped at each test's end.
 // ---------------------------------------------------------------------------
 
 fn db2() -> String {
@@ -962,7 +964,7 @@ async fn connect_db2(id: &str) -> qwry_lib::driver::postgres::PgSession {
 
 /// SAVEPOINT-wrapped edits inside the user's open transaction: apply works,
 /// the outer tx stays open and uncommitted, a verify failure only undoes the
-/// batch, and the user's ROLLBACK erases everything — the driver never
+/// batch, and the user's ROLLBACK erases everything; the driver never
 /// COMMITs the user's transaction.
 #[tokio::test]
 #[ignore]
@@ -1017,7 +1019,7 @@ async fn staging_savepoint_inside_user_tx() {
     assert_eq!(mine.statements[0].rows[0][0].as_deref(), Some("uno"));
     assert_eq!(mine.statements[1].rows[0][0].as_deref(), Some("3"));
 
-    // a second connection must NOT see any of it — nothing was committed
+    // a second connection must NOT see any of it; nothing was committed
     let theirs = watcher
         .execute_simple("SELECT v FROM qwry_test.qwry_scratch_sp WHERE id = 1; SELECT count(*) FROM qwry_test.qwry_scratch_sp")
         .await
@@ -1045,7 +1047,7 @@ async fn staging_savepoint_inside_user_tx() {
     assert_eq!(mine.statements[0].rows[0][0].as_deref(), Some("uno"), "earlier in-tx edit survives");
     assert_eq!(mine.statements[0].rows[1][0].as_deref(), Some("two"), "failed batch fully undone");
 
-    // the user's OWN savepoint named like ours must survive an edit batch —
+    // the user's OWN savepoint named like ours must survive an edit batch:
     // batch savepoints carry a unique suffix, so cleanup can't destroy it
     session
         .execute_simple("SAVEPOINT qwry_edit_sp")
@@ -1103,7 +1105,7 @@ async fn staging_savepoint_inside_user_tx() {
         .expect("recover via user savepoint");
     assert_eq!(session.tx_state(), TxState::InTx);
 
-    // the user rolls back — EVERYTHING vanishes (proves no COMMIT was sent)
+    // the user rolls back: EVERYTHING vanishes (proves no COMMIT was sent)
     session.execute_simple("ROLLBACK").await.expect("rollback");
     assert_eq!(session.tx_state(), TxState::Idle);
     let after = session
@@ -1220,7 +1222,7 @@ async fn staging_ctid_guard() {
 }
 
 /// GENERATED ALWAYS (stored) and identity-ALWAYS columns are read-only with
-/// precise reasons — on both the derived and the snapshot-hinted paths — and
+/// precise reasons (on both the derived and the snapshot-hinted paths), and
 /// matviews get an honest reason instead of a dead-end ctid suggestion.
 #[tokio::test]
 #[ignore]
@@ -1520,11 +1522,11 @@ async fn staging_tx_state_tracking() {
         .await
         .expect("probe check");
     // row 1 rode the chained COMMIT; row 2 died with the chained tx's
-    // ROLLBACK — proves the chain really left a tx open
+    // ROLLBACK, which proves the chain really left a tx open
     assert_eq!(check.statements[0].rows[0][0].as_deref(), Some("1"));
 
     // failed COMMIT (deferred constraint fires at commit time): the server
-    // ends the tx and returns to idle — the fold must agree, not FailedTx
+    // ends the tx and returns to idle; the fold must agree, not FailedTx
     session
         .execute_simple("CREATE TEMP TABLE qwry_tx_dc (i int UNIQUE DEFERRABLE INITIALLY DEFERRED)")
         .await
@@ -1613,7 +1615,7 @@ async fn staging_stale_hint_rename_guard() {
     };
 
     // the schema shifts BEHIND the snapshot: attnum 2 becomes "a_old" and a
-    // NEW column reuses the name "a" — `SET "a" = …` would hit the new column
+    // NEW column reuses the name "a"; `SET "a" = …` would hit the new column
     // and still match 1 row, committing silently without the identity guard
     ddl.execute_simple(
         "ALTER TABLE qwry_test.qwry_scratch_rename RENAME COLUMN a TO a_old;
@@ -1662,7 +1664,7 @@ async fn staging_stale_hint_rename_guard() {
 
     // sharpen the delete case: give the NEW column the OLD column's value, so
     // without the guard the locator would match (through the wrong column)
-    // and delete the row — the guard must make it match 0 and roll back
+    // and delete the row; the guard must make it match 0 and roll back
     ddl.execute_simple("UPDATE qwry_test.qwry_scratch_rename SET a = 'one' WHERE id = 1")
         .await
         .expect("bait the new column");
@@ -1741,7 +1743,7 @@ async fn staging_introspect_catalog_cache_roundtrip() {
     assert_eq!(a, b, "cached-merge function set must equal the full fetch");
     assert_eq!(full.server_version_num, cached_snap.server_version_num);
 
-    // drift detection: a stale cache (count mismatch — e.g. an extension
+    // drift detection: a stale cache (count mismatch, e.g. an extension
     // installed into pg_catalog) must trigger a refetch, not a wrong merge
     let mut stale = catalog.clone();
     stale.pop();
@@ -1756,7 +1758,7 @@ async fn staging_introspect_catalog_cache_roundtrip() {
 }
 
 /// introspect captures relhassubclass + reltuples: an inheritance parent
-/// reports has_children=true (its ctid keyset must be refused frontend-side —
+/// reports has_children=true (its ctid keyset must be refused frontend-side:
 /// child heaps have colliding ctids), the child and plain tables report
 /// false, and reltuples carries the planner estimate after ANALYZE.
 #[tokio::test]
@@ -1874,7 +1876,7 @@ async fn staging_introspect_v2() {
         .expect("enum missing from snapshot");
     assert_eq!(en.labels, vec!["sad", "ok", "happy"]);
 
-    // plpgsql ships in every stock database — the section must never be empty
+    // plpgsql ships in every stock database, so the section must never be empty
     assert!(
         snap.extensions.iter().any(|x| x.name == "plpgsql" && !x.version.is_empty()),
         "extensions missing plpgsql: {:?}",
@@ -1976,7 +1978,7 @@ async fn staging_table_stats() {
     assert!(!vidx.is_unique && !vidx.is_primary && !vidx.backs_constraint);
     assert!(vidx.size_bytes > 0 && !vidx.size_pretty.is_empty());
     assert!(vidx.definition.contains("CREATE INDEX"), "idx def: {}", vidx.definition);
-    // never-used inputs: fresh index, zero scans, no constraint backing —
+    // never-used inputs: fresh index, zero scans, no constraint backing;
     // exactly the badge shape (pkey must NOT qualify: backs_constraint)
     assert_eq!(vidx.scans, Some(0), "fresh index must report zero scans");
 
@@ -1993,7 +1995,7 @@ async fn staging_table_stats() {
     assert!(!stats.sizes.total_pretty.is_empty());
 
     let act = stats.activity.expect("plain table must have a pg_stat row");
-    // collector values lag async — assert presence, not magnitudes
+    // collector values lag async; assert presence, not magnitudes
     assert!(act.n_live_tup.is_some() && act.n_dead_tup.is_some());
 
     assert_eq!(stats.comment.as_deref(), Some("stats fixture"));
@@ -2083,7 +2085,7 @@ async fn staging_inverse_undo() {
     let map = session.editability(sql, 0, None).await.expect("map");
     let oid = map.columns[0].table_oid;
 
-    // (1) commit a 2-row batch — OLD values must land in the revert plan
+    // (1) commit a 2-row batch: OLD values must land in the revert plan
     let edits = vec![
         RowEdit { table_oid: oid, col: 1, value: Some("uno".into()), use_default: false, pk: vec![(0, Some("1".into()))], guard: vec![] },
         RowEdit { table_oid: oid, col: 2, value: Some("99".into()), use_default: false, pk: vec![(0, Some("2".into()))], guard: vec![] },
@@ -2166,7 +2168,7 @@ async fn staging_inverse_undo() {
     session.execute_simple("SELECT 1").await.expect("session alive");
 
     // (4) accounting proof: a hint faking the PK on a NON-unique column makes
-    // the locator match 2 rows — the capture join must report exactly
+    // the locator match 2 rows; the capture join must report exactly
     // "2 rows matched" (a cross-join artifact would double it) and roll back
     session
         .execute_simple("INSERT INTO qwry_test.qwry_undo_t VALUES (5, 'dup', 1), (6, 'dup', 1)")
@@ -2265,7 +2267,7 @@ async fn staging_inverse_undo() {
     assert_eq!(check.statements[0].rows[0][0].as_deref(), Some("1"));
 
     // (6) ctid-table update: the revert must locate by the NEW ctid (the
-    // update moved the row — the original ctid is stale) + value guards
+    // update moved the row, so the original ctid is stale) + value guards
     session
         .execute_simple(
             "DROP TABLE IF EXISTS qwry_test.qwry_undo_ctid;
@@ -2321,7 +2323,7 @@ async fn staging_inverse_undo() {
     assert_eq!(check.statements[0].rows[0][0].as_deref(), Some("one"), "value restored");
 
     // (7) savepoint-mode batches (inside the USER's open tx) must mint NO
-    // undo plan: RELEASE isn't durable — the user's ROLLBACK resurrects the
+    // undo plan: RELEASE isn't durable; the user's ROLLBACK resurrects the
     // pre-edit state, so an undo offer would be a lie
     session.execute_simple("BEGIN").await.expect("begin user tx");
     let edits = vec![RowEdit {
@@ -2389,7 +2391,7 @@ async fn staging_inverse_undo() {
     );
 
     // (9) INSERT-arm schema-identity guard: rename+add between the delete and
-    // its undo must refuse — without the attname probes the captured value
+    // its undo must refuse; without the attname probes the captured value
     // would be written into the WRONG (new) column and still "succeed"
     let outcome = session
         .delete_rows(sql, 0, oid, vec![vec![(0, Some("6".into()))]], None)
@@ -2428,7 +2430,7 @@ async fn staging_inverse_undo() {
 }
 
 /// Prod safe-mode composes with undo for free: the revert runs on the tab's
-/// session, and an is_prod session is server-side read-only — the undo batch
+/// session, and an is_prod session is server-side read-only, so the undo batch
 /// is refused BY THE SERVER, nothing special in the undo path.
 #[tokio::test]
 #[ignore]

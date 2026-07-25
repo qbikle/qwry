@@ -225,7 +225,7 @@
   {
    "title": "Cross-connection DDL diff for one object (staging vs prod drift)",
    "surface": "sidebar",
-   "detail": "Right-click a table \u2192 'Compare DDL with \u25b8 [other connection]' \u2192 side-by-side diff of get_ddl output. Bounded version of the deferred schema-diff epic: single object, text diff, read-only \u2014 catches the daily 'did the migration actually run on prod?' question. This user's world literally runs on staging/prod drift; full migration-gen stays deferred but a one-table DDL diff is a weekend of work on top of the planned get_ddl backend.",
+   "detail": "Right-click a table \u2192 'Compare DDL with \u25b8 [other connection]' \u2192 side-by-side diff of get_ddl output. Bounded version of the deferred schema-diff epic: single object, text diff, read-only \u2014 catches the daily 'did the migration actually run on prod?' question. Staging/prod drift is a common reality; full migration-gen stays deferred but a one-table DDL diff is a weekend of work on top of the planned get_ddl backend.",
    "importance": "med"
   },
   {
@@ -255,7 +255,7 @@
   {
    "title": "Tunnel/connection health: heartbeat, auto-reconnect, never-hang",
    "surface": "driver",
-   "detail": "SSH-tunnel drop is this user's daily reality. Affordances: lightweight keepalive detects a dead link in seconds (not TCP's minutes); status chip flips to 'reconnecting\u2026' and auto-reestablishes tunnel+session, restoring search_path/read-only state; any in-flight query fails FAST with a clear 'connection lost, tab session restored' \u2014 never a spinner-forever, never a wedged UI (the v0.5 items cover kill; this adds detect+auto-heal). Leapfrog: offer 're-run the query that was in flight' after reconnect.",
+   "detail": "SSH-tunnel drop is a common daily reality. Affordances: lightweight keepalive detects a dead link in seconds (not TCP's minutes); status chip flips to 'reconnecting\u2026' and auto-reestablishes tunnel+session, restoring search_path/read-only state; any in-flight query fails FAST with a clear 'connection lost, tab session restored' \u2014 never a spinner-forever, never a wedged UI (the v0.5 items cover kill; this adds detect+auto-heal). Leapfrog: offer 're-run the query that was in flight' after reconnect.",
    "importance": "high"
   },
   {

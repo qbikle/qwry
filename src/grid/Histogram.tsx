@@ -1,9 +1,9 @@
 // Distinct-value histogram ("Value distribution" in the header menu).
 // Browse tabs run a real GROUP BY on the table over an existing session
-// (primary preferred — the tab session is ⌘. cancel's target; plus the
-// compiled filter WHERE when the browse store exports it — otherwise
-// unfiltered, and the panel says so). Editor results — and json columns,
-// which have no server-side equality — bucket client-side over the LOADED
+// (primary preferred: the tab session is ⌘. cancel's target; plus the
+// compiled filter WHERE when the browse store exports it, otherwise
+// unfiltered, and the panel says so). Editor results (and json columns,
+// which have no server-side equality) bucket client-side over the LOADED
 // rows and label the scope honestly. Rendered with tokens only; NULL is its
 // own labeled bucket, excluded from the distinct count.
 import { useEffect, useState } from "react";
@@ -42,12 +42,12 @@ export type HistogramMode =
 interface HistResult {
   buckets: HistBucket[];
   total: number;
-  /** distinct NON-NULL values — the NULL bucket is labeled separately */
+  /** distinct NON-NULL values: the NULL bucket is labeled separately */
   distinct: number;
   hasNull: boolean;
 }
 
-/** per-session epoch for the server GROUP BY — the unmount cancel is only
+/** per-session epoch for the server GROUP BY: the unmount cancel is only
  * valid while its own epoch is still the latest (same guard as
  * cancelExactCount: the shared primary session may already be running a
  * NEWER query a stale cancel must not kill) */
@@ -72,7 +72,7 @@ export function Histogram({
 }) {
   const [res, setRes] = useState<HistResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  /** server GROUP BY fell back to client bucketing — its honest scope label */
+  /** server GROUP BY fell back to client bucketing: its honest scope label */
   const [fallbackNote, setFallbackNote] = useState<string | null>(null);
 
   useEffect(() => {
@@ -109,7 +109,7 @@ export function Histogram({
       .catch((e) => {
         if (stale) return;
         // 42883 (undefined function) = no equality operator for the type
-        // (domain-over-json class) — the server can't GROUP BY it; bucket the
+        // (domain-over-json class): the server can't GROUP BY it; bucket the
         // LOADED rows client-side and label the scope honestly
         if (((e as { code?: string | null }).code ?? null) === "42883") {
           setRes(bucketize(mode.fallbackValues));
@@ -125,7 +125,7 @@ export function Histogram({
       });
     return () => {
       stale = true;
-      // closing the popup must kill the GROUP BY, not just mute its writes —
+      // closing the popup must kill the GROUP BY, not just mute its writes:
       // existing escalating cancel path (CancelToken → pg_cancel_backend).
       // Deferred a tick + epoch re-checked: StrictMode's dev double-mount
       // runs this cleanup while mount #2's query is launching, and a

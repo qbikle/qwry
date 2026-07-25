@@ -40,7 +40,7 @@ export function ConnectionRail() {
   const editConnection = useConnections((s) => s.editConnection);
 
   // local order drives the drag animation; keep our order but always adopt the
-  // latest profile objects (so a customise — color/glyph — shows immediately)
+  // latest profile objects (so a customise, color/glyph, shows immediately)
   const [items, setItems] = useState<Profile[]>(profiles);
   const [menu, setMenu] = useState<{ x: number; y: number; profile: Profile } | null>(null);
   useEffect(() => {
@@ -88,7 +88,7 @@ export function ConnectionRail() {
               style={{ ["--c"]: avatarColor(p, i) } as React.CSSProperties}
               // canonical preset (was a hand-rolled spring): collapses under
               // prefers-reduced-motion like every other entrance. Keys are
-              // profile ids, so the pop only plays on genuinely new avatars —
+              // profile ids, so the pop only plays on genuinely new avatars;
               // reorder/edit/state churn never remounts them.
               {...railItemIn}
               whileDrag={{ scale: 1.14, zIndex: 10 }}

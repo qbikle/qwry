@@ -29,7 +29,7 @@
   },
   {
    "title": "Filter value input fires a full streaming SELECT per keystroke [known]",
-   "detail": "TableBrowser.tsx:137 onChange \u2192 update() \u2192 setFilters (browser.ts:186) \u2192 run(). Typing 'manish' = 6 queries against the server, each resetting edits and re-streaming up to LIMIT rows. Also fires on every column/op dropdown change mid-configuration (TableBrowser.tsx:115,123) \u2014 picking a column before typing a value still reruns the unfiltered SELECT. Fix: apply on Enter/blur (Enter handler already exists at :138) + explicit debounce; only auto-run on structural changes that are complete.",
+   "detail": "TableBrowser.tsx:137 onChange \u2192 update() \u2192 setFilters (browser.ts:186) \u2192 run(). Typing 'orders' = 6 queries against the server, each resetting edits and re-streaming up to LIMIT rows. Also fires on every column/op dropdown change mid-configuration (TableBrowser.tsx:115,123) \u2014 picking a column before typing a value still reruns the unfiltered SELECT. Fix: apply on Enter/blur (Enter handler already exists at :138) + explicit debounce; only auto-run on structural changes that are complete.",
    "severity": "P0",
    "effort": "S",
    "kind": "perf"

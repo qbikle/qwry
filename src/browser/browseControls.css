@@ -173,7 +173,7 @@
   align-items: center;
   gap: var(--sp-2);
   /* FIXED height sized to the tallest state (22px iconbtn inside the
-     counting/jump chips) — the strip must never resize when a chip
+     counting/jump chips): the strip must never resize when a chip
      appears (stable-chrome law, DESIGN rule 2) */
   height: 28px;
   padding: 0 var(--sp-3);
@@ -220,7 +220,7 @@
   white-space: nowrap;
 }
 
-/* × riding the count/jump chips — iconbtn ghost, danger on hover (cancel) */
+/* × riding the count/jump chips: iconbtn ghost, danger on hover (cancel) */
 .tbf-x:hover:not(:disabled) {
   color: var(--danger);
 }

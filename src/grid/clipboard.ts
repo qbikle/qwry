@@ -18,9 +18,9 @@ const sqlLiteral = (v: Cell) =>
   v === null ? "NULL" : `'${v.replace(/'/g, "''")}'`;
 
 /** exact inverse of the TSV writer (Excel convention): a field that STARTS
- * with a quote is quoted — it may contain tabs/newlines, `""` is a literal
+ * with a quote is quoted: it may contain tabs/newlines, `""` is a literal
  * quote; any other field is verbatim. Line endings (\n, \r\n, \r) are record
- * separators ONLY outside quotes — a quoted field's bytes are never touched
+ * separators ONLY outside quotes: a quoted field's bytes are never touched
  * (a global \r normalization silently corrupted Windows-origin cell data).
  * Returns null on malformed input (unterminated quote / garbage after a
  * closing quote) so callers can fall back to a naive split instead of
@@ -37,7 +37,7 @@ export function parseTsv(text: string): string[][] | null {
   let endedOnBreak = false;
   while (i < n) {
     if (text[i] === '"') {
-      // quoted field — the loop is always at field start here
+      // quoted field: the loop is always at field start here
       i++;
       let closed = false;
       while (i < n) {

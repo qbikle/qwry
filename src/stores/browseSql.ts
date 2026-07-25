@@ -64,7 +64,7 @@ export function typeClassOf(type: string, isEnum = false): TypeClass {
   return "text";
 }
 
-/** operator registry, keyed by type class — everything else is noise (or a
+/** operator registry, keyed by type class; everything else is noise (or a
  * guaranteed server error, e.g. ILIKE on an integer, `@>` on json-not-jsonb) */
 const OPS_BY_CLASS: Record<TypeClass, FilterOp[]> = {
   bool: ["IS TRUE", "IS FALSE", "IS", "IS NOT", "IS NULL", "IS NOT NULL", "raw SQL"],
@@ -96,7 +96,7 @@ export interface Filter {
   col: string;
   op: FilterOp;
   value: string;
-  /** second operand — BETWEEN only */
+  /** second operand, BETWEEN only */
   value2?: string;
   enabled: boolean;
   /** how this row chains onto the previous one (ignored on the first) */
@@ -109,7 +109,7 @@ const qi = (v: string) => `"${v.replace(/"/g, '""')}"`;
 /** split a user-typed IN list on commas, honoring 'quoted' / "quoted" tokens
  * (doubled-quote escapes) so values may contain commas; bare tokens are
  * trimmed. Returns [] on empty or unparseable input (unterminated quote,
- * junk after a closing quote) — the caller treats that filter as inactive,
+ * junk after a closing quote): the caller treats that filter as inactive,
  * because `IN ()` is a syntax error and guessing would silently filter wrong */
 export function parseInList(input: string): string[] {
   const out: string[] = [];
@@ -155,7 +155,7 @@ export function parseInList(input: string): string[] {
 }
 
 /** a filter row participates in the WHERE only when it has everything it
- * needs — half-typed rows must never change the query */
+ * needs: half-typed rows must never change the query */
 function filterActive(f: Filter): boolean {
   if (!f.enabled || !f.col) return false;
   if (!opNeedsValue(f.op)) return true;
@@ -180,7 +180,7 @@ function filterExpr(filters: Filter[]): string | null {
         return `${qi(f.col)} ${f.op}`;
       case "IS":
       case "IS NOT": {
-        // bool three-state — value comes from a fixed select, whitelisted
+        // bool three-state: value comes from a fixed select, whitelisted
         const kw = ["TRUE", "FALSE", "NULL"].includes(f.value) ? f.value : "TRUE";
         return `${qi(f.col)} ${f.op} ${kw}`;
       }
@@ -200,7 +200,7 @@ function filterExpr(filters: Filter[]): string | null {
       case "ends with":
         return `${qi(f.col)} ILIKE ${ql(`%${like(f.value)}`)}`;
       case "raw SQL":
-        // explicit escape hatch — the value is a predicate, used verbatim
+        // explicit escape hatch: the value is a predicate, used verbatim
         return `(${f.value})`;
       default:
         return `${qi(f.col)} ${f.op} ${ql(f.value)}`;
@@ -213,7 +213,7 @@ function filterExpr(filters: Filter[]): string | null {
 
 /** The WHERE body the browse actually embeds. `rawWhere` non-null means raw
  * mode: its text is the WHERE, used as written (user-owned, validated only by
- * running) — builder filters are ignored ENTIRELY, empty raw text = no WHERE
+ * running): builder filters are ignored ENTIRELY, empty raw text = no WHERE
  * (the hidden builder rows must never filter behind the user's back).
  * Exported so the filter bar's SQL-preview chip shows EXACTLY the text the
  * queries use. */
@@ -234,7 +234,7 @@ export interface SortKey {
 }
 export type SortChain = SortKey[];
 
-/** legacy single-column sort shape — kept for the setSort back-compat shim
+/** legacy single-column sort shape, kept for the setSort back-compat shim
  * and the store's `sort` mirror of sortChain[0] */
 export interface BrowseSort {
   col: string;
@@ -242,16 +242,16 @@ export interface BrowseSort {
 }
 
 /** one ORDER BY key of a keyset-paginated browse. `cast` is the column's own
- * type text (server-side format_type output from the schema snapshot — the
+ * type text (server-side format_type output from the schema snapshot; the
  * same wire-text + `::cast` approach the edit path uses), so seek values are
  * compared with the column's type semantics, never as bare strings. */
 export interface KeysetKey {
   col: string;
   dir: "ASC" | "DESC";
   cast: string;
-  /** catalog says NOT NULL — enables the row-value fast path */
+  /** catalog says NOT NULL; enables the row-value fast path */
   notNull: boolean;
-  /** EFFECTIVE NULLS placement of this key in the executed ORDER BY —
+  /** EFFECTIVE NULLS placement of this key in the executed ORDER BY:
    * the user's override when given, else the PG default for the direction.
    * The seek ladder branches on this, so overrides page correctly. */
   nulls: "FIRST" | "LAST";
@@ -264,21 +264,21 @@ const defaultNulls = (dir: "ASC" | "DESC"): "FIRST" | "LAST" =>
 export const CTID_KEYSET_MAX_ESTIMATE = 1_000_000;
 
 /** The total-order sort keys for keyset pagination: the user's sort chain
- * (if any) followed by a unique tiebreaker — the PK, or ctid for PK-less
+ * (if any) followed by a unique tiebreaker: the PK, or ctid for PK-less
  * ordinary tables. The tiebreaker inherits the FIRST chain key's direction
- * (chain-less browses stay ASC) — same rule the single-sort era used, so one
+ * (chain-less browses stay ASC); same rule the single-sort era used, so one
  * composite index still serves both directions via backward scan; deeper
  * chain keys keep their own directions (the ladder handles mixed dirs).
  *
- * Returns null when this relation CANNOT be keyset-paginated safely — the
+ * Returns null when this relation CANNOT be keyset-paginated safely: the
  * caller must fall back to the offset approach instead of a wrong-rows
  * keyset. Non-keysettable: views/matviews/foreign tables (no PK, no usable
  * ctid), partitioned tables without a PK (ctid is not unique across
  * partitions), inheritance parents without a PK (child heaps have colliding
- * ctids — TimescaleDB hypertables are relkind='r' PK-less parents),
+ * ctids; TimescaleDB hypertables are relkind='r' PK-less parents),
  * PK-less tables on PG < 14 (no tid btree opclass, so `ORDER BY ctid` / tid
  * comparisons fail), PK-less tables too big (or unsized) for the ctid gate
- * below, and any sort/PK column missing from the snapshot (schema drift —
+ * below, and any sort/PK column missing from the snapshot (schema drift:
  * refuse rather than guess). */
 export function keysetKeys(
   table: TableInfo,
@@ -301,13 +301,13 @@ export function keysetKeys(
     table.kind === "r" &&
     (serverVersionNum ?? 0) >= 140000 &&
     // has_children (relhassubclass) must be a known false: an inheritance
-    // parent's SELECT scans child heaps whose ctids collide with the parent's
-    // — a ctid seek would splice wrong rows. undefined = old cached snapshot
+    // parent's SELECT scans child heaps whose ctids collide with the parent's,
+    // so a ctid seek would splice wrong rows. undefined = old cached snapshot
     // that never captured the flag → refuse (fail safe; the live introspect
     // corrects it).
     table.has_children === false &&
     // Size gate (tradeoff): TID scans carry no pathkeys, so EVERY page of
-    // `ORDER BY ctid` is a full seq scan + top-N sort — O(table) per page.
+    // `ORDER BY ctid` is a full seq scan + top-N sort: O(table) per page.
     // That stays interactive only on smallish heaps; above ~1M estimated rows
     // it violates never-slow, so we take the documented offset fallback (its
     // dup/drop risk on PK-less physical order beats multi-second pages).
@@ -331,7 +331,7 @@ export function keysetKeys(
     // go stale (external ALTER between introspect and scroll) and a wrongly
     // trusted NOT NULL would silently drop the whole NULL partition. The
     // extra NULL terms match nothing on a truly NOT NULL column. PK/ctid
-    // tiebreak keys keep their flag — NOT NULL is structural there for as
+    // tiebreak keys keep their flag: NOT NULL is structural there for as
     // long as the PK the snapshot promised exists at all.
     head.push({
       col: k.column,
@@ -344,14 +344,14 @@ export function keysetKeys(
   const keys = [...head, ...tiebreak];
   // Anchor truncation: when the absorbed SINGLE-column PK sits in the chain,
   // it already totally orders every row at its position (catalog NOT NULL +
-  // unique-alone) — the chain suffix after it is ordering-irrelevant. Keeping
+  // unique-alone): the chain suffix after it is ordering-irrelevant. Keeping
   // the suffix is worse than useless: a page ending on a trailing key's NULL
   // makes seekPredicate refuse (NULL terminal) and the browse silently falls
   // back to O(n²) offset paging. Truncate after the anchor, so
-  // [id asc(PK), s asc] seeks on id alone — byte-identical to a bare [id asc]
+  // [id asc(PK), s asc] seeks on id alone, byte-identical to a bare [id asc]
   // chain. Only a genuinely unique-alone anchor qualifies: a single column of
   // a composite PK is not, so composite absorption keeps its full key list
-  // (and the ctid tiebreaker is always terminal — nothing to truncate).
+  // (and the ctid tiebreaker is always terminal: nothing to truncate).
   if (table.pk.length === 1) {
     const a = keys.findIndex((k) => k.col === table.pk[0]);
     if (a >= 0 && colInfo(table.pk[0])?.not_null === true) return keys.slice(0, a + 1);
@@ -360,7 +360,7 @@ export function keysetKeys(
 }
 
 /** NULLS clause is emitted only when it differs from the PG default for the
- * direction — default chains keep byte-identical SQL to the pre-override era
+ * direction: default chains keep byte-identical SQL to the pre-override era
  * (and default-order index scans stay natural) */
 const nullsClause = (dir: "ASC" | "DESC", nulls: "FIRST" | "LAST") =>
   nulls === defaultNulls(dir) ? "" : ` NULLS ${nulls}`;
@@ -369,7 +369,7 @@ const orderBy = (keys: KeysetKey[]) =>
   `\nORDER BY ${keys.map((k) => `${qi(k.col)} ${k.dir}${nullsClause(k.dir, k.nulls)}`).join(", ")}`;
 
 /** ORDER BY term for one chain key on the offset-fallback path (no keyset
- * keys) — same NULLS-emission rule as the keyset ORDER BY */
+ * keys); same NULLS-emission rule as the keyset ORDER BY */
 const sortKeySql = (k: SortKey) => {
   const dir = k.dir === "desc" ? "DESC" : "ASC";
   const eff: "FIRST" | "LAST" =
@@ -387,10 +387,10 @@ export function browseSql(s: {
   filters: Filter[];
   sort: SortChain;
   limit: number;
-  /** keyset sort keys — when present they define the ORDER BY (they already
+  /** keyset sort keys: when present they define the ORDER BY (they already
    * start with the user's chain); null/absent = non-keysettable legacy shape */
   keys?: KeysetKey[] | null;
-  /** raw-WHERE escape hatch text — replaces the builder filters when set */
+  /** raw-WHERE escape hatch text; replaces the builder filters when set */
   rawWhere?: string | null;
   /** jump-to-row: OFFSET of the page's first row (0 = top). Documented
    * tradeoff: the jump page itself is offset-paginated (honest, one-shot);
@@ -411,7 +411,7 @@ export function browseSql(s: {
 }
 
 /** exact-count-on-demand SQL: count(*) over the SAME WHERE the browse uses
- * (builder or raw) — the footer's number must describe the rows being
+ * (builder or raw): the footer's number must describe the rows being
  * browsed, never a different set */
 export function browseCountSql(s: {
   table: TableInfo;
@@ -425,11 +425,11 @@ export function browseCountSql(s: {
 
 /** "Strictly after the row whose key values are `last`" under ORDER BY keys.
  *
- * Correctness notes (each key carries its EFFECTIVE NULLS placement — the PG
+ * Correctness notes (each key carries its EFFECTIVE NULLS placement: the PG
  * default for its direction unless the user overrode it; the ladder branches
  * on that placement, so overridden chains page correctly too):
  * - Row-value comparison `(a, b) > (v1, v2)` is only used when every key runs
- *   the same direction AND every key column is NOT NULL by catalog — a NULL
+ *   the same direction AND every key column is NOT NULL by catalog: a NULL
  *   anywhere would silently drop its whole partition (row-value comparisons
  *   yield NULL, and mixed directions break lexicographic order outright).
  *   NULLS placement is irrelevant there: a catalog-NOT NULL column has no
@@ -440,11 +440,11 @@ export function browseCountSql(s: {
  *   after NULL ⇒ `k IS NOT NULL` when the values are still ahead (placement
  *   FIRST), else nothing is after within this key (tie-break deeper).
  * - Equality steps use `= 'v'::cast` / `IS NULL` rather than
- *   IS NOT DISTINCT FROM — semantically identical for known values and it
+ *   IS NOT DISTINCT FROM: semantically identical for known values and it
  *   stays indexable (same call as the bedrock ctid-guard decision).
  *
  * Returns null when no seek predicate exists (e.g. the unique tiebreaker
- * value is somehow NULL) — the caller must fall back, never guess. */
+ * value is somehow NULL): the caller must fall back, never guess. */
 export function seekPredicate(
   keys: KeysetKey[],
   last: (string | null)[],
@@ -490,7 +490,7 @@ export function seekPredicate(
 
 /** The next browse page: WHERE = the active WHERE body (builder filters or
  * raw text) AND the keyset seek from the last loaded row's key values. Null
- * when the seek can't be built — caller falls back to the offset approach. */
+ * when the seek can't be built; caller falls back to the offset approach. */
 export function browsePageSql(s: {
   table: TableInfo;
   filters: Filter[];
@@ -505,7 +505,7 @@ export function browsePageSql(s: {
   const f = compiledWhere(s.filters, s.rawWhere);
   // the closing paren and the seek live on their OWN line: a raw WHERE ending
   // in a line comment (`… --`) must not eat the wrap and the seek (page 1 and
-  // count survive that text — page 2 must too)
+  // count survive that text; page 2 must too)
   const where = f ? `\nWHERE (${f}\n) AND (${seek})` : `\nWHERE ${seek}`;
   return `SELECT ${selectCols(s.table)} FROM ${t}${where}${orderBy(s.keys)}\nLIMIT ${s.limit}`;
 }

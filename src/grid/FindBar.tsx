@@ -1,4 +1,4 @@
-// ⌘F bar over the loaded result rows — same chrome/keys as JsonTree's search
+// ⌘F bar over the loaded result rows: same chrome/keys as JsonTree's search
 // (↩/⇧↩ next/prev · esc close · match count). Scoped honestly to loaded rows.
 import { useEffect, useRef } from "react";
 import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
@@ -26,7 +26,7 @@ export function FindBar({ stmt }: { stmt: StatementState }) {
   }, [focusSeq]);
 
   // recompute matches (debounced) whenever the query, the loaded rows or the
-  // grid's hidden-column set change. Hidden columns are skipped — a "current
+  // grid's hidden-column set change. Hidden columns are skipped: a "current
   // hit" the grid can't scroll to reads as a frozen find
   const rows = stmt.rows;
   const hiddenCols = useGridFilter((s) => s.hiddenCols);
@@ -43,7 +43,7 @@ export function FindBar({ stmt }: { stmt: StatementState }) {
         for (let c = 0; c < row.length; c++) {
           if (hiddenCols.has(c)) continue;
           const v = row[c];
-          // NULL never matches text — searching "null" must not lie
+          // NULL never matches text: searching "null" must not lie
           if (v !== null && v.toLowerCase().includes(q)) {
             found.push({ r, c });
             if (found.length >= HIT_CAP) break outer;
@@ -75,7 +75,7 @@ export function FindBar({ stmt }: { stmt: StatementState }) {
         spellCheck={false}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => {
-          // swallow only unmodified typing keys — ⌘/⌃ chords must bubble to
+          // swallow only unmodified typing keys: ⌘/⌃ chords must bubble to
           // the window shortcuts (⌘I, ⌘G step, …) or they die while finding
           if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
           if (e.key === "Enter") {

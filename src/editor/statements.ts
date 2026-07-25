@@ -1,4 +1,4 @@
-/** Client-side statement spans — mirrors the Rust splitter's token rules
+/** Client-side statement spans: mirrors the Rust splitter's token rules
  * (strings, quoted idents, dollar-quotes, comments) so ⌘↩ can run just the
  * statement under the caret. Spans are [from, to) char offsets into `src`. */
 export interface StmtSpan {
@@ -28,7 +28,7 @@ function skipQuoted(src: string, i: number, quote: string, backslash: boolean): 
     }
     j++;
   }
-  return n; // unterminated — consume the rest
+  return n; // unterminated: consume the rest
 }
 
 export function splitStatementSpans(src: string): StmtSpan[] {
@@ -62,7 +62,7 @@ export function splitStatementSpans(src: string): StmtSpan[] {
   return spans;
 }
 
-/** the span the caret sits in — or the nearest one before it when the caret
+/** the span the caret sits in, or the nearest one before it when the caret
  * is in the gap between statements (matches psql/DataGrip intuition) */
 export function spanAtCursor(src: string, pos: number): StmtSpan | null {
   const spans = splitStatementSpans(src);
@@ -74,13 +74,13 @@ export function spanAtCursor(src: string, pos: number): StmtSpan | null {
   return spans[spans.length - 1];
 }
 
-/** skip past a string / quoted ident / comment / dollar-quote starting at i —
+/** skip past a string / quoted ident / comment / dollar-quote starting at i.
  * returns the index after the token, or -1 if src[i] starts none of them */
 export function skipToken(src: string, i: number): number {
   const c = src[i];
   const n = src.length;
   if (c === "'") {
-    // E'…' takes backslash escapes — but only when the E is its own token
+    // E'…' takes backslash escapes, but only when the E is its own token
     // (WHERE_E'x' is an identifier followed by a plain string)
     const prev = src[i - 1];
     const isE = (prev === "e" || prev === "E") && !isWordChar(src[i - 2]);
@@ -96,7 +96,7 @@ export function skipToken(src: string, i: number): number {
     return end === -1 ? n : end + 2;
   }
   if (c === "$") {
-    // tags are identifier-shaped: $$, $q$, $q1$ — but never $1 (a parameter)
+    // tags are identifier-shaped: $$, $q$, $q1$, but never $1 (a parameter)
     const m = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(src.slice(i));
     if (m) {
       const end = src.indexOf(m[0], i + m[0].length);
@@ -126,12 +126,12 @@ interface DocText {
  * bounded window around it, re-attach the (shifted) spans after it once the
  * lexer re-synchronizes on a statement boundary. Grows the window (up to the
  * whole tail) when the edit resists adoption, RESUMING from the lexer's
- * position — never wrong, only slower.
+ * position: never wrong, only slower.
  * Restart boundaries are only span ends of NON-final spans: those are always
  * terminated by a top-level `;` (the `;` branch of the splitter is the only
- * way a non-final span is pushed). The final span is never one — it may be
+ * way a non-final span is pushed). The final span is never one: it may be
  * unterminated, and can even HAPPEN to end in a `;` that sits inside an
- * unterminated comment/string — so it is always re-lexed. */
+ * unterminated comment/string, so it is always re-lexed. */
 export function updateStatementSpans(
   old: StmtSpan[],
   ranges: readonly ChangedRange[],
@@ -166,7 +166,7 @@ export function updateStatementSpans(
 
 /** lex statement spans from `base` until suffix adoption or doc end. Starts
  * on a bounded window and grows it ×4 whenever the edge is reached without a
- * decision — the lexer RESUMES where it stopped (the window text is only
+ * decision: the lexer RESUMES where it stopped (the window text is only
  * appended to), so growth re-lexes at most the one token the previous edge
  * clipped, never the whole window. The final span is only trusted once the
  * window covers the doc end. Mirrors splitStatementSpans exactly. */
@@ -206,7 +206,7 @@ function lexTail(
     const j = skipToken(text, i);
     if (j !== -1) {
       // a token that runs to the window edge may be clipped, not
-      // unterminated — grow and re-lex it from its start
+      // unterminated: grow and re-lex it from its start
       if (j >= n && !isFinal) {
         grow();
         continue;
@@ -216,7 +216,7 @@ function lexTail(
     }
     const c = text[i];
     // a token STARTER clipped by the edge lexes as plain chars (`-` of `--`,
-    // `/` of `/*`, a `$tag` prefix) — the restart-from-base loop discarded
+    // `/` of `/*`, a `$tag` prefix): the restart-from-base loop discarded
     // such misreads implicitly; a resuming lexer must not consume them until
     // the window proves them plain
     if (!isFinal && (c === "-" || c === "/" || c === "$") && clippedStarter(text, i, n)) {
@@ -266,7 +266,7 @@ function clippedStarter(text: string, i: number, n: number): boolean {
 }
 
 /** first bare keyword of a statement, skipping leading comments (lowercased;
- * "" when none) — head checks on raw regexes miss comment-prefixed statements */
+ * "" when none): head checks on raw regexes miss comment-prefixed statements */
 export function headToken(stmt: string): string {
   const n = stmt.length;
   let i = 0;
@@ -291,7 +291,7 @@ export interface CteDef {
   /** full `name [ (cols) ] AS [MATERIALIZED] ( body )` span within the statement */
   defFrom: number;
   defTo: number;
-  /** body span (inside the parens) — used to hit-test the caret */
+  /** body span (inside the parens), used to hit-test the caret */
   bodyFrom: number;
   bodyTo: number;
 }
@@ -302,7 +302,7 @@ export interface CteParse {
 }
 
 /** parse the WITH-clause of one statement (offsets relative to `stmt`).
- * Returns null when the statement has no leading WITH. Tolerant lexer — on
+ * Returns null when the statement has no leading WITH. Tolerant lexer: on
  * anything unexpected it returns what it parsed so far. */
 export function parseCtes(stmt: string): CteParse | null {
   const n = stmt.length;

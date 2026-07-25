@@ -18,7 +18,7 @@ export const useDanger = create<DangerState>((set, get) => ({
 let promptSeq = 0;
 
 /** async confirm for destructive operations (window.confirm is a WKWebView stub).
- * `confirmLabel` names the ACTION ("Discard", "Delete", "Quit") — a generic
+ * `confirmLabel` names the ACTION ("Discard", "Delete", "Quit"): a generic
  * label on a destructive button makes users misread what they're agreeing to. */
 export function confirmDanger(
   title: string,
@@ -28,7 +28,7 @@ export function confirmDanger(
   return confirmDangerLive(title, detail, confirmLabel).done;
 }
 
-/** confirm whose detail can be UPDATED while it's open — the no-WHERE prompt
+/** confirm whose detail can be UPDATED while it's open: the no-WHERE prompt
  * opens immediately with "estimating…" and streams planner estimates in
  * (blocking the modal on an EXPLAIN that may be lock-stuck made ⌘↩ hang).
  * `update` silently no-ops once this prompt is resolved or displaced. */
@@ -40,13 +40,13 @@ export function confirmDangerLive(
   const id = ++promptSeq;
   const done = new Promise<boolean>((resolve) => {
     // a new prompt displacing an open one must not orphan the old caller's
-    // promise — resolve it false (treated as "cancelled")
+    // promise: resolve it false (treated as "cancelled")
     useDanger.getState().resolver?.(false);
     useDanger.setState({ prompt: { id, title, detail, confirmLabel }, resolver: resolve });
   });
   const update = (next: string) => {
     const cur = useDanger.getState().prompt;
-    if (cur?.id !== id) return; // resolved or displaced — a late estimate is noise
+    if (cur?.id !== id) return; // resolved or displaced; a late estimate is noise
     useDanger.setState({ prompt: { ...cur, detail: next } });
   };
   return { done, update };
@@ -73,7 +73,7 @@ function skipWsComments(stmt: string, i: number): number {
 }
 
 /** a bare keyword from `i` on, outside strings/comments/dollar-quotes;
- * `topLevel` restricts to paren depth 0 — a WHERE inside a subselect doesn't
+ * `topLevel` restricts to paren depth 0: a WHERE inside a subselect doesn't
  * make the outer DML safe */
 function hasKeyword(stmt: string, i: number, word: string, topLevel: boolean): boolean {
   const n = stmt.length;
@@ -143,7 +143,7 @@ function dmlWithoutWhere(stmt: string): boolean {
   return !hasKeyword(stmt, end, "where", true);
 }
 
-/** UPDATE or DELETE statements with no WHERE clause — real statement
+/** UPDATE or DELETE statements with no WHERE clause. Real statement
  * boundaries (a `;` inside a string/dollar-quote no longer splits), leading
  * comments and CTE chains skipped, and only a TOP-LEVEL WHERE counts */
 export function dangerousStatements(sql: string): string[] {
@@ -157,7 +157,7 @@ const MUTATING = new Set([
   "insert", "update", "delete", "merge", "truncate", "drop", "alter", "create", "call", "do",
 ]);
 
-/** EXPLAIN ANALYZE executes the statement — anything that can write must warn.
+/** EXPLAIN ANALYZE executes the statement: anything that can write must warn.
  * COPY mutates only in its FROM form; SELECT … INTO creates a table. */
 export const isMutating = (sql: string): boolean => {
   const { word, end } = headAfterWith(sql);

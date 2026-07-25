@@ -106,11 +106,11 @@ function tokenize(state: EditorState, from: number, to: number): Tok[] {
 // Bound on how much statement text gets tokenized per keystroke. A statement
 // bigger than this (giant VALUES/IN paste) is windowed around the cursor:
 // completion inside a >200KB single statement may miss tables defined outside
-// the window — accepted; statements under the cap tokenize identically.
+// the window: accepted; statements under the cap tokenize identically.
 const MAX_SCAN = 200_000;
 const HALF_SCAN = 100_000;
 
-/** last ";" at or before pos-1, scanned backward in bounded chunks — never
+/** last ";" at or before pos-1, scanned backward in bounded chunks: never
  * materializes the doc. -1 when none within HALF_SCAN (or the doc start). */
 function lastSemi(state: EditorState, pos: number): number {
   const lo = Math.max(0, pos - HALF_SCAN);
@@ -145,7 +145,7 @@ function statementRange(state: EditorState, pos: number): { from: number; to: nu
     if (node.type.name === "Statement") return { from: node.from, to: node.to };
     node = node.parent;
   }
-  // fallback: split on semicolons textually (bounded — this path used to
+  // fallback: split on semicolons textually (bounded: this path used to
   // toString() the whole doc on every keystroke at a statement boundary)
   const from = lastSemi(state, pos) + 1;
   let to = nextSemi(state, pos);
@@ -164,12 +164,12 @@ function parseTableRef(parts: string[]): { schema: string | null; name: string }
 export function queryContext(state: EditorState, pos: number): QueryCtx {
   let { from, to } = statementRange(state, pos);
   // pathological single statements get a MAX_SCAN window around the cursor
-  // (see note above) — anything smaller tokenizes in full, byte-identically
+  // (see note above): anything smaller tokenizes in full, byte-identically
   if (to - from > MAX_SCAN) {
     from = Math.max(from, pos - HALF_SCAN);
     to = Math.min(to, pos + HALF_SCAN);
   }
-  // IMPORTANT: tokenize the WHOLE statement — in `SELECT col| FROM t` the
+  // IMPORTANT: tokenize the WHOLE statement: in `SELECT col| FROM t` the
   // tables live after the cursor. Clause detection is cursor-bounded below.
   const toks = tokenize(state, from, to);
 

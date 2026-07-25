@@ -55,7 +55,7 @@ export function ThemePicker() {
   if (!open) return null;
   const dark = resolved === "dark";
   const palettes = [...PALETTES, ...customThemes];
-  // the radio group reflects the scope a pick would land in — the active
+  // the radio group reflects the scope a pick would land in: the active
   // connection's choice when per-connection themes are on, the app theme
   // otherwise
   const choice = themeChoice({
@@ -250,7 +250,7 @@ export function ThemePicker() {
   );
 }
 
-/** which connections hold this theme — the pick-landed-here feedback while
+/** which connections hold this theme: the pick-landed-here feedback while
  * per-connection themes are on */
 function OwnerDots({ owners, all }: { owners: Profile[]; all: Profile[] }) {
   if (owners.length === 0) return null;

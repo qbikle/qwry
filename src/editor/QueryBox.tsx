@@ -4,12 +4,12 @@ import { Kbd } from "../design/Kbd";
 import { SqlEditor, editorRunText } from "./SqlEditor";
 import "./editor.css";
 
-/** selection if any, else statement under caret — matches ⌘↩ */
+/** selection if any, else statement under caret (matches ⌘↩) */
 const runTarget = () => editorRunText.current?.();
 
 export function QueryBox() {
   const connectError = useConnections((s) => s.error);
-  // a profile is active — run() auto-reconnects if the session has dropped
+  // a profile is active: run() auto-reconnects if the session has dropped
   const connected = useConnections((s) => s.activeProfileId !== null);
   const sql = useConnections((s) => s.sql);
   const run = useResults((s) => s.run);
@@ -36,7 +36,7 @@ export function QueryBox() {
         </button>
         {/* ONE action slot, constant size across every mode: all faces stay
             mounted stacked in a grid cell, and the faces are EQUALIZED by
-            copy ("Cancelling"/"Connecting" drop the progress … — a width-
+            copy ("Cancelling"/"Connecting" drop the progress …, a width-
             over-register call, scoped here) so the reservation costs ~1ch
             instead of a fat button. Explain never moves; the button never
             resizes; only its skin changes with state. */}

@@ -65,7 +65,7 @@ export const useInspector = create<InspectorState>()(
 );
 
 
-// the target indexes INTO the active result set — when that set is replaced
+// the target indexes INTO the active result set. When that set is replaced
 // or cleared (tab closed, new run, tab switch), stale coordinates would show
 // another dataset's value. Drop the target the moment it stops resolving.
 void import("./results").then(({ useResults }) => {

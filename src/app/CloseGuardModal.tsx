@@ -35,7 +35,7 @@ export function CloseGuardModal() {
       onClose={cancel}
       onKey={(e) => {
         // plain Enter = SAFE (keep the tab), ⌘⌫ = destructive (discard),
-        // ⌘↩ = commit & close — only while topmost.
+        // ⌘↩ = commit & close, only while topmost.
         if (e.key === "Enter") {
           e.preventDefault();
           e.stopImmediatePropagation();

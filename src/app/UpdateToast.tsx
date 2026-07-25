@@ -1,4 +1,4 @@
-// Update-available toast — rides the conn-toast layout with an accent skin.
+// Update-available toast: rides the conn-toast layout with an accent skin.
 // One per new version; Later silences it until the next launch.
 import { motion, AnimatePresence } from "motion/react";
 import { RefreshCw, X } from "lucide-react";

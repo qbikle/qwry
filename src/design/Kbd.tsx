@@ -1,10 +1,10 @@
 // The one shortcut-glyph renderer (WRITING.md glyph register, DESIGN.md rule
 // 7). Takes a chord SPEC ("shift+cmd+f") and emits canonical glyphs in HIG
-// modifier order — wrong order or wrong codepoint is untypeable by
+// modifier order: wrong order or wrong codepoint is untypeable by
 // construction. Hand-typed chord strings in JSX are a design-lint error.
 //
-// Two costumes: bare (default — menus, buttons, inline hints) and caps
-// (teaching surfaces only: cheatsheet, empty states — one keycap per key).
+// Two costumes: bare (default: menus, buttons, inline hints) and caps
+// (teaching surfaces only: cheatsheet, empty states, one keycap per key).
 
 const MODIFIER_ORDER = ["ctrl", "alt", "shift", "cmd"] as const;
 type Modifier = (typeof MODIFIER_ORDER)[number];
@@ -56,7 +56,7 @@ const KEY_GLYPH: Record<string, string> = {
   slash: "/",
 };
 
-/** "shift+cmd+f" → ["⇧", "⌘", "F"] — modifiers re-sorted to ⌃⌥⇧⌘ regardless
+/** "shift+cmd+f" → ["⇧", "⌘", "F"]: modifiers re-sorted to ⌃⌥⇧⌘ regardless
  *  of spec order, single chars uppercased, named keys mapped to canon */
 export function chordGlyphs(chord: string): string[] {
   const mods: Modifier[] = [];

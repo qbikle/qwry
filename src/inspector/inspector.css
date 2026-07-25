@@ -90,7 +90,7 @@
 .insp-chip.ro {
   color: var(--fg-faint);
 }
-/* skin comes from .linkish (tokens.css) — only the placement stays local */
+/* skin comes from .linkish (tokens.css): only the placement stays local */
 .insp-chip .insp-chip-retry {
   margin-left: auto;
 }
@@ -110,7 +110,7 @@
   padding: var(--sp-3);
 }
 /* raw JSON mode: the editor grows to its content, caps at the panel, and
- * scrolls INSIDE itself — no dead space under a max-height box */
+ * scrolls INSIDE itself: no dead space under a max-height box */
 .insp-body.raw-fill {
   display: flex;
   flex-direction: column;
@@ -205,12 +205,12 @@
 .insp-tools-actions button {
   height: 28px;
 }
-/* skin comes from .btnish (tokens.css) — verbs must not wrap mid-button */
+/* skin comes from .btnish (tokens.css): verbs must not wrap mid-button */
 .insp-editactions button {
   white-space: nowrap;
 }
 /* narrow panel (store width < 280): shortcut hints yield, verbs stay.
- * class comes from the width store, NOT a container query — container-type
+ * class comes from the width store, NOT a container query: container-type
  * on any ancestor would make it the containing block for the fixed
  * .insp-copy-backdrop, shrinking click-away to the panel */
 .inspector.narrow .kbd {
@@ -236,14 +236,14 @@
   border-color: var(--accent);
 }
 /* raw-fill + search: the CM editor owns its scroll (height-bound), so the
- * search panel stays pinned while results scroll under it — the outer
+ * search panel stays pinned while results scroll under it: the outer
  * .jsonfield scrolling instead would carry the panel away (chrome that
  * scrolls with content isn't chrome) */
 .insp-body.raw-fill .jsonfield .cm-editor {
   height: 100%;
 }
 
-/* ⌘F search panel inside the raw view — same skin as the SQL editor's
+/* ⌘F search panel inside the raw view: same skin as the SQL editor's
  * (editor.css .sql-editor .cm-panel.cm-search); duplicated because the two
  * surfaces live in different lazy chunks and the inspector must not depend
  * on the editor's CSS having loaded. Keep the values in lockstep. */
@@ -325,7 +325,7 @@
   position: relative;
   display: inline-flex;
 }
-/* fused halves of the split button — must outrank .iconbtn.bordered */
+/* fused halves of the split button: must outrank .iconbtn.bordered */
 .insp-copy button.insp-copy-main {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
@@ -372,7 +372,7 @@
   background: var(--bg-active);
 }
 
-/* skin comes from .btnish — un-italic against the NULL display around it */
+/* skin comes from .btnish: un-italic against the NULL display around it */
 .insp-null-edit {
   margin-left: var(--sp-2);
   font-style: normal;
@@ -422,7 +422,7 @@
   padding-left: var(--sp-2);
 }
 
-/* explicit child-cap expander — capped children are never silently hidden */
+/* explicit child-cap expander: capped children are never silently hidden */
 .jt-more {
   display: block;
   margin: 1px 0;
@@ -468,7 +468,7 @@
   color: var(--fg-faint);
   font-style: italic;
 }
-/* empty-string marker — data-state register, same tier as null */
+/* empty-string marker: data-state register, same tier as null */
 .jt-empty {
   color: var(--fg-faint);
 }
@@ -476,7 +476,7 @@
   color: var(--fg-faint);
 }
 
-/* JSON tree: fixed search header + independently scrolling rows — the bar
+/* JSON tree: fixed search header + independently scrolling rows. The bar
    never rides the scroll, structurally (no sticky, no masks) */
 .insp-body:has(> .json-tree) {
   display: flex;
@@ -529,7 +529,7 @@
   color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
 }
-/* skin comes from .iconbtn — the search bar is dense, so the box shrinks */
+/* skin comes from .iconbtn: the search bar is dense, so the box shrinks */
 .jt-search .jt-nav {
   width: 18px;
   height: 18px;
@@ -560,7 +560,7 @@
 
 .jt-edit {
   /* the negative-margin compensation pushes the border 1px into the
-     neighbor rows' boxes — positioned elements paint after normal-flow
+     neighbor rows' boxes: positioned elements paint after normal-flow
      siblings, so their hover backgrounds can never eat the border edge */
   position: relative;
   background: var(--bg-panel);
@@ -574,14 +574,14 @@
   user-select: text;
   min-width: 60px;
 }
-/* value editor (textarea): wears the DISPLAY's exact metrics — same font,
+/* value editor (textarea): wears the DISPLAY's exact metrics. Same font,
    line-height, wrap, and left edge (border + padding pulled back by the
    negative margin), so entering edit mode changes nothing but the border
    appearing and the row below staying put. Height is JS-grown to the wrapped
    content (Leaf's layout effect), capped at 40% of the window */
 .jt-edit:focus-visible {
   /* the always-on accent border IS the focus treatment (the editor only
-     exists focused) — the global ring paints outside the box and sibling
+     exists focused): the global ring paints outside the box and sibling
      hover backgrounds swallowed its edges by DOM paint order */
   outline: none;
 }
@@ -589,7 +589,7 @@
   flex: 1 1 auto;
   min-width: 60px;
   /* LEFT-only compensation: a negative right margin pushed the border past
-     the scroller edge and it clipped — the text anchor only needs the left */
+     the scroller edge and it clipped: the text anchor only needs the left */
   margin: -1px 0 -1px -5px; /* optical */ /* border 1 + padding 4 compensation */
   resize: none;
   overflow-y: auto;
@@ -609,7 +609,7 @@
   border-color: var(--danger);
 }
 /* key editor: box hugs the key text (width set inline from the mono char
-   count), chrome pulled back so the text never shifts — the sibling value's
+   count), chrome pulled back so the text never shifts: the sibling value's
    wrap column stays exactly where the display had it */
 .jt-key-edit {
   color: var(--syn-prop);

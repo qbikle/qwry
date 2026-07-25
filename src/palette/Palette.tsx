@@ -59,7 +59,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
     if (!open) setQuery("");
   }, [open]);
 
-  // fuzzy-match over the WHOLE catalog ourselves, render only the top hits —
+  // fuzzy-match over the WHOLE catalog ourselves, render only the top hits:
   // the old first-400 slice made every table past index 400 unfindable
   const tableHits = useMemo(() => {
     const all = snapshot?.tables ?? [];
@@ -116,7 +116,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
     close();
   };
 
-  // clear must refresh the History group + flash a cue — a silent action that
+  // clear must refresh the History group + flash a cue: a silent action that
   // keeps showing deleted rows lies twice
   const clearHistory = (pid: string, olderThanDays: number | null) =>
     invoke("history_clear", { profileId: pid, olderThanDays }).then(async () => {
@@ -141,7 +141,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
             <Command.Item
               onSelect={() => {
                 // while the editor shows a time-machine snapshot the store sql
-                // is the INVISIBLE parked draft — running it here would bypass
+                // is the INVISIBLE parked draft: running it here would bypass
                 // the editor's own gate
                 if (!editorTimeTraveling.current) void useResults.getState().run();
                 close();
@@ -222,13 +222,13 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
               value="disconnect current connection"
               onSelect={() => {
                 close();
-                // kills EVERY session on the profile (all tabs, tunnel) — the
+                // kills EVERY session on the profile (all tabs, tunnel): the
                 // only bulk teardown without a guard until now
                 void (async () => {
                   const { activeProfileId: pid, profiles } = useConnections.getState();
                   if (!pid) return;
                   const { useEdits } = await import("../stores/edits");
-                  // count only THIS profile's tabs — staged edits on another
+                  // count only THIS profile's tabs: staged edits on another
                   // connection survive its disconnect and must not inflate
                   // the warning
                   const tabList = useTabs.getState().tabs;
@@ -284,7 +284,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
             {tabs.map((t, i) => (
               <Command.Item
                 key={t.id}
-                // value must be UNIQUE — three "new qwry" tabs with the same
+                // value must be UNIQUE: three "new qwry" tabs with the same
                 // value make cmdk collapse/misroute them; the index also makes
                 // "tab 2" searchable
                 value={`tab ${i + 1} ${t.name} ${t.kind}`}
@@ -365,13 +365,13 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
           </Command.Group>
 
           {snapshot && tableHits.length > 0 && (
-            // forceMount on the GROUP too — cmdk decides group visibility from
+            // forceMount on the GROUP too: cmdk decides group visibility from
             // MATCHING children, so force-mounted items alone leave it hidden
             <Command.Group heading="Tables" forceMount>
               {tableHits.map((t) => (
                 <Command.Item
                   key={t.table_oid}
-                  // pre-filtered above — exempt from cmdk's own scoring so a
+                  // pre-filtered above: exempt from cmdk's own scoring so a
                   // match deep in the catalog can never be re-hidden
                   forceMount
                   value={`table ${t.schema}.${t.name}`}
@@ -389,7 +389,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
             {profiles.map((p) => (
               <Command.Item
                 key={p.id}
-                // p.id disambiguates — two profiles named "prod" would make
+                // p.id disambiguates: two profiles named "prod" would make
                 // cmdk activate whichever is first in the DOM, not the arrowed one
                 value={`connect ${p.name} ${p.id}`}
                 onSelect={() => {

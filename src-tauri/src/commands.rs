@@ -10,7 +10,7 @@ use crate::state::AppState;
 
 /// session → owning profile, stamped at `connect` and dropped at `disconnect`.
 /// Lets the commit path write undo-log rows keyed by profile WITHOUT the
-/// frontend having to thread a profile id through every edit call — grid
+/// frontend having to thread a profile id through every edit call: grid
 /// deletes and ⌘S commits both get undo rows for free.
 fn session_profiles() -> &'static Mutex<HashMap<String, String>> {
     static MAP: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
@@ -50,14 +50,14 @@ struct SessionClosed {
     reason: Option<String>,
 }
 
-/// session transaction status changed (driver-tracked) — feeds the tx chip
+/// session transaction status changed (driver-tracked); feeds the tx chip
 #[derive(Clone, serde::Serialize)]
 struct TxStateChanged {
     session_id: String,
     state: &'static str,
 }
 
-/// an appdb list dropped corrupt rows — surfaced as a frontend toast
+/// an appdb list dropped corrupt rows, surfaced as a frontend toast
 #[derive(Clone, serde::Serialize)]
 struct AppDbWarning {
     table: &'static str,
@@ -70,7 +70,7 @@ fn warn_skipped(app: &AppHandle, table: &'static str, skipped: usize) {
     }
 }
 
-/// false only on the refused-appdb path (stub state + fatal dialog) — the
+/// false only on the refused-appdb path (stub state + fatal dialog): the
 /// frontend must keep the hidden window hidden instead of revealing an
 /// empty app beside "qwry can't start"
 #[tauri::command]
@@ -101,7 +101,7 @@ pub async fn profile_save(
 #[tauri::command]
 pub async fn profile_delete(state: State<'_, AppState>, id: String) -> Result<()> {
     state.appdb.delete_profile(&id)?;
-    // unbind its tunnel spec — the shared ssh process dies only when no other
+    // unbind its tunnel spec: the shared ssh process dies only when no other
     // profile still rides it
     state.invalidate_profile_tunnel(&id);
     secrets::delete_password(&id)
@@ -109,7 +109,7 @@ pub async fn profile_delete(state: State<'_, AppState>, id: String) -> Result<()
 
 /// A profile was repointed: unbind it from its SSH tunnel so the next connect
 /// resolves a fresh spec. The tunnel itself is dropped only when no OTHER
-/// profile shares it (tunnels are keyed/shared by spec — DB-switcher clones
+/// profile shares it (tunnels are keyed/shared by spec: DB-switcher clones
 /// ride one ssh process). No-op when the profile has none.
 #[tauri::command]
 pub async fn invalidate_profile(state: State<'_, AppState>, profile_id: String) -> Result<()> {
@@ -122,7 +122,7 @@ pub async fn set_profile_order(state: State<'_, AppState>, ids: Vec<String>) -> 
     state.appdb.set_profile_order(&ids)
 }
 
-/// clone a profile onto a different database (the DB-switcher) — new id, same
+/// clone a profile onto a different database (the DB-switcher): new id, same
 /// host/creds (password carried over), name "<base> · <db>"
 #[tauri::command]
 pub async fn clone_connection(
@@ -151,7 +151,7 @@ pub async fn clone_connection(
     Ok(p)
 }
 
-/// percent-encode a URI component (RFC 3986 — unreserved chars pass through)
+/// percent-encode a URI component (RFC 3986: unreserved chars pass through)
 fn uri_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
@@ -166,7 +166,7 @@ fn uri_encode(s: &str) -> String {
 }
 
 /// postgres:// URI for a profile. The password is read from the Keychain only
-/// when explicitly requested — the redacted form is the default copy action.
+/// when explicitly requested; the redacted form is the default copy action.
 #[tauri::command]
 pub async fn connection_uri(
     state: State<'_, AppState>,
@@ -249,7 +249,7 @@ pub async fn connect(
 
     // through an SSH tunnel when the profile has one, else direct. Cancel and
     // terminate signals ride the tunnel's control lane (a second ssh process)
-    // when it spawned — a bulk result saturating the data lane can no longer
+    // when it spawned: a bulk result saturating the data lane can no longer
     // starve the cancel handshake.
     let session = if crate::tunnel::tunnel_host(&profile).is_some() {
         let tunnel = state.ensure_tunnel(&profile).await?;
@@ -313,7 +313,7 @@ pub struct TestResult {
 }
 
 /// Ephemeral connectivity probe for the connection editor: connect (through
-/// the tunnel if configured — the tunnel cache keeps it for the real connect),
+/// the tunnel if configured; the tunnel cache keeps it for the real connect),
 /// SELECT version(), disconnect. Password may be passed unsaved from the form.
 #[tauri::command]
 pub async fn test_connection(
@@ -363,7 +363,7 @@ pub async fn test_connection(
     Ok(TestResult { latency_ms, server_version, tls })
 }
 
-/// write an export to disk — path comes from the native save dialog. Async +
+/// write an export to disk; path comes from the native save dialog. Async +
 /// tokio::fs so a multi-MB CSV export never freezes the main thread/event loop.
 #[tauri::command]
 pub async fn write_text_file(path: String, contents: String) -> Result<()> {
@@ -372,7 +372,7 @@ pub async fn write_text_file(path: String, contents: String) -> Result<()> {
         .map_err(|e| driver::DriverError::Internal(format!("write {path}: {e}")))
 }
 
-/// read a .sql file from disk — path comes from the native open dialog or a
+/// read a .sql file from disk; path comes from the native open dialog or a
 /// drag-drop onto the window
 #[tauri::command]
 pub async fn read_text_file(path: String) -> Result<String> {
@@ -381,7 +381,7 @@ pub async fn read_text_file(path: String) -> Result<String> {
         .map_err(|e| driver::DriverError::Internal(format!("read {path}: {e}")))
 }
 
-/// mtime + size identity for a file on disk — the frontend's cheap probe for
+/// mtime + size identity for a file on disk: the frontend's cheap probe for
 /// on-disk .sql conflict detection and import size gating
 #[tauri::command]
 pub async fn file_stat(path: String) -> Result<crate::import::FileStat> {
@@ -404,7 +404,7 @@ pub async fn table_ddl(
 }
 
 /// Structure-tab depth for one relation: constraints, indexes (with scan
-/// counts), triggers, sizes, pg_stat activity, comments — one round trip,
+/// counts), triggers, sizes, pg_stat activity, comments; one round trip,
 /// read-only, runs on whichever session the tab holds.
 #[tauri::command]
 pub async fn table_stats(
@@ -421,7 +421,7 @@ pub async fn table_stats(
 
 #[tauri::command]
 pub async fn disconnect(state: State<'_, AppState>, session_id: String) -> Result<()> {
-    // a running query keeps its own Arc alive past removal — cancel it
+    // a running query keeps its own Arc alive past removal; cancel it
     // best-effort so the server stops burning through it (cancel itself is
     // deadline-bounded, so a dead tunnel can't hang the disconnect), then
     // hard-abort the connection: even when every cancel tier failed, the
@@ -431,7 +431,7 @@ pub async fn disconnect(state: State<'_, AppState>, session_id: String) -> Resul
     session_profiles().lock().unwrap().remove(&session_id);
     if let Some(s) = session {
         // an already-aborted connection (terminate tier, cap hard-abort) has
-        // nothing left to cancel — skip ~8s of pointless dialing
+        // nothing left to cancel: skip ~8s of pointless dialing
         if !s.is_aborted() {
             let _ = s.cancel().await;
         }
@@ -488,7 +488,7 @@ pub async fn introspect(
         .ok_or(driver::DriverError::NoSession)?;
     let ver = session.server_version();
     let cached: Option<Vec<FuncInfo>> = if ver.is_empty() {
-        None // unknown build — never serve possibly-wrong catalog functions
+        None // unknown build: never serve possibly-wrong catalog functions
     } else {
         state
             .appdb
@@ -500,7 +500,7 @@ pub async fn introspect(
     let (snap, fresh_catalog) = session.introspect(cached).await?;
     if !ver.is_empty() {
         if let Some(cat) = &fresh_catalog {
-            // best-effort — a failed cache write must never fail the introspect
+            // best-effort: a failed cache write must never fail the introspect
             if let Ok(data) = serde_json::to_string(cat) {
                 let _ = state.appdb.pg_catalog_funcs_put(&ver, &data);
             }
@@ -514,7 +514,7 @@ pub async fn introspect(
     Ok(snap)
 }
 
-/// Last persisted schema snapshot for a profile, as its raw JSON string —
+/// Last persisted schema snapshot for a profile, as its raw JSON string,
 /// parsed once in TS. Returns None when absent or when the stored `sig` does
 /// not match (profile repointed since the cache was written).
 #[tauri::command]
@@ -598,7 +598,7 @@ pub async fn delete_rows(
     Ok(outcome)
 }
 
-/// newest unexpired undo-log row for a profile — the frontend's undo offer
+/// newest unexpired undo-log row for a profile: the frontend's undo offer
 #[tauri::command]
 pub async fn undo_log_latest(
     state: State<'_, AppState>,
@@ -608,8 +608,8 @@ pub async fn undo_log_latest(
 }
 
 /// Apply a persisted revert plan on the session that committed it. Session
-/// identity is verified on a PEEK first — a refused undo must not consume the
-/// offer — and only a passing row is taken (an undo is single-shot — NEVER
+/// identity is verified on a PEEK first (a refused undo must not consume the
+/// offer) and only a passing row is taken (an undo is single-shot, NEVER
 /// auto-retried); the plan re-enters the verified-batch pipeline, so a stale
 /// undo rolls back honestly. A session mismatch refuses: undo is never
 /// offered across reconnects, and the server-side check backs the frontend's
@@ -641,7 +641,7 @@ pub async fn undo_apply(
     let (outcome, redo) = session.apply_revert(&plan).await?;
     if outcome.committed {
         if let Some(redo) = redo {
-            // the undo commit writes its own undo row — redo emerges naturally
+            // the undo commit writes its own undo row; redo emerges naturally
             if let Ok(json) = serde_json::to_string(&redo) {
                 if let Err(e) = state.appdb.undo_log_add(
                     &row.profile_id,
@@ -684,7 +684,7 @@ pub async fn buffer_snapshots_clear(state: State<'_, AppState>, tab_id: String) 
     state.appdb.buffer_snapshots_clear(&tab_id)
 }
 
-/// one full (untruncated) cell by table identity + row locator — replaces the
+/// one full (untruncated) cell by table identity + row locator; replaces the
 /// frontend's hand-rolled fetch SQL (aliased/unquoted idents, dotted names)
 #[tauri::command]
 pub async fn fetch_cell(
@@ -710,7 +710,7 @@ pub struct SessionInfo {
     pub backend_pid: i32,
 }
 
-/// live facts about a session the frontend can't know otherwise — whether TLS
+/// live facts about a session the frontend can't know otherwise: whether TLS
 /// is actually on (sslmode=prefer can silently downgrade) and the backend pid
 #[tauri::command]
 pub async fn session_info(state: State<'_, AppState>, session_id: String) -> Result<SessionInfo> {
@@ -723,7 +723,7 @@ pub async fn session_info(state: State<'_, AppState>, session_id: String) -> Res
     })
 }
 
-/// pg_terminate_backend over a fresh control connection — the last cancel
+/// pg_terminate_backend over a fresh control connection: the last cancel
 /// tier. Only ever run on explicit user action. The tier's contract is
 /// "this session is dead, fresh one next run": whether or not the server-side
 /// terminate landed, the local connection is hard-aborted so nothing keeps
@@ -753,7 +753,7 @@ pub async fn insert_row(
     session.insert_row(&schema, &table, cols, values).await
 }
 
-// appdb commands are async so Tauri runs them OFF the main thread — a sync
+// appdb commands are async so Tauri runs them OFF the main thread: a sync
 // command body executes on the main thread and a slow sqlite write (or a
 // Keychain prompt) froze the whole event loop.
 

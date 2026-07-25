@@ -47,7 +47,7 @@ export function TableBrowser() {
   const [jumpOpen, setJumpOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
-  // ⌘L — jump to row (data tab only; the footer input takes it from there)
+  // ⌘L: jump to row (data tab only; the footer input takes it from there)
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.metaKey && !e.shiftKey && !e.altKey && !e.ctrlKey && e.key.toLowerCase() === "l") {
@@ -100,12 +100,12 @@ export function TableBrowser() {
           className="iconbtn"
           title="Refresh"
           onClick={() => {
-            // Structure shows table_stats, not the data query — refresh THAT
+            // Structure shows table_stats, not the data query: refresh THAT
             if (tab === "structure") {
               structureRefresh.current?.();
               return;
             }
-            // DDL shows the deparsed DDL — refetch it, never the invisible
+            // DDL shows the deparsed DDL: refetch it, never the invisible
             // data query behind the pane
             if (tab === "ddl") {
               ddlRefresh.current?.();
@@ -151,8 +151,8 @@ export function TableBrowser() {
   );
 }
 
-/** locally-buffered filter value — the query fires on Enter/blur, not per
- * keystroke (typing "manish" used to run six streaming SELECTs) */
+/** locally-buffered filter value: the query fires on Enter/blur, not per
+ * keystroke (typing "orders" used to run six streaming SELECTs) */
 function FilterValue({
   value,
   placeholder,
@@ -184,7 +184,7 @@ function FilterValue({
   );
 }
 
-/** enum labels for a column type, from the snapshot — defensively: `enums`
+/** enum labels for a column type, from the snapshot, defensively: `enums`
  * is absent on pre-introspect-v2 cached snapshots → null → plain text input */
 function enumLabelsFor(colType: string, enums: EnumInfo[] | undefined): string[] | null {
   if (!Array.isArray(enums)) return null;
@@ -394,7 +394,7 @@ function FilterRow({
         value={f.col}
         onChange={(e) => {
           const col = e.target.value;
-          // the new column's type may not support the current operator —
+          // the new column's type may not support the current operator, so
           // normalize so the row always renders a consistent control set
           const type = table.columns.find((c) => c.name === col)?.type ?? "";
           const isEnum = enumLabelsFor(type, enums) !== null;
@@ -418,7 +418,7 @@ function FilterRow({
         value={f.op}
         onChange={(e) => {
           const op = e.target.value as Filter["op"];
-          // bool ops carry a fixed-choice value — normalize on switch so
+          // bool ops carry a fixed-choice value: normalize on switch so
           // the row never renders an inconsistent state
           const boolOp = op === "IS" || op === "IS NOT";
           onPatch({
@@ -442,8 +442,8 @@ function FilterRow({
   );
 }
 
-/** raw-WHERE escape hatch: the text becomes the browse WHERE as written —
- * the user owns it; it's validated only by running */
+/** raw-WHERE escape hatch: the text becomes the browse WHERE as written.
+ * The user owns it; it's validated only by running */
 function RawWhere() {
   const rawWhere = useBrowser((s) => s.rawWhere);
   const setRawWhere = useBrowser((s) => s.setRawWhere);
@@ -473,7 +473,7 @@ function RawWhere() {
   );
 }
 
-/** the COMPILED WHERE clause for builder-mode filters — the exact SQL text
+/** the COMPILED WHERE clause for builder-mode filters: the exact SQL text
  * the queries embed (trust feature); click copies it */
 function WherePreview({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -554,7 +554,7 @@ function FilterBar() {
           <button
             className="tb-addfilter"
             onClick={() => {
-              // seed a type-valid operator — "=" isn't offered for booleans
+              // seed a type-valid operator; "=" isn't offered for booleans
               const first = table.columns[0];
               const isEnum = enumLabelsFor(first?.type ?? "", enums) !== null;
               const op = opsForType(first?.type ?? "", isEnum)[0] ?? "=";
@@ -617,7 +617,7 @@ function BrowseFooter({
     Boolean(compiledWhere(s.filters, s.whereMode === "raw" ? s.rawWhere : null)),
   );
 
-  // planner row estimate for the whole table (reltuples — no COUNT scan).
+  // planner row estimate for the whole table (reltuples, no COUNT scan).
   // Honest tilde: it's statistics, refreshed by (auto)analyze.
   const activeProfileId = useConnections((s) => s.activeProfileId);
   const [est, setEst] = useState<string | null>(null);
@@ -647,7 +647,7 @@ function BrowseFooter({
     return () => {
       stale = true;
     };
-    // bump = header Refresh clicks — stats move after (auto)analyze
+    // bump = header Refresh clicks; stats move after (auto)analyze
   }, [table.schema, table.name, activeProfileId, bump]);
 
   return (
@@ -742,7 +742,7 @@ function SortSelect() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
 
-  // PKs + time-ish columns are what you actually sort by — surface them first
+  // PKs + time-ish columns are what you actually sort by: surface them first
   const quick = table.columns.filter(
     (c) =>
       table.pk.includes(c.name) ||
@@ -759,7 +759,7 @@ function SortSelect() {
   const restM = match(rest);
 
   // click = single-column sort (replace the chain; clicking the sole active
-  // column flips its direction — the pre-chain behavior); ⇧click = append
+  // column flips its direction, the pre-chain behavior); ⇧click = append
   // the column as a tiebreaker (or flip it where it already sits)
   const pick = (col: string, additive: boolean) => {
     const idx = sortChain.findIndex((k) => k.column === col);
@@ -837,7 +837,7 @@ function SortSelect() {
                 {sortChain.map((k, i) => {
                   // a NULLS override on a catalog-NOT NULL key is semantically
                   // inert but emits a non-default NULLS clause that demolishes
-                  // the plan (Index Scan → Seq Scan + full Sort per page) —
+                  // the plan (Index Scan → Seq Scan + full Sort per page), so
                   // gate the affordance; a stale override (column altered
                   // after it was set) stays clickable so it can be cleared
                   const notNull =

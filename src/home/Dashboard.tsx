@@ -39,7 +39,7 @@ export function Dashboard() {
     void ipc.historyRecent(8).then(setRecent).catch(() => setRecent([]));
   }, []);
 
-  // already connected (green) → open the work view instantly; else connect —
+  // already connected (green) → open the work view instantly; else connect:
   // a reconnect drops the profile's tab sessions, so open transactions gate it
   const openConn = (id: string) => {
     if ((connState[id] ?? "disconnected") === "connected") {

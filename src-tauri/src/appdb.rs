@@ -1,6 +1,6 @@
 //! App-local SQLite: connection profiles (sans passwords), query history,
 //! tab state. Lives in the platform app-data dir. Schema is versioned via
-//! `PRAGMA user_version` — see `migrate`.
+//! `PRAGMA user_version`; see `migrate`.
 
 use std::borrow::Cow;
 use std::path::Path;
@@ -14,7 +14,7 @@ use crate::driver::{DriverError, Profile, Result};
 
 /// bump when appending a migration in `migrate`
 const SCHEMA_VERSION: i64 = 5;
-/// per-row stored SQL cap (bytes, cut at a char boundary) — a pasted multi-MB
+/// per-row stored SQL cap (bytes, cut at a char boundary): a pasted multi-MB
 /// INSERT must not bloat the appdb forever
 const HISTORY_SQL_CAP: usize = 20_000;
 const HISTORY_TRUNC_MARKER: &str = " …[truncated]";
@@ -24,7 +24,7 @@ const HISTORY_ROW_CAP: i64 = 20_000;
 /// substring LIKE can never use the btree index, so the palette's
 /// per-keystroke search bounds its scan here instead of walking all 20k rows
 /// (× up to 20KB of SQL each). Tradeoff, documented: matches older than the
-/// newest 5k searched rows are not returned — acceptable for a
+/// newest 5k searched rows are not returned, acceptable for a
 /// recency-ranked palette; FTS would lift the bound if that ever hurts.
 const HISTORY_SEARCH_WINDOW: i64 = 5_000;
 /// distinct server builds whose pg_catalog function lists we keep cached
@@ -58,7 +58,7 @@ pub struct SavedQuery {
     #[serde(default)]
     pub created_at: String,
     /// owning connection; NULL = legacy bookmark (visible everywhere until
-    /// next saved under a connection — adopt-on-touch, mirrors tabs)
+    /// next saved under a connection: adopt-on-touch, mirrors tabs)
     #[serde(default)]
     pub profile_id: Option<String>,
 }
@@ -130,7 +130,7 @@ impl AppDb {
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
             .map_err(internal)?;
         // one corrupt row degrades to "that profile missing", never "all
-        // connections gone" — skip and log instead of aborting the list
+        // connections gone": skip and log instead of aborting the list
         let mut out = Vec::new();
         let mut skipped = 0usize;
         for row in rows {
@@ -199,7 +199,7 @@ impl AppDb {
 /// transaction and stamped on commit. v1 is the pre-versioning schema as a
 /// baseline: legacy DBs predate the stamp and already hold some or all of it,
 /// so v1 deliberately uses CREATE TABLE IF NOT EXISTS plus column-checked
-/// ALTERs — it fills exactly what's missing, re-runs nothing, and real errors
+/// ALTERs: it fills exactly what's missing, re-runs nothing, and real errors
 /// propagate (the old `let _ = ALTER` pattern swallowed everything).
 fn migrate(conn: &mut Connection) -> Result<()> {
     let mut version: i64 = conn
@@ -291,7 +291,7 @@ fn pg_catalog_cache_v3(conn: &Connection) -> Result<()> {
 }
 
 /// inverse-SQL undo after commit: one row per committed edit/delete batch.
-/// `revert_sql` holds the structured revert plan (JSON — regenerated into SQL
+/// `revert_sql` holds the structured revert plan (JSON, regenerated into SQL
 /// by the driver's own generator at undo time, never parsed). `session_key`
 /// stamps the committing session; undo is refused across reconnects.
 fn undo_log_v4(conn: &Connection) -> Result<()> {
@@ -343,7 +343,7 @@ fn add_column_if_missing(conn: &Connection, table: &str, col: &str, decl: &str) 
     Ok(())
 }
 
-/// collect decoded rows, skipping (and logging) any that fail — one bad row
+/// collect decoded rows, skipping (and logging) any that fail: one bad row
 /// must cost one row, not the whole list. Returns the skip count so callers
 /// can surface it to the UI. NEVER use for tabs: a skipped tab row feeding
 /// the replace-all tabs_save would permanently delete that tab's SQL.
@@ -383,7 +383,7 @@ fn cap_sql(sql: &str) -> Cow<'_, str> {
 /// Persisted stale-while-revalidate schema snapshots: the last introspection
 /// result per profile, hydrated INSTANTLY on connect (sidebar + completion at
 /// t=0) while the real introspect refreshes in the background. `sig` binds the
-/// cache to the profile's connection identity — a repointed profile (different
+/// cache to the profile's connection identity: a repointed profile (different
 /// host/db) never hydrates the old server's schema.
 impl AppDb {
     pub fn schema_cache_get(&self, profile_id: &str, sig: &str) -> Result<Option<String>> {
@@ -419,7 +419,7 @@ impl AppDb {
 /// pg_catalog function-list cache, keyed by the full server_version string:
 /// pg_catalog contents only change with the server build, so introspection
 /// stops re-pulling ~3k rows on every connect/⌘R/DDL refresh. User-schema
-/// functions are NOT cached — they stay live on every introspect.
+/// functions are NOT cached: they stay live on every introspect.
 impl AppDb {
     pub fn pg_catalog_funcs_get(&self, server_version: &str) -> Result<Option<String>> {
         let conn = self.0.lock().unwrap();
@@ -485,7 +485,7 @@ impl AppDb {
         Ok(out)
     }
 
-    /// replace-all save — tab counts are tiny, atomicity matters more
+    /// replace-all save: tab counts are tiny, atomicity matters more
     pub fn tabs_save(&self, tabs: &[TabRow]) -> Result<()> {
         let mut conn = self.0.lock().unwrap();
         let tx = conn.transaction().map_err(internal)?;
@@ -536,7 +536,7 @@ impl AppDb {
         // profile_id NULL = search across every connection (history panel).
         // The inner window bounds the LIKE scan to the newest
         // HISTORY_SEARCH_WINDOW rows (id DESC ≡ insertion order, walked via
-        // the rowid PK — the profile filter is applied inside so a busy
+        // the rowid PK; the profile filter is applied inside so a busy
         // sibling profile can't starve the window). See the const's doc for
         // the recall tradeoff. Newest-first semantics unchanged.
         let mut stmt = conn
@@ -662,14 +662,14 @@ pub struct UndoLogRow {
     pub session_key: String,
     pub created_at: String,
     pub description: String,
-    /// structured revert plan (JSON) — see driver::postgres::edit::UndoPlan
+    /// structured revert plan (JSON); see driver::postgres::edit::UndoPlan
     pub revert_sql: String,
     pub expires_at: String,
 }
 
 /// Inverse-SQL undo log: one row per committed edit/delete batch, aggressively
 /// pruned (15-minute TTL + newest UNDO_KEEP_PER_PROFILE per profile). Only the
-/// LATEST row per profile is ever offered — a newer commit supersedes.
+/// LATEST row per profile is ever offered; a newer commit supersedes.
 impl AppDb {
     pub fn undo_log_add(
         &self,
@@ -698,7 +698,7 @@ impl AppDb {
         Ok(id)
     }
 
-    /// newest unexpired row for a profile — the only offer ever surfaced
+    /// newest unexpired row for a profile: the only offer ever surfaced
     pub fn undo_log_latest(&self, profile_id: &str) -> Result<Option<UndoLogRow>> {
         let conn = self.0.lock().unwrap();
         let mut stmt = conn
@@ -716,7 +716,7 @@ impl AppDb {
         }
     }
 
-    /// read one unexpired undo row WITHOUT consuming it — undo_apply checks
+    /// read one unexpired undo row WITHOUT consuming it; undo_apply checks
     /// session identity on the peeked row FIRST and only then takes, so a
     /// refused undo never burns the offer
     pub fn undo_log_peek(&self, id: i64) -> Result<Option<UndoLogRow>> {
@@ -734,7 +734,7 @@ impl AppDb {
         }
     }
 
-    /// atomically consume one undo row (select + delete in a transaction) —
+    /// atomically consume one undo row (select + delete in a transaction):
     /// an undo is single-shot whether it succeeds or rolls back; expired rows
     /// consume to None
     pub fn undo_log_take(&self, id: i64) -> Result<Option<UndoLogRow>> {
@@ -1088,7 +1088,7 @@ mod tests {
             )
             .unwrap();
         }
-        // tabs must ERROR, not skip — a skipped row fed back through the
+        // tabs must ERROR, not skip: a skipped row fed back through the
         // replace-all tabs_save would permanently delete that tab's SQL
         assert!(db.tabs_list().is_err(), "corrupt tab row must surface as an error");
         let (h, skipped) = db.history_recent(10).unwrap();
@@ -1175,7 +1175,7 @@ mod tests {
         let (hits, _) = db.history_search(Some("p"), "needle", 50).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].sql, "SELECT needle_new");
-        // profile filter applies INSIDE the window — "other" noise can't
+        // profile filter applies INSIDE the window: "other" noise can't
         // starve p's rows; and the needle is found under a per-profile search
         let (hits, _) = db.history_search(Some("other"), "noise", 3).unwrap();
         assert_eq!(hits.len(), 3);

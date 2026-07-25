@@ -1,4 +1,4 @@
-// Pure logic for the data-navigation wave: sort-chain math (multi-column
+// Pure data-navigation logic: sort-chain math (multi-column
 // sort), row-diff computation, histogram bucketing, and the SQL text for the
 // FK picker + value-distribution queries. No runtime imports beyond the pure
 // identifier quoting in lib/sqlIdent, so a bun harness can exercise the exact
@@ -17,7 +17,7 @@ export interface ChainEntry<K> {
 }
 
 /** plain click: single-sort tri-state (existing grammar). The chain collapses
- * to just this column — asc → desc → cleared. A flip keeps the entry's NULLS
+ * to just this column: asc → desc → cleared. A flip keeps the entry's NULLS
  * preference; switching columns starts fresh. */
 export function cycleChain<K>(chain: ChainEntry<K>[], key: K): ChainEntry<K>[] {
   if (chain.length === 1 && chain[0].key === key) {
@@ -37,7 +37,7 @@ export function shiftToggleChain<K>(chain: ChainEntry<K>[], key: K): ChainEntry<
   return chain.filter((_, j) => j !== i);
 }
 
-/** ⌥-click: cycle the NULLS placement on this column's entry —
+/** ⌥-click: cycle the NULLS placement on this column's entry:
  * default → FIRST → LAST → default. Not in the chain = no-op (returns the
  * SAME array so callers can skip the dispatch). */
 export function altCycleNulls<K>(chain: ChainEntry<K>[], key: K): ChainEntry<K>[] {
@@ -73,7 +73,7 @@ export interface SortSpec {
   nullsFirst: boolean;
 }
 
-/** effective NULL placement for a chain entry — PG semantics: an explicit
+/** effective NULL placement for a chain entry, PG semantics: an explicit
  * NULLS FIRST/LAST wins; the default is DIRECTION-DEPENDENT (ASC ⇒ NULLS
  * LAST, DESC ⇒ NULLS FIRST), so the three ⌥-cycle states are three distinct
  * behaviors: default follows the direction, first/last stay pinned. */
@@ -81,7 +81,7 @@ export function nullsFirstOf(dir: "asc" | "desc", nulls?: "first" | "last"): boo
   return nulls ? nulls === "first" : dir === "desc";
 }
 
-/** stable multi-key sort of `base` (data-row indexes) by the chain specs —
+/** stable multi-key sort of `base` (data-row indexes) by the chain specs:
  * ties keep base order (Array.sort stability), so layering under the
  * quick-filter view map preserves stream order for equal keys. */
 export function multiSortIndices(
@@ -131,7 +131,7 @@ export interface HistBucket {
 }
 
 /** top-N value counts over loaded rows; NULL is its own bucket, labeled
- * separately — `distinct` counts NON-NULL values only (`hasNull` says whether
+ * separately: `distinct` counts NON-NULL values only (`hasNull` says whether
  * a NULL bucket exists) */
 export function bucketize(
   values: readonly (string | null)[],
@@ -152,7 +152,7 @@ export function bucketize(
   };
 }
 
-/** json (not jsonb) has no equality operator — server GROUP BY would error;
+/** json (not jsonb) has no equality operator: server GROUP BY would error;
  * the caller must bucket client-side over loaded rows instead */
 export function jsonNoEquality(typeName: string | undefined): boolean {
   if (!typeName) return false;
@@ -163,7 +163,7 @@ export function jsonNoEquality(typeName: string | undefined): boolean {
 /** value-distribution query: one round trip returns the top groups plus the
  * whole-source totals via window aggregates (sum of group counts = total
  * rows, count(*) over groups = group count, count(col) over groups = distinct
- * NON-NULL values since each group row carries its key — windows run after
+ * NON-NULL values since each group row carries its key. Windows run after
  * GROUP BY and before LIMIT; group count minus non-null count says whether a
  * NULL bucket exists). `where` is a pre-compiled predicate or null. */
 export function histogramSql(s: {

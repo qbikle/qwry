@@ -27,7 +27,7 @@ export function DbSwitcher({ profileId, dbname, name }: { profileId: string; dbn
     setOpen(true);
     setDbs(null);
     setErr(null);
-    // prefer the PRIMARY session — opening the switcher must not mint (or
+    // prefer the PRIMARY session: opening the switcher must not mint (or
     // consume the pre-warmed spare for) a tab session just to run one
     // SELECT datname. Fallbacks: the last-run session (only if it belongs to
     // THIS profile), then a tab session as the true last resort.
@@ -46,7 +46,7 @@ export function DbSwitcher({ profileId, dbname, name }: { profileId: string; dbn
       const out = await ipc.execute(sid, LIST_DBS);
       setDbs((out.statements[0]?.rows.map((r) => r[0] ?? "").filter(Boolean) as string[]) ?? []);
     } catch (e) {
-      // a failure must never render as "No databases" — that's a lie
+      // a failure must never render as "No databases"; that's a lie
       setErr((e as { message?: string }).message ?? String(e));
     }
   };

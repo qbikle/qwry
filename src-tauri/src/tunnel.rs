@@ -6,7 +6,7 @@
 //! Each tunnel is TWO ssh processes to the same destination: the data lane
 //! (all session traffic) and a control lane. One ssh process is one TCP
 //! connection, so a bulk SELECT saturating the data lane queues any NEW
-//! connection's handshake behind buffered row bytes — and Postgres cancel
+//! connection's handshake behind buffered row bytes, and Postgres cancel
 //! REQUIRES a new connection. The control lane is a separate process =
 //! separate TCP connection, so cancel/terminate signals get through no matter
 //! how congested the data lane is. A failed control spawn degrades gracefully
@@ -52,7 +52,7 @@ pub fn tunnel_spec(p: &Profile) -> String {
     )
 }
 
-/// two distinct free ports — both listeners are held simultaneously so the
+/// two distinct free ports: both listeners are held simultaneously so the
 /// kernel cannot hand the same port to both lanes
 fn free_local_ports() -> Result<(u16, u16)> {
     let bind = || {
@@ -69,7 +69,7 @@ fn free_local_ports() -> Result<(u16, u16)> {
 }
 
 /// spawn one `ssh -N -L` forward and wait until its local port accepts.
-/// The control lane opts out of ControlMaster multiplexing — a user's
+/// The control lane opts out of ControlMaster multiplexing: a user's
 /// `ControlMaster auto` in ~/.ssh/config would otherwise fold both lanes
 /// back onto ONE shared TCP connection, defeating the second lane entirely.
 async fn spawn_forward(
@@ -81,7 +81,7 @@ async fn spawn_forward(
     let mut cmd = Command::new("ssh");
     cmd.arg("-N") // no remote command, just forward
         .arg("-T")
-        .args(["-o", "BatchMode=yes"]) // never prompt — fail instead of hanging
+        .args(["-o", "BatchMode=yes"]) // never prompt: fail instead of hanging
         .args(["-o", "ExitOnForwardFailure=yes"])
         .args(["-o", "ServerAliveInterval=30"])
         .args(["-o", "ServerAliveCountMax=3"])
@@ -157,7 +157,7 @@ impl Tunnel {
             .ok_or_else(|| DriverError::Connect("tunnel: no ssh host".into()))?;
         let (data_port, control_port) = free_local_ports()?;
 
-        // both lanes concurrently — the control spawn must not double connect
+        // both lanes concurrently: the control spawn must not double connect
         // latency, and a control failure must never block connecting
         let (data, control) = tokio::join!(
             spawn_forward(profile, ssh_host, data_port, false),
@@ -184,7 +184,7 @@ impl Tunnel {
 
 async fn wait_ready(port: u16, child: &mut Child) -> Result<()> {
     // ~10s budget; poll fast at first (a warm ControlMaster/localhost forward
-    // is up in <50ms — a fixed 200ms quantum wasted most of that), backing off
+    // is up in <50ms; a fixed 200ms quantum wasted most of that), backing off
     // toward 200ms for the slow-bastion case
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     let mut delay = Duration::from_millis(25);

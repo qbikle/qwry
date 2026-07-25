@@ -3,7 +3,7 @@
 //     Array<{column, dir: "asc"|"desc", nulls?: "first"|"last"}> (sortChain
 //     state is the source of truth; `sort` is a legacy mirror of entry 0).
 //   - compiled WHERE for the histogram: the EXACT text the browse queries
-//     embed, via the exported `compiledWhere(filters, rawWhere)` — builder
+//     embed, via the exported `compiledWhere(filters, rawWhere)`: builder
 //     filters, or the raw-WHERE escape hatch when that mode is on.
 // Only maps between the store's {column,…} shape and the grid's generic
 // ChainEntry<K> (keyed by name here, by data index for editor results).

@@ -1,4 +1,4 @@
-// Collapsible JSON tree — now with ⌘F search (filter + highlight + hit nav)
+// Collapsible JSON tree with ⌘F search (filter + highlight + hit nav)
 // and in-place leaf/key editing. Free, unlike some tools.
 import {
   createContext,
@@ -35,7 +35,7 @@ import {
 import "./inspector.css";
 
 /** human-readable JSON path: a.b[0].c */
-/** hand focus back to the inspector shell (next frame — after the editor's
+/** hand focus back to the inspector shell (next frame, after the editor's
  *  unmount settles) so ⌘F and the global chords keep their inspector scope */
 function refocusInspector(from: HTMLElement): void {
   const box = from.closest(".inspector-fixed") as HTMLElement | null;
@@ -82,10 +82,10 @@ function renameKeyIn(root: Json, parentPath: Path, oldKey: string, newKey: strin
 }
 
 /** coerce edited text to a JSON value. TYPED grammar, not original-type-bound:
- *  quotes always force a string (the universal escape hatch — '123', 'true');
+ *  quotes always force a string (the universal escape hatch: '123', 'true');
  *  bare true/false/null become their literals; bare numbers become numbers
  *  ONLY when they round-trip exactly (43 → 43, but 007 / 1e5 / 1.50 stay
- *  strings — an ID with leading zeros must never silently mutate to 7).
+ *  strings: an ID with leading zeros must never silently mutate to 7).
  *  Number-typed leaves keep the looser legacy parse (1.50 → 1.5 there is the
  *  expected numeric edit, not a type change). */
 function coerce(original: Json, text: string): { ok: true; value: Json } | { ok: false } {
@@ -169,7 +169,7 @@ function KeyLabel({
   if (editing) {
     return (
       // wrapper keeps the colon OUTSIDE the box but inside one flex child, so
-      // the line keeps a single gap before the value — same grammar as the
+      // the line keeps a single gap before the value, same grammar as the
       // display's `key:` span
       <span className="jt-keywrap">
         <input
@@ -177,7 +177,7 @@ function KeyLabel({
           className="jt-edit jt-key-edit"
           value={draft}
           spellCheck={false}
-          // mono font: content width IS the character count — the box hugs
+          // mono font: content width IS the character count. The box hugs
           // the key exactly as the label did (chrome pulled back by the
           // negative margins), so the value's wrap column never moves
           style={{ width: `calc(${Math.max(draft.length, 1)}ch + 10px)` }}
@@ -231,12 +231,12 @@ function Leaf({ value, path }: { value: Json; path: Path }) {
   const [err, setErr] = useState(false);
   // hug-the-content mode, decided ONCE at open (a live threshold would flip
   // the box to full-width mid-keystroke). 40ch ≈ a full row at the panel's
-  // 220px floor — anything longer wraps, so it takes the row instead
+  // 220px floor: anything longer wraps, so it takes the row instead
   const [fit, setFit] = useState(true);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   // the editor wears the display's exact metrics (font, wrap, left edge), so
-  // it must also take the display's HEIGHT — a fixed one-line box collapsed a
+  // it must also take the display's HEIGHT: a fixed one-line box collapsed a
   // six-line wrapped value into a blind tail-scroll and jumped the whole tree
   useLayoutEffect(() => {
     if (!editing) return;
@@ -302,10 +302,10 @@ function Leaf({ value, path }: { value: Json; path: Path }) {
           if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
           if (e.key === "Enter" && !e.altKey && !e.shiftKey) {
             // Enter commits; ⌥/⇧-Enter inserts a real newline (grid grammar).
-            // preventDefault either way — a failed commit must keep the
+            // preventDefault either way: a failed commit must keep the
             // draft as typed, not gain the newline Enter would insert
             e.preventDefault();
-            // refocus only when the edit actually closes — an invalid value
+            // refocus only when the edit actually closes: an invalid value
             // keeps the editor (and its error state) focused
             const el = e.currentTarget;
             if (commit()) refocusInspector(el);
@@ -337,7 +337,7 @@ function Leaf({ value, path }: { value: Json; path: Path }) {
       title={ctx.editable ? "click to edit · ⌥-click copies path" : "click to copy · ⌥-click for path"}
     >
       {value === "" ? (
-        // an empty string renders zero characters = zero click target — the
+        // an empty string renders zero characters = zero click target: the
         // "" marker (data-state register, like the italic null) restores the
         // way in for keys that don't have a value yet
         <span className="jt-empty">""</span>
@@ -368,10 +368,10 @@ function Node({
   const ctx = useContext(Ctx)!;
   const id = pid(path);
   const [open, setOpen] = useState(depth < 2);
-  // per-container render cap — a 50k-element array must not mount 50k nodes
+  // per-container render cap: a 50k-element array must not mount 50k nodes
   const [shown, setShown] = useState(CHILD_CAP);
   // transient growth of a ⌘F hit-revealed window (expander clicks); applies
-  // only while the cursor stays in the same block — never pins a giant window
+  // only while the cursor stays in the same block, never pins a giant window
   const [hitExtra, setHitExtra] = useState<{ base: number; prev: number; next: number } | null>(
     null,
   );
@@ -383,7 +383,7 @@ function Node({
     registerRef(id, rowRef.current);
     return () => registerRef(id, null);
     // isContainer is a dep: a container↔leaf morph (edit changed the node
-    // kind) swaps the DOM element under the same id — re-register, or ⌘F
+    // kind) swaps the DOM element under the same id: re-register, or ⌘F
     // scroll targets a detached element
   }, [id, registerRef, isContainer]);
 
@@ -404,7 +404,7 @@ function Node({
 
     let children: React.ReactNode = null;
     if (effectiveOpen) {
-      // candidate child keys — under search, only the visible ones (filtered
+      // candidate child keys: under search, only the visible ones (filtered
       // HERE so hidden children never mount a component at all)
       let keys: (string | number)[];
       if (ctx.query) {
@@ -420,7 +420,7 @@ function Node({
         keys = isArr ? Array.from({ length: total }, (_, i) => i) : (objKeys as string[]);
       }
 
-      // ⌘F hit-nav must reach past the cap — re-window to a bounded slice
+      // ⌘F hit-nav must reach past the cap: re-window to a bounded slice
       // around the hit (never mount the whole prefix up to it)
       let hitIdx: number | null = null;
       const hp = ctx.currentHitPath;
@@ -469,7 +469,7 @@ function Node({
             />
           ))}
           {win.after > 0 && (
-            // never silently hide — an explicit expander says what's left
+            // never silently hide: an explicit expander says what's left
             <button
               className="jt-more"
               onClick={(e) => {
@@ -535,7 +535,7 @@ export function JsonTree({
   onChange?: (next: Json) => void;
 }) {
   const [input, setInput] = useState("");
-  /** debounced copy of `input` — the walk runs on this, not per keystroke */
+  /** debounced copy of `input`: the walk runs on this, not per keystroke */
   const [query, setQuery] = useState("");
   const [hitIdx, setHitIdx] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -575,7 +575,7 @@ export function JsonTree({
     refs.current.get(currentHit)?.scrollIntoView({ block: "nearest" });
   }, [currentHit]);
 
-  // ⌘F focuses the search box — but ONLY when the user is already in the
+  // ⌘F focuses the search box, but ONLY when the user is already in the
   // inspector; a mounted JSON cell must not steal ⌘F from the editor/grid
   // (the search input stays clickable as the mouse entry point).
   useEffect(() => {
@@ -640,7 +640,7 @@ export function JsonTree({
         {input && (
           <>
             <span className="jt-hitcount">
-              {/* debounce pending — the walk hasn't run for THIS input yet;
+              {/* debounce pending: the walk hasn't run for THIS input yet;
                   showing the previous query's count would be a lie */}
               {input !== query ? "…" : hits.length === 0 ? "0/0" : `${hitIdx + 1}/${hits.length}`}
             </span>
@@ -663,7 +663,7 @@ export function JsonTree({
         </div>
       )}
       {/* rows scroll in their own container so the search bar is a fixed
-          header by STRUCTURE — the sticky+mask approach fought the body's
+          header by STRUCTURE: the sticky+mask approach fought the body's
           padding and let rows paint above the bar */}
       <div className="jt-scroll">
         <Ctx.Provider value={ctx}>

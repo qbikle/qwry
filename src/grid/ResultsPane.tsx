@@ -32,7 +32,7 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
   const findOpen = useFind((s) => s.open);
 
   // a late error (mid-stream connection drop) must NOT wipe already-streamed
-  // rows off the screen — full error pane only when there's nothing to show
+  // rows off the screen: full error pane only when there's nothing to show
   if (globalError && statements.length === 0)
     return (
       <div className="grid-error">
@@ -103,7 +103,7 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
           </div>
         ) : stmt.columns.length > 0 ? (
           // keyed per tab+statement: switching tabs or statement chips swaps
-          // the DATA under a mounted grid — selection/editor state carrying
+          // the DATA under a mounted grid: selection/editor state carrying
           // over targeted phantom rows in the other result (wrong-row copy /
           // Set-NULL / delete class)
           <>
@@ -135,7 +135,7 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
           <span className="status-running">{cancelling ? "⏳ cancelling" : "⏳ running"}</span>
         )}
         {running && browser && (
-          // browse tabs have no QueryBox — this is their only cancel affordance
+          // browse tabs have no QueryBox: this is their only cancel affordance
           <button
             className="status-link linkish"
             disabled={cancelling}
@@ -162,7 +162,7 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
 
 /** the rows on screen came from a DIFFERENT connection than the rail
  * selection (pinned tab ran elsewhere): edits/imports commit to the ORIGIN
- * while Run executes on the rail — say so, tinted with the origin's color.
+ * while Run executes on the rail: say so, tinted with the origin's color.
  * Sits beside the other strips OUTSIDE .stmt-body so grid geometry
  * (HEADER_H anchors, virtualizer measures) is untouched. */
 function OriginBanner() {
@@ -190,7 +190,7 @@ function OriginBanner() {
 
 /** funnel toggle + inline input: view-level filter over the LOADED rows.
  * The input keeps LOCAL text and publishes to the store on an ~80ms debounce
- * (Enter flushes immediately) — the grid's match scan used to run on every
+ * (Enter flushes immediately): the grid's match scan used to run on every
  * keystroke. Closing/clearing unmounts the input, so local state can't drift. */
 function QuickFilter() {
   const open = useGridFilter((s) => s.open);
@@ -237,7 +237,7 @@ function QuickFilter() {
           value={local}
           onChange={(e) => push(e.target.value)}
           onKeyDown={(e) => {
-            // typing keys only — ⌘/⌃ chords must reach the window handler
+            // typing keys only: ⌘/⌃ chords must reach the window handler
             if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
             if (e.key === "Escape") useGridFilter.getState().clear();
             if (e.key === "Enter") flush();
@@ -250,7 +250,7 @@ function QuickFilter() {
 
 /** zero-result statement: say "0 rows" with the statement timing under the
  * column headers instead of a blank void; in browse mode point at add-row
- * (hidden while the draft band is open — it sits in the same space) */
+ * (hidden while the draft band is open: it sits in the same space) */
 function ZeroRows({
   stmt,
   browser,
@@ -341,7 +341,7 @@ function RerunBtn() {
       title="Refresh this query"
       onClick={() => {
         const st = useResults.getState();
-        // keep the original buffer offset — the error squiggle stays honest
+        // keep the original buffer offset: the error squiggle stays honest
         void st.run(executedSql, st.executedOffset);
       }}
     >
@@ -352,7 +352,7 @@ function RerunBtn() {
 
 /** explicit transaction open on one of this tab's sessions → chip + one-click
  * ROLLBACK. The tx can live on the tab's ORIGIN session (rows ran on another
- * connection) as well as the rail's — prefer origin (writes live there); any
+ * connection) as well as the rail's: prefer origin (writes live there); any
  * other session-tx for the tab still resolves so ROLLBACK always targets the
  * session that actually holds it. */
 function TxChip() {
@@ -376,12 +376,12 @@ function TxChip() {
     const sid = tabSessions[key];
     if (!sid) return;
     try {
-      // straight on the session — running it through run() would wipe the
+      // straight on the session: running it through run() would wipe the
       // result grid the user is probably inspecting mid-transaction
       await ipc.execute(sid, "ROLLBACK");
       setTxTab(key, false);
     } catch {
-      /* session died — the closed event resets tx state */
+      /* session died: the closed event resets tx state */
     }
   };
   return (
@@ -389,7 +389,7 @@ function TxChip() {
       TX OPEN
       <button
         className="status-link linkish danger"
-        // tokio-postgres serializes on the single session connection — a
+        // tokio-postgres serializes on the single session connection: a
         // ROLLBACK behind a running query would silently queue ("frozen app")
         disabled={running}
         title={running ? "Waiting for the running query. Cancel it first (⌘.)" : "Roll back this tab’s open transaction"}
@@ -413,14 +413,14 @@ function PendingEditsStatus() {
   const offer = undoOffer && undoOffer.tabId === activeTab ? undoOffer : null;
 
   // ⇧⌘Z while the offer is visible. defaultPrevented yields to the grid's
-  // staged-edit redo and the editor's text redo — the toast only claims the
+  // staged-edit redo and the editor's text redo: the toast only claims the
   // chord when nothing focused wanted it.
   useEffect(() => {
     if (!offer) return;
     const h = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
       // never claim redo from text editing (inputs/contenteditable) or from
-      // under an overlay — this chord reverts a DB commit, not a keystroke
+      // under an overlay: this chord reverts a DB commit, not a keystroke
       const t = e.target as HTMLElement | null;
       const tag = t?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || t?.isContentEditable) return;
@@ -439,7 +439,7 @@ function PendingEditsStatus() {
     <span className="status-edits">
       {lastError && (
         // honesty notes ("no changes") and copy progress share the slot with
-        // real errors — classify so they render neutral, not danger-red
+        // real errors: classify so they render neutral, not danger-red
         // (notes reuse the progress class: same --fg-muted styling)
         <span
           className={

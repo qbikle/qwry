@@ -1,4 +1,4 @@
-// Pop-out single-value editor shared by the record view and the draft band —
+// Pop-out single-value editor shared by the record view and the draft band:
 // its own overlay-stack entry, so Esc closes IT first and the modal
 // underneath never moves. Also home of the shared display/stage helpers.
 import { useEffect, useRef, useState } from "react";
@@ -12,7 +12,7 @@ import { flashReadOnlyReason } from "./flashReason";
 import { Kbd } from "../design/Kbd";
 import "./grid.css";
 
-/** JSON.parse would silently round-trip 16+-digit ints through float64 —
+/** JSON.parse would silently round-trip 16+-digit ints through float64:
  * pretty-printing such values would lie about the stored digits */
 export const LOSSY_NUMS = /(?:^|[\s:,[])-?\d{16,}(?:[\s,}\]]|$)/;
 
@@ -39,7 +39,7 @@ export function stageCellDraft(a: {
   typeName: string | undefined;
   original: string | null;
 }): string | null {
-  // draft text identical to the cell's ORIGINAL raw text = nothing to stage —
+  // draft text identical to the cell's ORIGINAL raw text = nothing to stage:
   // never manufacture an edit out of a no-change close (a pending edit on the
   // cell still falls through: setEdit(original) is the revert path)
   if (
@@ -60,7 +60,7 @@ export function stageCellDraft(a: {
         }
         value = jsToPgArray(parsed);
       }
-      // json/jsonb: parse is VALIDATION only — the typed text stages verbatim
+      // json/jsonb: parse is VALIDATION only, the typed text stages verbatim
     } catch (e) {
       return (e as Error).message;
     }
@@ -86,7 +86,7 @@ export function ValuePop({
   colName: string;
   typeName: string | undefined;
   initial: string;
-  /** the initial text is already an edit (paste-opened pop) — Stage must
+  /** the initial text is already an edit (paste-opened pop): Stage must
    * stage it even untouched, never treat it as a no-change close */
   startDirty?: boolean;
   onStage: (draft: string) => string | null;
@@ -94,7 +94,7 @@ export function ValuePop({
 }) {
   const [draft, setDraft] = useState(initial);
   const [err, setErr] = useState<string | null>(null);
-  // the pop opens on the PRETTY-PRINTED value — staging an untouched draft
+  // the pop opens on the PRETTY-PRINTED value: staging an untouched draft
   // would silently rewrite `json` (byte-preserving) cells with pretty bytes.
   // dirty = the user deliberately changed the text (typing, or Format).
   const dirty = useRef(!!startDirty);
@@ -114,7 +114,7 @@ export function ValuePop({
 
   const stage = () => {
     if (!dirty.current) {
-      // untouched pop — Stage is a no-change close, never a real edit
+      // untouched pop: Stage is a no-change close, never a real edit
       flashReadOnlyReason("no changes");
       onClose();
       return;

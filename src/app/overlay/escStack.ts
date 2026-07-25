@@ -10,19 +10,19 @@
 export type OverlayEntry = {
   onClose: () => void;
   onKey?: (e: KeyboardEvent) => void;
-  /** element that held focus when the overlay opened — focus returns to it on
+  /** element that held focus when the overlay opened: focus returns to it on
    *  close (captured at render time, BEFORE any autoFocus inside the overlay) */
   restoreFocus?: Element | null;
 };
 
 const stack: OverlayEntry[] = [];
 let installed = false;
-/** bumped on every push — a pending focus-restore aborts if a newer overlay
+/** bumped on every push: a pending focus-restore aborts if a newer overlay
  *  opened in the meantime (it owns focus and carries its own restore point) */
 let pushSeq = 0;
 
 /** Put focus back where it was when the overlay opened. A gone/unfocusable
- *  opener falls back to the main surface (editor, then the main card) — focus
+ *  opener falls back to the main surface (editor, then the main card): focus
  *  must never be left stranded on <body>. */
 function restoreFocusTo(el: Element | null | undefined) {
   const target = el instanceof HTMLElement && el.isConnected ? el : null;
@@ -39,14 +39,14 @@ function restoreFocusTo(el: Element | null | undefined) {
 /** stacking base for overlay layers; each push gets BASE_Z + its 1-based depth,
  *  so a later overlay always paints above the one it opened over */
 const BASE_Z = 50;
-/** ceiling for dynamic overlay z — fixed chrome (prod strip, z 60) must stay
+/** ceiling for dynamic overlay z: fixed chrome (prod strip, z 60) must stay
  *  on top; ties between clamped layers fall back to DOM order */
 export const MAX_OVERLAY_Z = 59;
 let zSeq = 0;
 
 function onKeyDown(e: KeyboardEvent) {
   if (stack.length === 0) return;
-  // IME composition owns the keyboard — Esc/Enter there cancel/commit the
+  // IME composition owns the keyboard: Esc/Enter there cancel/commit the
   // composition, never the overlay
   if (e.isComposing) return;
   const top = stack[stack.length - 1];
@@ -82,7 +82,7 @@ export function pushOverlay(entry: OverlayEntry): { z: number; pop: () => void }
       // Restore focus AFTER React finishes removing the overlay's DOM (focus
       // lands on <body> then). Deferred a microtask so a close that
       // immediately opens another overlay (Settings → Theme…, StrictMode
-      // re-mount) skips the restore — the newer overlay owns focus. An action
+      // re-mount) skips the restore: the newer overlay owns focus. An action
       // that deliberately focused something else on close also wins.
       const seqAtPop = pushSeq;
       queueMicrotask(() => {
@@ -95,7 +95,7 @@ export function pushOverlay(entry: OverlayEntry): { z: number; pop: () => void }
   };
 }
 
-/** true while any overlay is mounted — global shortcut handlers use this to
+/** true while any overlay is mounted: global shortcut handlers use this to
  *  stand down (⌘W through an open modal was silently closing tabs) */
 export function overlayOpen(): boolean {
   return stack.length > 0;

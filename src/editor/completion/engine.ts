@@ -1,5 +1,5 @@
 // The intellisense core: a CodeMirror CompletionSource scoped by QueryCtx.
-// All data comes from the in-memory SchemaSnapshot — zero IPC per keystroke.
+// All data comes from the in-memory SchemaSnapshot: zero IPC per keystroke.
 
 import {
   pickedCompletion,
@@ -225,7 +225,7 @@ function joinOptions(ctx: QueryCtx, snap: SchemaSnapshot): Completion[] {
 
 interface BuiltLists {
   allTables: Completion[];
-  /** allTables with the default-clause demotion pre-applied — the per-keystroke
+  /** allTables with the default-clause demotion pre-applied: the per-keystroke
    * `.map(spread)` over the whole catalog was pure allocation churn */
   allTablesDemoted: Completion[];
   allFunctions: Completion[];
@@ -294,7 +294,7 @@ export function makeCompletionSource(snap: SchemaSnapshot, fnInComplete = false)
         // schema.<tables>
         options = tableOptions(snap, ctx.qualifier);
       } else {
-        // alias.<columns> — exact table only
+        // alias.<columns>: exact table only
         const hit = [...scoped.entries()].find(([ref]) => ref.alias === ctx.qualifier);
         const direct = hit
           ? new Map([hit])
@@ -329,7 +329,7 @@ export function makeCompletionSource(snap: SchemaSnapshot, fnInComplete = false)
           break;
         default:
           // select / where / group / order / having / set / values / returning
-          // functions are noisy (3.5k in pg_catalog) — explicit trigger (^Space)
+          // functions are noisy (3.5k in pg_catalog): explicit trigger (^Space)
           // or the settings toggle opts them into the typed flow
           options = [
             ...columnOptions(scoped, { detailAlias: true }),

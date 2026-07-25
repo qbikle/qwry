@@ -1,6 +1,6 @@
 //! Schema introspection: ONE simple-protocol round trip of batched
 //! statements, each returning a single json_agg cell. Powers sidebar tree +
-//! completion. The single round trip is an identity feature — additions ride
+//! completion. The single round trip is an identity feature: additions ride
 //! the same batch, never a second trip.
 
 use serde::{Deserialize, Serialize};
@@ -23,7 +23,7 @@ pub struct ColumnInfo {
     /// pg_attribute.attidentity ('' = none, 'a' = always, 'd' = by default)
     #[serde(default)]
     pub identity: String,
-    /// COMMENT ON COLUMN (pg_description) — sidebar/structure tooltips.
+    /// COMMENT ON COLUMN (pg_description): sidebar/structure tooltips.
     /// None on pre-v0.8 caches.
     #[serde(default)]
     pub comment: Option<String>,
@@ -39,20 +39,20 @@ pub struct TableInfo {
     pub columns: Vec<ColumnInfo>,
     #[serde(default)]
     pub pk: Vec<String>,
-    /// pg_class.relhassubclass — the table has inheritance children (or is a
+    /// pg_class.relhassubclass: the table has inheritance children (or is a
     /// partition parent); child heaps have colliding ctids, so the frontend
     /// refuses ctid keyset pagination on parents. None on pre-v0.7.1 caches
     /// = unknown → the gate fails safe.
     #[serde(default)]
     pub has_children: Option<bool>,
-    /// pg_class.reltuples planner row estimate (-1 = never analyzed) — sizes
+    /// pg_class.reltuples planner row estimate (-1 = never analyzed); sizes
     /// the frontend's ctid keyset gate. None on pre-v0.7.1 caches.
     #[serde(default)]
     pub reltuples: Option<f64>,
     /// COMMENT ON TABLE (pg_description). None on pre-v0.8 caches.
     #[serde(default)]
     pub comment: Option<String>,
-    /// pg_inherits parent (first parent for multiple inheritance) — lets the
+    /// pg_inherits parent (first parent for multiple inheritance); lets the
     /// sidebar nest partitions/children under their parent instead of
     /// flooding the schema list. None = top-level relation or pre-v0.8 cache.
     #[serde(default)]
@@ -116,16 +116,16 @@ pub struct SchemaSnapshot {
     pub schemas: Vec<String>,
     #[serde(default)]
     pub indexes: Vec<IndexInfo>,
-    /// user-defined enum types — powers type-aware cell editors
+    /// user-defined enum types; powers type-aware cell editors
     #[serde(default)]
     pub enums: Vec<EnumInfo>,
-    /// user-schema sequences — sidebar section. Empty on pre-v0.8 caches.
+    /// user-schema sequences: sidebar section. Empty on pre-v0.8 caches.
     #[serde(default)]
     pub sequences: Vec<SeqInfo>,
-    /// installed extensions — sidebar section. Empty on pre-v0.8 caches.
+    /// installed extensions: sidebar section. Empty on pre-v0.8 caches.
     #[serde(default)]
     pub extensions: Vec<ExtInfo>,
-    /// current_setting('server_version_num') — the frontend gates ctid keyset
+    /// current_setting('server_version_num'); the frontend gates ctid keyset
     /// pagination on it (tid btree ops are PG 14+). None on pre-v0.7.1 caches.
     #[serde(default)]
     pub server_version_num: Option<i64>,
@@ -197,8 +197,8 @@ SELECT coalesce(json_agg(t), '[]') FROM (
 ) t"#;
 
 // Functions are fetched in two partitions: user-schema functions stay live on
-// every introspect, while the ~3k pg_catalog functions — which only change
-// with the server build — are fetched once per server_version and cached in
+// every introspect, while the ~3k pg_catalog functions, which only change
+// with the server build, are fetched once per server_version and cached in
 // the appdb (see commands::introspect). Their union is exactly the old
 // single-query set.
 const USER_FUNCS_SQL: &str = r#"
@@ -282,7 +282,7 @@ SELECT coalesce(json_agg(t), '[]') FROM (
 impl PgSession {
     /// Introspect the session's database. `cached_catalog_funcs` = the
     /// caller's appdb-cached pg_catalog functions for THIS server version;
-    /// when present the catalog partition is not re-fetched — a cheap count
+    /// when present the catalog partition is not re-fetched; a cheap count
     /// probe rides the same batch and self-verifies the cache (a mismatch,
     /// e.g. an extension installed into pg_catalog under the same version,
     /// triggers one refetch round trip). The second return value carries

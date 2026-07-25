@@ -32,7 +32,7 @@ export function EditPreview() {
       label="Commit Staged Edits"
       onClose={closePreview}
       onKey={(e) => {
-        // Enter = commit — DELIBERATELY unlike CloseGuard/DangerModal, where
+        // Enter = commit, DELIBERATELY unlike CloseGuard/DangerModal, where
         // plain Enter maps to the safe action and the destructive confirm
         // needs ⌘⌫. Committing is this dialog's PRIMARY action: the user
         // explicitly opened a review of the exact SQL (⌘S), so Enter here is
@@ -50,7 +50,7 @@ export function EditPreview() {
           {preview.statements.length === 1 ? "" : "s"} · runs in one transaction
         </div>
         {originPid && (
-          // always shown, same-profile included — the moment of consequence
+          // always shown, same-profile included: the moment of consequence
           // must name the write target
           <div className="ep-target">
             <span

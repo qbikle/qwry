@@ -1,9 +1,9 @@
-// The only place spring parameters live. Springs on transitions — never on
+// The only place spring parameters live. Springs on transitions, never on
 // scroll, typing, or completion popups (those must be instant).
 //
 // prefers-reduced-motion: every preset collapses to an instant variant while
 // the OS setting is on. The presets expose getters so each render reads the
-// LIVE flag — flipping the setting mid-session applies to the next animation
+// LIVE flag: flipping the setting mid-session applies to the next animation
 // without a reload. Initial offsets also collapse (no one-frame jump).
 
 const rmq: MediaQueryList | null =
@@ -57,7 +57,7 @@ export const menuIn = {
   },
 };
 
-/** floating panels/cards settling in — gentle, Linear/Arc-ish */
+/** floating panels/cards settling in: gentle, Linear/Arc-ish */
 export const panelIn = {
   get initial() {
     return reduced ? { opacity: 1, y: 0, scale: 1 } : { opacity: 0, y: 10, scale: 0.985 };

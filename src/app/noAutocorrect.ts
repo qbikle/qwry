@@ -1,5 +1,5 @@
 // WKWebView applies macOS autocorrect / autocapitalization / inline text
-// substitution to every editable field — the "Fifth" suggestion bubble that
+// substitution to every editable field: the "Fifth" suggestion bubble that
 // commits on Return or blur. None of it belongs in a SQL/data tool: column
 // names, identifiers and values must stay verbatim. WebKit honors the
 // `autocorrect` / `autocapitalize` content attributes per-field (there is no
@@ -26,7 +26,7 @@ function scan(root: ParentNode) {
 // The virtualized grid mounts thousands of nodes during a 60fps scroll; none
 // of them can ever be (or contain) a form field: .vgrid-cell is spans/text
 // (value + NULL/∅/DEFAULT chips), .vgrid-rownum is a number, .vgrid-hcell is
-// spans + a plain button. Skip their subtrees entirely — draft cells
+// spans + a plain button. Skip their subtrees entirely: draft cells
 // (.vgrid-draftcell, real inputs) and the cell editor are NOT in this list
 // and keep the full scan, as do modals/editors anywhere else.
 function skipSubtree(el: Element): boolean {
@@ -43,13 +43,13 @@ export function installNoAutocorrect() {
         if (n.nodeType !== Node.ELEMENT_NODE) return;
         const el = n as Element;
         // tag-gate the node itself before any selector work (contenteditable
-        // must stay covered — CodeMirror's content div has no input/textarea)
+        // must stay covered: CodeMirror's content div has no input/textarea)
         const tag = el.tagName;
         if (tag === "INPUT" || tag === "TEXTAREA" || el.hasAttribute("contenteditable")) {
           disable(el);
         }
         if (skipSubtree(el)) return;
-        if (!el.firstElementChild) return; // leaf — no subtree to scan
+        if (!el.firstElementChild) return; // leaf: no subtree to scan
         scan(el);
       });
     }

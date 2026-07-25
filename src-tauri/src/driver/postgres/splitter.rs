@@ -16,7 +16,7 @@ pub fn split_statements(sql: &str) -> Vec<String> {
     split_statement_spans(sql).into_iter().map(|s| s.sql).collect()
 }
 
-/// First two word-tokens of a statement, lowercased — the common case of
+/// First two word-tokens of a statement, lowercased: the common case of
 /// transaction-state folding (BEGIN / ROLLBACK TO / PREPARE TRANSACTION).
 pub fn statement_head(sql: &str) -> (String, String) {
     let mut it = statement_tokens(sql, 2).into_iter();
@@ -25,7 +25,7 @@ pub fn statement_head(sql: &str) -> (String, String) {
 
 /// Up to `max` leading word-tokens of a statement, lowercased, skipping
 /// comments and whitespace. Lexing stops at anything that isn't a plain word
-/// (quote, digit, punctuation) — tx-control statements are made of plain
+/// (quote, digit, punctuation): tx-control statements are made of plain
 /// keywords only, and PG's optional `WORK`/`TRANSACTION` filler means the
 /// decisive token can sit third or fourth (`ROLLBACK WORK TO SAVEPOINT sp`,
 /// `COMMIT TRANSACTION AND NO CHAIN`).
@@ -117,7 +117,7 @@ pub fn split_statement_spans(sql: &str) -> Vec<StmtSpan> {
             }
             b'\'' => {
                 has_token = true;
-                // E'…' escape strings honor backslash escapes — treating \' as
+                // E'…' escape strings honor backslash escapes; treating \' as
                 // a terminator would split at an interior ';' and desync
                 // statement indexes (editability would target the wrong SQL)
                 let escape_string = i > 0

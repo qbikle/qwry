@@ -1,4 +1,4 @@
-// Shared right-click menu for a connection — used by the rail and the dashboard
+// Shared right-click menu for a connection, used by the rail and the dashboard
 // so both surfaces offer the same actions.
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import * as ipc from "../ipc/commands";

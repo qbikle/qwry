@@ -30,18 +30,18 @@ interface SettingsState {
   /** soft-wrap long lines in the SQL editor */
   wrapLines: boolean;
   toggleWrapLines: () => void;
-  /** server-side statement_timeout, seconds — applies to NEW connections */
+  /** server-side statement_timeout, seconds; applies to NEW connections */
   statementTimeoutSecs: number;
   setStatementTimeoutSecs: (n: number) => void;
 
-  /** default ⇧⌘F style — id into FORMAT_PRESETS */
+  /** default ⇧⌘F style: id into FORMAT_PRESETS */
   formatPreset: string;
   setFormatPreset: (id: string) => void;
   /** keyword/type case applied by every preset */
   formatKeywordCase: "upper" | "lower" | "preserve";
   setFormatKeywordCase: (c: "upper" | "lower" | "preserve") => void;
 
-  /** UI (chrome) zoom percent, ⌘+/⌘−/⌘0 — 70–150, 100 = actual size */
+  /** UI (chrome) zoom percent, ⌘+/⌘−/⌘0: 70–150, 100 = actual size */
   uiZoom: number;
   setUiZoom: (n: number) => void;
 
@@ -63,11 +63,11 @@ interface SettingsState {
   setConnAccent: (c: string | null) => void;
   /** one theme everywhere (default) vs per-connection themes */
   themeEverywhere: boolean;
-  /** per-connection theme choices, sparse — an absent entry follows the app
+  /** per-connection theme choices, sparse: an absent entry follows the app
    * theme, so turning the toggle off changes nothing until a pick lands */
   connThemes: Record<string, ConnThemeChoice>;
   /** the active workspace's profile id (runtime only, pushed by the
-   * connections store) — the per-connection theme scope key */
+   * connections store): the per-connection theme scope key */
   activeConnId: string | null;
   setThemeEverywhere: (on: boolean) => void;
   setActiveConnId: (id: string | null) => void;
@@ -84,7 +84,7 @@ interface SettingsState {
   removeCustomTheme: (id: string) => void;
 }
 
-/** one theme decision — a palette, or Match Connection with the palette as
+/** one theme decision: a palette, or Match Connection with the palette as
  * its disconnected fallback */
 export interface ConnThemeChoice {
   paletteId: string;
@@ -106,7 +106,7 @@ export function themeChoice(
   return { paletteId: s.paletteId, match: s.matchConnection };
 }
 
-/** route a pick to the scope it belongs to — the active connection's map
+/** route a pick to the scope it belongs to: the active connection's map
  * entry when per-connection themes are on, the app theme fields otherwise */
 function scopedChoice(s: SettingsState, choice: ConnThemeChoice): Partial<SettingsState> {
   if (!s.themeEverywhere && s.activeConnId) {
@@ -122,13 +122,13 @@ function systemDark(): boolean {
   );
 }
 
-/* rehydrate validation — a corrupt qwry.settings blob (NaN sizes, garbage
+/* rehydrate validation: a corrupt qwry.settings blob (NaN sizes, garbage
  * enums, mangled custom themes) must degrade field-by-field to defaults, never
  * propagate invalid CSS vars app-wide */
 const finite = (v: unknown, lo: number, hi: number, fallback: number): number =>
   typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : fallback;
 
-/** UI zoom bounds — ⌘0 resets to 100 */
+/** UI zoom bounds; ⌘0 resets to 100 */
 export const ZOOM_MIN = 70;
 export const ZOOM_MAX = 150;
 export const ZOOM_STEP = 10;
@@ -169,7 +169,7 @@ function sanitizeSettings(persisted: unknown, current: SettingsState): SettingsS
     mode: pick(p.mode, ["system", "dark", "light"] as const, current.mode),
     // a paletteId pointing at a palette that no longer exists (corrupt custom
     // theme, version downgrade) would leave the picker with ZERO active cards
-    // while the app silently wears the fallback — degrade to the default
+    // while the app silently wears the fallback; degrade to the default
     paletteId:
       typeof p.paletteId === "string" && knownPalettes.has(p.paletteId)
         ? p.paletteId
@@ -182,7 +182,7 @@ function sanitizeSettings(persisted: unknown, current: SettingsState): SettingsS
 }
 
 /** map entries whose palette no longer exists fall back to the default
- * palette, keeping the per-connection intent — same outcome as deleting the
+ * palette, keeping the per-connection intent; same outcome as deleting the
  * custom theme in-app (removeCustomTheme). Malformed shapes drop. */
 function sanitizeConnThemes(raw: unknown, known: Set<string>): Record<string, ConnThemeChoice> {
   if (typeof raw !== "object" || raw === null) return {};
@@ -240,13 +240,13 @@ export const useSettings = create<SettingsState>()(
       paletteId: DEFAULT_PALETTE,
       matchConnection: false,
       /** the ACTIVE connection's avatar color (runtime only, pushed by the
-       * connections store) — the Match Connection seed */
+       * connections store): the Match Connection seed */
       connAccent: null,
       customThemes: [],
       resolved: "dark",
 
       setMode: (mode) => set({ mode, resolved: resolveDark(mode) ? "dark" : "light" }),
-      // picking a palette turns Match Connection off — mutual exclusion by
+      // picking a palette turns Match Connection off: mutual exclusion by
       // structure, the picker card and palettes are one radio group (per
       // scope: the pick routes through scopedChoice)
       setPalette: (paletteId) => set((s) => scopedChoice(s, { paletteId, match: false })),
@@ -275,7 +275,7 @@ export const useSettings = create<SettingsState>()(
       addCustomTheme: (p) =>
         set((s) => ({
           customThemes: [...s.customThemes.filter((c) => c.id !== p.id), p],
-          // authoring a theme IS choosing it — leaving Match Connection on
+          // authoring a theme IS choosing it; leaving Match Connection on
           // made Save appear to do nothing (the radio invariant, as in
           // setPalette above)
           ...scopedChoice(s, { paletteId: p.id, match: false }),
@@ -319,7 +319,7 @@ export const useSettings = create<SettingsState>()(
   ),
 );
 
-/** all selectable palettes — curated first, then the user's */
+/** all selectable palettes: curated first, then the user's */
 export function allPalettes(): Palette[] {
   return [...PALETTES, ...useSettings.getState().customThemes];
 }
@@ -341,7 +341,7 @@ function currentPalette(): Palette {
  * stylesheet once, so token retunes in tokens.css stay authoritative), plus
  * root font-size % (any rem-based sizes inherit) and a --zoom factor for CSS
  * that wants to opt other px sizes in. DELIBERATELY EXCLUDED: the editor
- * (--editor-fs) and the results grid (--grid-fs, row/header geometry) — both
+ * (--editor-fs) and the results grid (--grid-fs, row/header geometry): both
  * have their own font-size settings, and the grid's virtualizer/hit-test math
  * is anchored to px constants. Zoom is chrome-level. */
 const ZOOM_TOKENS = ["--text-2xs", "--text-xs", "--text-sm", "--text-md", "--text-lg"] as const;
@@ -382,7 +382,7 @@ function applyZoom(pct: number) {
 function apply() {
   const { mode, glassAlpha } = useSettings.getState();
   setGlassAlpha(glassAlpha);
-  // the mode toggle governs every theme — custom themes synthesise the
+  // the mode toggle governs every theme: custom themes synthesise the
   // matching dark/light variant from their authored colours
   const dark = resolveDark(mode);
   applyTheme(currentPalette(), dark);
@@ -393,7 +393,7 @@ function apply() {
 apply();
 // zoom waits a microtask: this module evaluates BEFORE main.tsx's tokens.css
 // import in dev, and the token bases must be read from the loaded stylesheet.
-// Microtasks still run before first paint — no unzoomed flash.
+// Microtasks still run before first paint: no unzoomed flash.
 if (useSettings.getState().uiZoom !== 100) {
   queueMicrotask(() => applyZoom(useSettings.getState().uiZoom));
 }
@@ -425,7 +425,7 @@ if (typeof window !== "undefined") {
   });
 }
 
-/** ⌘+/⌘− step, ⌘0 reset — shared by the menu items and the window shortcuts */
+/** ⌘+/⌘− step, ⌘0 reset; shared by the menu items and the window shortcuts */
 export function zoomBy(dir: 1 | -1) {
   const s = useSettings.getState();
   s.setUiZoom(s.uiZoom + dir * ZOOM_STEP);

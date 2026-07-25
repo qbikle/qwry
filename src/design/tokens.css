@@ -1,4 +1,4 @@
-/* qwry design tokens — dark is the default (:root); light overrides under
+/* qwry design tokens: dark is the default (:root); light overrides under
    :root[data-theme="light"]. Theme is set by src/stores/settings.ts. */
 
 :root {
@@ -55,7 +55,7 @@
   --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.45);
   --backdrop: rgba(0, 0, 0, 0.45);
 
-  /* motion — the whole CSS vocabulary (DESIGN.md rule 6): two durations, one
+  /* motion. The whole CSS vocabulary (DESIGN.md rule 6): two durations, one
      standard curve, one spring. 120ms was already the de-facto standard (11
      raw uses); the token now matches it instead of competing at 150ms */
   --ease-spring: cubic-bezier(0.2, 0.9, 0.3, 1.2);
@@ -100,7 +100,7 @@
   --radius-lg: 12px;
 
   /* v0.2 floating-card shell */
-  --rail-w: 56px; /* 8px pad · 40px avatar · 8px pad — ring (+4px) keeps 4px air inside the clip */
+  --rail-w: 56px; /* 8px pad · 40px avatar · 8px pad. Ring (+4px) keeps 4px air inside the clip */
   --gutter: 9px;
   --radius-panel: 14px;
   --radius-inner: 10px;
@@ -137,7 +137,7 @@
   --border: #e1e5ec;
   --border-strong: #c8cfda;
 
-  /* syntax — darkened for legibility on white */
+  /* syntax: darkened for legibility on white */
   --syn-keyword: #8a1fa6;
   --syn-operator: #0a7ea4;
   --syn-number: #b5430b;
@@ -158,7 +158,7 @@
   --hl-bg: #ffd866;
   --hl-fg: #1c2128;
 
-  /* v0.2 card shell — light */
+  /* v0.2 card shell (light) */
   --shadow-panel: 0 6px 22px rgba(30, 41, 66, 0.16);
   --card-border: rgba(20, 30, 60, 0.08);
   --card-highlight: rgba(255, 255, 255, 0.5);
@@ -181,7 +181,7 @@ body {
   font-family: var(--font-ui);
   font-size: var(--text-md);
   color: var(--fg);
-  /* themed translucent wash over the vibrancy material in the gutters — gives a
+  /* themed translucent wash over the vibrancy material in the gutters: gives a
      frosted glass that matches the active palette instead of neutral system gray */
   background: var(--glass-tint, transparent);
   -webkit-font-smoothing: antialiased;
@@ -249,13 +249,13 @@ textarea:focus-visible,
   outline: none;
 }
 
-/* a disabled control must LOOK disabled — several surfaces had no rule */
+/* a disabled control must LOOK disabled. Several surfaces had no rule */
 button:disabled {
   opacity: var(--o-disabled);
   cursor: default;
 }
 
-/* the one action-button skin — every modal/toolbar button resolves here.
+/* the one action-button skin: every modal/toolbar button resolves here.
    Component CSS may keep its class name but must not reinvent these values. */
 .btnish, .btn {
   display: inline-flex;
@@ -286,7 +286,7 @@ button:disabled {
 }
 .btnish.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) { filter: brightness(1.08); }
 
-/* the one icon-button skin (DESIGN.md rule 1) — ghost 22px box by default;
+/* the one icon-button skin (DESIGN.md rule 1): ghost 22px box by default;
    .iconbtn-lg = 28px toolbar tier; .bordered = standalone-toolbar look */
 .iconbtn {
   display: inline-flex;
@@ -309,7 +309,7 @@ button:disabled {
 .iconbtn.bordered { border: 1px solid var(--border); background: var(--bg-raised); }
 .iconbtn.bordered:hover:not(:disabled) { border-color: var(--border-strong); background: var(--bg-hover); }
 
-/* the one link-button skin — accent text with real feedback (DESIGN.md rule 8:
+/* the one link-button skin: accent text with real feedback (DESIGN.md rule 8:
    feedback-free text buttons read as static text) */
 .linkish {
   background: none;
@@ -325,7 +325,7 @@ button:disabled {
 .linkish:hover:not(:disabled) { background: var(--accent-soft); }
 .linkish:active:not(:disabled) { background: color-mix(in srgb, var(--accent) 24%, transparent); }
 
-/* switch — macOS-style toggle for feature/setting rows (rendered only via
+/* switch: macOS-style toggle for feature/setting rows (rendered only via
    <Switch>). A hidden native checkbox is the truth: role=switch, Space
    toggles, label clicks associate; every visual state derives from the
    input through :has(). Checkboxes remain the species for selection within
@@ -338,8 +338,8 @@ button:disabled {
   height: 20px;
   border-radius: 10px;
   /* liquid glass track. NSGlassEffectView can't back an in-content control
-     (it refracts through the WINDOW, not the modal under the knob — the
-     gutter is the window-edge special case) — backdrop-filter is the
+     (it refracts through the WINDOW, not the modal under the knob: the
+     gutter is the window-edge special case). backdrop-filter is the
      in-content equivalent: it samples the actual pixels beneath. The lens
      is drawn in shadows: dark upper carve, bright lower rim, side glints */
   background: color-mix(in srgb, var(--bg-active) 55%, transparent);
@@ -406,7 +406,7 @@ button:disabled {
 .switch:has(input:checked) .switch-knob {
   left: 17px; /* optical */
 }
-/* macOS press stretch — the knob grows while held and springs on release */
+/* macOS press stretch: the knob grows while held and springs on release */
 .switch:has(input:active:not(:disabled)) .switch-knob {
   width: 19px; /* optical */
 }
@@ -422,7 +422,7 @@ button:disabled {
   outline-offset: 1px;
 }
 
-/* shortcut glyphs (WRITING.md glyph register / DESIGN.md rule 7) — UI font,
+/* shortcut glyphs (WRITING.md glyph register / DESIGN.md rule 7): UI font,
    tier-2 contrast, label-adjacent size. Rendered only via <Kbd>. */
 .kbd {
   font-family: var(--font-ui);
@@ -430,7 +430,7 @@ button:disabled {
   color: var(--fg-muted);
   letter-spacing: 0.02em;
 }
-/* keycap costume — teaching surfaces only (cheatsheet, empty states) */
+/* keycap costume: teaching surfaces only (cheatsheet, empty states) */
 .kbd-cap {
   display: inline-flex;
   align-items: center;
@@ -450,7 +450,7 @@ button:disabled {
   border-radius: 5px; /* optical */
 }
 .kbd-caps { display: inline-flex; gap: 3px; }
-/* on filled primary/danger the tier-2 gray drowns — the glyph rides the
+/* on filled primary/danger the tier-2 gray drowns: the glyph rides the
    fill's ink, one step quieter than the label */
 .btnish.primary .kbd, .btn.primary .kbd,
 .btnish.danger .kbd, .btn.danger .kbd {

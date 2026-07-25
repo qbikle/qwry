@@ -1,6 +1,6 @@
 // Memoized structured-cell parse for the inspector. Parsing + pretty-printing
 // a multi-MB jsonb cell on every render (every streamed batch, every raw-mode
-// keystroke) burned 100s of ms — cache the result keyed by (cell text, type).
+// keystroke) burned 100s of ms: cache the result keyed by (cell text, type).
 // A small bounded Map LRU, NOT WeakRef (WKWebView GCs WeakRefs aggressively):
 // 8 entries covers hopping between a handful of cells without pinning big
 // strings' parse trees forever.
@@ -10,7 +10,7 @@ import { structuredValue } from "./format";
 export interface ParsedCell {
   /** parsed JSON / PG array; undefined when the cell isn't structured */
   structured: unknown;
-  /** doc contains a 16+ digit bare number — parse→re-serialize would round it */
+  /** doc contains a 16+ digit bare number: parse→re-serialize would round it */
   lossyNums: boolean;
   /** pretty-printed JSON; null when not structured or lossy */
   pretty: string | null;
@@ -22,7 +22,7 @@ interface Entry extends ParsedCell {
 
 export const PARSE_CACHE_CAP = 8;
 
-// a bare number token of 16+ digits exceeds JS float precision — any
+// a bare number token of 16+ digits exceeds JS float precision: any
 // parse→re-serialize path would silently round it (even in untouched
 // fields), so tree editing and pretty-printing are disabled for such docs
 const LOSSY_NUM_RE = /(?:^|[\s:,[])-?\d{16,}(?:[\s,}\]]|$)/;
@@ -51,5 +51,5 @@ export function parsedCell(value: string, typeName: string | undefined): ParsedC
   return entry;
 }
 
-/** test hook — current number of cached entries */
+/** test hook: current number of cached entries */
 export const parseCacheSize = () => lru.size;

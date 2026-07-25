@@ -10,7 +10,7 @@ use tauri::menu::{AboutMetadata, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager};
 
 /// macOS 26 "Liquid Glass": mount an NSGlassEffectView beneath the (transparent)
-/// webview. The class is resolved at RUNTIME — on older macOS this returns
+/// webview. The class is resolved at RUNTIME; on older macOS this returns
 /// false and the caller falls back to the NSVisualEffectView vibrancy path.
 /// Must run on the main thread (Tauri's setup hook does).
 #[cfg(target_os = "macos")]
@@ -50,7 +50,7 @@ fn apply_liquid_glass(window: &tauri::WebviewWindow) -> bool {
             Encoding::Struct("CGRect", &[CGPoint::ENCODING, CGSize::ENCODING]);
     }
 
-    // runtime lookup — class! would link-fail on older SDKs
+    // runtime lookup: class! would link-fail on older SDKs
     let Some(glass_cls) = objc2::runtime::AnyClass::get(c"NSGlassEffectView") else {
         return false;
     };
@@ -69,7 +69,7 @@ fn apply_liquid_glass(window: &tauri::WebviewWindow) -> bool {
         if glass.is_null() {
             return false;
         }
-        // NSViewWidthSizable | NSViewHeightSizable — track window resizes
+        // NSViewWidthSizable | NSViewHeightSizable: track window resizes
         let _: () = msg_send![&*glass, setAutoresizingMask: 18usize];
         // beneath every sibling (the webview stays on top, transparent)
         let below: isize = -1; // NSWindowBelow
@@ -150,7 +150,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> 
         .item(&item("inspector", "Toggle Inspector", Some("Cmd+I"))?)
         .item(&item("theme", "Theme…", None)?)
         .separator()
-        // muda has no "Plus" key — Cmd+= is the canonical zoom-in accelerator
+        // muda has no "Plus" key; Cmd+= is the canonical zoom-in accelerator
         // (Safari-style; the frontend fallback also accepts ⌘⇧= aka ⌘+)
         .item(&item("zoom-in", "Zoom In", Some("Cmd+="))?)
         .item(&item("zoom-out", "Zoom Out", Some("Cmd+-"))?)
@@ -160,7 +160,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> 
         .item(&item("refresh-schema", "Refresh Schema", Some("Cmd+R"))?)
         .build()?;
 
-    // deliberately NO Close Window item — ⌘W belongs to tab close
+    // deliberately NO Close Window item: ⌘W belongs to tab close
     let window = SubmenuBuilder::new(app, "Window")
         .minimize()
         .maximize()
@@ -196,7 +196,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         // remembers window size/position across launches (saves on close/move).
         // VISIBLE is excluded: the window is created hidden and the frontend
-        // shows it after first paint — restoring visibility here would flash
+        // shows it after first paint; restoring visibility here would flash
         // the empty glass pane the hidden start exists to prevent
         .plugin(
             tauri_plugin_window_state::Builder::default()
@@ -213,7 +213,7 @@ pub fn run() {
                 Err(e) => {
                     // A refused appdb (e.g. written by a NEWER qwry, or an
                     // open/migrate failure) used to bubble into the builder's
-                    // bare .expect — the app bounced and died with no
+                    // bare .expect: the app bounced and died with no
                     // explanation. Tell the user why, then exit cleanly.
                     // blocking_show must run OFF the main thread (it would
                     // deadlock the not-yet-started event loop), so the dialog
@@ -272,14 +272,14 @@ pub fn run() {
 
             // the frontend shows the hidden window after its first paint; if
             // the webview ever fails to boot, this fallback keeps the app from
-            // looking dead (no window, no error) — a blank pane after 5s beats
+            // looking dead (no window, no error); a blank pane after 5s beats
             // an invisible hang
             {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(5));
                     if let Some(win) = handle.get_webview_window("main") {
-                        // unknowable visibility counts as hidden — a watchdog
+                        // unknowable visibility counts as hidden: a watchdog
                         // that rescues invisible hangs must fail toward showing
                         if !win.is_visible().unwrap_or(false) {
                             let _ = win.show();

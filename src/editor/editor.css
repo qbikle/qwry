@@ -23,7 +23,7 @@
   gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-3);
   border-top: 1px solid var(--border);
-  /* between-mode face swaps share .btnish metrics today — the floor makes
+  /* between-mode face swaps share .btnish metrics today: the floor makes
      that structural instead of coincidental (rule 2 strips clause) */
   min-height: 28px;
 }
@@ -40,7 +40,7 @@
   scrollbar-width: none; /* Firefox */
 }
 .tabbar::-webkit-scrollbar {
-  display: none; /* WebKit / WKWebView — no visible horizontal bar */
+  display: none; /* WebKit / WKWebView: no visible horizontal bar */
 }
 
 .tab {
@@ -68,7 +68,7 @@
   /* pinned tabs keep their ORIGIN connection's color (--tab-conn) */
   box-shadow: inset 0 2px 0 var(--tab-conn, var(--conn-color, var(--accent)));
 }
-/* inactive pinned tab: faint origin-colored topline — spottable at a glance */
+/* inactive pinned tab: faint origin-colored topline, spottable at a glance */
 .tab.is-pinned:not(.active) {
   box-shadow: inset 0 2px 0 color-mix(in srgb, var(--tab-conn, var(--accent)) 45%, transparent);
 }
@@ -79,7 +79,7 @@
   align-items: center;
   min-width: 0;
 }
-/* ellipsis needs a block-level text box — inline-flex never applies it */
+/* ellipsis needs a block-level text box: inline-flex never applies it */
 .tab-name-text {
   display: block;
   min-width: 0;
@@ -141,7 +141,7 @@
   background: var(--bg-active);
   color: var(--fg);
 }
-/* saved-drift indicator OWNS the close slot: dot at rest, ✕ on tab hover —
+/* saved-drift indicator OWNS the close slot: dot at rest, ✕ on tab hover.
    one slot, no bolted-on markers drifting after the name (VS Code grammar) */
 .tab-close .tc-dot { display: none; }
 .tab-close .tc-x { display: grid; place-items: center; }
@@ -159,7 +159,7 @@
 .tab:hover .tab-close.dirty .tc-dot { display: none; }
 .tab:hover .tab-close.dirty .tc-x { display: grid; }
 
-/* .iconbtn provides the skin — layout only here */
+/* .iconbtn provides the skin: layout only here */
 .tab-new {
   margin-left: var(--sp-1);
   flex-shrink: 0;
@@ -173,7 +173,7 @@
   flex-direction: column;
 }
 
-/* buffer time-machine — ghost banner floated over the editor while a past
+/* buffer time-machine: ghost banner floated over the editor while a past
    run is shown read-only (⌃⌘←/→ step · Enter restores · Esc returns) */
 .tt-banner {
   position: absolute;
@@ -192,7 +192,7 @@
   color: var(--fg);
   font-size: var(--text-sm);
   white-space: nowrap;
-  pointer-events: none; /* purely informational — keys drive the mode */
+  pointer-events: none; /* purely informational: keys drive the mode */
 }
 .tt-banner .tt-glyph {
   display: flex;
@@ -205,7 +205,7 @@
 .tt-banner .tt-hint {
   color: var(--fg-muted);
 }
-/* the viewed snapshot reads slightly ghosted — it isn't the live buffer */
+/* the viewed snapshot reads slightly ghosted: it isn't the live buffer */
 .tt-viewing .cm-editor {
   opacity: 0.92; /* optical */
 }
@@ -251,7 +251,7 @@
   inset: 0;
   z-index: 15;
   background: rgba(0, 0, 0, 0.25);
-  /* flex centering — transform is owned by the spring animation */
+  /* flex centering: transform is owned by the spring animation */
   display: flex;
   justify-content: center;
   align-items: flex-start;
@@ -277,7 +277,7 @@
   font-size: var(--text-lg);
   user-select: text;
 }
-/* underline-style input: the underline is the focus treatment — kill the
+/* underline-style input: the underline is the focus treatment: kill the
    global ring (bare outline:none loses to input:focus-visible) */
 .fn-search input:focus-visible {
   outline: none;
@@ -340,7 +340,7 @@
   user-select: text;
 }
 
-/* Explain is .btnish — muted-by-default is its one delta (secondary action) */
+/* Explain is .btnish: muted-by-default is its one delta (secondary action) */
 .qb-bar .qb-explain {
   color: var(--fg-muted);
   font-weight: 500;
@@ -349,7 +349,7 @@
   color: var(--fg);
 }
 
-/* Run is .btnish.primary; Cancel keeps a soft-danger tint — a filled .danger
+/* Run is .btnish.primary; Cancel keeps a soft-danger tint: a filled .danger
    would shout for the whole life of every query (annotated species exception) */
 .qb-cancel {
   display: inline-grid;
@@ -377,7 +377,7 @@
 }
 .qb-action-slot > * {
   grid-area: 1 / 1;
-  /* faces stretch to the slot's reserved width — center their labels so the
+  /* faces stretch to the slot's reserved width: center their labels so the
      ~1ch of reservation slack splits evenly instead of pooling on the right */
   justify-content: center;
 }
@@ -385,7 +385,7 @@
   visibility: hidden;
 }
 /* Cancel / Cancelling stack in one grid cell so the button holds the wider
-   label's width for the whole run — no layout jump when the swap happens */
+   label's width for the whole run: no layout jump when the swap happens */
 .qb-cancel .qb-cancel-face {
   grid-area: 1 / 1;
   justify-self: center;
@@ -497,7 +497,7 @@
 .tab.drop-before { box-shadow: inset 2px 0 0 var(--accent); }
 .tab.drop-after { box-shadow: inset -2px 0 0 var(--accent); }
 
-/* the statement ⌘↩ would run — only shown in multi-statement buffers */
+/* the statement ⌘↩ would run. Only shown in multi-statement buffers */
 .cm-stmt-scope {
   /* background-IMAGE: composes with .cm-activeLine's background-color
      instead of fighting it in the cascade */
@@ -516,12 +516,12 @@
 }
 
 
-/* pin glyph: origin-colored marker — click shows INFO (never unpins).
+/* pin glyph: origin-colored marker. Click shows INFO (never unpins).
    No chip background: a button look begged for a destructive click */
 .tab-pin-glyph {
   display: grid;
   place-items: center;
-  /* 18px = the tab-close box — a taller child grew the whole TAB STRIP by
+  /* 18px = the tab-close box: a taller child grew the whole TAB STRIP by
      2px the moment the first tab was pinned (stable-chrome, rule 2) */
   width: 18px;
   height: 18px;

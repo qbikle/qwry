@@ -78,7 +78,7 @@
 .tree-icon.view {
   color: var(--accent);
 }
-/* distinct relkind glyphs — matview/partitioned/foreign read at a glance */
+/* distinct relkind glyphs: matview/partitioned/foreign read at a glance */
 .tree-icon.matview {
   color: var(--syn-type);
 }
@@ -205,7 +205,7 @@
   white-space: nowrap;
 }
 
-/* introspection failure state — never a silently blank sidebar */
+/* introspection failure state: never a silently blank sidebar */
 .tree-error {
   color: var(--danger);
 }
@@ -217,7 +217,7 @@
   word-break: break-word;
 }
 
-/* table expand → column list — skin comes from .iconbtn, box stays 18px so
+/* table expand → column list: skin comes from .iconbtn, box stays 18px so
    dense rows keep their height */
 .tree-table .tree-twist {
   width: 18px;

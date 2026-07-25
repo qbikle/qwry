@@ -1,4 +1,4 @@
-/** Sessions whose death the app itself ordered — the terminate tier, user
+/** Sessions whose death the app itself ordered: the terminate tier, user
  * disconnects, profile teardown. An in-flight run on one of these rejects
  * with a connection-closed shape; the results store reads this set to
  * classify that rejection as the cancel it was, never a scary error.

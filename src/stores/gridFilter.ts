@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-/** quick-filter over LOADED grid rows (editor results only — the browser's
+/** quick-filter over LOADED grid rows (editor results only: the browser's
  * paged data filters server-side via the filter bar). View-level like client
  * sort: data indexes untouched, so staged edits stay on the right rows. */
 interface GridFilterState {

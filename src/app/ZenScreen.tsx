@@ -4,7 +4,7 @@ import { prefersReducedMotion } from "../design/springs";
 import { Kbd } from "../design/Kbd";
 import "./app.css";
 
-/** quotes + small thoughts for the zero-tab zen screen — DB-flavored calm */
+/** quotes + small thoughts for the zero-tab zen screen: DB-flavored calm */
 const THOUGHTS = [
   "The best query is the one you didn’t have to run.",
   "NULL is not nothing. It’s the unknown, politely labeled.",
@@ -34,7 +34,7 @@ const THOUGHTS = [
 ];
 
 /** monochrome flow-field: a sheet of thin drifting lines, amplitude breathing
- * through a center envelope — pure canvas, ~1ms/frame, dies with the screen */
+ * through a center envelope: pure canvas, ~1ms/frame, dies with the screen */
 function Waves() {
   const ref = useRef<HTMLCanvasElement>(null);
 
@@ -59,7 +59,7 @@ function Waves() {
       canvas.style.height = `${h}px`;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       // resizing the backing store WIPES the canvas, and ResizeObserver fires
-      // AFTER this frame's rAF draw — repaint now or the sheet blanks for the
+      // AFTER this frame's rAF draw: repaint now or the sheet blanks for the
       // whole duration of a panel slide (inspector ⌘I)
       paint();
     };
@@ -112,7 +112,7 @@ function Waves() {
     const ro = new ResizeObserver(fit);
     if (canvas.parentElement) ro.observe(canvas.parentElement);
 
-    // prefers-reduced-motion: the sheet renders once, statically — no drift
+    // prefers-reduced-motion: the sheet renders once, statically, no drift
     // loop. Tracks the live OS setting so flipping it mid-session applies.
     const mq = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     const start = () => {
@@ -163,7 +163,7 @@ export function ZenScreen() {
               key={idx}
               className="zen-quote"
               // collapses under prefers-reduced-motion like the spring
-              // presets (read per render — the quote swaps every 14s)
+              // presets (read per render: the quote swaps every 14s)
               initial={prefersReducedMotion() ? { opacity: 1, y: 0 } : { opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={prefersReducedMotion() ? { opacity: 0 } : { opacity: 0, y: -8 }}

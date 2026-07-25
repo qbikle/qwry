@@ -9,13 +9,13 @@ import "./sidebar.css";
 import "./sidebar-tree.css";
 
 /** open a saved query the sidebar way: focus its linked tab if one is open,
- *  else a new tab linked to it — shared with the palette's Saved group */
+ *  else a new tab linked to it. Shared with the palette's Saved group */
 export function openSavedQuery(q: { id: string; sql: string; name: string }) {
   // selecting/creating a query tab makes the active tab a query tab, so any
   // open table view is left automatically
   const { tabs, select, pinned } = useTabs.getState();
-  // match within the VISIBLE strip only (own profile ∪ legacy null ∪ pinned)
-  // — an unscoped match could select another workspace's tab: its cached rows
+  // match within the VISIBLE strip only (own profile ∪ legacy null ∪ pinned):
+  // an unscoped match could select another workspace's tab: its cached rows
   // render under this connection's branding with no active tab in the strip
   // (same seam as openTable's scoped dedup)
   const pid = useConnections.getState().activeProfileId;
@@ -45,7 +45,7 @@ export function SavedQueries() {
 
   const open = openSavedQuery;
 
-  // deletes have no undo (saved_delete is permanent) — one ceremony for both
+  // deletes have no undo (saved_delete is permanent): one ceremony for both
   // the menu and the inline trash: the DangerModal (window.confirm is a stub
   // in WKWebView, never gate on it)
   const confirmDelete = async (q: SavedQuery) => {
@@ -86,7 +86,7 @@ export function SavedQueries() {
     },
   ];
 
-  // name OR sql text match — a flat list is unusable past ~20 entries
+  // name OR sql text match: a flat list is unusable past ~20 entries
   const needle = filter.trim().toLowerCase();
   const shown = needle
     ? queries.filter(
@@ -111,7 +111,7 @@ export function SavedQueries() {
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             onKeyDown={(e) => {
-              // typing keys only — ⌘/⌃ chords must reach the window handler
+              // typing keys only: ⌘/⌃ chords must reach the window handler
               if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
               if (e.key === "Escape") setFilter("");
             }}
@@ -128,7 +128,7 @@ export function SavedQueries() {
             onClick={() => open(q)}
             onKeyDown={(e) => {
               // row-only: Enter on the inner action buttons fires their click,
-              // which bubbles here as keydown too — don't double-activate
+              // which bubbles here as keydown too; don't double-activate
               if (e.target !== e.currentTarget) return;
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();

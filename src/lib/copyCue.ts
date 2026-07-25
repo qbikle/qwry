@@ -1,4 +1,4 @@
-// One clipboard write path with visible feedback — audits found copies were
+// One clipboard write path with visible feedback: copies used to be
 // silent app-wide (an accidental schema-tree click silently overwrites the
 // clipboard) and failures indistinguishable from empty clipboards. Fire the
 // cue event either way; CopyToast renders it.
@@ -9,7 +9,7 @@ export function copyCueShow(label: string) {
 }
 
 /** write to the clipboard and flash a cue ("Copied" / "copy failed").
- * Resolves true only when the write landed — follow-up honesty notes
+ * Resolves true only when the write landed; follow-up honesty notes
  * (truncation flashes etc.) must not fire on a failed copy. */
 export function copyCue(text: string, label = "Copied"): Promise<boolean> {
   return writeText(text).then(
