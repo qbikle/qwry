@@ -28,7 +28,7 @@ export function ConnectionEditor({ profile }: { profile: Profile }) {
     { ok: true; ms: number; version: string; tls: boolean } | { ok: false; error: string } | null
   >(null);
 
-  // probe the CURRENT form values — nothing is saved; an unsaved password is
+  // probe the CURRENT form values: nothing is saved; an unsaved password is
   // passed along, otherwise the keychain entry for this profile id is used
   const testConn = async () => {
     setTesting(true);

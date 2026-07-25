@@ -1,4 +1,4 @@
-/* panes inside the main card (editor over results) — split is user-draggable */
+/* panes inside the main card (editor over results): split is user-draggable */
 .editor-pane {
   height: var(--editor-h, 38%);
   min-height: 90px;
@@ -82,7 +82,7 @@
   user-select: text;
 }
 
-/* buttons are .btnish (+ .danger / .primary) — layout only here */
+/* buttons are .btnish (+ .danger / .primary): layout only here */
 .danger-actions {
   display: flex;
   justify-content: flex-end;
@@ -117,7 +117,7 @@
   margin-top: 1px;
   color: var(--accent);
 }
-/* download progress — the bar is the message; the title row carries the
+/* download progress: the bar is the message; the title row carries the
    number (top right, tabular so it never jitters) */
 .update-dl-head {
   display: flex;
@@ -192,7 +192,7 @@
   word-break: break-word;
   user-select: text;
 }
-/* .btnish provides the skin — layout deltas only */
+/* .btnish provides the skin: layout deltas only */
 .conn-toast-action {
   flex-shrink: 0;
   align-self: center;
@@ -224,7 +224,7 @@
   color: var(--fg-muted);
   line-height: 1.5;
 }
-/* buttons are .btnish (+ .primary / .danger) — layout only here */
+/* buttons are .btnish (+ .primary / .danger): layout only here */
 .cg-actions {
   display: flex;
   justify-content: flex-end;
@@ -265,7 +265,7 @@
 .settings-label { color: var(--fg-muted); }
 .settings-check { cursor: pointer; }
 /* segmented control (DESIGN.md rule 1): panel-inset track, 2px gap,
-   active = accent-soft — keep in lockstep with .tp-modes */
+   active = accent-soft. Keep in lockstep with .tp-modes */
 .settings-seg {
   display: flex;
   background: var(--bg-panel);
@@ -467,13 +467,13 @@
   font-size: var(--text-xs);
   color: var(--fg-muted);
 }
-/* teaching-surface keycap — same costume as .kbd-cap (tokens.css), widened
+/* teaching-surface keycap: same costume as .kbd-cap (tokens.css), widened
    so the chord column aligns; UI font, tier 2, heavier bottom edge */
 .keys-row kbd {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 20px; /* the .kbd-cap square-base height — one cap geometry app-wide */
+  height: 20px; /* the .kbd-cap square-base height, one cap geometry app-wide */
   min-width: 72px;
   padding: 0 6px; /* optical */
   font-family: var(--font-ui);
@@ -511,7 +511,7 @@
   pointer-events: none;
 }
 /* invisible two-column grid: keys right-aligned toward the seam,
-   descriptions left-aligned away from it — no boundaries drawn */
+   descriptions left-aligned away from it, no boundaries drawn */
 .zen-keys {
   display: grid;
   grid-template-columns: auto auto;

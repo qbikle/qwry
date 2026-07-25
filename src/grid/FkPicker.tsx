@@ -1,8 +1,8 @@
 // FK-cell picker (Postico parity): while editing a foreign-key cell, pick the
 // referenced row from a live-searched list instead of typing the key blind.
-// Anchored overlay (own esc-stack entry — Esc closes the picker, not the cell
+// Anchored overlay (own esc-stack entry: Esc closes the picker, not the cell
 // editor); the search runs a read-only SELECT on an EXISTING session (primary
-// preferred — see preferredSessionId), debounced ~200ms, identifiers/literals
+// preferred, see preferredSessionId), debounced ~200ms, identifiers/literals
 // quoted through the shared safe helpers only. Errors render here, honestly.
 import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
@@ -18,8 +18,8 @@ import "./grid.css";
 const DEBOUNCE_MS = 200;
 
 /** session for grid side-queries (FK picker, histogram): the result's
- * profile, PRIMARY session preferred — the tab session is what ⌘. cancels,
- * and a side-query there would die with (or delay) the tab's own work — with
+ * profile, PRIMARY session preferred: the tab session is what ⌘. cancels,
+ * and a side-query there would die with (or delay) the tab's own work, with
  * any live tab session of that profile as fallback. Same rule as
  * runExactCount's count probe. */
 export function preferredSessionId(): string | undefined {
@@ -55,7 +55,7 @@ export function FkPicker({
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // primary session preferred (⌘. cancel targets the tab session — a
+    // primary session preferred (⌘. cancel targets the tab session: a
     // picker query there would collide with it); a picker with no live
     // session reports instead of silently showing nothing
     const sessionId = preferredSessionId();

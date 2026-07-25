@@ -116,7 +116,7 @@ async function smartPaste(view: EditorView, shape: "in" | "values") {
   view.focus();
 }
 
-/** allocation-free equality between a CodeMirror rope and a string —
+/** allocation-free equality between a CodeMirror rope and a string:
  * length check first, then chunk-wise compare (never materializes the doc) */
 function docEqualsString(doc: Text, s: string): boolean {
   if (doc.length !== s.length) return false;
@@ -129,13 +129,13 @@ function docEqualsString(doc: Text, s: string): boolean {
   return pos === s.length;
 }
 
-/** subtle band over the statement the caret sits in — makes the ⌘↩ scope
+/** subtle band over the statement the caret sits in: makes the ⌘↩ scope
  * visible at a glance. Only drawn when the buffer holds 2+ statements. */
 const stmtScopeDeco = Decoration.line({ class: "cm-stmt-scope" });
 const stmtScopePlugin = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet = Decoration.none;
-    // spans are kept incrementally — a keystroke typically re-lexes only a
+    // spans are kept incrementally: a keystroke typically re-lexes only a
     // small window around the edit. Not a hard <16ms guarantee: the final
     // span must be re-lexed to the doc end before it is trusted, so one
     // giant statement still costs O(text after the edit) per keystroke
@@ -176,14 +176,14 @@ const stmtScopePlugin = ViewPlugin.fromClass(
           break;
         }
       }
-      // caret moved within the same statement — decorations still valid
+      // caret moved within the same statement: decorations still valid
       if (span.from === this.lastFrom && span.to === this.lastTo) return this.decorations;
       this.lastFrom = span.from;
       this.lastTo = span.to;
       const from = view.state.doc.lineAt(span.from).number;
       const to = view.state.doc.lineAt(span.to).number;
       // a pasted 5k-line VALUES statement must not mint 5k decorations per
-      // keystroke — past this size the band adds nothing anyway
+      // keystroke: past this size the band adds nothing anyway
       if (to - from > 300) return Decoration.none;
       const decos = [];
       for (let l = from; l <= to; l++) {
@@ -207,7 +207,7 @@ function runTarget(view: EditorView): { text: string; offset: number } {
   return { text: doc, offset: 0 };
 }
 
-/** appdb timestamps are UTC "YYYY-MM-DD HH:MM:SS" (datetime('now')) — render
+/** appdb timestamps are UTC "YYYY-MM-DD HH:MM:SS" (datetime('now')): render
  * as a local wall-clock time for the time-machine banner; snapshots from
  * another day carry the date (a bare "14:03" would read as today's) */
 function snapTime(ts: string): string {
@@ -249,11 +249,11 @@ export function SqlEditor() {
   useEffect(() => {
     if (!hostRef.current) return;
 
-    // the exact string handed to setSql — lets the connections subscriber
+    // the exact string handed to setSql: lets the connections subscriber
     // dismiss its own echo (and every unrelated store update) by IDENTITY
     // instead of re-materializing + comparing a 2MB doc each time
     let lastSyncedSql: string | null = null;
-    // whether we currently show PG-error diagnostics — a streamed result
+    // whether we currently show PG-error diagnostics: a streamed result
     // arrives in many batches and each one used to dispatch a clearing
     // transaction (plus an O(doc) toString); skip when there's nothing to clear
     let hasDiags = false;
@@ -261,7 +261,7 @@ export function SqlEditor() {
     // ------------------------------------------------------------------
     // Buffer time-machine (⌃⌘←/→). While viewing, the LIVE EditorState is
     // parked in ttState.draftState (doc + selection + undo history) and the
-    // view shows a throwaway READ-ONLY state per snapshot — swaps go through
+    // view shows a throwaway READ-ONLY state per snapshot: swaps go through
     // setState, which bypasses the update listener, so a snapshot can never
     // leak into the sql store / tab persistence. Enter restores the snapshot
     // as ONE undoable transaction; Esc returns the parked state untouched.
@@ -273,7 +273,7 @@ export function SqlEditor() {
 
     // ⌥↑/⌥↓ quick history walk (psql). Slot 0 = the live draft; i>=1 maps to
     // snaps[i-1] (newest-first). Unlike the time-machine this REPLACES the
-    // buffer per step (each an undoable tx) — no banner, no read-only.
+    // buffer per step (each an undoable tx): no banner, no read-only.
     let walk: { snaps: string[]; idx: number; draft: string } | null = null;
     let walkDispatching = false;
 
@@ -286,7 +286,7 @@ export function SqlEditor() {
           extensions: [extensions, EditorState.readOnly.of(true)],
         }),
       );
-      // setState bypasses the update listener — same discipline as tab switch
+      // setState bypasses the update listener: same discipline as tab switch
       lastSyncedSql = null;
       hasDiags = true;
       editorTimeTraveling.current = true;
@@ -296,7 +296,7 @@ export function SqlEditor() {
 
     /** never-lose-work: a live draft about to be replaced by history text
      * (↩-restore, ⌥-walk leaving slot 0, a walk killed mid-cycle) joins the
-     * snapshot trail first — same trail the feature exists to provide. The
+     * snapshot trail first, the same trail the feature exists to provide. The
      * appdb layer dedupes, so a draft equal to the newest snapshot no-ops. */
     const parkDraft = (tabId: string | null, draft: string, newestSnap: string | undefined) => {
       if (!tabId || draft.trim() === "" || draft === newestSnap) return;
@@ -317,7 +317,7 @@ export function SqlEditor() {
       lastSyncedSql = null;
       hasDiags = true;
       if (apply) {
-        // the live draft is about to be overwritten through the store — park
+        // the live draft is about to be overwritten through the store: park
         // it in the trail FIRST so ↩-restore can never lose a never-run draft
         parkDraft(
           useTabs.getState().activeId,
@@ -360,10 +360,10 @@ export function SqlEditor() {
         .bufferSnapshotsList(tabId)
         .then((snaps) => {
           // stale press: anything moved meanwhile (typing, tab switch, a
-          // second ⌃⌘← that already entered) — drop it
+          // second ⌃⌘← that already entered): drop it
           if (editorGone || ttState || view.state !== draftState) return;
           if (useTabs.getState().activeId !== tabId) return;
-          // the newest snapshot usually IS the current buffer (it just ran) —
+          // the newest snapshot usually IS the current buffer (it just ran):
           // start at the first one that differs
           let idx = 0;
           while (idx < snaps.length && docEqualsString(draftState.doc, snaps[idx].sql)) idx++;
@@ -388,7 +388,7 @@ export function SqlEditor() {
 
     // ⌥↑ STARTS a walk only when the caret sits at the absolute doc start,
     // nothing is selected, no completion popup is open, and the buffer is a
-    // single statement or ≤10 lines (whole scripts are protected — the keys
+    // single statement or ≤10 lines (whole scripts are protected: the keys
     // fall through to moveLine there). Mid-walk only the selection/completion
     // gates apply, so repeated presses cycle without re-homing the caret.
     const walkGateOk = (view: EditorView): boolean =>
@@ -438,7 +438,7 @@ export function SqlEditor() {
             walk = null; // nothing older that differs
           } else {
             // slot 0 was left: the draft now lives only in walk RAM and each
-            // step REPLACES the buffer through the store — park it first
+            // step REPLACES the buffer through the store: park it first
             parkDraft(tabId, draft, w.snaps[0]);
           }
         })
@@ -449,7 +449,7 @@ export function SqlEditor() {
       keymap.of([
         {
           // run selection when present, else the statement under the caret.
-          // Swallowed while time-traveling — the banner owns Enter/Esc there
+          // Swallowed while time-traveling: the banner owns Enter/Esc there
           // and running the VIEWED text would be a silent foot-gun.
           key: "Mod-Enter",
           run: (view) => {
@@ -494,7 +494,7 @@ export function SqlEditor() {
           },
         },
         {
-          // defaultKeymap binds Mod-i to selectParentSyntax — we want inspector
+          // defaultKeymap binds Mod-i to selectParentSyntax, but we want inspector
           key: "Mod-i",
           run: () => {
             useInspector.getState().toggle();
@@ -502,7 +502,7 @@ export function SqlEditor() {
           },
         },
         {
-          // format dispatches straight to the doc — must not touch a snapshot
+          // format dispatches straight to the doc: must not touch a snapshot
           key: "Mod-Shift-f",
           run: (view) => {
             if (!ttState) void formatDefault(view);
@@ -558,7 +558,7 @@ export function SqlEditor() {
               return true;
             }
             // dead walk: it leaves the caret at the doc END, where another ⌥↓
-            // used to fall through to moveLineDown — a silent line reorder
+            // used to fall through to moveLineDown: a silent line reorder
             // where the user expected history nav. At the end edge (where
             // moveLineDown is a no-op anyway) restart the walk instead; the
             // start edge stays with moveLineDown, which is real editing there.
@@ -602,7 +602,7 @@ export function SqlEditor() {
       ]),
       sql({ dialect: PostgreSQL }),
       // grammar/highlighting from lang-sql; completion is OUR engine, which
-      // reads the live schema store itself — no reconfiguration needed
+      // reads the live schema store itself (no reconfiguration needed)
       autocompletion({
         activateOnTyping: true,
         maxRenderedOptions: 50,
@@ -617,11 +617,11 @@ export function SqlEditor() {
           // a real edit invalidates the ⌥↑ walk (its draft slot went stale);
           // our own walk steps survive via the flag
           if (walk && !walkDispatching) walk = null;
-          // belt: a read-only snapshot view must NEVER flow into the store —
+          // belt: a read-only snapshot view must NEVER flow into the store:
           // doc changes can't normally happen there, but a leak would persist
           // snapshot text over the user's live buffer
           if (ttState) return;
-          // ONE materialization per edit — the store, the tabs mirror and the
+          // ONE materialization per edit: the store, the tabs mirror and the
           // echo check below all share this exact string
           const sql = u.state.doc.toString();
           lastSyncedSql = sql;
@@ -638,15 +638,15 @@ export function SqlEditor() {
     viewRef.current = view;
     // ⌘T contract: land typing. A single focus() after a fresh mount is
     // UNRELIABLE in WKWebView (silently dropped when issued in the same task
-    // as the mount) — retry until CM itself reports focus, ~350ms deadline.
+    // as the mount): retry until CM itself reports focus, ~350ms deadline.
     // ⌘T contract: land typing. The signal is consumed ONLY once focus is
-    // CONFIRMED — a mount that dies before winning focus (StrictMode's dev
+    // CONFIRMED: a mount that dies before winning focus (StrictMode's dev
     // double-effect throwaway, any remount race) leaves it set for the mount
     // that actually survives. The loop halts with its own view's lifecycle.
     const claimFocus = () => {
       let tries = 20;
       const attempt = () => {
-        if (editorGone) return; // this view was destroyed — a successor claims
+        if (editorGone) return; // this view was destroyed: a successor claims
         if (view.hasFocus) {
           editorFocusSignal.current = false; // consumed on SUCCESS only
           return;
@@ -663,14 +663,14 @@ export function SqlEditor() {
 
     // ONE EditorState PER TAB. A tab switch swaps the whole state (doc,
     // selection, UNDO HISTORY) instead of replacing the document in a shared
-    // state — a doc-replace lands on the shared undo stack, so ⌘Z in tab B
+    // state: a doc-replace lands on the shared undo stack, so ⌘Z in tab B
     // would restore tab A's SQL into B and persist it (cross-tab corruption).
     // Cache dies with this effect, so a theme remount starts states fresh.
     const tabStates = new Map<string, EditorState>();
     let currentTab = useTabs.getState().activeId;
     const unsubTabs = useTabs.subscribe((s) => {
       if (s.activeId === currentTab) {
-        // same tab — just prune cached states of closed tabs
+        // same tab: just prune cached states of closed tabs
         for (const id of [...tabStates.keys()]) {
           if (!s.tabs.some((t) => t.id === id)) tabStates.delete(id);
         }
@@ -685,7 +685,7 @@ export function SqlEditor() {
         setTt(null);
       }
       // a walk killed away from slot 0 holds its draft ONLY in RAM (the
-      // buffer + store show a snapshot) — park it before it dies
+      // buffer + store show a snapshot): park it before it dies
       if (walk && walk.idx !== 0) parkDraft(currentTab, walk.draft, walk.snaps[0]);
       walk = null;
       if (currentTab) tabStates.set(currentTab, parked);
@@ -702,13 +702,13 @@ export function SqlEditor() {
       // stale now, and a cached state may carry diagnostics we didn't count
       lastSyncedSql = null;
       hasDiags = true;
-      // ⌘T while the editor is already mounted — same landing
+      // ⌘T while the editor is already mounted: same landing
       if (editorFocusSignal.current) claimFocus();
     });
 
     // toolbar Run/Explain read this so they honour the same scope as ⌘↩.
     // While time-traveling they see an empty target (run/explain no-op on
-    // blank sql) — the mouse paths must not execute the VIEWED snapshot.
+    // blank sql): the mouse paths must not execute the VIEWED snapshot.
     editorRunText.current = () => (ttState ? { text: "", offset: 0 } : runTarget(view));
     editorFormat.current = () => {
       if (!ttState) void formatDefault(view);
@@ -724,13 +724,13 @@ export function SqlEditor() {
     };
 
     // reflect SAME-TAB external sql changes into the doc. Tab switches are
-    // handled by the state swap above (which runs first — select() sets
-    // activeId before setSql — so by the time this fires the doc already
+    // handled by the state swap above (which runs first: select() sets
+    // activeId before setSql, so by the time this fires the doc already
     // matches and it no-ops). This fires on EVERY connections-store update
     // (connState, txTabs, …), so the fast paths matter: identity check for
-    // our own echo, then length + chunk compare — never a full toString.
+    // our own echo, then length + chunk compare, never a full toString.
     const unsub = useConnections.subscribe((s) => {
-      // viewing a snapshot: the live buffer is parked in ttState.draftState —
+      // viewing a snapshot: the live buffer is parked in ttState.draftState:
       // reflecting store sql into the READ-ONLY view would clobber the
       // snapshot; exitTimeTravel reconciles any external change on the way out
       if (ttState) return;
@@ -747,7 +747,7 @@ export function SqlEditor() {
     // PG error position → squiggle. Works for whole-buffer runs AND
     // statement/selection runs: the executed text must still sit at its
     // recorded offset in the buffer (i.e. the user hasn't edited over it).
-    // fires per streamed batch — touch the doc ONLY when there's a failure to
+    // fires per streamed batch: touch the doc ONLY when there's a failure to
     // place (bounded slices, no toString) and never dispatch a no-op clear
     const unsubLint = useResults.subscribe((s) => {
       const failed = s.statements.find((st) => st.error?.position != null);
@@ -763,7 +763,7 @@ export function SqlEditor() {
           const wordEnd =
             /[\w$]*/.exec(view.state.sliceDoc(pos + 1, Math.min(docLen, pos + 257)))?.[0]
               .length ?? 0;
-          // PG's DETAIL/HINT are often the actual answer — show them at the squiggle
+          // PG's DETAIL/HINT are often the actual answer: show them at the squiggle
           const err = failed.error!;
           const message = [
             err.message,
@@ -818,7 +818,7 @@ export function SqlEditor() {
       className={`sql-editor-wrap${tt ? " tt-viewing" : ""}`}
       onContextMenu={(e) => {
         e.preventDefault();
-        // the menu's actions (run/format/paste) all target the live buffer —
+        // the menu's actions (run/format/paste) all target the live buffer:
         // suppress it while a read-only snapshot is shown
         if (!tt) setMenu({ x: e.clientX, y: e.clientY });
       }}

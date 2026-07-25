@@ -1,5 +1,5 @@
 //! Per-table depth for the Structure tab: constraints, indexes (with scan
-//! counts), triggers, sizes, pg_stat activity, comments — one simple-protocol
+//! counts), triggers, sizes, pg_stat activity, comments; one simple-protocol
 //! round trip of json cells, same shape as introspect.
 
 use serde::{Deserialize, Serialize};
@@ -22,11 +22,11 @@ pub struct IndexStatInfo {
     /// server deparse (pg_get_indexdef)
     pub definition: String,
     /// NB: a bare CREATE UNIQUE INDEX has no pg_constraint row
-    /// (backs_constraint=false) yet still enforces uniqueness — drop-candidacy
+    /// (backs_constraint=false) yet still enforces uniqueness; drop-candidacy
     /// must exclude unique indexes too, not just constraint-backed ones
     pub is_unique: bool,
     pub is_primary: bool,
-    /// a constraint (PK/UNIQUE/EXCLUDE) owns this index — the never-used
+    /// a constraint (PK/UNIQUE/EXCLUDE) owns this index; the never-used
     /// badge must skip it (the constraint is the point, not the scans)
     pub backs_constraint: bool,
     pub size_bytes: i64,
@@ -54,7 +54,7 @@ pub struct TableSizes {
     pub total_pretty: String,
 }
 
-/// pg_stat_all_tables row — deliberately NOT pg_stat_user_tables, which
+/// pg_stat_all_tables row, deliberately NOT pg_stat_user_tables, which
 /// drops matviews. Timestamps are wire text; all fields None when the
 /// stats collector has no row for the relation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,7 +75,7 @@ pub struct ColumnComment {
     pub comment: String,
 }
 
-/// Live pg_attribute row — the Columns section renders these instead of the
+/// Live pg_attribute row; the Columns section renders these instead of the
 /// (possibly stale) snapshot copy the tab carries.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnStatInfo {
@@ -84,7 +84,7 @@ pub struct ColumnStatInfo {
     /// format_type(atttypid, atttypmod)
     pub data_type: String,
     pub not_null: bool,
-    /// pg_get_expr(adbin) — the generation expression for generated columns
+    /// pg_get_expr(adbin): the generation expression for generated columns
     pub default: Option<String>,
     /// pg_attribute.attidentity ('' = none, 'a' = always, 'd' = by default)
     pub identity: String,
@@ -103,7 +103,7 @@ pub struct TableStats {
     /// COMMENT ON TABLE
     pub comment: Option<String>,
     pub column_comments: Vec<ColumnComment>,
-    /// live column list — supersedes the snapshot while the tab is open
+    /// live column list; supersedes the snapshot while the tab is open
     pub columns: Vec<ColumnStatInfo>,
 }
 

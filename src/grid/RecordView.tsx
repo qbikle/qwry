@@ -1,14 +1,14 @@
-// Record view (Space) — THE transposed single-row modal (columns as rows:
+// Record view (Space): THE transposed single-row modal (columns as rows:
 // name / type icon / value) with prev/next row navigation (‹ › buttons +
 // ⌘↑/⌘↓) and IN-PLACE editing that stages through the normal edits pipeline
-// (same keys — staged dots appear in the grid behind it). Read-only cells
+// (same keys, staged dots appear in the grid behind it). Read-only cells
 // show their reason; truncated cells route to the inspector (the grid value
-// is only the 8KB prefix — editing it inline would commit the prefix over
-// the full value). Absorbed the old RowPeek (Space) — one row-view concept,
+// is only the 8KB prefix: editing it inline would commit the prefix over
+// the full value). Absorbed the old RowPeek (Space): one row-view concept,
 // one gesture; two near-identical modals needed every guard fix twice.
 //
 // Dual-column DIFF mode (context menu "Compare 2 rows"): two value columns,
-// differing values tinted, identical values dimmed — viewing only.
+// differing values tinted, identical values dimmed. Viewing only.
 //
 // Esc layering: inline editors and the structured-value pop-out each push
 // their own overlay-stack entry, so Esc closes the editor first and the
@@ -37,7 +37,7 @@ interface EditState {
   kind: "text" | "bool" | "enum";
   enumLabels?: string[];
   initial: string;
-  /** cell was NULL when the editor opened — untouched close must NOT stage '' */
+  /** cell was NULL when the editor opened: untouched close must NOT stage '' */
   startedNull: boolean;
 }
 
@@ -59,7 +59,7 @@ export function RecordView({
   rowAt: (view: number) => number;
   /** view→data column map so columns list in the GRID's order */
   colAt: (view: number) => number;
-  /** TRUE view column count — colAt past it falls back to identity, which
+  /** TRUE view column count: colAt past it falls back to identity, which
    * would leak hidden columns (and duplicate the last one) */
   viewColLen: number;
   rowCount: number;
@@ -104,11 +104,11 @@ export function RecordView({
     return diffMask(a, b);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [diff, rowSig, pending, statement.rows, nCols]);
-  // header count speaks VISIBLE columns only — same scope as the listing
+  // header count speaks VISIBLE columns only, same scope as the listing
   let differCount = 0;
   if (mask) for (let v = 0; v < viewColLen; v++) if (mask[colAt(v)]) differCount++;
 
-  // rows can be replaced/shrunk under the open modal (browser re-run) — a
+  // rows can be replaced/shrunk under the open modal (browser re-run): a
   // gone row must CLOSE the record, not render null: the grid still holds
   // record ≠ null and would silently keep routing the keyboard here
   const rowGone = rowsData.some((r) => !r);
@@ -192,13 +192,13 @@ export function RecordView({
         onClose={() => {
           // layered close: an open inline editor absorbs the first Esc/
           // outside-click (its own overlay entry handles Esc; this covers the
-          // backdrop path) — never both in one gesture
+          // backdrop path), never both in one gesture
           if (edit) setEdit(null);
           else onClose();
         }}
         onKey={(e) => {
           if (diff) return;
-          // Space closes what Space opened (Quick Look grammar) — unless a
+          // Space closes what Space opened (Quick Look grammar), unless a
           // focused control (nav button, editor) claims it for activation.
           // Editors are safe by construction anyway: RvInlineEdit/ValuePop
           // push their own overlay layer, so this handler isn't topmost then
@@ -218,7 +218,7 @@ export function RecordView({
         <motion.div
           className={`recordview${diff ? " rv-cmp" : ""}`}
           {...popIn}
-          // portals bubble through the REACT tree — without this, keys typed
+          // portals bubble through the REACT tree: without this, keys typed
           // here reach the grid underneath and seed type-to-edit. ⌘/⌃
           // chords bubble on: the window shortcuts own those (LESSONS.md)
           onKeyDown={(e) => {
@@ -275,7 +275,7 @@ export function RecordView({
           </div>
           <div className="rv-body">
             {Array.from({ length: viewColLen }, (_, view) => {
-              const i = colAt(view); // data index — everything below is data-keyed
+              const i = colAt(view); // data index: everything below is data-keyed
               const c = statement.columns[i];
               const tn = typeOf(i);
               const glyph = typeIcon(tn);
@@ -316,7 +316,7 @@ export function RecordView({
                           key={side}
                           className={`rv-val rv-side${differs ? " rv-diff" : " rv-same"}`}
                         >
-                          {/* same renderValue path as record mode — a staged
+                          {/* same renderValue path as record mode: a staged
                               Set-DEFAULT must show DEFAULT, never lie as NULL */}
                           {renderValue(v, null, !!peS?.useDefault)}
                           {trunc && (
@@ -417,7 +417,7 @@ export function RecordView({
   );
 }
 
-/** In-place value editor for one record row — its own overlay-stack entry so
+/** In-place value editor for one record row: its own overlay-stack entry so
  * Esc closes it (not the record view). Enter stages; blur stages; ∅ = NULL. */
 function RvInlineEdit({
   kind,
@@ -439,7 +439,7 @@ function RvInlineEdit({
   const taRef = useRef<HTMLTextAreaElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   // this layer is topmost while open, which suspends the parent Modal's Tab
-  // trap — trap Tab at the editor's own edge or focus walks out of the modal
+  // trap: trap Tab at the editor's own edge or focus walks out of the modal
   useOverlayLayer(
     () => {
       done.current = true;
@@ -487,7 +487,7 @@ function RvInlineEdit({
       <div
         className="vgrid-boolpick rv-edit"
         ref={rootRef}
-        // ⇧⌘⌫ = NULL here too — the ∅ button advertises the chord, and the
+        // ⇧⌘⌫ = NULL here too: the ∅ button advertises the chord, and the
         // grid's own boolpick honors it (keyboard parity across both editors)
         onKeyDown={(e) => {
           if (e.key === "Backspace" && e.metaKey && e.shiftKey) {

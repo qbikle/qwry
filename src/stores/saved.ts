@@ -63,7 +63,7 @@ export const useSaved = create<SavedState>()(
       rename: async (id, name) => {
         const q = get().queries.find((q) => q.id === id);
         if (!q) return;
-        // rename is not adoption — keep the bookmark's home connection
+        // rename is not adoption: keep the bookmark's home connection
         await get().upsert({ ...q, name, profile_id: q.profile_id ?? null });
         // reflect on any open tab linked to this saved query
         const { useTabs } = await import("./tabs");

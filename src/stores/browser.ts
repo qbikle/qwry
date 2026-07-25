@@ -30,7 +30,7 @@ export {
 } from "./browseSql";
 export type { Filter, FilterOp, SortChain, SortKey, BrowseSort, TypeClass } from "./browseSql";
 
-/** one cell of the inline draft (new) row. The rule: NO TEXT = DEFAULT —
+/** one cell of the inline draft (new) row. The rule: NO TEXT = DEFAULT;
  * typing into a column and clearing it again resets it (a pasted serial PK
  * that gets ⌫'d must take its default, never insert ''). Explicit NULL and
  * empty-string are deliberate acts (cell menu / ⌥⌫), carried in `state`. */
@@ -56,7 +56,7 @@ interface BrowseTab {
    * running); builder filters are kept but inert until toggled back. */
   whereMode: "builder" | "raw";
   rawWhere: string;
-  /** multi-column sort chain — the SOURCE OF TRUTH for ordering.
+  /** multi-column sort chain: the SOURCE OF TRUTH for ordering.
    * setSortChain is the store contract the grid header wires to. */
   sortChain: SortChain;
   /** legacy single-sort mirror of sortChain[0] (uppercased) for pre-chain
@@ -64,18 +64,18 @@ interface BrowseTab {
   sort: BrowseSort | null;
   limit: number;
   /** ⌘L jump-to-row: OFFSET of the current result's first row (0 = top).
-   * The jump page itself is offset-fetched — honest and one-shot; scrolling
+   * The jump page itself is offset-fetched: honest and one-shot; scrolling
    * onward re-anchors keyset from the landed page's last row, so continuation
    * costs the same as any other page (offset-fallback relations continue by
    * offset growth as before). */
   jumpOffset: number;
   draftRow: Record<string, DraftCell> | null;
   draftError: string | null;
-  /** keyset keys (incl. casts) PINNED at run() time — loadMore seeks with
+  /** keyset keys (incl. casts) PINNED at run() time: loadMore seeks with
    * THESE, never a live-snapshot recompute: DDL landing mid-scroll would
    * otherwise change the keys under the loaded rows and splice wrong rows */
   pinnedKeys: KeysetKey[] | null;
-  /** a committed edit patched a pinned key column — the loaded last row no
+  /** a committed edit patched a pinned key column: the loaded last row no
    * longer holds the value the executed ORDER BY placed there, so the next
    * loadMore must re-run instead of seeking from the patched value */
   pageStale: boolean;
@@ -114,7 +114,7 @@ const sortMirror = (chain: SortChain): BrowseSort | null =>
     ? { col: chain[0].column, dir: chain[0].dir === "desc" ? "DESC" : "ASC" }
     : null;
 
-/** the raw-WHERE text the queries actually use — only when raw mode is on */
+/** the raw-WHERE text the queries actually use, only when raw mode is on */
 const rawWhereArg = (t: Pick<BrowseTab, "whereMode" | "rawWhere">): string | null =>
   t.whereMode === "raw" ? t.rawWhere : null;
 
@@ -151,18 +151,18 @@ interface BrowserState extends BrowseTab {
   loadMore: () => void;
   refresh: () => void;
   /** post-write reload (insert / import): re-run the browse reading the
-   * connection the write landed on — under a different rail a plain run()
+   * connection the write landed on: under a different rail a plain run()
    * would repaint from the rail's database, the committed rows would silently
    * vanish and executedProfileId would flip; a backgrounded tab latches
    * pageStale instead (refreshed on return, same as a mid-flight switch) */
   reloadAfterWrite: (tabId: string, profileId: string | null) => void;
   /** commit-patch hook (called from edits.ts after a commit patches rows):
    * when any patched column is one of the PINNED keyset key columns, latch
-   * the tab stale so the next loadMore re-runs instead of appending — a seek
+   * the tab stale so the next loadMore re-runs instead of appending: a seek
    * from the patched value would silently skip/dup rows */
   noteCommittedPatch: (tabId: string, cols: string[]) => void;
   /** insert a row; cols/values cover only the columns the user set. tabId and
-   * table default to the active tab's — commitDraft passes both captured at
+   * table default to the active tab's; commitDraft passes both captured at
    * its entry, since a mid-insert tab switch must never retarget the writes
    * (reading the active-tab mirror after an await = wrong-table insert) */
   insertRow: (
@@ -179,7 +179,7 @@ interface BrowserState extends BrowseTab {
   commitDraft: () => Promise<void>;
 }
 
-/** in-flight commit guards, per tab — a second ⌘↩ during the insert round
+/** in-flight commit guards, per tab: a second ⌘↩ during the insert round
  * trip must not fire a second identical INSERT */
 const draftCommitting = new Set<string>();
 
@@ -201,7 +201,7 @@ function writeBrowse(
 }
 
 /** server_version_num from the profile's schema snapshot; null = unknown
- * (pre-introspect cache hydrate) — only gates the ctid keyset path */
+ * (pre-introspect cache hydrate); only gates the ctid keyset path */
 function serverVersionNum(profileId: string | null): number | null {
   if (!profileId) return null;
   return useSchema.getState().snapshots[profileId]?.server_version_num ?? null;
@@ -219,7 +219,7 @@ function keysFor(table: TableInfo, chain: SortChain, profileId?: string): Keyset
 
 /** in-flight keyset page fetches, per tab */
 const pageInflight = new Set<string>();
-/** frontend row ceiling for keyset scrolling — mirrors the driver's ROW_CAP
+/** frontend row ceiling for keyset scrolling; mirrors the driver's ROW_CAP
  * so "browse forever" can't grow memory past what a capped query would */
 const ROW_HARD_CAP = 50_000;
 
@@ -227,13 +227,13 @@ const ROW_HARD_CAP = 50_000;
  * orphans any in-flight count so its result can never land on a fresh browse */
 const countEpoch = new Map<string, number>();
 /** the tab's in-flight count: its session (cancel target) plus the epoch it
- * belongs to — a cancel must only fire while that epoch is still the
+ * belongs to: a cancel must only fire while that epoch is still the
  * in-flight one, because the shared primary session may already be running
  * an unrelated query (editor, estimate probe) by the time a stale cancel
  * button is clicked */
 const countSessions = new Map<string, { sid: string; epoch: number }>();
 
-/** the page-1 browse SQL a state would execute (limit-normalized) — the
+/** the page-1 browse SQL a state would execute (limit-normalized): the
  * no-op guard the setters diff against: when the effective SQL is unchanged,
  * resetting limit/jump or re-running would only desync the loaded rows */
 const effectiveSql = (st: BrowserState): string =>
@@ -279,7 +279,7 @@ interface PageResult {
 }
 
 /** run one page query on the tab's session, collecting rows off the stream
- * (bypasses useResults.run — a page must APPEND, never replace, and scroll
+ * (bypasses useResults.run: a page must APPEND, never replace, and scroll
  * pages don't belong in history) */
 async function fetchPage(sessionId: string, sql: string): Promise<PageResult> {
   const rows: (string | null)[][] = [];
@@ -295,7 +295,7 @@ async function fetchPage(sessionId: string, sql: string): Promise<PageResult> {
 }
 
 /** append a fetched page onto the tab's first statement. Drops the page when
- * the result set changed underneath (re-run, commit patch, session swap) —
+ * the result set changed underneath (re-run, commit patch, session swap):
  * the seek was built against the old rows, so appending would lie; the fresh
  * result's own scrolling refetches. */
 function appendPage(
@@ -310,7 +310,7 @@ function appendPage(
     const t = rs.byTab[tabId];
     const st0 = t?.statements[0];
     if (!t || !st0 || t.executedSessionId !== sessionId || st0.rows !== seededRows) return rs;
-    // capped means "rows were actually discarded at the ceiling" — a page
+    // capped means "rows were actually discarded at the ceiling"; a page
     // that merely lands exactly on the cap is NOT capped (the table may end
     // right there); the next loadMore probes one more page and either hits
     // end-of-data honestly or discards for real
@@ -346,8 +346,8 @@ function appendPage(
 }
 
 /** rerun the active tab's browse query (results land in the active tab).
- * Pins the keyset keys computed HERE onto the tab — the executed ORDER BY is
- * built from exactly these, so page seeks must reuse them verbatim — and
+ * Pins the keyset keys computed HERE onto the tab: the executed ORDER BY is
+ * built from exactly these, so page seeks must reuse them verbatim. Also
  * clears the stale/broken pagination latches (a fresh result set resets
  * both) plus the exact-count footer (the number no longer describes the new
  * result; an in-flight count is orphaned via its epoch). profileId pins the
@@ -379,7 +379,7 @@ function run(set: SetFn, s: BrowserState, profileId?: string) {
   );
 }
 
-/** structural equality of key lists — cheap drift check for loadMore */
+/** structural equality of key lists: cheap drift check for loadMore */
 function sameKeys(a: KeysetKey[], b: KeysetKey[] | null): boolean {
   if (!b || a.length !== b.length) return false;
   return a.every(
@@ -403,7 +403,7 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     const table = tab && tab.kind === "table" ? tab.table : null;
     set((s) => ({ active: tabId, table, ...(s.byTab[tabId] ?? blankBrowse()) }));
     // a row committed while this tab was backgrounded left its page stale
-    // (insertRow can't re-run a non-active tab) — refresh on return, parked
+    // (insertRow can't re-run a non-active tab): refresh on return, parked
     // while edits are staged or a draft is open (same rule as loadMore:
     // their row coordinates must hold)
     const t = get().byTab[tabId];
@@ -420,7 +420,7 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     const pid = useConnections.getState().activeProfileId;
     // already open in THIS connection's workspace → focus it (and apply the
     // requested filter). Scoped by profile: an unscoped match selected the
-    // OTHER connection's same-named table tab — its cached rows rendered
+    // OTHER connection's same-named table tab: its cached rows rendered
     // under this connection's branding (identity lie), with no active tab in
     // the strip. profile_id null = legacy tab, adopted on select.
     const existing = tabsApi.tabs.find(
@@ -455,7 +455,7 @@ export const useBrowser = create<BrowserState>((set, get) => ({
   setTab: (tab) => writeBrowse(set, get().active, { tab }),
 
   setFilters: (filters) => {
-    // only hit the server when the effective SQL actually changed — toggling
+    // only hit the server when the effective SQL actually changed: toggling
     // an incomplete filter row or picking a column before typing a value
     // used to re-run the unfiltered SELECT (and in raw-WHERE mode builder
     // edits are inert by construction). The limit/jump reset lives under the
@@ -475,7 +475,7 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     // (∅ override set to the direction's default, the PK added as an explicit
     // key where it already served as the tiebreaker) must not reset the
     // loaded window / jump or re-run. A REAL ordering change makes both
-    // meaningless — reset to page 1 of the new order.
+    // meaningless: reset to page 1 of the new order.
     const s = get();
     const before = effectiveSql(s);
     writeBrowse(set, s.active, { sortChain: chain, sort: sortMirror(chain) });
@@ -535,12 +535,12 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     const tabId = s.active;
     if (!s.table || s.counting) return;
     const conn = useConnections.getState();
-    // count the database the ROWS came from — under a foreign rail, a
+    // count the database the ROWS came from: under a foreign rail, a
     // rail-bound count would print another database's number directly
     // beneath the origin's rows (same rule as loadMore/import binding)
     const pid = useResults.getState().byTab[tabId]?.executedProfileId ?? conn.activeProfileId;
     // primary preferred (never queued behind the tab session's own page
-    // fetches); any live tab session on that profile works as fallback —
+    // fetches); any live tab session on that profile works as fallback:
     // same rule as the planner-estimate probe
     const sid = pid
       ? (conn.sessions[pid] ??
@@ -557,7 +557,7 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     writeBrowse(set, tabId, { counting: true, countError: null, exactCount: null });
     try {
       const out = await ipc.execute(sid, sql);
-      if (countEpoch.get(tabId) !== epoch) return; // superseded — never land stale
+      if (countEpoch.get(tabId) !== epoch) return; // superseded; never land stale
       const n = Number(out.statements[0]?.rows[0]?.[0]);
       writeBrowse(
         set,
@@ -569,7 +569,7 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     } catch (e) {
       if (countEpoch.get(tabId) !== epoch) return;
       const code = (e as { code?: string | null } | null)?.code ?? null;
-      // a user-cancelled count just reverts to the estimate — not an error
+      // a user-cancelled count just reverts to the estimate, not an error
       writeBrowse(
         set,
         tabId,
@@ -585,7 +585,7 @@ export const useBrowser = create<BrowserState>((set, get) => ({
   cancelExactCount: () => {
     const tabId = get().active;
     const entry = countSessions.get(tabId);
-    // only cancel while this count's own epoch is still the in-flight one —
+    // only cancel while this count's own epoch is still the in-flight one:
     // once the count finished or was superseded, the shared primary session
     // may be running an unrelated query a stale click must not kill
     if (!entry || countEpoch.get(tabId) !== entry.epoch) return;
@@ -598,7 +598,7 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     const tabId = s.active;
     const table = s.table;
     if (!table) return;
-    // pagination latch: a page fetch already failed — retrying per scroll
+    // pagination latch: a page fetch already failed; retrying per scroll
     // tick would hammer a broken seek invisibly; refresh/sort/filter clears
     if (s.paginationBroken) return;
     const res = useResults.getState();
@@ -613,22 +613,22 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     const chain = s.sortChain;
     const pinned = s.pinnedKeys;
     void import("./edits").then(({ useEdits }) => {
-      // re-check past the async boundary — two rapid scroll events can both
+      // re-check past the async boundary: two rapid scroll events can both
       // pass the sync guard before either adds itself
       if (pageInflight.has(tabId)) return;
-      // parked while edits are staged — appending/re-running would invalidate
+      // parked while edits are staged: appending/re-running would invalidate
       // their row coordinates (and a confirm modal on mere scrolling would be
       // hostile)
       if (Object.keys(useEdits.getState().byTab[tabId]?.pending ?? {}).length > 0) return;
-      // run() always targets the ACTIVE tab — if focus moved across the
+      // run() always targets the ACTIVE tab: if focus moved across the
       // async tick, growing/rerunning would hit the WRONG tab's browse (and
       // poison this one's limit). Skip; this tab's own next scroll retries.
       const rerunActive = () => {
         if (get().active === tabId) run(set, get());
       };
 
-      // a committed edit patched a pinned key column (see noteCommittedPatch)
-      // — appending would seek from the patched value; re-run instead.
+      // a committed edit patched a pinned key column (see noteCommittedPatch):
+      // appending would seek from the patched value; re-run instead.
       // Read LIVE: a commit finishing during the import tick can latch it.
       if (get().byTab[tabId]?.pageStale) {
         rerunActive();
@@ -636,7 +636,7 @@ export const useBrowser = create<BrowserState>((set, get) => ({
       }
 
       // ---- keyset page: WHERE row-value seek from the last loaded row -----
-      // Seek with the keys PINNED at run() time — the executed ORDER BY was
+      // Seek with the keys PINNED at run() time: the executed ORDER BY was
       // built from them. A live recompute that drifted (DDL mid-scroll: PK
       // dropped/added, column retyped) means the pinned order no longer
       // matches the snapshot: re-run fresh rather than splicing wrong rows.
@@ -657,7 +657,7 @@ export const useBrowser = create<BrowserState>((set, get) => ({
       if (!pageSql || !sessionId) {
         // Offset fallback for anything keyset can't serve safely (see
         // keysetKeys / pageSqlFromLastRow): re-run from the jump offset with
-        // a grown LIMIT — the pre-keyset behavior. O(n²) and, without a
+        // a grown LIMIT (the pre-keyset behavior). O(n²) and, without a
         // unique sort, able to dup/drop rows across pages; kept ONLY as the
         // boundary for non-keysettable relations, never in place of a
         // correct seek.
@@ -673,7 +673,7 @@ export const useBrowser = create<BrowserState>((set, get) => ({
         })
         .catch((e) => {
           const code = (e as { code?: string | null } | null)?.code ?? null;
-          // user-initiated cancels aren't a broken paginator — don't latch
+          // user-initiated cancels aren't a broken paginator; don't latch
           if (code === "57014" || code === "57P01") return;
           const message = `couldn't load more rows: ${
             (e as { message?: string }).message ?? String(e)
@@ -720,7 +720,7 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     if (!sessionId) return { ok: false, error: "not connected" };
     try {
       await ipc.insertRow(sessionId, table.schema, table.name, cols, values);
-      // reload so the new row shows — reading the ORIGIN the INSERT landed on
+      // reload so the new row shows, reading the ORIGIN the INSERT landed on
       // (entry-time executedProfileId: the profile that owns sessionId)
       get().reloadAfterWrite(tabId, rt?.executedProfileId ?? null);
       return { ok: true };
@@ -734,14 +734,14 @@ export const useBrowser = create<BrowserState>((set, get) => ({
   cancelDraft: () => writeBrowse(set, get().active, { draftRow: null, draftError: null }),
   setDraftCell: (col, cell) =>
     writeBrowse(set, get().active, (t) =>
-      // editing clears a pre-check error — "required: a" must not sit red
+      // editing clears a pre-check error; "required: a" must not sit red
       // while the user is filling a
       t.draftRow ? { draftRow: { ...t.draftRow, [col]: cell }, draftError: null } : {},
     ),
 
   commitDraft: async () => {
     const s = get();
-    // active tab captured AT ENTRY — the insert round trip outlives a tab
+    // active tab captured AT ENTRY: the insert round trip outlives a tab
     // switch, and the draft-clear/re-run must target the tab that committed
     const tabId = s.active;
     if (!s.table || !s.draftRow) return;
@@ -765,7 +765,7 @@ async function commitDraftInner(
     const draft = s.draftRow!;
     const cols: string[] = [];
     const values: (string | null)[] = [];
-    // column truth for the pre-check: prefer the LIVE schema snapshot — the
+    // column truth for the pre-check: prefer the LIVE schema snapshot. The
     // tab's TableInfo froze at open time, and refusing a legal write off a
     // stale "no default" would block the user with a false message (dynamic
     // import: static one would cycle at module eval)
@@ -809,7 +809,7 @@ async function commitDraftInner(
     }
     // the loop stages from the LIVE column list; a draft cell whose column
     // was dropped/renamed/made-auto since the tab opened would silently
-    // vanish from the INSERT while the band still shows it — refuse loudly
+    // vanish from the INSERT while the band still shows it; refuse loudly
     // instead (frozen-auto cells can't hold content, setters never write them)
     const stagedSet = new Set(cols);
     const frozenAuto = new Set(

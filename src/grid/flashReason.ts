@@ -1,10 +1,10 @@
 // flash a read-only reason (or any honesty note) through the status bar's
-// existing message slot — double-click/Enter/type-to-edit on an uneditable
+// existing message slot: double-click/Enter/type-to-edit on an uneditable
 // cell must never no-op mute. Shared by the grid and the record view.
 import { useEdits } from "../stores/edits";
 
 let reasonTimer: ReturnType<typeof setTimeout> | undefined;
-/** the message currently flashed from here — an informational note, never a
+/** the message currently flashed from here: an informational note, never a
  * failure (the slot's other writers are real errors, plus the grid's
  * "building copy…" progress prefix) */
 let flashedNote: string | null = null;

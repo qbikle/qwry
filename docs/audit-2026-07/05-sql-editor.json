@@ -138,7 +138,7 @@
   },
   {
    "title": "Usage-based ranking is frozen, global across profiles, and unbounded",
-   "detail": "builtLists caches tables/functions WITH their usage boosts baked in, keyed by snapshot object (engine.ts:230-245) \u2014 picking a table doesn't improve its rank until the next schema refresh, defeating the ranking design. usage.ts:4 claims 'per-profile' but the localStorage key has no profile component, so crawler_data ranking pollutes auth_new. Counts grow unboundedly and the whole map is re-stringified per save tick (usage.ts:21-31). Fix: compute usageBoost at query time (cache labels only), key by profile, cap entries (LRU/decay).",
+   "detail": "builtLists caches tables/functions WITH their usage boosts baked in, keyed by snapshot object (engine.ts:230-245) \u2014 picking a table doesn't improve its rank until the next schema refresh, defeating the ranking design. usage.ts:4 claims 'per-profile' but the localStorage key has no profile component, so bigdb ranking pollutes app_db. Counts grow unboundedly and the whole map is re-stringified per save tick (usage.ts:21-31). Fix: compute usageBoost at query time (cache labels only), key by profile, cap entries (LRU/decay).",
    "severity": "P1",
    "effort": "S",
    "kind": "bug"

@@ -55,7 +55,7 @@ export function TabBar() {
     file_saved_sql?: string;
   }) => savedDirty(t) || fileDirty(t);
   const txTabs = useConnections((s) => s.txTabs);
-  // tx dot: sessions are keyed skey(`${profileId}::${tabId}`) — a transaction
+  // tx dot: sessions are keyed skey(`${profileId}::${tabId}`): a transaction
   // can be open on the RAIL session or the tab's ORIGIN session (pinned tab
   // that ran on another connection), so ANY open tx for this tab id counts
   // (same suffix match closeTabSessions uses)
@@ -91,7 +91,7 @@ export function TabBar() {
     if (e.button !== 0) return;
     const t = e.target as HTMLElement;
     if (t.closest(".tab-close") || t.tagName === "INPUT") return;
-    // tab midpoints measured ONCE — tabs don't move until drop, and per-move
+    // tab midpoints measured ONCE: tabs don't move until drop, and per-move
     // getBoundingClientRect sweeps were a layout read on every mousemove.
     // Midpoints are viewport-space: if the strip scrolls mid-drag (momentum
     // still in flight), offset the pointer by the scroll delta to compare in
@@ -185,7 +185,7 @@ export function TabBar() {
   };
 
   return (
-    // NB: no dbl-click-new-tab here — the strip is a tauri drag region, and
+    // NB: no dbl-click-new-tab here: the strip is a tauri drag region, and
     // macOS double-click-to-zoom on drag regions would fire alongside it
     <div className="tabbar" data-tauri-drag-region ref={stripRef}>
       {tabs.map((t, i) => (
@@ -197,7 +197,7 @@ export function TabBar() {
           }${dropIdx !== null && dragState.current?.fromIdx === i ? " dragging" : ""}${
             dropIdx === i ? " drop-before" : ""
           }${dropIdx === i + 1 && i === tabs.length - 1 ? " drop-after" : ""}`}
-          // pinned tabs wear their ORIGIN connection's color everywhere —
+          // pinned tabs wear their ORIGIN connection's color everywhere:
           // under a red connection a blue pin stays blue
           style={
             pinned.has(t.id)
@@ -207,7 +207,7 @@ export function TabBar() {
           title={t.name}
           onMouseDown={(e) => beginTabDrag(i, e)}
           onAuxClick={(e) => {
-            // middle-click closes — browser muscle memory (pinned excluded)
+            // middle-click closes: browser muscle memory (pinned excluded)
             if (e.button === 1 && !pinned.has(t.id)) requestClose(t.id);
           }}
           onClick={() => select(t.id)}
@@ -250,7 +250,7 @@ export function TabBar() {
                   title={pinMeta(t).label}
                   onClick={(e) => {
                     // click = INFO, never unpin (unpin lives in the context
-                    // menu / closing) — a destructive one-click pin was a trap
+                    // menu / closing): a destructive one-click pin was a trap
                     e.stopPropagation();
                     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
                     setPinInfo({ x: r.left, y: r.bottom + 6, id: t.id });

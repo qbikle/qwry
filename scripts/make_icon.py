@@ -3,7 +3,7 @@
 
 Apple grid: a rounded "squircle" content square (824²) centered in a 1024 canvas
 with margin for a soft drop shadow; the glyph sits padded inside. Source is the
-transparent SVG (rendered to PNG by rsvg-convert) — clean alpha, no black-key.
+transparent SVG (rendered to PNG by rsvg-convert): clean alpha, no black-key.
 """
 import os
 from PIL import Image, ImageDraw, ImageFilter

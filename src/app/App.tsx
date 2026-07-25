@@ -32,7 +32,7 @@ import { useResults } from "../stores/results";
 import "./app.css";
 import "./v2.css";
 
-// heavy surfaces (CodeMirror, grid, explain) load as separate chunks — the
+// heavy surfaces (CodeMirror, grid, explain) load as separate chunks: the
 // window shows on the light Home shell, then these warm in the background
 // (see the preload in the show effect) so connect never waits on a fetch
 const QueryBox = lazy(() => import("../editor/QueryBox").then((m) => ({ default: m.QueryBox })));
@@ -66,7 +66,7 @@ export function App() {
   const inspectorWidth = useInspector((s) => s.width);
   const inspectorFixedRef = useRef<HTMLDivElement>(null);
   const preInspectorFocus = useRef<HTMLElement | null>(null);
-  // the inspector card never unmounts (collapses to width 0) — a close from
+  // the inspector card never unmounts (collapses to width 0). A close from
   // ANY path (rail button, palette, ⌘I with a dead prev element) must pull
   // focus out of the now-invisible panel, or ⌘F and typing land in a hidden
   // input (the app-lies class). Mirrors escStack's restore fallback chain.
@@ -82,7 +82,7 @@ export function App() {
     (prev && document.contains(prev) ? prev : fallback)?.focus({ preventScroll: true });
   }, [inspectorOpen]);
   const explainOpen = useExplain((s) => s.open);
-  // scalar selectors only — selecting the tab OBJECT re-rendered the entire
+  // scalar selectors only: selecting the tab OBJECT re-rendered the entire
   // shell tree on every editor keystroke (setSql replaces the active tab
   // object). kind/name are primitives; table is a stable reference.
   const activeTabKind = useTabs((s) => s.tabs.find((t) => t.id === s.activeId)?.kind ?? null);
@@ -97,7 +97,7 @@ export function App() {
   const [keysOpen, setKeysOpen] = useState(false);
   const [resizing, setResizing] = useState(false);
   const activeTabId = useTabs((s) => s.activeId);
-  // origin of the active tab's CURRENT rows (results mirror the active tab) —
+  // origin of the active tab's CURRENT rows (results mirror the active tab):
   // a pinned tab can show rows from a connection other than the rail selection
   const originPid = useResults((s) => s.executedProfileId);
   const editorFontSize = useSettings((s) => s.fontSize);
@@ -107,7 +107,7 @@ export function App() {
   const connected = activeProfileId ? connState[activeProfileId] === "connected" : false;
   const railProd = !!activeProfile?.is_prod && connected;
   // prod ceremony keys on the ORIGIN too: when the rows came from a foreign
-  // prod connection, the chip binds to the ORIGIN session — the chip's verb is
+  // prod connection, the chip binds to the ORIGIN session. The chip's verb is
   // WRITES, and edits/imports commit to the origin while Run executes on the
   // rail. Rail-only prod keeps the rail chip (Run still executes there).
   const originProfile = originPid ? (profiles.find((p) => p.id === originPid) ?? null) : null;
@@ -136,13 +136,13 @@ export function App() {
     ) as string[];
   }, [homeMode, activeProfile, isTableTab, browserTable, activeTabName]);
 
-  // drag writes go straight to a CSS var — the store (and its localStorage
+  // drag writes go straight to a CSS var: the store (and its localStorage
   // persist) previously ran once PER MOUSEMOVE and re-rendered the whole shell
   useEffect(() => {
     document.documentElement.style.setProperty("--inspector-w", `${inspectorWidth}px`);
   }, [inspectorWidth]);
 
-  // editor font size flows through a CSS var — no CodeMirror remount
+  // editor font size flows through a CSS var, no CodeMirror remount
   useEffect(() => {
     document.documentElement.style.setProperty("--editor-fs", `${editorFontSize}px`);
   }, [editorFontSize]);
@@ -160,7 +160,7 @@ export function App() {
 
   // window title mirrors the active connection ("qwry · profile · db") for
   // Mission Control / ⌘-tab / Dock; plain "qwry" on home. Debounced a tick so
-  // rail-switch churn writes once. Never credentials — name/host + db only.
+  // rail-switch churn writes once. Never credentials: name/host + db only.
   const titleProfile = connected && !homeMode ? activeProfile : null;
   const titleName = titleProfile ? titleProfile.name || titleProfile.host : null;
   const titleDb = titleProfile?.dbname ?? null;
@@ -175,11 +175,11 @@ export function App() {
   }, [titleName, titleDb]);
 
   // user-draggable layout (editor/results split, sidebar width): CSS vars
-  // during drag — zero re-renders — persisted to localStorage on release
+  // during drag (zero re-renders), persisted to localStorage on release
   const [splitDragging, setSplitDragging] = useState(false);
   useEffect(() => {
     // a split persisted on a tall display must not swallow the results pane
-    // (divider off-screen = unrecoverable) — clamp on restore AND live resize
+    // (divider off-screen = unrecoverable): clamp on restore AND live resize
     const clampEditorH = () => {
       const raw = localStorage.getItem("qwry.editorH");
       if (!raw) return;
@@ -226,7 +226,7 @@ export function App() {
     if (!card) return;
     let value = "";
     const onMove = (me: MouseEvent) => {
-      // recompute per move — the card's mount spring animates its position
+      // recompute per move: the card's mount spring animates its position
       const left = card.getBoundingClientRect().left;
       const px = Math.max(180, Math.min(me.clientX - left, 420));
       value = `${px}px`;
@@ -241,7 +241,7 @@ export function App() {
     window.addEventListener("mouseup", onUp);
   };
 
-  // prod safe-mode chip: confirm, then lift read-only on the chip's session —
+  // prod safe-mode chip: confirm, then lift read-only on the chip's session:
   // the ORIGIN session when the rows came from a foreign prod connection
   const toggleProdWrites = async () => {
     const { setSessionWrites, profiles: profs } = useConnections.getState();
@@ -270,7 +270,7 @@ export function App() {
     const onMove = (me: MouseEvent) => {
       w = Math.max(220, Math.min(640, window.innerWidth - me.clientX));
       document.documentElement.style.setProperty("--inspector-w", `${w}px`);
-      // the inspector's narrow mode reads the STORE width — without this the
+      // the inspector's narrow mode reads the STORE width. Without this the
       // hints would only hide/show on release, not live during the drag
       if (w < 280 !== useInspector.getState().width < 280) useInspector.getState().setWidth(w);
     };
@@ -288,7 +288,7 @@ export function App() {
     // the window is created hidden (tauri.conf `visible: false`) so launch
     // never shows an empty glass pane while the bundle evals. Reveal once the
     // startup data (profiles, tabs) has settled AND the resulting shell has
-    // painted (two rAFs = post-commit, post-paint) — otherwise Home flashes
+    // painted (two rAFs = post-commit, post-paint). Otherwise Home flashes
     // its empty state before the connection list pops in. Then warm the lazy
     // chunks so connecting never waits on a fetch. A Rust-side fallback shows
     // the window after 5s if the frontend dies before reaching this.
@@ -296,7 +296,7 @@ export function App() {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           void import("@tauri-apps/api/core").then(async ({ invoke }) => {
-            // refused-appdb startup keeps the window hidden — revealing an
+            // refused-appdb startup keeps the window hidden: revealing an
             // empty app beside the fatal dialog would contradict it. An IPC
             // failure still reveals: a reachable-but-broken backend beats an
             // invisible window (the Rust 5s fallback agrees).
@@ -314,7 +314,7 @@ export function App() {
       });
     });
 
-    // StrictMode double-mounts this effect — a listener that resolves after
+    // StrictMode double-mounts this effect: a listener that resolves after
     // the first mount's cleanup ran must unregister itself, not leak
     let disposed = false;
 
@@ -337,7 +337,7 @@ export function App() {
     );
 
     // quit/close flow shared by the menu's Quit (⌘Q) and the window close
-    // button — the ceremony itself lives in stores/exitGuard so the
+    // button. The ceremony itself lives in stores/exitGuard so the
     // updater's relaunch runs the SAME flush + confirm (a relaunch is a
     // process death too).
     const requestQuit = async () => {
@@ -365,10 +365,10 @@ export function App() {
     let unlistenMenu: (() => void) | undefined;
     void import("@tauri-apps/api/event").then(({ listen }) =>
       listen<string>("menu", (e) => {
-        // an open overlay owns the interaction — the menu path used to act
+        // an open overlay owns the interaction: the menu path used to act
         // BEHIND modals (Close Tab under an open CloseGuard etc.), mirroring
         // the keyboard guard below. Help, Quit and the (view-level, harmless)
-        // zoom items stay reachable, like ⌘?; Cancel too — a runaway query
+        // zoom items stay reachable, like ⌘?; Cancel too: a runaway query
         // must be killable with a modal open.
         const overlayExempt = ["shortcuts", "quit", "zoom-in", "zoom-out", "zoom-reset", "cancel"];
         if (overlayOpen() && !overlayExempt.includes(e.payload)) return;
@@ -393,14 +393,14 @@ export function App() {
             if (activeId) useCloseGuard.getState().request(activeId);
             break;
           }
-          // File ▸ Open… / Save — ids reserved for the native menu items
+          // File ▸ Open… / Save: ids reserved for the native menu items
           // (lib.rs); the ⌘O/⇧⌘S window shortcuts below work regardless
           case "open-file":
             void openSqlFileDialog();
             break;
           case "save-file":
             // while a time-machine snapshot is shown the parked draft is
-            // invisible — writing it to disk would save text the user isn't
+            // invisible: writing it to disk would save text the user isn't
             // looking at (same swallow as run/format)
             if (!editorTimeTraveling.current) void saveActiveToFile();
             break;
@@ -413,7 +413,7 @@ export function App() {
             break;
           }
           case "run-all":
-            // the store sql holds the PARKED draft while time-traveling —
+            // the store sql holds the PARKED draft while time-traveling:
             // running it would execute invisible text (⇧⌘↩ in the editor is
             // swallowed there; the menu path must match)
             if (editorTimeTraveling.current) break;
@@ -483,7 +483,7 @@ export function App() {
           const files = e.payload.paths.filter((p) => /\.(sql|txt)$/i.test(p));
           if (files.length === 0) return;
           if (useConnections.getState().homeMode) return; // no tab strip there
-          // payload position is PHYSICAL px — scale to logical before hit-test
+          // payload position is PHYSICAL px: scale to logical before hit-test
           const scale = window.devicePixelRatio || 1;
           const x = e.payload.position.x / scale;
           const y = e.payload.position.y / scale;
@@ -502,18 +502,18 @@ export function App() {
     window.addEventListener("qwry:open-history", onOpenHistory);
 
     const onKey = (e: KeyboardEvent) => {
-      // CodeMirror (or another component) already handled it — don't double-fire
+      // CodeMirror (or another component) already handled it: don't double-fire
       if (e.defaultPrevented) return;
-      // ⌘? is non-destructive and useful FROM a modal — the only shortcut
+      // ⌘? is non-destructive and useful FROM a modal: the only shortcut
       // exempt from the overlay guard below (the menu path isn't gated either).
       // WebKit reports the UNSHIFTED key while ⌘ is held, so ⌘⇧/ arrives as // lint-ok: physical key order, not the chord's canonical name
-      // key="/" — match both spellings or the binding never fires on macOS.
+      // key="/". Match both spellings or the binding never fires on macOS.
       if (e.metaKey && (e.key === "?" || (e.key === "/" && e.shiftKey))) {
         e.preventDefault();
         setKeysOpen(true);
         return;
       }
-      // UI zoom works everywhere, modals included (view-level, harmless) —
+      // UI zoom works everywhere, modals included (view-level, harmless):
       // fallback for the View-menu accelerators. WebKit reports the unshifted
       // key with ⌘ held, so classic ⌘⇧= (aka ⌘+) arrives as "=". // lint-ok: physical key order, not the chord's canonical name
       if (e.metaKey && !e.altKey && (e.key === "=" || e.key === "+")) {
@@ -557,7 +557,7 @@ export function App() {
       }
       if (e.metaKey && e.shiftKey && !e.altKey && e.key.toLowerCase() === "s") {
         e.preventDefault();
-        // swallowed while a snapshot is shown — saving would write the parked
+        // swallowed while a snapshot is shown: saving would write the parked
         // draft while the user looks at different text
         if (!editorTimeTraveling.current) void saveActiveToFile();
       }
@@ -567,7 +567,7 @@ export function App() {
       }
       if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "w") {
         e.preventDefault();
-        // closes the active tab — query or table alike (prompts on unsaved edits)
+        // closes the active tab, query or table alike (prompts on unsaved edits)
         const { activeId } = useTabs.getState();
         if (activeId) useCloseGuard.getState().request(activeId);
       }
@@ -582,18 +582,18 @@ export function App() {
         e.preventDefault();
         useTabs.getState().cycle(e.shiftKey ? -1 : 1);
       }
-      // ⌘1…9 jump to tab — ⌘0 now belongs to zoom reset (macOS convention)
+      // ⌘1…9 jump to tab. ⌘0 now belongs to zoom reset (macOS convention)
       if (e.metaKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
         e.preventDefault();
         useTabs.getState().selectByIndex(Number(e.key) - 1);
       }
-      // ⇧⌘F = Format SQL everywhere, as the palette advertises — inside the
+      // ⇧⌘F = Format SQL everywhere, as the palette advertises. Inside the
       // editor CodeMirror's own Prec.highest binding claims it first
       if (e.metaKey && e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
         e.preventDefault();
         editorFormat.current?.();
       }
-      // ⌥⌘F focuses the schema filter — with ⌥ held mac reports key "ƒ", so
+      // ⌥⌘F focuses the schema filter. With ⌥ held mac reports key "ƒ", so
       // match the physical key (e.code) instead of either key spelling
       if (e.metaKey && e.altKey && !e.shiftKey && e.code === "KeyF") {
         e.preventDefault();
@@ -662,7 +662,7 @@ export function App() {
       }
       if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "d") {
         e.preventDefault();
-        // direct discard, no confirm — discardAll pushes an undo snapshot,
+        // direct discard, no confirm: discardAll pushes an undo snapshot,
         // so ⌘Z brings the staged edits straight back
         void import("../stores/edits").then(({ useEdits }) =>
           useEdits.getState().discardAll(),
@@ -727,7 +727,7 @@ export function App() {
             onClick={() => void toggleProdWrites()}
           >
             {writeUnlocked ? <LockOpen size={12} /> : <Lock size={12} />}
-            {/* foreign origin wears its name — a bare PROD would read as the rail */}
+            {/* foreign origin wears its name: a bare PROD would read as the rail */}
             {originProd ? `PROD · ${chipName}` : "PROD"}
             {writeUnlocked ? " · WRITES ON" : " · READ-ONLY"}
           </button>
@@ -777,7 +777,7 @@ export function App() {
                 <>
                   <TabBar />
                   {activeTabKind === null ? (
-                    // zero tabs is a legal state — breathe (no phoenix tab)
+                    // zero tabs is a legal state: breathe (no phoenix tab)
                     <ZenScreen />
                   ) : isTableTab ? (
                     <Suspense fallback={null}>
@@ -825,7 +825,7 @@ export function App() {
                 className="inspector-fixed"
                 style={{ width: "var(--inspector-w)", outline: "none" }}
                 ref={inspectorFixedRef}
-                // click-to-focus so ⌘F scopes here — JsonTree rows are plain
+                // click-to-focus so ⌘F scopes here: JsonTree rows are plain
                 // divs and WKWebView won't focus ancestors on click; explicit
                 // focus is the only engine-proof path. Inputs keep their own.
                 tabIndex={-1}

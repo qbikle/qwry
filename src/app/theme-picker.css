@@ -31,10 +31,10 @@
   font-size: var(--text-lg);
   font-weight: 650;
 }
-/* close button is .iconbtn — no local skin */
+/* close button is .iconbtn: no local skin */
 
 /* segmented control (DESIGN.md rule 1): panel-inset track, 2px gap,
-   active = accent-soft — keep in lockstep with .settings-seg */
+   active = accent-soft. Keep in lockstep with .settings-seg */
 .tp-modes {
   display: flex;
   gap: 2px; /* optical */
@@ -89,13 +89,13 @@
   overflow: hidden;
   transition: transform var(--dur-quick) var(--ease-spring);
 }
-/* Match Connection card: neutral surface, live dot(s) — connected shows the
+/* Match Connection card: neutral surface, live dot(s): connected shows the
    ACTIVE connection's color, disconnected previews the rotation */
 .tp-swatch.tp-match {
   background: var(--bg-raised);
   color: var(--fg);
 }
-/* the universal "any connection" wheel — one dot, every hue; connected
+/* the universal "any connection" wheel: one dot, every hue; connected
    swaps it for the live connection color */
 .tp-dot.rainbow {
   background: conic-gradient(
@@ -136,9 +136,9 @@
   white-space: nowrap;
 }
 
-/* hover action (edit / duplicate) — bottom-right corner. Rides .iconbtn for
+/* hover action (edit / duplicate): bottom-right corner. Rides .iconbtn for
    shape/states; scrim colors stay local so it reads on ANY swatch color
-   (specificity beats .iconbtn's own hover/active — tokens.css loads last) */
+   (specificity beats .iconbtn's own hover/active: tokens.css loads last) */
 .tp-swatch .tp-action {
   position: absolute;
   bottom: var(--sp-1);
@@ -223,13 +223,13 @@
   position: absolute;
   inset: 0;
 }
-/* buttons are .btnish (+ .primary) — layout + the delete tint only */
+/* buttons are .btnish (+ .primary): layout + the delete tint only */
 .tp-create-actions {
   display: flex;
   justify-content: flex-end;
   gap: var(--sp-2);
 }
-/* soft-danger tint: a filled .danger would shout on every edit — the delete
+/* soft-danger tint: a filled .danger would shout on every edit: the delete
    action rests quiet and fills only on hover (annotated species exception) */
 .tp-create-actions .tp-del-btn {
   margin-right: auto;
@@ -243,7 +243,7 @@
   color: var(--danger-fg);
 }
 
-/* scope row — System Settings layout: label, ⓘ, switch pushed right. Only
+/* scope row. System Settings layout: label, ⓘ, switch pushed right. Only
    the switch toggles (macOS: the label is a name, not a hit target) */
 .tp-scope {
   display: flex;
@@ -256,7 +256,7 @@
 .tp-scope .switch {
   margin-left: auto;
 }
-/* instant hover tooltip — WKWebView's native title is slow and unreliable */
+/* instant hover tooltip: WKWebView's native title is slow and unreliable */
 .tp-scope-info {
   position: relative;
   display: inline-flex;
@@ -302,7 +302,7 @@
   visibility: visible;
 }
 
-/* owner dots — which connections hold this theme (per-connection mode).
+/* owner dots: which connections hold this theme (per-connection mode).
    Absolute overlay: appearing dots never move the card's content */
 .tp-who {
   position: absolute;

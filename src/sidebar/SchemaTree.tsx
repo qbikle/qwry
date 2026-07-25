@@ -44,7 +44,7 @@ function fuzzyMatch(needle: string, hay: string): boolean {
   return n.length === 0;
 }
 
-// icon elements hoisted once — thousands of rows re-creating 2 SVG trees per
+// icon elements hoisted once: thousands of rows re-creating 2 SVG trees per
 // filter keystroke was pure churn (React elements are immutable; reuse is safe)
 const SCHEMA_OPEN = <ChevronDown size={12} />;
 const SCHEMA_CLOSED = <ChevronRight size={12} />;
@@ -99,7 +99,7 @@ const rowKey = (r: TreeRow): string => {
       return "pinh";
     case "schema":
       return `s:${r.schema}`;
-    // a pinned table renders twice (strip + schema) — keys must not collide
+    // a pinned table renders twice (strip + schema), so keys must not collide
     case "table":
       return r.pinned ? `pt:${r.t.table_oid}` : `t:${r.t.table_oid}`;
     case "col":
@@ -317,7 +317,7 @@ const ExtRow = memo(function ExtRow(p: { x: ExtInfo; onCopy: (name: string) => v
 });
 
 /** persisted pins: table identity as {schema, name} pairs (never a dotted
- * string), per profile — same localStorage precedent as active-tab restore */
+ * string), per profile, same localStorage precedent as active-tab restore */
 type PinRef = { schema: string; name: string };
 const pinsKey = (profileId: string) => `qwry.pins.${profileId}`;
 
@@ -341,7 +341,7 @@ export function SchemaTree({ profileId }: { profileId: string }) {
   const loading = useSchema((s) => s.loading[profileId]);
   const error = useSchema((s) => s.errors[profileId]);
   const [filterInput, setFilterInput] = useState("");
-  /** debounced (80ms) copy of the filter — the tree rebuilds on this */
+  /** debounced (80ms) copy of the filter; the tree rebuilds on this */
   const [filter, setFilter] = useState("");
   const [openSchemas, setOpenSchemas] = useState<Record<string, boolean>>({ public: true });
   const [openTables, setOpenTables] = useState<Record<number, boolean>>({});
@@ -354,7 +354,7 @@ export function SchemaTree({ profileId }: { profileId: string }) {
   const [pins, setPins] = useState<PinRef[]>(() => loadPins(profileId));
   const [menu, setMenu] = useState<{ x: number; y: number; table: TableInfo } | null>(null);
 
-  // pins are per profile — reload when the rail switches connections
+  // pins are per profile: reload when the rail switches connections
   useEffect(() => {
     setPins(loadPins(profileId));
   }, [profileId]);
@@ -381,7 +381,7 @@ export function SchemaTree({ profileId }: { profileId: string }) {
   }, [snapshot, filter]);
 
   // partitions/inheritance children grouped under their parent (only parents
-  // that actually exist in the snapshot — an orphan renders top-level)
+  // that actually exist in the snapshot; an orphan renders top-level)
   const childrenByParent = useMemo(() => {
     const m = new Map<number, TableInfo[]>();
     if (!snapshot) return m;
@@ -396,7 +396,7 @@ export function SchemaTree({ profileId }: { profileId: string }) {
     return m;
   }, [snapshot]);
 
-  // per-schema object sections (user-schema functions only — the snapshot's
+  // per-schema object sections (user-schema functions only; the snapshot's
   // function list also carries the merged pg_catalog set for completion)
   const objsBySchema = useMemo(() => {
     const m = new Map<string, { funcs: FuncInfo[]; seqs: SeqInfo[]; enums: EnumInfo[] }>();
@@ -436,7 +436,7 @@ export function SchemaTree({ profileId }: { profileId: string }) {
     return out;
   }, [snapshot, pins]);
 
-  // the visible tree flattened to one row list, virtualized like the grid —
+  // the visible tree flattened to one row list, virtualized like the grid:
   // a 2k-table schema previously rendered every row on each filter keystroke
   const treeRows = useMemo(() => {
     const out: TreeRow[] = [];
@@ -444,7 +444,7 @@ export function SchemaTree({ profileId }: { profileId: string }) {
       for (const c of t.columns)
         out.push({ kind: "col", t, c, pk: t.pk.includes(c.name), pinnedCtx });
     };
-    // pinned strip (hidden while filtering — matches render in place below)
+    // pinned strip (hidden while filtering; matches render in place below)
     if (!filter && pinnedTables.length > 0) {
       out.push({ kind: "pin-header", count: pinnedTables.length });
       for (const t of pinnedTables) {
@@ -458,7 +458,7 @@ export function SchemaTree({ profileId }: { profileId: string }) {
       out.push({ kind: "table", t, open: tOpen, pinned: false, nested });
       if (tOpen) pushCols(t, false);
       // partitions nest under their parent, collapsed by default (recursion
-      // covers subpartitioning); while filtering the tree is flat instead —
+      // covers subpartitioning); while filtering the tree is flat instead:
       // a matching partition must be visible without walking its ancestors
       if (!filter) {
         const kids = childrenByParent.get(t.table_oid);
@@ -520,7 +520,7 @@ export function SchemaTree({ profileId }: { profileId: string }) {
     snapshot,
   ]);
 
-  // the scroll container is an ancestor (.sb-tables) — find it once the list
+  // the scroll container is an ancestor (.sb-tables): find it once the list
   // mounts and anchor the virtualizer with the list's offset inside it
   const listRef = useRef<HTMLDivElement>(null);
   const [scrollEl, setScrollEl] = useState<HTMLElement | null>(null);
@@ -546,7 +546,7 @@ export function SchemaTree({ profileId }: { profileId: string }) {
         list.getBoundingClientRect().top - scroll.getBoundingClientRect().top + scroll.scrollTop,
       );
     measure();
-    // zoom resizes the filter input above the list — a one-shot offset goes
+    // zoom resizes the filter input above the list: a one-shot offset goes
     // stale and every virtual row lands shifted; re-measure when it resizes
     const ro = new ResizeObserver(measure);
     if (list.previousElementSibling) ro.observe(list.previousElementSibling);
@@ -572,7 +572,7 @@ export function SchemaTree({ profileId }: { profileId: string }) {
   }, []);
 
   const insertSelect = useCallback((t: TableInfo) => {
-    // quoted ref — a mixed-case/reserved name must never case-fold to a
+    // quoted ref: a mixed-case/reserved name must never case-fold to a
     // DIFFERENT table when this SQL runs
     const ref = qualify(t.schema, t.name);
     // open the SELECT in a fresh query tab (sets editor sql) and run it
@@ -602,7 +602,7 @@ export function SchemaTree({ profileId }: { profileId: string }) {
     (schema: string, sec: SectionKind) => {
       setOpenSections((s) => {
         const key = `${schema}:${sec}`;
-        // under a filter sections default open — the first click must close
+        // under a filter sections default open, so the first click must close
         return { ...s, [key]: !(s[key] ?? !!filter) };
       });
     },
@@ -648,10 +648,10 @@ export function SchemaTree({ profileId }: { profileId: string }) {
   };
 
   // stale-while-revalidate: only show the loading message when there is no
-  // snapshot yet — a ⌘R refresh must not blank the whole tree
+  // snapshot yet: a ⌘R refresh must not blank the whole tree
   if (loading && !snapshot) return <div className="tree-msg">Loading schema…</div>;
   if (!snapshot) {
-    // a silently empty sidebar lies — say WHY and offer a retry
+    // a silently empty sidebar lies: say WHY and offer a retry
     if (error)
       return (
         <div className="tree-msg tree-error">
@@ -790,7 +790,7 @@ export function SchemaTree({ profileId }: { profileId: string }) {
       </div>
       {treeRows.length === 0 &&
         (filter ? (
-          // filter no-match is a dead end without a way back — offer it
+          // filter no-match is a dead end without a way back; offer it
           <div className="tree-empty">
             <span>No tables match “{filterInput}”</span>
             <button className="btnish" onClick={() => setFilterInput("")}>

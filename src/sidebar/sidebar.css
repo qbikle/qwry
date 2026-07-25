@@ -44,7 +44,7 @@
 .pl-item-actions {
   display: flex;
   gap: 2px;
-  /* occupies layout even hidden — the 22px iconbtns are taller than the
+  /* occupies layout even hidden: the 22px iconbtns are taller than the
      text line, and a display reveal GREW the row on hover (stable-chrome
      law, DESIGN rule 2). focus-within = the keyboard route in */
   visibility: hidden;
@@ -55,7 +55,7 @@
 }
 
 
-/* saved queries — pinned to sidebar bottom, own scroll */
+/* saved queries: pinned to sidebar bottom, own scroll */
 .saved-section {
   flex-shrink: 0;
   max-height: 40%;
@@ -120,7 +120,7 @@
   font-size: var(--text-xs);
 }
 
-/* server info ⓘ + modal — button skin comes from .iconbtn */
+/* server info ⓘ + modal; button skin comes from .iconbtn */
 .sb-info-btn {
   flex-shrink: 0;
 }

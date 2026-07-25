@@ -7,7 +7,7 @@ import { useConnections } from "../stores/connections";
 import type { TableInfo } from "../stores/schema";
 import "./browser.css";
 
-/** TableBrowser's header Refresh routes here while Structure is active — it
+/** TableBrowser's header Refresh routes here while Structure is active; it
  * used to rerun the DATA query, which does nothing for this surface */
 export const structureRefresh = { current: null as null | (() => void) };
 
@@ -21,7 +21,7 @@ const CONSTRAINT_KIND: Record<string, string> = {
   n: "NOT NULL",
 };
 
-/** any live session on the active profile (primary preferred — it can be
+/** any live session on the active profile (primary preferred; it can be
  * dead while tab sessions live on) */
 function pickSession(): string | undefined {
   const conn = useConnections.getState();
@@ -96,7 +96,7 @@ export function StructureTab({ table }: { table: TableInfo }) {
   const anyColComment =
     stats?.column_comments.length ?? table.columns.filter((c) => c.comment).length;
 
-  // "never scanned" is a neutral fact; "candidate for dropping" is advice —
+  // "never scanned" is a neutral fact; "candidate for dropping" is advice:
   // enforcement-only unique indexes (CREATE UNIQUE INDEX, no pg_constraint
   // row) get the fact but never the advice: dropping one loses uniqueness
   const neverScanned = (ix: TableStats["indexes"][number]) =>

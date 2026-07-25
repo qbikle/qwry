@@ -1,26 +1,25 @@
 #!/usr/bin/env bun
-// Keyset pagination proof harness — PERMANENT regression gate.
+// Keyset pagination proof harness: PERMANENT regression gate.
 //
 // Drives the app's REAL SQL generators (src/stores/browseSql.ts: keysetKeys /
-// browseSql / browsePageSql) against live staging fixtures, pages through
+// browseSql / browsePageSql) against live database fixtures, pages through
 // psql exactly the way loadMore does (seek from the last row's key values),
 // and asserts ORDER-SENSITIVE sequence equality against the one-shot
 // reference query. Any skip/dup/reorder across a page boundary fails.
 //
 // Usage:
-//   source ~/.claude/.env.claude
-//   QWRY_TEST_HOST=$STAGING_DB_HOST QWRY_TEST_USER=$STAGING_DB_USER \
-//   QWRY_TEST_PASSWORD=$STAGING_DB_PASSWORD bun scripts/keyset-proof.ts
+//   QWRY_TEST_HOST=<host> QWRY_TEST_USER=<user> \
+//   QWRY_TEST_PASSWORD=<password> QWRY_TEST_DB2=<db> bun scripts/keyset-proof.ts
 //
-// Same env vars as the Rust staging suite. Connects to db "squad" (override:
-// QWRY_TEST_DB2); fixtures live in schema qwry_test and are dropped at the
-// end. NEVER point this at prod.
+// Point the QWRY_TEST_* vars at a disposable test database you control (same
+// env vars as the Rust integration suite); fixtures live in schema qwry_test
+// and are dropped at the end. NEVER point this at prod.
 //
 // Covers: PK / composite-PK row-value seeks, duplicate sort values across
 // page boundaries, NULL partitions (ASC + DESC, paging inside the
 // partition), sort-on-PK DESC, typed casts (timestamptz), filter folding,
 // ctid keyset on PK-less tables, inheritance-parent ctid refusal
-// (relhassubclass — colliding child ctids proven live), the reltuples
+// (relhassubclass; colliding child ctids proven live), the reltuples
 // size gate (mocked estimates), NULLS FIRST/LAST overrides (ladder
 // variants), multi-column sort chains (mixed directions, tiebreaker
 // absorbed into the chain), raw-WHERE composition with the seek, BETWEEN /
@@ -31,7 +30,7 @@
 // overrides on BOTH keys at once, mixed directions over data with NULLs in
 // both columns, sort chain + ctid tiebreak, jump re-anchor landing INSIDE a
 // NULL partition under a chain+override, single-col-PK anchor truncation
-// (chain [pk, nullable] must stay keyset when pages end on NULL — never the
+// (chain [pk, nullable] must stay keyset when pages end on NULL, never the
 // silent offset fallback; provePaging now asserts keyset-vs-fallback
 // explicitly), and raw WHERE ending in a `--` line comment paged through
 // the newline-safe seek composition.
@@ -54,7 +53,7 @@ import type { TableInfo } from "../src/stores/schema";
 const env = (k: string): string => {
   const v = process.env[k];
   if (!v) {
-    console.error(`missing env ${k} — source ~/.claude/.env.claude and map QWRY_TEST_* (see header)`);
+    console.error(`missing env ${k}: set the QWRY_TEST_* vars to a disposable test database (see header)`);
     process.exit(2);
   }
   return v;
@@ -63,14 +62,14 @@ const env = (k: string): string => {
 const HOST = env("QWRY_TEST_HOST");
 const USER = env("QWRY_TEST_USER");
 const PASSWORD = env("QWRY_TEST_PASSWORD");
-const DB = process.env.QWRY_TEST_DB2 ?? "squad";
+const DB = process.env.QWRY_TEST_DB2 ?? "postgres";
 if (/prod/i.test(HOST) || /prod/i.test(DB)) {
   console.error(`refusing to run against a prod-looking target (${HOST}/${DB})`);
   process.exit(2);
 }
 
-const FS = "\u001f"; // unit separator — never appears in fixture data
-const NULLMARK = "\u0007"; // psql null marker — never appears in fixture data
+const FS = "\u001f"; // unit separator, never appears in fixture data
+const NULLMARK = "\u0007"; // psql null marker, never appears in fixture data
 const PAGE = 7; // small page so every case crosses several boundaries
 
 function psqlRaw(sql: string, viaStdin = false): string {
@@ -88,7 +87,7 @@ function psqlRaw(sql: string, viaStdin = false): string {
   return proc.stdout.toString();
 }
 
-/** run a SELECT, rows as (string|null)[][] — the shape loadMore sees */
+/** run a SELECT, rows as (string|null)[][], the shape loadMore sees */
 function query(sql: string): (string | null)[][] {
   const out = psqlRaw(sql);
   if (out.replace(/\n+$/, "") === "") return [];
@@ -100,7 +99,7 @@ function query(sql: string): (string | null)[][] {
 
 const exec = (sql: string): void => void psqlRaw(sql, true);
 
-/** live TableInfo for one fixture — same catalog fields the Rust introspect
+/** live TableInfo for one fixture: same catalog fields the Rust introspect
  * captures (format_type text, attnotnull, pk order, relhassubclass,
  * reltuples), so the TS gates see exactly what the app would */
 function introspectTable(schema: string, name: string): TableInfo {
@@ -165,7 +164,7 @@ function provePaging(
   if (!keys) return caseDone(name, before);
 
   // result column order, as the app's SELECT produces it (ctid is prepended
-  // for PK-less ordinary tables — mirrors browseSql's selectCols)
+  // for PK-less ordinary tables; mirrors browseSql's selectCols)
   const colNames =
     table.pk.length === 0 && table.kind === "r"
       ? ["ctid", ...table.columns.map((c) => c.name)]
@@ -190,7 +189,7 @@ function provePaging(
     pages++;
     collected.push(...page);
   }
-  // keyset must STAY keyset: a null page SQL is the silent offset fallback —
+  // keyset must STAY keyset: a null page SQL is the silent offset fallback,
   // an O(n²) regression even when the fallback would return the right rows
   check(
     fallbackPages === 0,
@@ -302,7 +301,7 @@ try {
   {
     const before = failures;
     // the hazard is real: the parent's scan unions child heaps whose ctids
-    // collide with the parent's — ORDER BY ctid is not a total order here
+    // collide with the parent's: ORDER BY ctid is not a total order here
     const [row] = query(`SELECT count(*), count(DISTINCT ctid) FROM ${T("qwry_kp_parent")}`);
     check(Number(row[0]) === 24, "K1: parent scan sees parent+child rows");
     check(Number(row[1]) < Number(row[0]), "K1: colliding ctids across child heaps (the hazard)");
@@ -369,7 +368,7 @@ try {
   );
 
   // -- v0.8: raw-WHERE escape hatch composes with the seek -------------------
-  // 15. raw WHERE only (ORs inside — must be parenthesized against the seek)
+  // 15. raw WHERE only (ORs inside must be parenthesized against the seek)
   provePaging("15 raw WHERE", pk, [], [], vnum, 39, "v LIKE 'beta%' OR id <= 9");
   // 16. raw WHERE + sort chain over dups+NULLs
   provePaging("16 raw WHERE + sort", nulls, [], [{ column: "s", dir: "asc" }], vnum, 50, "id > 5");
@@ -388,7 +387,7 @@ try {
     24,
   );
 
-  // -- J1: ⌘L jump — offset page, then keyset re-anchor ----------------------
+  // -- J1: ⌘L jump (offset page, then keyset re-anchor) ----------------------
   {
     const before = failures;
     const keys = keysetKeys(pk, [], vnum)!;
@@ -400,7 +399,7 @@ try {
       JSON.stringify(jump) === JSON.stringify(reference.slice(10, 10 + PAGE)),
       "J1: offset jump page equals the reference slice",
     );
-    // continuation: seek from the LANDED page's last row (loadMore's path —
+    // continuation: seek from the LANDED page's last row (loadMore's path;
     // the offset never appears again)
     const colNames = pk.columns.map((c) => c.name);
     const keyIdx = keys.map((k) => colNames.indexOf(k.col));
@@ -469,7 +468,7 @@ try {
         `SELECT count(*) FROM "qwry_test"."qwry_kp_pk"\nWHERE id < 5`,
       "K6: count(*) composes the same WHERE",
     );
-    // page SQL ANDs the raw text with the seek, parenthesized — the closing
+    // page SQL ANDs the raw text with the seek, parenthesized: the closing
     // paren + seek on their OWN line so a trailing `--` can't eat them
     const pkeys = keysetKeys(pk, [], vnum)!;
     const psql = browsePageSql({ table: pk, filters: [], keys: pkeys, last: ["10"], limit: 5, rawWhere: "id < 40 OR v = 'x'" });
@@ -482,7 +481,7 @@ try {
 
   // -- v0.8.1: deeper/multi NULLS overrides + mixed dirs over 2-NULL data ----
   // 21. override on a DEEPER (non-head) chain key: g pages by default, the
-  //     override sits on s — the ladder's inner branches carry it
+  //     override sits on s; the ladder's inner branches carry it
   provePaging("21 deeper-key override", multi, [], [{ column: "g", dir: "asc" }, { column: "s", dir: "asc", nulls: "first" }], vnum, 60);
   // 22. overrides on BOTH keys simultaneously (both non-default placements)
   provePaging("22 overrides on both keys", multi, [], [{ column: "g", dir: "asc", nulls: "first" }, { column: "s", dir: "desc", nulls: "last" }], vnum, 60);
@@ -525,14 +524,14 @@ try {
   // -- v0.8.1: single-col-PK anchor truncation (finding: NULL terminal key) --
   // 26. chain [pk, nullable]: the absorbed single-col PK anchor already
   //     totally orders, so the keys truncate to [id] and pages ending on
-  //     s IS NULL (ids 31+) keep seeking — the pre-fix code returned null
+  //     s IS NULL (ids 31+) keep seeking; the pre-fix code returned null
   //     from seekPredicate there and silently fell back to offset paging
   provePaging("26 anchor truncation [pk, nullable]", nulls, [], [{ column: "id", dir: "asc" }, { column: "s", dir: "asc" }], vnum, 55);
 
   // -- v0.8.1: raw WHERE ending in a line comment pages safely ---------------
   // 27. page 1 and count always survived a trailing `--` (nothing follows the
   //     WHERE body on its line); page 2 used to be a syntax error because the
-  //     one-line wrap let the comment eat the seek — prove full paging now,
+  //     one-line wrap let the comment eat the seek; prove full paging now,
   //     with a nullable sort chain so the seek is the OR-ladder form
   provePaging("27 raw WHERE trailing --", pk, [], [{ column: "v", dir: "asc" }], vnum, 48, "id > 5 -- tail comment");
 

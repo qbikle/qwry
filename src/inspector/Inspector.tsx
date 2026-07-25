@@ -66,11 +66,11 @@ export function Inspector() {
   const [mode, setMode] = useState<"auto" | "raw">("auto");
   const [editingText, setEditingText] = useState<string | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
-  // the raw-mode JsonField's live CM view — non-null EXACTLY while raw mode
+  // the raw-mode JsonField's live CM view: non-null EXACTLY while raw mode
   // shows a searchable field, which is the whole mode gate for the ⌘F claim
   const rawViewRef = useRef<EditorView | null>(null);
   // ⌘F in raw mode: JsonTree (which owns the tree-mode claim) is unmounted
-  // here, so the shell mirrors its exact gates — open inspector, focus
+  // here, so the shell mirrors its exact gates: open inspector, focus
   // within the panel, nobody upstream claimed the event. When the CM itself
   // has focus its own searchKeymap handles ⌘F first (defaultPrevented).
   useEffect(() => {
@@ -93,7 +93,7 @@ export function Inspector() {
   const [jsonError, setJsonError] = useState<string | null>(null);
   const editSeq = useInspector((s) => s.editSeq);
 
-  // subscriptions are narrowed to THIS cell's slice (scalars / stable refs) —
+  // subscriptions are narrowed to THIS cell's slice (scalars / stable refs):
   // subscribing to whole statements/pending re-rendered (and re-parsed) the
   // inspector on every streamed batch of an unrelated result
   const k = target ? editKey(target.stmtIndex, target.row, target.col) : null;
@@ -116,7 +116,7 @@ export function Inspector() {
     return st?.rows[target.row]?.[target.col] ?? null;
   });
   const pendingEdit = useEdits((s) => (k ? s.pending[k] : undefined));
-  // a staged edit always wins over the fetched DB value — the inspector must
+  // a staged edit always wins over the fetched DB value: the inspector must
   // show what ⌘S will write, not what the DB still holds
   const value =
     pendingEdit !== undefined
@@ -124,7 +124,7 @@ export function Inspector() {
       : truncated && fullValueFor === k
         ? fullValue
         : dbCell;
-  // truncated cells may only be edited once the FULL value is here — staging
+  // truncated cells may only be edited once the FULL value is here: staging
   // the 8KB prefix and committing it would destroy everything past the cap
   const fullLoaded = !truncated || fullValueFor === k || pendingEdit !== undefined;
 
@@ -136,7 +136,7 @@ export function Inspector() {
 
   // full-value fetch retry: bumping the seq re-fires the fetch effect. One
   // automatic retry ~1.5s after the FIRST failure (transient tunnel blips),
-  // then the chip's Retry button — never an automatic loop.
+  // then the chip's Retry button, never an automatic loop.
   const [retrySeq, setRetrySeq] = useState(0);
   const autoRetried = useRef(false);
 
@@ -160,7 +160,7 @@ export function Inspector() {
       pc,
       stmt.rows[target.row]?.[pc] ?? null,
     ]);
-    // ctid rows move under UPDATE/VACUUM FULL — AND in the same old-value
+    // ctid rows move under UPDATE/VACUUM FULL: AND in the same old-value
     // guard as edits so a moved row shows matched ≠ 1, never a wrong value
     if (editMap.columns[pkCols[0]]?.is_ctid) {
       locator.push(...ctidGuardPairs(editMap, meta.table_oid, stmt, target.row));
@@ -192,7 +192,7 @@ export function Inspector() {
     };
   }, [truncated, target, editMap, k, fullValueFor, retrySeq]);
 
-  // raw-mode JSON validation is debounced (150ms) — a full parse of a multi-MB
+  // raw-mode JSON validation is debounced (150ms): a full parse of a multi-MB
   // doc per keystroke froze typing. Validation-only: staging still re-parses.
   const validateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearValidateTimer = () => {
@@ -211,7 +211,7 @@ export function Inspector() {
     setJsonError(null);
     setMode("auto");
     wantEdit.current = false;
-    // retrySeq is a monotonic effect trigger — resetting it would double-fire
+    // retrySeq is a monotonic effect trigger: resetting it would double-fire
     // the fetch on cell change; only the one-auto-retry latch resets per cell
     autoRetried.current = false;
     clearValidateTimer();
@@ -267,7 +267,7 @@ export function Inspector() {
   }
 
   // parse + pretty + lossy-number detection come from the bounded LRU
-  // (parseCache.ts) — O(1) on re-render instead of re-parsing the full cell
+  // (parseCache.ts): O(1) on re-render instead of re-parsing the full cell
   const parsed = value != null ? parsedCell(value, editMeta?.type_name) : undefined;
   const structured = parsed?.structured;
   const isStructured = structured !== undefined;
@@ -275,7 +275,7 @@ export function Inspector() {
   const pretty = parsed?.pretty ?? (value ?? "");
   const isArr = isArrayType(editMeta?.type_name);
   const canEdit = !!editMeta?.editable && fullLoaded;
-  // `json` (not jsonb) preserves exact text — tree edits re-serialize the doc
+  // `json` (not jsonb) preserves exact text: tree edits re-serialize the doc
   // (minify, key reorder), so json columns edit through raw mode only
   const structuredEditable =
     canEdit && isStructured && !lossyNums && editMeta?.type_name !== "json";
@@ -307,7 +307,7 @@ export function Inspector() {
         }
         stage(jsToPgArray(parsed));
       } else {
-        // stage the raw text VERBATIM — parse is validation only. A
+        // stage the raw text VERBATIM: parse is validation only. A
         // parse→re-serialize round trip would minify `json` columns and
         // silently round >2^53 numbers the user never touched.
         stage(rawDraft);
@@ -449,7 +449,7 @@ export function Inspector() {
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                  // ⌘↩ is also the Run accelerator — claim it or staging
+                  // ⌘↩ is also the Run accelerator: claim it or staging
                   // could ALSO run the active statement
                   e.preventDefault();
                   const shell = e.currentTarget.closest(".inspector-fixed") as HTMLElement | null;
@@ -457,7 +457,7 @@ export function Inspector() {
                   setEditingText(null);
                   if (shell) requestAnimationFrame(() => shell.focus({ preventScroll: true }));
                 } else if (e.key === "Escape") {
-                  // refocus the shell, not body — ⌘F must keep inspector scope
+                  // refocus the shell, not body: ⌘F must keep inspector scope
                   const shell = e.currentTarget.closest(".inspector-fixed") as HTMLElement | null;
                   setEditingText(null);
                   if (shell) requestAnimationFrame(() => shell.focus({ preventScroll: true }));

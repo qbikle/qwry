@@ -1,4 +1,4 @@
-//! Streaming execution over the PG simple protocol — one statement at a time.
+//! Streaming execution over the PG simple protocol, one statement at a time.
 //!
 //! Each split statement runs as its own `simple_query` (psql autocommit
 //! semantics). This is a correctness keystone: with the whole buffer sent as
@@ -11,7 +11,7 @@
 //! CREATE DATABASE) work in multi-statement buffers.
 //!
 //! Rows are batched and emitted through the caller-provided sink as they
-//! arrive — no full materialization on the Rust side.
+//! arrive; no full materialization on the Rust side.
 
 use std::time::Instant;
 
@@ -33,7 +33,7 @@ struct RowState {
 
 impl PgSession {
     /// Emits QueryEvent through `sink`; a `false` return from the sink means the
-    /// receiver hung up — we stop emitting but keep draining the wire.
+    /// receiver hung up: we stop emitting but keep draining the wire.
     pub async fn execute_stream(
         &self,
         sql: &str,
@@ -51,11 +51,11 @@ impl PgSession {
         };
 
         // set when WE fired a cancel to stop a pointless drain (row cap hit on
-        // the final statement, or the receiver hung up) — the resulting 57014
+        // the final statement, or the receiver hung up); the resulting 57014
         // is then a successful completion, not an error
         let mut auto_cancelled = false;
         // set when the cancel ladder failed outright and we killed our own
-        // connection instead — the resulting stream error (any error: the
+        // connection instead; the resulting stream error (any error: the
         // connection is dead, not the query) is likewise completion
         let mut hard_aborted = false;
 
@@ -74,7 +74,7 @@ impl PgSession {
                     .to_ascii_lowercase();
                 matches!(head.as_str(), "select" | "table" | "values" | "show" | "explain")
             };
-            // true start — progress and ms are real for DDL/UPDATE too (they
+            // true start: progress and ms are real for DDL/UPDATE too (they
             // previously "started" only at completion)
             emit(
                 QueryEvent::StatementStart { index, sql: span.sql.clone() },
@@ -208,12 +208,12 @@ impl PgSession {
                         };
                         state.row_count += 1;
                         if state.row_count > ROW_CAP {
-                            // past the cap nothing more reaches the UI — on the
+                            // past the cap nothing more reaches the UI; on the
                             // last statement (or a dead receiver) draining the
                             // rest of a 10M-row result over the wire for
                             // minutes is pure waste: cancel our own query and
                             // treat the 57014 as completion. Never inside an
-                            // open transaction — our cancel would abort it.
+                            // open transaction: our cancel would abort it.
                             if state.row_count == ROW_CAP + 1
                                 && cancellable
                                 && (last_statement || !alive)
@@ -222,7 +222,7 @@ impl PgSession {
                                 auto_cancelled = true;
                                 // NOT the cancel() ladder: its busy-poll can
                                 // never observe this query dying because WE
-                                // hold the busy guard — it would escalate on
+                                // hold the busy guard; it would escalate on
                                 // every capped result. Fire both tiers
                                 // directly (fresh connections, never this
                                 // session); only when BOTH fail did nothing
@@ -233,7 +233,7 @@ impl PgSession {
                                     // draining a 10M-row result for minutes
                                     // helps nobody. The guard above already
                                     // established this is a read-only
-                                    // statement outside a tx — kill our own
+                                    // statement outside a tx: kill our own
                                     // connection and resolve the stream error
                                     // as the capped completion.
                                     hard_aborted = true;
@@ -292,7 +292,7 @@ impl PgSession {
                         emit(
                             QueryEvent::StatementDone {
                                 index,
-                                // always pass the count through — UPDATE…RETURNING
+                                // always pass the count through: UPDATE…RETURNING
                                 // keeps its affected count alongside its rows
                                 affected: Some(affected),
                                 ms: started.elapsed().as_secs_f64() * 1000.0,

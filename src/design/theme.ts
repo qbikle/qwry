@@ -3,12 +3,12 @@
 // tinted toward the palette, and applies them as CSS vars at runtime. Surfaces
 // are subtly tinted; syntax stays a fixed legible set per mode.
 
-/** gutter glass opacity (0..1) — Settings slider; applied on next theme apply */
+/** gutter glass opacity (0..1): Settings slider; applied on next theme apply */
 let glassAlpha = 0.55;
 export function setGlassAlpha(a: number) {
   glassAlpha = Math.max(0, Math.min(1, a));
   // below ~half wash the wallpaper dominates the glass and theme fg can't be
-  // trusted on it — titlebar content switches to self-surfaced chips/halo
+  // trusted on it: titlebar content switches to self-surfaced chips/halo
   // (v2.css rules scoped on this attribute; DESIGN.md rule 3 glass clause)
   document.documentElement.toggleAttribute("data-glassy", glassAlpha < 0.5);
 }
@@ -33,7 +33,7 @@ export interface Palette {
   secondary?: string;
 }
 
-// curated set — full hue spread; Blastoise is the default (closest to v0.1)
+// curated set: full hue spread; Blastoise is the default (closest to v0.1)
 export const PALETTES: Palette[] = [
   { id: "blastoise", name: "Blastoise", accent: "#4a90e2", hue: 215 },
   { id: "charizard", name: "Charizard", accent: "#ff7a3c", hue: 20 },
@@ -144,7 +144,7 @@ function lumHex(hex: string): number {
 }
 const accentFg = (hex: string) => (lumHex(hex) > 0.5 ? "#16181d" : "#ffffff");
 
-// curated (hue) accents: cap saturation, nudge lightness for contrast — but
+// curated (hue) accents: cap saturation, nudge lightness for contrast, but
 // never FORCE saturation up (that turned white/gray accents pink).
 function adjustAccent(accent: string, mode: "dark" | "light") {
   const { h, s, l } = hexToHsl(accent);
@@ -168,7 +168,7 @@ function hueDist(a: number, b: number): number {
 }
 
 /** steer a hue out of the danger band (reds, ~345–15°): the accent must
- * never wear the danger register's color — Run reading as Delete is a
+ * never wear the danger register's color: Run reading as Delete is a
  * data-safety failure, not a taste call. Exits to the nearer safe edge. */
 function steerFromDanger(h: number): number {
   if (hueDist(h, 0) > 15) return h;
@@ -176,11 +176,11 @@ function steerFromDanger(h: number): number {
 }
 
 /** Match Connection: the active connection's avatar color seeds the accent
- * over a PURE NEUTRAL surface ramp (tint 0) — the app quietly wears the
+ * over a PURE NEUTRAL surface ramp (tint 0): the app quietly wears the
  * connection's identity without surfaces shifting hue per connection */
 export function connectionPalette(color: string): Palette | null {
   // profile.color comes from appdb and never crossed sanitizePalette's HEX6
-  // moat — malformed hex once expanded to NaN CSS vars and bricked the UI,
+  // moat: malformed hex once expanded to NaN CSS vars and bricked the UI,
   // so an invalid seed declines and the caller falls back to the palette
   if (!isHex(color)) return null;
   const { h, s: sat, l } = hexToHsl(color);
@@ -203,7 +203,7 @@ const HEX6 = /^#[0-9a-fA-F]{6}$/;
 const isHex = (v: unknown): v is string => typeof v === "string" && HEX6.test(v);
 
 /** validate a persisted palette. Corrupt seeds (NaN hue, malformed hex) return
- * null so rehydrate falls back to the default palette — a single bad stored
+ * null so rehydrate falls back to the default palette: a single bad stored
  * theme used to expand to NaN CSS vars and brick the whole UI at startup. */
 export function sanitizePalette(raw: unknown): Palette | null {
   if (typeof raw !== "object" || raw === null) return null;
@@ -212,7 +212,7 @@ export function sanitizePalette(raw: unknown): Palette | null {
   const out: Palette = { id: p.id, name: p.name };
   if (p.custom === true) out.custom = true;
   if (p.bg !== undefined || p.fg !== undefined || p.primary !== undefined) {
-    // anchors kind — the colour math only handles #rrggbb
+    // anchors kind: the colour math only handles #rrggbb
     if (!isHex(p.bg) || !isHex(p.fg) || !isHex(p.primary)) return null;
     out.bg = p.bg;
     out.fg = p.fg;
@@ -293,7 +293,7 @@ function deriveAnchors(p: Palette, dark: boolean): Record<string, string> {
   v["--fg"] = fg;
   v["--fg-muted"] = mix(fg, bg, 0.4);
   v["--fg-faint"] = mix(fg, bg, 0.62);
-  // glass text (titlebar breadcrumb): NEUTRAL gray, untinted — it sits on the
+  // glass text (titlebar breadcrumb): NEUTRAL gray, untinted: it sits on the
   // wallpaper glass, not a themed surface, so the hue-tinted muted reads dirty
   v["--fg-glass"] = dark ? "hsl(0, 0%, 78%)" : "hsl(0, 0%, 27%)";
   v["--accent"] = primary;

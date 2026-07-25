@@ -1,14 +1,14 @@
-# LESSONS.md — classes of mistakes this app actually made
+# LESSONS.md: classes of mistakes this app actually made
 
 Every lesson below cost a real bug round in qwry. They are law for future work
-here and portable to any app. When a proposed change (from anyone — including
-the user) violates one, say so and cite it; the pushback is wanted.
+here and portable to any app. When a proposed change violates one, even one
+from the maintainer, say so and cite it; the pushback is wanted.
 
 ## Data integrity
 
 1. **Serialize/deserialize are born as a pair.** The TSV copier shipped months
    before its parser existed; paste naive-split quoted fields and split quoted
-   newlines into extra rows. Any format you emit, you parse — build both
+   newlines into extra rows. Any format you emit, you parse: build both
    together and property-test `parse(write(x)) === x` with hostile inputs
    (quotes, tabs, newlines, CRLF, nulls, empties).
 2. **Know the platform's silently-lossy conversions.** `JSON.parse→stringify`
@@ -17,7 +17,7 @@ the user) violates one, say so and cite it; the pushback is wanted.
    stage the original bytes. List the runtime's lossy paths before touching
    user data.
 3. **Capture context before every await.** Three separate bugs read "the
-   active tab/table" after an async gap — wrong tab's draft cleared, one
+   active tab/table" after an async gap: wrong tab's draft cleared, one
    refactor away from a wrong-table INSERT. Snapshot (tab, target, session,
    table) at function entry; after an await, `getState().active` answers a
    different question.
@@ -28,18 +28,18 @@ the user) violates one, say so and cite it; the pushback is wanted.
    not the navigation state; never write to A and repaint from B; scope every
    global lookup.
 5. **Cached metadata may inform, never refuse.** A tab-frozen schema blocked a
-   legal INSERT after an `ALTER` added a default — no escape hatch. Stale
+   legal INSERT after an `ALTER` added a default, with no escape hatch. Stale
    cache refusing legal work means the app is lying. Resolve live truth first,
    or make the refusal advisory.
 
 ## UI
 
 6. **Deliberate conventions can be wrong.** "Touched-but-empty commits `''`"
-   was documented, commented, and audit-approved — and violated the human
+   was documented, commented, and audit-approved, yet violated the human
    model (clearing a field means reset). Audits verify code against intent;
-   only dogfooding verifies intent against humans. Treat user bug reports
+   only real-world use verifies intent against humans. Treat user bug reports
    about "weird behavior" as intent bugs until proven otherwise.
-7. **In virtualized UIs, state owns focus and position — never the DOM.**
+7. **In virtualized UIs, state owns focus and position, never the DOM.**
    `autoFocus` re-fired on remount and WKWebView scroll-yanked to origin; Tab
    died at the mount boundary; an open editor teleported when its cell left
    the window. Focus/position derive from your own indices; `preventScroll`
@@ -47,7 +47,7 @@ the user) violates one, say so and cite it; the pushback is wanted.
    survive remounts.
 8. **Sticky chrome shrinks the viewport; alpha hides from probes.** Keyboard
    nav parked the focused row under the sticky header (`scrollPaddingEnd`
-   unset); the gutter bug was a 12%-alpha token over scrolling content —
+   unset); the gutter bug was a 12%-alpha token over scrolling content:
    invisible to every layout probe, provable only in pixels. Every
    scroll-into-view must know the chrome's height; alpha tokens get opaque
    backing when they occlude; geometry bugs demand screenshot-level repro.
@@ -57,7 +57,7 @@ the user) violates one, say so and cite it; the pushback is wanted.
    broken. Feedback must exist, match its register, and be true.
 10. **An input may swallow only the keys it owns.** FindBar's blanket
     `stopPropagation` orphaned every window chord (⌘I, ⌘G, ⌘W…) whenever
-    focus sat in it — five more surfaces had the same pattern. Stop
+    focus sat in it; five more surfaces had the same pattern. Stop
     unmodified typing keys only; ⌘/⌃ chords belong to the window handler
     and must bubble. (Capture-phase globals are not the fix: ⌘F scoping
     depends on inner surfaces claiming first.)
@@ -67,7 +67,7 @@ the user) violates one, say so and cite it; the pushback is wanted.
 11. **Polish is consistency systems, not good individual decisions.** Tokens,
     copy registers (WRITING.md), the z-ladder, one easing, one term per concept.
     Each drift is invisible alone and corrosive together. Multi-session work
-    WILL drift unless conventions are written law — DECISIONS.md worked;
+    WILL drift unless conventions are written law: DECISIONS.md worked;
     strings had no law until WRITING.md and it showed.
 12. **One review is not review.** A second pass with a different lens found an
     S1 the first pass missed on the same diff. Independence and a changed

@@ -4,7 +4,7 @@ import { TriangleAlert, X } from "lucide-react";
 import { popIn } from "../design/springs";
 import { useConnections } from "../stores/connections";
 
-/** global toast for connect failures (auth, network) — shows on any view,
+/** global toast for connect failures (auth, network): shows on any view,
  * including the dashboard where the inline editor error isn't mounted */
 export function ConnToast() {
   const error = useConnections((s) => s.error);
@@ -12,7 +12,7 @@ export function ConnToast() {
   const clearError = useConnections((s) => s.clearError);
   const profiles = useConnections((s) => s.profiles);
   const editConnection = useConnections((s) => s.editConnection);
-  // session-death toasts render straight from the store — markDisconnected
+  // session-death toasts render straight from the store: markDisconnected
   // decides which deaths are toast-worthy (it knows which branch fired), so
   // nothing here depends on listener registration order
   const closed = useConnections((s) => s.closedToast);

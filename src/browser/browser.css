@@ -26,7 +26,7 @@
   color: var(--fg-muted);
 }
 
-/* seg recipe (DESIGN.md rule 1) — active keeps the neutral bg-active: these
+/* seg recipe (DESIGN.md rule 1); active keeps the neutral bg-active: these
    are view tabs (Data/DDL/Structure), not option toggles; accent-soft would
    read as a filter state */
 .tb-tabs {
@@ -243,7 +243,7 @@
 .tbs-pop input:focus {
   border-bottom-color: var(--accent);
 }
-/* underline-style input: the underline is the focus treatment — kill the
+/* underline-style input: the underline is the focus treatment, so kill the
    global ring (bare outline:none loses to input:focus-visible) */
 .tbs-pop input:focus-visible {
   outline: none;

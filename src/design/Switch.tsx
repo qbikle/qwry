@@ -1,4 +1,4 @@
-// macOS-style switch (DESIGN.md rule 1 species) — a real checkbox wears the
+// macOS-style switch (DESIGN.md rule 1 species). A real checkbox wears the
 // costume: role=switch, Space toggles, wrapping labels associate clicks.
 // Visual states live in tokens.css and derive from the input via :has().
 export function Switch({

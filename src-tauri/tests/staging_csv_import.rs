@@ -1,7 +1,9 @@
-//! Live CSV-import tests against a staging DB (QWRY_TEST_DB2, qwry_test
-//! schema). Ignored by default; run with:
-//!   source ~/.claude/.env.claude && cargo test --test staging_csv_import -- --ignored --test-threads=1
-//! using QWRY_TEST_HOST/USER/PASSWORD (+ QWRY_TEST_DB2 for the fixture db).
+//! Live CSV-import tests against a disposable PostgreSQL database you
+//! control (QWRY_TEST_DB2, qwry_test schema), never production. Ignored by
+//! default; run with:
+//!   cargo test --test staging_csv_import -- --ignored --test-threads=1
+//! using QWRY_TEST_HOST / QWRY_TEST_USER / QWRY_TEST_PASSWORD
+//! (+ QWRY_TEST_DB2 for the fixture db).
 
 use std::io::Write;
 
@@ -56,7 +58,7 @@ fn write_csv(name: &str, content: &str) -> String {
 }
 
 /// int/text/bool/timestamp/numeric incl. NOT NULL + DEFAULT (tag is
-/// deliberately NEVER mapped — the import must let its DEFAULT apply)
+/// deliberately NEVER mapped; the import must let its DEFAULT apply)
 async fn fresh_fixture(session: &postgres::PgSession, table: &str) {
     session
         .execute_simple(&format!(
@@ -115,7 +117,7 @@ fn spec(path: &str, table: &str, mode: &str) -> ImportSpec {
     }
 }
 
-/// happy path: validate writes NOTHING, commit lands values exactly —
+/// happy path: validate writes NOTHING, commit lands values exactly:
 /// empty→NULL rule applied, unmapped DEFAULT column defaulted, quotes and
 /// embedded delimiters survive round-trip
 #[tokio::test]
@@ -132,7 +134,7 @@ async fn staging_csv_import_happy_path() {
          3,gam'ma,,2026-12-31 23:59:59,0.00\n",
     );
 
-    // validate first — clean report, and the always-ROLLBACK contract holds
+    // validate first: clean report, and the always-ROLLBACK contract holds
     let mut ticks: Vec<(u64, u64)> = Vec::new();
     let report = run_import(&session, &spec(&path, table, "validate"), &mut |p, t| {
         ticks.push((p, t))
@@ -148,7 +150,7 @@ async fn staging_csv_import_happy_path() {
     assert_eq!(ticks.last(), Some(&(3, 3)));
     assert_eq!(ticks.first(), Some(&(0, 3)));
 
-    // commit — all three land, exactly
+    // commit: all three land, exactly
     let report = run_import(&session, &spec(&path, table, "commit"), &mut |_, _| {})
         .await
         .expect("commit");
@@ -340,7 +342,7 @@ async fn staging_csv_import_file_changed_gate() {
     assert_eq!(report.outcome, ImportOutcome::RolledBack);
     let stat = report.file_stat.expect("validate report must carry the file stat");
 
-    // the file changes AFTER validation (different size — mtime granularity
+    // the file changes AFTER validation (different size; mtime granularity
     // must not be the only tripwire)
     let path = write_csv(
         "toctou",
@@ -359,7 +361,7 @@ async fn staging_csv_import_file_changed_gate() {
         "refusal must be actionable: {err}"
     );
     assert_eq!(count(&session, table).await, 0, "refused commit must write nothing");
-    // the session is idle again — a fresh run must be possible
+    // the session is idle again; a fresh run must be possible
     let report = run_import(&session, &spec(&path, table, "validate"), &mut |_, _| {})
         .await
         .expect("re-validate");

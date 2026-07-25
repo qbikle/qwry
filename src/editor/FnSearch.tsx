@@ -1,4 +1,4 @@
-// Searchable function palette — insert any of the 3.5k pg functions without
+// Searchable function palette: insert any of the 3.5k pg functions without
 // polluting the typed completion flow.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";

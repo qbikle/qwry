@@ -1,11 +1,11 @@
 // The exit ceremony shared by Quit (menu ⌘Q, window close) and the updater's
-// relaunch — both are process deaths: flush the debounced tab persist so the
+// relaunch; both are process deaths: flush the debounced tab persist so the
 // last keystrokes hit disk, then confirm any loss the death would cause
-// (staged cell edits, a half-typed draft row, open transactions — those roll
+// (staged cell edits, a half-typed draft row, open transactions; those roll
 // back, and never silently).
 import { openTxCount, useConnections } from "./connections";
 
-/** what a process death would cost right now — returned on confirm so a
+/** what a process death would cost right now; returned on confirm so a
  * second guard can auto-pass when nothing new appeared in between */
 export interface ExitCensus {
   dirty: number;
@@ -15,7 +15,7 @@ export interface ExitCensus {
 
 /** census = clear to exit (the user confirmed, or nothing to lose);
  * null = the user kept the app's state alive. Pass a prior confirmed
- * census to re-prompt ONLY if the stakes grew since — confirming a loss
+ * census to re-prompt ONLY if the stakes grew since: confirming a loss
  * doesn't discard anything, so an unchanged census must not re-ask the
  * identical question. */
 export async function prepareExit(

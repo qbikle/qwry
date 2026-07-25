@@ -221,7 +221,7 @@
    "title": "AI chat + MCP (2026) \u2014 TablePlus's newest bet, qwry's ideological fork",
    "importance": "med",
    "surface": "shell",
-   "detail": "2026 TablePlus ships a native BYOK LLM chat with built-in MCP functions that auto-fetch schema context for query writing, plus Codex CLI support. Users like schema-aware SQL drafting; qwry's no-telemetry/local-only stance argues against embedding chat. BEYOND without betrayal: qwry as an MCP SERVER \u2014 let the user's own Claude Code/agent drive qwry (open table, run query, read staged changes) so AI assistance lives outside the app, keys and data stay under user control."
+   "detail": "2026 TablePlus ships a native BYOK LLM chat with built-in MCP functions that auto-fetch schema context for query writing, plus Codex CLI support. Users like schema-aware SQL drafting; qwry's no-telemetry/local-only stance argues against embedding chat. BEYOND without betrayal: qwry as an MCP SERVER \u2014 let the user's own AI agent drive qwry (open table, run query, read staged changes) so AI assistance lives outside the app, keys and data stay under user control."
   },
   {
    "title": "Customizable shortcuts arrived late (Windows first) \u2014 Mac users still stuck",

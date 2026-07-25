@@ -2,7 +2,7 @@
 //!
 //! Contract (never lose or lie about a row):
 //! - VALIDATE runs the whole file through real batched INSERTs inside a
-//!   transaction that ALWAYS rolls back — every value passes the same
+//!   transaction that ALWAYS rolls back: every value passes the same
 //!   `'v'::type` cast discipline the commit run uses, so a clean validate is
 //!   a faithful rehearsal. A failing batch is re-run row-by-row under
 //!   savepoints to name each bad row exactly; collection stops after
@@ -10,16 +10,16 @@
 //! - COMMIT is one transaction of batched multi-row INSERTs (500/batch),
 //!   all-or-nothing: the first error rolls EVERYTHING back and the report
 //!   names the batch (and the row, when the server position lands inside a
-//!   tuple). Rows are never silently dropped, padded, or coerced — a short
+//!   tuple). Rows are never silently dropped, padded, or coerced: a short
 //!   or long CSV record is a per-row error (`flexible(false)`), and a
 //!   client-side bad row aborts a commit run outright. A connection-class
-//!   failure DURING the COMMIT itself is reported as outcome "unknown" —
+//!   failure DURING the COMMIT itself is reported as outcome "unknown":
 //!   the server may have applied it. Commit runs carrying the validate run's
 //!   `expected_stat` refuse when the file changed in between, and both
 //!   transactions pin `standard_conforming_strings = on` via SET LOCAL.
 //!
 //! Encoding: UTF-8 only (a bad byte is a per-row error naming the row).
-//! Quoting mirrors `driver/postgres/edit.rs` (`ql`/`qi`) — those helpers are
+//! Quoting mirrors `driver/postgres/edit.rs` (`ql`/`qi`); those helpers are
 //! module-private there, so byte-identical copies live here with parity
 //! tests; keep them in lockstep.
 
@@ -40,18 +40,18 @@ const SNIFF_RECORDS: usize = 40;
 const PREVIEW_ROWS: usize = 20;
 const DELIM_CANDIDATES: [u8; 4] = [b',', b'\t', b';', b'|'];
 
-/// quote an identifier for SQL (mirror of edit.rs `qi` — keep byte-identical)
+/// quote an identifier for SQL (mirror of edit.rs `qi`; keep byte-identical)
 fn qi(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
-/// quote a text literal (mirror of edit.rs `ql` — keep byte-identical)
+/// quote a text literal (mirror of edit.rs `ql`; keep byte-identical)
 fn ql(v: &str) -> String {
     format!("'{}'", v.replace('\'', "''"))
 }
 
 /// a bare lowercase identifier is safe unquoted in a cast; `"char"` must stay
-/// quoted (mirror of edit.rs `safe_type_ident` — keep in lockstep)
+/// quoted (mirror of edit.rs `safe_type_ident`; keep in lockstep)
 fn safe_type_ident(name: &str) -> bool {
     name != "char"
         && !name.is_empty()
@@ -79,7 +79,7 @@ fn internal(msg: impl Into<String>) -> DriverError {
     DriverError::Internal(msg.into())
 }
 
-/// file identity snapshot (mtime + size) — the validate→commit TOCTOU gate
+/// file identity snapshot (mtime + size): the validate→commit TOCTOU gate
 /// and the `file_stat` command (mirrored in src/ipc/types.ts)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileStat {
@@ -162,7 +162,7 @@ fn sniff_delimiter(sample: &[u8]) -> u8 {
     best_delim
 }
 
-/// crude type classes for header detection — deliberately coarse
+/// crude type classes for header detection, deliberately coarse
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FieldClass {
     Empty,
@@ -223,7 +223,7 @@ fn merge_class(a: FieldClass, b: FieldClass) -> FieldClass {
 fn fits(header: FieldClass, col: FieldClass) -> bool {
     use FieldClass::*;
     match (header, col) {
-        // no evidence either way — can't prove a mismatch
+        // no evidence either way: can't prove a mismatch
         (Empty, _) | (_, Empty) | (_, Text) => true,
         (h, c) if h == c => true,
         (Int, Float) => true,
@@ -234,11 +234,11 @@ fn fits(header: FieldClass, col: FieldClass) -> bool {
 
 /// Header detection: row 1 is a header only when at least one of its fields
 /// TYPE-MISMATCHES the data rows below it. If every row-1 field fits the data
-/// (including the all-text case), default to NO header — the sniffer must
+/// (including the all-text case), default to NO header: the sniffer must
 /// never eat a headerless file's first data row. Overridable in the UI.
 fn detect_header(records: &[Vec<String>]) -> bool {
     if records.len() < 2 {
-        return false; // nothing to compare against — never eat the only row
+        return false; // nothing to compare against: never eat the only row
     }
     let width = records[0].len();
     let mut col_class = vec![FieldClass::Empty; width];
@@ -317,7 +317,7 @@ pub fn preview(
         None => detect_header(&sample_records),
     };
 
-    // full pass: preview rows + honest total (record read attempts count —
+    // full pass: preview rows + honest total (record read attempts count:
     // a malformed record is still a row the import will report on)
     let mut rdr = csv::ReaderBuilder::new()
         .delimiter(delim)
@@ -388,7 +388,7 @@ pub struct ImportSpec {
     pub null_token: Option<String>,
     /// "validate" (always rolls back) | "commit" (one all-or-nothing tx)
     pub mode: String,
-    /// commit only: the `file_stat` a validate run reported — a mismatch at
+    /// commit only: the `file_stat` a validate run reported; a mismatch at
     /// commit time refuses outright ("file changed since validation")
     #[serde(default)]
     pub expected_stat: Option<FileStat>,
@@ -409,7 +409,7 @@ pub struct RowIssue {
     pub message: String,
 }
 
-/// end state of an import run — `Unknown` is the honest answer when the
+/// end state of an import run; `Unknown` is the honest answer when the
 /// connection died DURING COMMIT: the server may or may not have applied it
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -423,15 +423,15 @@ pub enum ImportOutcome {
 pub struct ImportReport {
     pub total_rows: u64,
     /// validate: rows that passed; commit: rows persisted (0 unless
-    /// committed; also 0 on an Unknown outcome — never claim persistence)
+    /// committed; also 0 on an Unknown outcome; never claim persistence)
     pub ok_rows: u64,
     pub errors: Vec<RowIssue>,
-    /// error collection stopped at MAX_ERRORS — "…and possibly more"
+    /// error collection stopped at MAX_ERRORS: "…and possibly more"
     pub more_errors: bool,
     pub committed: bool,
     /// "committed" | "rolled_back" | "unknown" on the wire
     pub outcome: ImportOutcome,
-    /// file identity at validate time — feed back as `expected_stat` on the
+    /// file identity at validate time; feed back as `expected_stat` on the
     /// commit run to catch the file changing in between; None on commit runs
     pub file_stat: Option<FileStat>,
 }
@@ -479,13 +479,13 @@ struct PreparedRow {
     values: Vec<Option<String>>,
 }
 
-/// codes where continuing to hammer the transaction would only lie — the run
+/// codes where continuing to hammer the transaction would only lie: the run
 /// aborts with the server's own error instead of 50 copies of it
 fn fatal_code(e: &DriverError) -> bool {
     match e {
         DriverError::Db { code: Some(c), .. } => {
             c == "25006"            // read-only transaction (prod safe-mode)
-                || c == "25P02"     // tx already aborted — our savepoint dance broke
+                || c == "25P02"     // tx already aborted: our savepoint dance broke
                 || c == "57014"     // cancelled by the user
                 || c == "57P01"     // admin shutdown
                 || c.starts_with("08") // connection failure
@@ -696,7 +696,7 @@ pub async fn run_import(
         ));
     }
     // TOCTOU gate: a commit run must operate on the exact bytes the validate
-    // run rehearsed — stat before reading anything, refuse on any drift
+    // run rehearsed: stat before reading anything, refuse on any drift
     if mode == Mode::Commit {
         if let Some(expected) = &spec.expected_stat {
             if stat_file(&spec.path)? != *expected {
@@ -740,7 +740,7 @@ pub async fn run_import(
     .await;
     match (mode, body) {
         (_, Err(e)) => {
-            // fatal path — undo everything this run did, then surface honestly
+            // fatal path: undo everything this run did, then surface honestly
             let _ = session.execute_simple("ROLLBACK").await;
             Err(e)
         }
@@ -754,14 +754,14 @@ pub async fn run_import(
         (Mode::Commit, Ok(mut report)) => {
             if report.errors.is_empty() {
                 match session.execute_simple("COMMIT").await {
-                    // ok_rows already accumulated per batch — the true count
+                    // ok_rows already accumulated per batch: the true count
                     // even if the file changed between the count pass and now
                     Ok(_) => {
                         report.committed = true;
                         report.outcome = ImportOutcome::Committed;
                     }
                     Err(e) if commit_indeterminate(&e) => {
-                        // the connection died DURING COMMIT — the server may
+                        // the connection died DURING COMMIT: the server may
                         // have applied it before the link dropped. Claiming
                         // "nothing imported" here would invite a duplicate
                         // re-run; say the only honest thing we know.
@@ -780,7 +780,7 @@ pub async fn run_import(
                         report.outcome = ImportOutcome::Unknown;
                     }
                     Err(e) => {
-                        // a real SQLSTATE at commit (deferred constraint…) —
+                        // a real SQLSTATE at commit (deferred constraint…):
                         // the server rolled back; certain, nothing persisted
                         let _ = session.execute_simple("ROLLBACK").await;
                         report.errors.push(RowIssue {
@@ -803,7 +803,7 @@ pub async fn run_import(
 /// COMMIT errors where the server MAY have committed before the failure
 /// reached us: transport/protocol errors (no SQLSTATE at all) and the 08*
 /// connection-exception class. Everything with a real non-08 SQLSTATE is a
-/// server-side refusal — the transaction is certainly rolled back.
+/// server-side refusal: the transaction is certainly rolled back.
 fn commit_indeterminate(e: &DriverError) -> bool {
     match e {
         DriverError::Db { code: None, .. } => true,
@@ -1019,7 +1019,7 @@ mod tests {
 
     #[test]
     fn quoting_matches_edit_rs_rules() {
-        // parity contract with edit.rs ql/qi — if these fail, the mirrors drifted
+        // parity contract with edit.rs ql/qi: if these fail, the mirrors drifted
         assert_eq!(ql("it's"), "'it''s'");
         assert_eq!(ql(""), "''");
         assert_eq!(ql("a''b"), "'a''''b'");
@@ -1040,7 +1040,7 @@ mod tests {
         assert_eq!(sniff_delimiter(b"a|b|c\n1|2|3\n"), b'|');
         // commas inside quotes don't fool the semicolon file
         assert_eq!(sniff_delimiter(b"\"x,y\";b\n\"1,2\";3\n"), b';');
-        // single column, no delimiter at all — comma default
+        // single column, no delimiter at all: comma default
         assert_eq!(sniff_delimiter(b"solo\nrows\n"), b',');
     }
 
@@ -1070,12 +1070,12 @@ mod tests {
 
     #[test]
     fn all_text_file_defaults_to_no_header() {
-        // every field fits Text — no type evidence, default keeps row 1 as data
+        // every field fits Text: no type evidence, default keeps row 1 as data
         assert!(!detect_header(&rows(&[
             &["name", "city"],
             &["ada", "london"],
         ])));
-        // single record: nothing to compare — never eat the only row
+        // single record: nothing to compare: never eat the only row
         assert!(!detect_header(&rows(&[&["a", "b"]])));
     }
 

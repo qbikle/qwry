@@ -4,7 +4,7 @@ import { terminatedSessions } from "./sessionFlags";
 
 /** app-ordered session death: mark BEFORE the IPC so an in-flight run's
  * connection-closed rejection classifies as a cancel, not an error
- * (spare-pool disposals skip this — spares never carry a visible run) */
+ * (spare-pool disposals skip this: spares never carry a visible run) */
 function dropSession(sid: string) {
   terminatedSessions.add(sid);
   void ipc.disconnect(sid);
@@ -18,15 +18,15 @@ export type HomeMode = "dashboard" | "edit" | null;
 /** key for a per-tab session / transaction flag */
 export const skey = (profileId: string, tabId: string) => `${profileId}::${tabId}`;
 
-/** in-flight tab-session connects, keyed by skey — concurrent callers share one */
+/** in-flight tab-session connects, keyed by skey; concurrent callers share one */
 const inflightTabSessions = new Map<string, Promise<string | null>>();
 
-/** in-flight primary connects, keyed by profile — a double-click (or a
+/** in-flight primary connects, keyed by profile; a double-click (or a
  * concurrent ensureTabSession reconnect) must not spawn a second primary
  * whose loser leaks server-side */
 const inflightConnects = new Map<string, Promise<void>>();
 
-/** per-profile connect epoch — bumped whenever the profile's connection
+/** per-profile connect epoch: bumped whenever the profile's connection
  * identity changes (edit/delete/invalidate). Every handshake captures it at
  * start and refuses to install sessions if it moved, so a "Save & Connect
  * after fixing a bad host" can never join (or install) the OLD host's attempt */
@@ -45,11 +45,11 @@ function bumpEpoch(id: string) {
 
 // ---- pre-warmed spare session pool -----------------------------------------
 // One hot standby session per connected profile. A fresh tab's first run
-// CLAIMS the spare instantly (zero handshake — 2-3s through a real bastion)
+// CLAIMS the spare instantly (zero handshake; 2-3s through a real bastion)
 // and a replacement builds in the background. Connection footprint: tabs that
 // actually ran + 1, instead of every visited tab.
 const spareSessions = new Map<string, string>();
-/** the replenish handshake in flight — ensureTabSession AWAITS and claims it
+/** the replenish handshake in flight: ensureTabSession AWAITS and claims it
  * instead of starting a THIRD full handshake (connect → immediate ⌘↩ used to
  * pay the whole tunnel handshake again while the spare was mid-build) */
 const spareInflight = new Map<string, Promise<string | null>>();
@@ -108,14 +108,14 @@ interface ConnectionsState {
   homeMode: HomeMode;
 
   sql: string;
-  /** connect-time errors (auth, network) — surfaced as a global toast */
+  /** connect-time errors (auth, network), surfaced as a global toast */
   error: DriverError | null;
   /** profile id the connect error belongs to (for the toast's "Edit" action) */
   errorProfileId: string | null;
-  /** profiles_list failed at startup — surfaced with a retry, never a silently
+  /** profiles_list failed at startup; surfaced with a retry, never a silently
    * empty rail */
   profilesError: string | null;
-  /** a held session died with a driver-known reason — rendered by ConnToast.
+  /** a held session died with a driver-known reason; rendered by ConnToast.
    * Set by markDisconnected itself (it knows which branch fired), never by a
    * separate listener racing it. */
   closedToast: { profileId: string; reason: string } | null;
@@ -138,18 +138,18 @@ interface ConnectionsState {
   setSessionWrites: (profileId: string, tabId: string, on: boolean) => Promise<boolean>;
   /** disconnect and forget every session for a closed tab */
   closeTabSessions: (tabId: string) => void;
-  /** a profile's connection died — flip the dot and drop its (dead) sessions.
+  /** a profile's connection died: flip the dot and drop its (dead) sessions.
    * When the dead session is just the pre-warmed SPARE, it's replaced quietly
    * without touching the live connection state. `reason` (driver-known) makes
    * a held session's death toast; without it the teardown is silent. */
   markDisconnected: (profileId: string, sessionId?: string, reason?: string | null) => void;
   clearClosedToast: () => void;
-  /** a profile was repointed — close its live sessions + drop its tunnel so the
+  /** a profile was repointed: close its live sessions + drop its tunnel so the
    * next connect uses the new host/creds */
   invalidateProfile: (profileId: string) => Promise<void>;
 }
 
-/** fields that decide what/where we connect to — a change here means any live
+/** fields that decide what/where we connect to: a change here means any live
  * session for the profile is stale and must be rebuilt. Also the identity the
  * persisted schema cache is bound to (schema.ts). */
 export const connSig = (p: Profile) =>
@@ -195,7 +195,7 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
   },
 
   deleteProfile: async (id) => {
-    // full teardown FIRST: spare + primary + per-tab sessions + state — and
+    // full teardown FIRST: spare + primary + per-tab sessions + state, and
     // flip connState before the delete so an in-flight replenishSpare can't
     // mint a fresh backend session for a profile that no longer exists
     bumpEpoch(id);
@@ -242,12 +242,12 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
 
   connect: (profileId) => {
     // concurrent calls (double-click, run + explain racing a reconnect) share
-    // ONE attempt — two parallel ipc.connects left the loser's backend
+    // ONE attempt: two parallel ipc.connects left the loser's backend
     // session/tunnel alive with nothing tracking it
     const inflight = inflightConnects.get(profileId);
     if (inflight) return inflight;
     // guarded delete: an epoch bump may have already replaced this entry with
-    // a fresh attempt — the stale finally must not evict it
+    // a fresh attempt; the stale finally must not evict it
     const attempt = connectInner(profileId, set, get).finally(() => {
       if (inflightConnects.get(profileId) === attempt) inflightConnects.delete(profileId);
     });
@@ -262,7 +262,7 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
     const key = skey(profileId, tabId);
     const existing = get().tabSessions[key];
     if (existing) return existing;
-    // claim the pre-warmed spare — instant, no handshake — replenish behind it
+    // claim the pre-warmed spare (instant, no handshake); replenish behind it
     const spare = spareSessions.get(profileId);
     if (spare && get().sessions[profileId]) {
       spareSessions.delete(profileId);
@@ -285,7 +285,7 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
         replenishSpare(profileId);
         return sid;
       }
-      // build failed or someone else claimed it — fall through
+      // build failed or someone else claimed it; fall through
     }
     // dedupe concurrent callers (run + explain): two parallel connects would
     // leak the loser's backend session
@@ -300,14 +300,14 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
           if (!get().sessions[profileId]) return null;
         }
         const sid = await ipc.connect(profileId);
-        // the profile was repointed mid-handshake — this session targets the
+        // the profile was repointed mid-handshake: this session targets the
         // OLD host; installing it would run the tab against the wrong database
         if (epochOf(profileId) !== epoch) {
           void ipc.disconnect(sid);
           return null;
         }
         set((s) => ({ tabSessions: { ...s.tabSessions, [key]: sid } }));
-        // we paid the handshake because no spare existed — build one so the
+        // we paid the handshake because no spare existed; build one so the
         // NEXT fresh tab doesn't
         replenishSpare(profileId);
         return sid;
@@ -321,7 +321,7 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
     })();
     inflightTabSessions.set(key, p);
     // guarded delete: an epoch bump may have evicted (and a new attempt
-    // replaced) this entry — the stale cleanup must not remove the fresh one
+    // replaced) this entry; the stale cleanup must not remove the fresh one
     void p.finally(() => {
       if (inflightTabSessions.get(key) === p) inflightTabSessions.delete(key);
     });
@@ -372,7 +372,7 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
   },
 
   markDisconnected: (profileId, sessionId, reason) => {
-    // the standby died (bastion idle-drop etc.) — replace it quietly; the
+    // the standby died (bastion idle-drop etc.): replace it quietly; the
     // profile and its live tab sessions are untouched
     if (sessionId && spareSessions.get(profileId) === sessionId) {
       spareSessions.delete(profileId);
@@ -380,7 +380,7 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
       replenishSpare(profileId);
       return;
     }
-    // ONE tab session died (e.g. its own idle-in-tx timeout) — forget just
+    // ONE tab session died (e.g. its own idle-in-tx timeout): forget just
     // that session; sibling tabs on the profile keep their live sessions and
     // open transactions. The old profile-wide wipe silently orphaned them.
     if (sessionId && get().sessions[profileId] !== sessionId) {
@@ -397,13 +397,13 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
           tabSessions,
           txTabs,
           writeTabs,
-          // a session the user actually held died — say so
+          // a session the user actually held died; say so
           ...(reason ? { closedToast: { profileId, reason } } : {}),
         };
       });
       return;
     }
-    // the PRIMARY died (real drop: network/bastion) — flip the dot. Tab
+    // the PRIMARY died (real drop: network/bastion); flip the dot. Tab
     // sessions ride the same transport; each fires its own session-closed as
     // keepalives detect it, and the branch above reaps them one by one.
     dropSpare(profileId);
@@ -420,7 +420,7 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
 
   invalidateProfile: async (profileId) => {
     const prefix = `${profileId}::`;
-    // any handshake still in flight belongs to the OLD identity — it must
+    // any handshake still in flight belongs to the OLD identity: it must
     // neither be joined nor allowed to install what it produces
     bumpEpoch(profileId);
     dropSpare(profileId);
@@ -449,7 +449,7 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
       connState: { ...s.connState, [profileId]: "disconnected" },
     }));
     // drop the cached SSH tunnel so the next connect rebuilds it against the new
-    // host — awaited so a Save&Connect that reconnects right after sees it gone
+    // host, awaited so a Save&Connect that reconnects right after sees it gone
     await ipc.invalidateProfile(profileId);
   },
 }));
@@ -471,20 +471,20 @@ async function connectInner(
     error: null,
     errorProfileId: null,
   }));
-  // hydrate the persisted schema snapshot NOW — sidebar + completion are
+  // hydrate the persisted schema snapshot NOW: sidebar + completion are
   // live at t=0 while the handshake and the fresh introspect run behind it
   void import("./schema").then(({ useSchema }) => useSchema.getState().hydrate(profileId));
   try {
     const sessionId = await ipc.connect(profileId);
     // the profile was edited/deleted mid-handshake: this session belongs to
-    // the OLD identity — installing it would put the old host's session under
+    // the OLD identity: installing it would put the old host's session under
     // the new profile. Dispose it and let the caller's fresh attempt win.
     if (epochOf(profileId) !== epoch) {
       dropSession(sessionId);
       return;
     }
     // a fresh primary connection invalidates any prior per-tab sessions for
-    // this profile — drop them so tabs re-create against the live connection
+    // this profile; drop them so tabs re-create against the live connection
     const prefix = `${profileId}::`;
     const tabSessions: Record<string, string> = {};
     const txTabs: Record<string, boolean> = {};
@@ -523,7 +523,7 @@ async function connectInner(
     // profile identity as errored
     if (epochOf(profileId) !== epoch) return;
     set((s) => ({
-      // distinct from plain disconnected — the card/rail dot shows the failure
+      // distinct from plain disconnected: the card/rail dot shows the failure
       connState: { ...s.connState, [profileId]: "error" },
       error: e as DriverError,
       errorProfileId: profileId,
@@ -569,7 +569,7 @@ import { useSettings } from "./settings";
 let lastConnAccent: string | null = null;
 let lastActiveConn: string | null = null;
 useConnections.subscribe((s) => {
-  // per-connection themes key on the workspace identity, connected or not —
+  // per-connection themes key on the workspace identity, connected or not:
   // a disconnected workspace still shows that connection's UI
   if (s.activeProfileId !== lastActiveConn) {
     lastActiveConn = s.activeProfileId;

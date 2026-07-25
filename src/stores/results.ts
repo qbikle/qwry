@@ -26,7 +26,7 @@ interface TabResult {
   statements: StatementState[];
   activeStatement: number;
   running: boolean;
-  /** cancel requested for the in-flight run — instant feedback while the
+  /** cancel requested for the in-flight run: instant feedback while the
    * backend cancel ladder works; clears when the cancel IPC settles or the
    * run itself settles, whichever comes first */
   cancelling: boolean;
@@ -34,14 +34,14 @@ interface TabResult {
   connecting: boolean;
   totalMs: number | null;
   executedSql: string | null;
-  /** char offset of executedSql within the editor buffer at run time — lets
+  /** char offset of executedSql within the editor buffer at run time; lets
    * the error squiggle land right when only a statement/selection ran */
   executedOffset: number;
   /** server NOTICEs (RAISE NOTICE, …) received on this tab's session since
-   * the last run — psql prints these; dropping them hides real information */
+   * the last run. psql prints these; dropping them hides real information */
   notices: { severity: string; message: string }[];
   executedSessionId: string | null;
-  /** profile the result came from — commits must target THIS, never the
+  /** profile the result came from: commits must target THIS, never the
    * currently-active rail selection (staging→prod misfire class) */
   executedProfileId: string | null;
   globalError: DriverError | null;
@@ -72,13 +72,13 @@ interface ResultsState extends TabResult {
   setActive: (tabId: string) => void;
   clearTab: (tabId: string) => void;
   /** opts.profileId pins the run to that profile instead of the rail-active
-   * one — post-write reloads must read the connection they wrote to; every
+   * one: post-write reloads must read the connection they wrote to; every
    * other caller keeps rail semantics (the v0.6 contract) */
   run: (sqlOverride?: string, offset?: number, opts?: { profileId?: string }) => Promise<void>;
   cancel: () => Promise<void>;
   setActiveStatement: (i: number) => void;
   /** patch one statement's rows (edits commit); tabId defaults to the active
-   * tab but commits pass their own — the user may switch tabs mid-flight */
+   * tab but commits pass their own; the user may switch tabs mid-flight */
   patchStatement: (
     stmtIndex: number,
     patchRows: (rows: (string | null)[][]) => (string | null)[][],
@@ -117,12 +117,12 @@ function writeTab(
   });
 }
 
-/** synchronous per-tab run guard — `running` only flips true AFTER the
+/** synchronous per-tab run guard: `running` only flips true AFTER the
  * confirm prompts, so a second ⌘↩ during a modal would overwrite the danger
  * resolver and orphan the first invocation */
 const runInflight = new Set<string>();
 
-/** sessions the user force-terminated (last cancel tier) — their run's
+/** sessions the user force-terminated (last cancel tier): their run's
  * connection-closed rejection is a cancel, not an error */
 
 
@@ -196,12 +196,12 @@ export const useResults = create<ResultsState>((set, get) => ({
 
   run: async (sqlOverride?: string, offset = 0, opts?: { profileId?: string }) => {
     const conn = useConnections.getState();
-    // the profile this run EXECUTES on — everything downstream (session,
+    // the profile this run EXECUTES on: everything downstream (session,
     // history, executedProfileId stamp, disconnect reaping) reads this one
     // variable, so the stamp can never claim a profile that didn't execute
     const profileId = opts?.profileId ?? conn.activeProfileId;
     const sql = sqlOverride ?? conn.sql;
-    // captured AT ENTRY, next to the executed sql — the snapshot block below
+    // captured AT ENTRY, next to the executed sql: the snapshot block below
     // sits after awaits (session connect, confirms), and a mid-connect tab
     // switch would otherwise record tab B's buffer under this tab's id
     const buffer = conn.sql;
@@ -209,7 +209,7 @@ export const useResults = create<ResultsState>((set, get) => ({
     if (!tabId) return;
     const cur = get().byTab[tabId] ?? blankTab();
     if (runInflight.has(tabId) || cur.running || !profileId || !sql.trim()) return;
-    // a commit in flight builds PK locators against the CURRENT result set —
+    // a commit in flight builds PK locators against the CURRENT result set;
     // replacing it mid-commit could aim UPDATEs at the wrong rows
     {
       const { useEdits } = await import("./edits");
@@ -218,13 +218,13 @@ export const useResults = create<ResultsState>((set, get) => ({
     if (runInflight.has(tabId) || (get().byTab[tabId] ?? blankTab()).running) return; // re-check after await
     runInflight.add(tabId);
 
-    // the first run in a fresh tab establishes its dedicated session — say so
+    // the first run in a fresh tab establishes its dedicated session; say so
     // instead of sitting silent for the tunnel handshake
     writeTab(set, tabId, { connecting: true });
     const sessionId = await conn.ensureTabSession(profileId, tabId);
     writeTab(set, tabId, { connecting: false });
     if (!sessionId) {
-      // no statements will ever arrive — without an error the pane sits on
+      // no statements will ever arrive; without an error the pane sits on
       // "Loading table…" forever once the connect toast expires
       writeTab(set, tabId, {
         globalError: {
@@ -237,7 +237,7 @@ export const useResults = create<ResultsState>((set, get) => ({
       return;
     }
 
-    // staged edits die with the old result set — never silently. (Scroll-
+    // staged edits die with the old result set, never silently. (Scroll-
     // triggered loadMore parks itself instead of prompting; this covers
     // explicit re-runs, filter/sort changes and refresh.)
     {
@@ -263,7 +263,7 @@ export const useResults = create<ResultsState>((set, get) => ({
       // the confirm opens IMMEDIATELY listing the statements; planner
       // estimates ("no WHERE clause" reads very differently at 12 rows vs
       // 4.2M) STREAM into the open modal. Plain EXPLAIN (no ANALYZE) plans
-      // without executing — but planning still waits on locks, so it runs on
+      // without executing, but planning still waits on locks, so it runs on
       // the PRIMARY session (never queued in front of the user's own run on
       // the tab session) with a 2s UI deadline → "estimate unavailable".
       const est: string[] = danger.map(() => "≈ estimating…");
@@ -280,7 +280,7 @@ export const useResults = create<ResultsState>((set, get) => ({
             const txt = out.statements[0]?.rows[0]?.[0];
             if (!txt) return null;
             // DML plans root at ModifyTable whose own Plan Rows is 0 (no
-            // RETURNING) — the row estimate lives in its child scan node
+            // RETURNING): the row estimate lives in its child scan node
             interface PlanNode {
               "Node Type"?: string;
               "Plan Rows"?: number;
@@ -314,7 +314,7 @@ export const useResults = create<ResultsState>((set, get) => ({
     }
 
     // never-lose-work: every committed run parks the tab's FULL buffer in the
-    // time-machine (query tabs only — table-browse runs land here too);
+    // time-machine (query tabs only; table-browse runs land here too);
     // dedupe + the 50/tab cap live in the appdb layer
     if (buffer.trim() && useTabs.getState().tabs.find((t) => t.id === tabId)?.kind === "query") {
       void ipc
@@ -339,7 +339,7 @@ export const useResults = create<ResultsState>((set, get) => ({
     // this tab's stale editability + pending edits die with its old result set
     void import("./edits").then(({ useEdits }) => useEdits.getState().resetTab(tabId));
 
-    // history timing/rows come from the events themselves — reading the store
+    // history timing/rows come from the events themselves: reading the store
     // after the invoke resolves races the rAF row flush and logged ms=0
     let historyRows = 0;
     let historyDone = false;
@@ -428,11 +428,11 @@ export const useResults = create<ResultsState>((set, get) => ({
 
     try {
       await ipc.executeStream(sessionId, sql, onEvent);
-      // (open-transaction tracking is driver-truth now — the "tx-state"
+      // (open-transaction tracking is driver-truth now: the "tx-state"
       // event listener below feeds txTabs; no SQL sniffing here)
 
       // schema-affecting statement heads (real statement boundaries from the
-      // executed run — not a whole-buffer regex) → refresh the snapshot AND
+      // executed run, not a whole-buffer regex) → refresh the snapshot AND
       // every tab's cached editability maps (they carry table/column/pk
       // identity that DDL can invalidate)
       const ranDdl = (get().byTab[tabId]?.statements ?? []).some(
@@ -447,11 +447,11 @@ export const useResults = create<ResultsState>((set, get) => ({
     } catch (e) {
       const err = e as DriverError;
       // 57014 = user cancel, 57P01 = pg_terminate_backend; a force-disconnect
-      // (last cancel tier) rejects with a connection-closed shape instead —
+      // (last cancel tier) rejects with a connection-closed shape instead;
       // the terminatedSessions flag marks it as the cancel it was
       const cancelled =
         err?.code === "57014" || err?.code === "57P01" || terminatedSessions.has(sessionId);
-      // failed/cancelled runs enter history too — flagged, never silently
+      // failed/cancelled runs enter history too: flagged, never silently
       // absent; a failed write logs but must not break the run path
       if (!historyDone) {
         historyDone = true;
@@ -470,21 +470,21 @@ export const useResults = create<ResultsState>((set, get) => ({
       }));
       const msg = (err?.message ?? "").toLowerCase();
       if (/connection|closed|communicat|broken pipe|reset|terminat|no such session/.test(msg)) {
-        // reap the EXECUTED session only — sibling tabs on the profile keep
+        // reap the EXECUTED session only; sibling tabs on the profile keep
         // their live sessions (flipping the whole profile contradicted the
         // per-session reaping in markDisconnected)
         useConnections.getState().markDisconnected(profileId, sessionId);
       }
     } finally {
       terminatedSessions.delete(sessionId);
-      // a successful cancel ends the run — the flag dies with it
+      // a successful cancel ends the run; the flag dies with it
       writeTab(set, tabId, { running: false, cancelling: false });
       runInflight.delete(tabId);
     }
   },
 
   cancel: async () => {
-    // captured at entry (LESSONS #3) — the flag must land on the tab whose
+    // captured at entry: the flag must land on the tab whose
     // run is being cancelled even if the user switches tabs mid-flight
     const tabId = get().active;
     const sessionId = get().executedSessionId;
@@ -492,7 +492,7 @@ export const useResults = create<ResultsState>((set, get) => ({
     // already cancelling → no-op; repeated ⌘. must not stack cancel IPCs
     if ((get().byTab[tabId] ?? blankTab()).cancelling) return;
     writeTab(set, tabId, { cancelling: true });
-    // clear scoped to THIS run's session — a late-settling cancel from an
+    // clear scoped to THIS run's session: a late-settling cancel from an
     // earlier run must never release a newer run's flag
     const clearCancelling = () =>
       writeTab(set, tabId, (t) =>
@@ -500,30 +500,30 @@ export const useResults = create<ResultsState>((set, get) => ({
       );
     try {
       // escalating cancel: CancelToken, then pg_cancel_backend over a fresh
-      // control connection if the query didn't die — driver-side
+      // control connection if the query didn't die (driver-side)
       await ipc.cancel(sessionId);
       // deliberately NOT cleared on success: over a congested tunnel the
-      // dead query's 57014 still has to drain through the buffered rows —
+      // dead query's 57014 still has to drain through the buffered rows;
       // the run's finally clears the flag when the run truly settles.
       // Clearing here flickered the button back to Cancel mid-death.
     } catch (e) {
-      // a failed cancel leaves the run running — release the flag so the
+      // a failed cancel leaves the run running; release the flag so the
       // user can retry or escalate through the terminate confirm below
       clearCancelling();
       const conns = useConnections.getState();
       const entry = Object.entries(conns.tabSessions).find(([, sid]) => sid === sessionId);
-      // the terminated session's OWN profile — teardown must never touch the
+      // the terminated session's OWN profile: teardown must never touch the
       // tab's sibling sessions on other profiles
       const profileId = entry?.[0].split("::")[0] ?? get().executedProfileId;
       const msg = (e as { message?: string }).message ?? String(e);
-      // the session is already gone — nothing to terminate; just forget it so
+      // the session is already gone: nothing to terminate; just forget it so
       // the next run builds a fresh one
       if (msg.includes("no such session")) {
         if (profileId) conns.markDisconnected(profileId, sessionId);
         return;
       }
       // both cancel tiers failed. Last tier: pg_terminate_backend (kills the
-      // server process) + force-disconnect — explicit confirm, never automatic
+      // server process) + force-disconnect: explicit confirm, never automatic
       const { confirmDanger } = await import("./danger");
       const inTx = entry ? !!conns.txTabs[entry[0]] : false;
       const ok = await confirmDanger(
@@ -538,7 +538,7 @@ export const useResults = create<ResultsState>((set, get) => ({
       try {
         await ipc.terminateBackend(sessionId);
       } catch {
-        // server unreachable — the teardown below still unsticks the UI;
+        // server unreachable: the teardown below still unsticks the UI;
         // the server reaps the query via keepalives
       }
       // scoped teardown: disconnects + forgets ONLY the executed session (the
@@ -554,8 +554,8 @@ export const useResults = create<ResultsState>((set, get) => ({
 if (useTabs.getState().activeId) useResults.getState().setActive(useTabs.getState().activeId!);
 let prevTabIds = new Set(useTabs.getState().tabs.map((t) => t.id));
 useTabs.subscribe((s, p) => {
-  // (first-run latency is handled by the spare-session pool in connections.ts
-  // — a fresh tab claims the pre-warmed standby instantly on its first run)
+  // (first-run latency is handled by the spare-session pool in connections.ts;
+  // a fresh tab claims the pre-warmed standby instantly on its first run)
   if (s.activeId !== p.activeId) useResults.getState().setActive(s.activeId ?? "");
   const ids = new Set(s.tabs.map((t) => t.id));
   if (ids.size !== prevTabIds.size) {
@@ -573,7 +573,7 @@ useTabs.subscribe((s, p) => {
 // driver-tracked transaction state → the tx chip / amber tab dot. The driver
 // lexes statement heads + error outcomes (tokio-postgres hides ReadyForQuery),
 // so txTabs is server-truth instead of a frontend SQL sniff. failed-tx still
-// counts as open — the transaction exists until COMMIT/ROLLBACK.
+// counts as open: the transaction exists until COMMIT/ROLLBACK.
 void import("@tauri-apps/api/event").then(({ listen }) =>
   listen<{ session_id: string; state: "idle" | "in_tx" | "failed_tx" }>("tx-state", (e) => {
     const conns = useConnections.getState();
@@ -586,8 +586,8 @@ void import("@tauri-apps/api/event").then(({ listen }) =>
 );
 
 // server NOTICEs → the tab whose session raised them (session ids are unique
-// per tab session, so routing is exact; notices from unknown sessions —
-// primary/spare/introspection — are dropped, matching psql's per-session view)
+// per tab session, so routing is exact; notices from unknown sessions
+// (primary/spare/introspection) are dropped, matching psql's per-session view)
 void import("@tauri-apps/api/event").then(({ listen }) =>
   listen<{ session_id: string; severity: string; message: string }>("pg-notice", (e) => {
     const { byTab } = useResults.getState();

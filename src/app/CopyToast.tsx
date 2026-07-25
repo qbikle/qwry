@@ -1,5 +1,5 @@
 // Small transient pill confirming clipboard writes (see lib/copyCue.ts).
-// Non-interactive, never in the overlay stack — pure feedback.
+// Non-interactive, never in the overlay stack: pure feedback.
 import { useEffect, useRef, useState } from "react";
 import "./copytoast.css";
 

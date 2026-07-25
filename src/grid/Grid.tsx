@@ -1,4 +1,4 @@
-// Virtualized results grid — rows and columns both windowed (DOM cells, P2).
+// Virtualized results grid: rows and columns both windowed (DOM cells, P2).
 // Perf checkpoint vs Glide Data Grid happens at the end of P2 (see ROADMAP).
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -60,7 +60,7 @@ const NUMERIC_TYPES = new Set([
 ]);
 
 // ⌘C selections at/above this cell count build their TSV in rAF-yielded
-// slices — a 50k-row ⌘A+⌘C built a >100MB string synchronously (seconds of
+// slices: a 50k-row ⌘A+⌘C built a >100MB string synchronously (seconds of
 // beachball). Below it the copy stays fully synchronous (zero added latency).
 const COPY_ASYNC_CELLS = 16_000;
 const COPY_SLICE_ROWS = 4_000;
@@ -74,7 +74,7 @@ const FORMAT_LABEL: Record<CopyFormat, string> = {
 };
 
 // chunked-copy slice scheduling: rAF stalls while the window is occluded
-// (WKWebView suspends rAF) — race it against a timeout, first wins, cancel
+// (WKWebView suspends rAF): race it against a timeout, first wins, cancel
 // the loser, so a background build still finishes
 function nextCopyTick(fn: () => void) {
   let done = false;
@@ -92,7 +92,7 @@ function nextCopyTick(fn: () => void) {
   }, 32);
 }
 
-/** One data cell — memoized on primitive props so an arrow key / drag step /
+/** One data cell: memoized on primitive props so an arrow key / drag step /
  * stream flush repaints only the handful of cells whose state changed, not
  * the whole visible window (the grid's single biggest perf lever). Mouse
  * handling is DELEGATED to the container via data-r/data-c, so cells carry
@@ -129,7 +129,7 @@ const Cell = memo(function Cell(p: {
       title={p.title}
     >
       {/* the grid must never lie: real NULL renders as a chip element, '' as a
-          dim marker — the literal text "NULL" stays visually distinct */}
+          dim marker: the literal text "NULL" stays visually distinct */}
       {p.isDefault ? (
         <span className="vgrid-defaultchip">DEFAULT</span>
       ) : p.v === null ? (
@@ -147,7 +147,7 @@ const Cell = memo(function Cell(p: {
 
 // ---- column-width persistence -------------------------------------------
 // keyed by the result's column-name signature (localStorage, LRU-capped) so a
-// re-run — or reopening the same table/query tomorrow — keeps hand-set widths
+// re-run (or reopening the same table/query tomorrow) keeps hand-set widths
 const COLW_KEY = "qwry.colWidths";
 const COLW_CAP = 300;
 const colSig = (cols: { name: string }[]) => cols.map((c) => c.name).join("\u0001");
@@ -171,7 +171,7 @@ function saveStoredWidths(sig: string, widths: number[]) {
     for (let i = 0; i < keys.length - COLW_CAP; i++) delete all[keys[i]];
     localStorage.setItem(COLW_KEY, JSON.stringify(all));
   } catch {
-    /* quota/parse — widths just won't persist */
+    /* quota/parse: widths just won't persist */
   }
 }
 // ---------------------------------------------------------------------------
@@ -188,14 +188,14 @@ function estimateWidths(st: StatementState): number[] {
   });
 }
 
-/** sort-arrow tooltip — speaks the CHAIN grammar: what click / ⇧-click /
+/** sort-arrow tooltip. Speaks the CHAIN grammar: what click / ⇧-click /
  * ⌥-click will actually do given the current chain state (the single-sort
  * wording only appears when this column really is the whole chain) */
 function sortBtnTitle(s: {
   dir: "asc" | "desc" | null;
   chainLen: number;
   nulls?: "first" | "last";
-  /** catalog NOT NULL (browse) — the ⌥ gesture is gated, say so */
+  /** catalog NOT NULL (browse): the ⌥ gesture is gated, say so */
   notNull?: boolean;
 }): string {
   const solo = s.chainLen === 1 && s.dir !== null;
@@ -246,12 +246,12 @@ function CellEditor({
   placeholder?: string;
   kind: "text" | "bool" | "enum";
   enumLabels?: string[];
-  /** column is a single-column FK — offer the referenced-row picker */
+  /** column is a single-column FK: offer the referenced-row picker */
   fk?: FkPickTarget | null;
   onDraft: (d: string) => void;
   /** advance moves focus after staging: true = down (Enter), "right" = Tab */
   onSave: (advance?: boolean | "right") => void;
-  /** stage an explicit value (bool picker — bypasses the async draft state) */
+  /** stage an explicit value (bool picker: bypasses the async draft state) */
   onCommit: (value: string, advance?: boolean) => void;
   onNull: () => void;
   onCancel: () => void;
@@ -260,7 +260,7 @@ function CellEditor({
   const cancelled = useRef(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
-  // FK picker: while it's open the picker input holds focus — the textarea
+  // FK picker: while it's open the picker input holds focus. The textarea
   // blur must NOT save-and-close under it
   const [pickerAt, setPickerAt] = useState<{ x: number; y: number } | null>(null);
   const pickerOpen = useRef(false);
@@ -339,7 +339,7 @@ function CellEditor({
               className={draft === wire || draft === label ? "active" : ""}
               onClick={() => {
                 cancelled.current = true;
-                // commit the WIRE text ('t'/'f') — PG returns bools as t/f, so
+                // commit the WIRE text ('t'/'f'): PG returns bools as t/f, so
                 // picking the current value stays a no-op instead of dirtying
                 onCommit(wire, true);
               }}
@@ -391,13 +391,13 @@ function CellEditor({
           onChange={(e) => onDraft(e.target.value)}
           onKeyDown={(e) => {
             if (keyGuard(e)) return;
-            // Enter saves-and-advances; ⌥/⇧-Enter inserts a real newline —
+            // Enter saves-and-advances; ⌥/⇧-Enter inserts a real newline:
             // multiline values are finally editable inline
             if (e.key === "Enter" && !e.altKey && !e.shiftKey) {
               e.preventDefault();
-              onSave(); // commit in place — advancing on Enter surprised more than it helped
+              onSave(); // commit in place: advancing on Enter surprised more than it helped
             }
-            // Tab follows the grid's own grammar: commit + move right —
+            // Tab follows the grid's own grammar: commit + move right.
             // the browser default blurred into the ∅ button instead
             if (e.key === "Tab" && !e.shiftKey) {
               e.preventDefault();
@@ -407,7 +407,7 @@ function CellEditor({
           }}
           onBlur={() => {
             // click-outside = save; Esc/∅ already handled; an open FK picker
-            // holds focus deliberately — never save-and-close under it
+            // holds focus deliberately: never save-and-close under it
             if (!cancelled.current && !pickerOpen.current) onSave();
           }}
         />
@@ -444,7 +444,7 @@ function CellEditor({
           point={pickerAt}
           target={fk}
           onPick={(v) => {
-            // through the normal editor-commit path — staged, never written
+            // through the normal editor-commit path: staged, never written
             cancelled.current = true;
             pickerOpen.current = false;
             onCommit(v);
@@ -456,7 +456,7 @@ function CellEditor({
   );
 }
 
-/** browse tabs: horizontal scroll survives the reload-remount cycle — sort/
+/** browse tabs: horizontal scroll survives the reload-remount cycle. Sort/
  * filter/page re-runs clear the results while streaming, unmounting the
  * grid, and a fresh scroller teleported the user back to column one. The
  * viewport belongs to the user (LESSONS: one scroll authority); vertical
@@ -502,7 +502,7 @@ export function Grid({
 
   useEffect(() => {
     if (widthsInitialized.current) return;
-    // hand-set widths for this column shape win over content estimation —
+    // hand-set widths for this column shape win over content estimation,
     // and apply immediately, before any rows have streamed in
     const stored = loadStoredWidths(colSig(statement.columns), statement.columns.length);
     if (stored) {
@@ -526,7 +526,7 @@ export function Grid({
   const widthsRef = useRef(colWidths);
   widthsRef.current = colWidths;
 
-  // (virtualizers + selection are created AFTER the view-mapping block —
+  // (virtualizers + selection are created AFTER the view-mapping block:
   // the quick-filter changes the VIEW row count they must be sized by)
   const colAtRef = useRef<(view: number) => number>((v) => v);
 
@@ -553,7 +553,7 @@ export function Grid({
   // ---- view mappings ---------------------------------------------------
   // Sort and column reorder are VIEW-level index maps over untouched data.
   // Everything data-keyed (staged edits, truncated markers, find hits,
-  // editability) stays on UNDERLYING indexes — sorting after staging an edit
+  // editability) stays on UNDERLYING indexes: sorting after staging an edit
   // must never make ⌘S write through the wrong row.
   // client sort is a CHAIN (shift-click appends tiebreakers, ⌥-click cycles
   // NULLS placement); a single-entry chain is the old tri-state sort
@@ -566,9 +566,9 @@ export function Grid({
     setColOrder(null);
     setHiddenCols(new Set());
   }, [statement.index, cols.length]);
-  // an open inline editor holds VIEW coords — a sort/reorder under it would
+  // an open inline editor holds VIEW coords: a sort/reorder under it would
   // make save resolve through the NEW maps and stage onto the wrong cell.
-  // The record view and histogram hold view/value snapshots — same rule.
+  // The record view and histogram hold view/value snapshots, same rule.
   useEffect(() => {
     setEditing(null);
     setRecord(null);
@@ -589,9 +589,9 @@ export function Grid({
   colAtRef.current = colAt;
 
   // quick-filter over LOADED rows (view-level, same contract as client sort;
-  // browser excluded — filtering one server page would lie). Perf shape:
+  // browser excluded: filtering one server page would lie). Perf shape:
   // lowercase per-row haystacks are built ONCE per rows identity (not per
-  // keystroke — the naive scan re-lowercased rows×cols every keypress), and a
+  // keystroke: the naive scan re-lowercased rows×cols every keypress), and a
   // query that extends the previous one only re-tests the previous matches.
   // Cells are joined with NUL (untypeable) so a match can never span cells.
   const rawFilter = useGridFilter((st) => st.text);
@@ -632,10 +632,10 @@ export function Grid({
     return idx;
   }, [filterText, rows]);
 
-  // client-side sort over LOADED rows — editor results only; the browser's
+  // client-side sort over LOADED rows: editor results only; the browser's
   // paged data sorts server-side (a client sort of one page would lie).
   // Stable multi-key sort: ties keep stream order, NULL placement defaults
-  // to PG's direction-dependent rule (asc last, desc first — nullsFirstOf);
+  // to PG's direction-dependent rule (asc last, desc first: nullsFirstOf);
   // ⌥-click pins an entry to explicit FIRST/LAST.
   const rowOrder = useMemo(() => {
     const sorting = clientChain.length > 0 && !insertable;
@@ -658,7 +658,7 @@ export function Grid({
   );
   const rowViewOf = useMemo(() => {
     if (!rowOrder) return null;
-    // sized by DATA rows — filtered-out rows have no view slot (undefined)
+    // sized by DATA rows: filtered-out rows have no view slot (undefined)
     const inv = new Array<number | undefined>(rows.length);
     rowOrder.forEach((dataR, view) => (inv[dataR] = view));
     return inv;
@@ -666,17 +666,17 @@ export function Grid({
   }, [rowOrder, rows.length]);
   const colViewOf = useMemo(() => {
     if (!colOrder && hiddenCols.size === 0) return null;
-    // sized by DATA cols — hidden ones have no view slot (undefined)
+    // sized by DATA cols: hidden ones have no view slot (undefined)
     const inv = new Array<number | undefined>(cols.length);
     viewCols.forEach((dataC, view) => (inv[dataC] = view));
     return inv;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [colOrder, hiddenCols, viewCols, cols.length]);
 
-  /** VIEW row count — differs from rows.length while the quick-filter is on */
+  /** VIEW row count: differs from rows.length while the quick-filter is on */
   const viewLen = rowOrder ? rowOrder.length : rows.length;
 
-  // inline new-row draft (table browser only) — declared before the
+  // inline new-row draft (table browser only): declared before the
   // virtualizers because the band's height feeds their scroll padding
   const draftRow = useBrowser((s) => s.draftRow);
   const showDraft = insertable && draftRow !== null;
@@ -688,12 +688,12 @@ export function Grid({
     estimateSize: () => ROW_H,
     overscan: 12,
     // rows paint HEADER_H + draftH below their virtual offsets (sticky
-    // chrome overlays the top of the viewport) — end-aligned scrollToIndex
+    // chrome overlays the top of the viewport): end-aligned scrollToIndex
     // must aim past it or downward nav parks the focused row out of view
     scrollPaddingEnd: HEADER_H + draftH,
   });
   useLayoutEffect(() => {
-    rowVirt.measure(); // density change resizes every row — same frame
+    rowVirt.measure(); // density change resizes every row, same frame
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ROW_H]);
   const colVirt = useVirtualizer({
@@ -712,9 +712,9 @@ export function Grid({
   const sel = useSelection(viewLen, viewColLen);
 
   // ANY view remap (quick-filter, sort, column reorder) invalidates an open
-  // editor and the range selection — both hold VIEW coords, and batch actions
+  // editor and the range selection: both hold VIEW coords, and batch actions
   // (Set NULL, fill down, paste, delete) re-resolve them through the NEW maps
-  // onto different data rows. Drop both on every remap (record view too — it
+  // onto different data rows. Drop both on every remap (record view too, it
   // holds view rows).
   useEffect(() => {
     setEditing(null);
@@ -735,13 +735,13 @@ export function Grid({
   useEffect(() => {
     useGridFilter.getState().setMatches(filterIdx ? filterIdx.length : null);
   }, [filterIdx]);
-  // FindBar computes hits over data columns — it needs the hidden set so a
+  // FindBar computes hits over data columns: it needs the hidden set so a
   // "current hit" can't sit in a column the grid can't scroll to
   useEffect(() => {
     useGridFilter.getState().setHiddenCols(hiddenCols);
   }, [hiddenCols]);
   useEffect(() => () => useGridFilter.getState().setHiddenCols(new Set()), [statement.index]);
-  // leaving this grid (tab switch / new result) resets the filter — carrying
+  // leaving this grid (tab switch / new result) resets the filter: carrying
   // it into a different result set would silently hide rows there
   useEffect(() => () => useGridFilter.getState().clear(), [statement.index]);
 
@@ -773,7 +773,7 @@ export function Grid({
     [viewColLen, viewOffsets],
   );
 
-  // ⌘F current hit is data-indexed — map into view space before scrolling
+  // ⌘F current hit is data-indexed: map into view space before scrolling
   useEffect(() => {
     if (!findCur) return;
     const vr = rowViewOf ? rowViewOf[findCur.r] : findCur.r;
@@ -786,7 +786,7 @@ export function Grid({
   }, [findCur, rowViewOf, colViewOf]);
   // ------------------------------------------------------------------------
 
-  /** the browsed relation (browse tabs only) — gates row mutations on kind
+  /** the browsed relation (browse tabs only): gates row mutations on kind
    * 'r' and feeds catalog NOT NULL into the sort-arrow NULLS affordance */
   const browseTable = useBrowser((s) => s.table);
   const draftError = useBrowser((s) => s.draftError);
@@ -815,14 +815,14 @@ export function Grid({
     );
   }, []);
   // per-column table metadata for the draft band (default expression,
-  // nullability, identity/generated) — the band is self-documenting: the
+  // nullability, identity/generated). The band is self-documenting: the
   // placeholder shows what omitting the column actually does
   const draftMeta = useMemo(() => {
     const m = new Map<string, ColumnInfo>();
     for (const c of browseTable?.columns ?? []) m.set(c.name, c);
     return m;
   }, [browseTable]);
-  // columns Postgres fills itself — no input, "auto" like ctid
+  // columns Postgres fills itself: no input, "auto" like ctid
   const draftAuto = (name: string) => {
     if (name === "ctid") return true;
     const m = draftMeta.get(name);
@@ -839,18 +839,18 @@ export function Grid({
     if (m.default !== null) return m.default;
     return m.not_null ? "required" : "NULL";
   };
-  // first VISIBLE typeable column — data order broke autofocus when the
+  // first VISIBLE typeable column: data order broke autofocus when the
   // first data column was hidden (no rendered draft cell matched)
   const firstDraftCol = viewCols.find((d) => cols[d] && !draftAuto(cols[d].name)) ?? -1;
   // focus once per draft-open, never per MOUNT: autoFocus re-fired whenever
   // the first draft cell REMOUNTED after a horizontal scroll, and WKWebView's
   // focus-reveal yanked the scroller back to the origin
   const draftFocusedOnce = useRef(false);
-  /** last-focused draft view column — refocus target when a manual scroll
+  /** last-focused draft view column: refocus target when a manual scroll
    * unmounts the focused input (focus falls to body, Esc stops reaching the
    * band) */
   const lastDraftFocus = useRef<number | null>(null);
-  /** Tab target still unmounted after the rAF — consumed by the input's ref
+  /** Tab target still unmounted after the rAF: consumed by the input's ref
    * callback when the virtualizer finally mounts it */
   const pendingDraftFocus = useRef<number | null>(null);
   /** two-step Esc arm: a filled band warns before discarding */
@@ -871,13 +871,13 @@ export function Grid({
     r: number;
     c: number;
     draft: string;
-    /** cell was NULL when the editor opened — an untouched close must NOT stage '' */
+    /** cell was NULL when the editor opened: an untouched close must NOT stage '' */
     startedNull: boolean;
     /** type-aware editor variant */
     kind: "text" | "bool" | "enum";
     enumLabels?: string[];
   } | null>(null);
-  // pop-out editor for a DRAFT cell — multiline pastes and duplicated rows
+  // pop-out editor for a DRAFT cell: multiline pastes and duplicated rows
   // with multiline values can't live honestly in a one-line input
   // per-cell value-state menu (Set NULL / Set empty / Reset to DEFAULT)
   const [draftMenu, setDraftMenu] = useState<{ x: number; y: number; col: string } | null>(null);
@@ -893,7 +893,7 @@ export function Grid({
     mode: HistogramMode;
   } | null>(null);
 
-  // focused cell drives the inspector — debounced so holding an arrow key
+  // focused cell drives the inspector, debounced so holding an arrow key
   // doesn't re-render (and re-parse) the inspector on every step
   useEffect(() => {
     if (!sel.focus) return;
@@ -928,7 +928,7 @@ export function Grid({
         );
         return;
       }
-      // a truncated cell's grid value is only the 8KB prefix — editing it
+      // a truncated cell's grid value is only the 8KB prefix: editing it
       // inline would commit the prefix over the full value. Route to the
       // inspector, which fetches (and gates editing on) the full value.
       if (statement.truncated.has(`${r}:${c}`)) {
@@ -937,7 +937,7 @@ export function Grid({
       }
       const k = editKey(statement.index, r, c);
       const current = pending[k] ? pending[k].value : rows[r][c];
-      // JSON cells edit in the inspector — a one-line input is hostile UX.
+      // JSON cells edit in the inspector: a one-line input is hostile UX.
       // Routing is by column TYPE only: a text cell that merely looks like
       // JSON must edit as plain text (the '[draft]' corruption class).
       const isJson = meta.type_name === "jsonb" || meta.type_name === "json";
@@ -994,7 +994,7 @@ export function Grid({
       }
       const dataR = rowAt(editing.r);
       const dataC = colAt(editing.c);
-      // rows can be replaced/shrunk under an open editor (browser re-run) —
+      // rows can be replaced/shrunk under an open editor (browser re-run):
       // never stage against a row that no longer exists
       if (!rows[dataR]) {
         finish();
@@ -1013,10 +1013,10 @@ export function Grid({
     [editing, rows, statement.index, rowAt, colAt, sel.moveFocus, rowVirt, colVirt],
   );
 
-  // monotonically bumped per copy — a newer copy (or unmount) abandons any
+  // monotonically bumped per copy: a newer copy (or unmount) abandons any
   // in-flight chunked build so it can't overwrite a later copy's clipboard
   const copyRun = useRef(0);
-  /** runId of the chunked build in flight (null = none) — abandon detection
+  /** runId of the chunked build in flight (null = none): abandon detection
    * can't lean on the progress message, which a real error may displace */
   const copyBuildRun = useRef<number | null>(null);
   useEffect(
@@ -1024,7 +1024,7 @@ export function Grid({
       copyRun.current++;
       if (copyBuildRun.current != null) {
         // remount/unmount mid-build (statement chip, tab switch): the OLD
-        // clipboard content survives — never abandon without saying so
+        // clipboard content survives: never abandon without saying so
         // (flash is a store write, it outlives this component)
         copyBuildRun.current = null;
         flashReadOnlyReason("copy cancelled, result changed before it finished");
@@ -1039,13 +1039,13 @@ export function Grid({
       if (!rect) return;
       copyRun.current++;
       if (copyBuildRun.current != null) {
-        // a superseded chunked build leaves its progress message behind —
-        // the new copy takes the slot over, no cancel flash (the user asked)
+        // a superseded chunked build leaves its progress message behind:
+        // the new copy takes the slot over, no cancel flash
         copyBuildRun.current = null;
         const cur = useEdits.getState().lastError;
         if (cur?.startsWith("building copy…")) useEdits.setState({ lastError: null });
       }
-      // truncated cells copy as their 8KB prefix — count the ones inside the
+      // truncated cells copy as their 8KB prefix: count the ones inside the
       // selection (walk the truncated set, not the rect: the set stays small)
       // and flash so the prefix never ships silently as the full value
       let truncCount = 0;
@@ -1063,13 +1063,13 @@ export function Grid({
             `${truncCount} truncated cell${truncCount === 1 ? "" : "s"} copied as 8KB prefix, open in the Inspector for full values`,
           );
       };
-      // the selection rect is view-space — resolve through the sort/reorder
+      // the selection rect is view-space: resolve through the sort/reorder
       // maps so what's copied is exactly what's on screen
       const dataCs: number[] = [];
       for (let c = rect.c0; c <= rect.c1; c++) dataCs.push(colAt(c));
       const selCols = dataCs.map((dc) => cols[dc]);
       // copy-as-INSERT gets the REAL table name (single-source results) and
-      // drops locator ctid columns — an INSERT with ctid is invalid SQL
+      // drops locator ctid columns: an INSERT with ctid is invalid SQL
       const map = editMap && editMap !== "loading" && editMap !== "unavailable" ? editMap : null;
       const tableOids = map ? Object.keys(map.tables) : [];
       const table = map && tableOids.length === 1 ? map.tables[Number(tableOids[0])] : undefined;
@@ -1092,7 +1092,7 @@ export function Grid({
         const parts: string[] = [];
         let r = rect.r0;
         const step = () => {
-          if (copyRun.current !== runId) return; // superseded — abandon
+          if (copyRun.current !== runId) return; // superseded: abandon
           const slice: (string | null)[][] = [];
           const end = Math.min(rect.r1, r + COPY_SLICE_ROWS - 1);
           for (; r <= end; r++) {
@@ -1104,7 +1104,7 @@ export function Grid({
             parts.push(formatCells(selCols, slice, format, { table, ctidCols }));
           if (r <= rect.r1) {
             // a progress tick may only overwrite an empty slot or its own
-            // previous tick — never a real error that landed mid-build
+            // previous tick, never a real error that landed mid-build
             const cur = useEdits.getState().lastError;
             if (cur === null || cur.startsWith("building copy…"))
               useEdits.setState({
@@ -1113,7 +1113,7 @@ export function Grid({
             nextCopyTick(step);
             return;
           }
-          // build is finished — clear the cancel target BEFORE dispatching the
+          // build is finished: clear the cancel target BEFORE dispatching the
           // write, or an Escape landing mid-write flashes "copy cancelled"
           // while the clipboard still gets replaced
           copyBuildRun.current = null;
@@ -1131,10 +1131,10 @@ export function Grid({
       const selRows: (string | null)[][] = [];
       for (let r = rect.r0; r <= rect.r1; r++) {
         const row = rows[rowAt(r)];
-        if (!row) continue; // selection outlived a shrunk result — never crash ⌘C
+        if (!row) continue; // selection outlived a shrunk result: never crash ⌘C
         selRows.push(dataCs.map((dc) => row[dc]));
       }
-      // a SINGLE cell copies raw — TSV quoting ("" doubling, wrapping) is for
+      // a SINGLE cell copies raw: TSV quoting ("" doubling, wrapping) is for
       // multi-cell spreadsheet paste and reads as garbage in an input field.
       // Exception (Excel's own rule): a cell holding tab/newline MUST quote,
       // or the paste side reads it as several cells/rows; the 1x1 parse on
@@ -1154,7 +1154,7 @@ export function Grid({
   );
 
   /** export loaded rows (or the selection when it spans >1 cell) to a file
-   * via the native save dialog. Exports what the grid HOLDS — a capped result
+   * via the native save dialog. Exports what the grid HOLDS: a capped result
    * exports the loaded rows, never a silent refetch. */
   const exportRows = useCallback(
     async (format: CopyFormat) => {
@@ -1165,7 +1165,7 @@ export function Grid({
       if (useSel && rect) for (let c = rect.c0; c <= rect.c1; c++) dataCs.push(colAt(c));
       else for (let c = 0; c < viewColLen; c++) dataCs.push(colAt(c));
       const r0 = useSel && rect ? rect.r0 : 0;
-      // VIEW extent, not rows.length — under the quick-filter, view indexes
+      // VIEW extent, not rows.length: under the quick-filter, view indexes
       // past rowOrder fall back to identity and would export duplicate rows
       const r1 = useSel && rect ? rect.r1 : viewLen - 1;
       const outCols = dataCs.map((dc) => cols[dc]);
@@ -1204,7 +1204,7 @@ export function Grid({
     [sel.rect, cols, rows, viewLen, viewColLen, editMap, rowAt, colAt],
   );
 
-  // status-bar selection stats — computed here because the view→data maps
+  // status-bar selection stats: computed here because the view→data maps
   // live here. Wire text throughout: numeric-ness is per-value (strict
   // decimal/scientific shape; a numeric-typed col can still hold NULLs).
   useEffect(() => {
@@ -1246,7 +1246,7 @@ export function Grid({
   // grid unmounts (tab switch, new result) → stale stats must not linger
   useEffect(() => () => useGridStats.getState().set(null), []);
 
-  // preventDefault on mousedown kills native text selection but also focus —
+  // preventDefault on mousedown kills native text selection but also focus:
   // refocus the container manually so keyboard nav keeps working.
   const beginDrag = useCallback(
     (e: React.MouseEvent, pos: { r: number; c: number }, mode: DragMode) => {
@@ -1254,7 +1254,7 @@ export function Grid({
       e.preventDefault();
       containerRef.current?.focus();
       sel.startDrag(pos, e.shiftKey, mode);
-      // seed from the EVENT — pointer.current is stale until the first
+      // seed from the EVENT: pointer.current is stale until the first
       // mousemove, which would fake instant "movement" and false-arm the loop
       pointer.current = { x: e.clientX, y: e.clientY };
       startAutoScroll();
@@ -1277,7 +1277,7 @@ export function Grid({
     return Number.isFinite(r) && Number.isFinite(c) ? { r, c } : null;
   };
 
-  // drag-select coalesced to one store write per frame — mouseover previously
+  // drag-select coalesced to one store write per frame: mouseover previously
   // fired a full-grid re-render per cell crossed
   const dragRaf = useRef<number | null>(null);
   const dragPos = useRef<{ r: number; c: number } | null>(null);
@@ -1300,7 +1300,7 @@ export function Grid({
   // visible edge). All loop inputs live in refs so the rAF callback is stable.
   const pointer = useRef({ x: 0, y: 0 });
   const dragLive = useRef(false);
-  /** where the drag STARTED — autoscroll arms only after real movement, so
+  /** where the drag STARTED: autoscroll arms only after real movement, so
    * click-and-hold on a cell near an edge doesn't creep the grid away */
   const dragStart = useRef({ x: 0, y: 0 });
   const dragMoved = useRef(false);
@@ -1324,7 +1324,7 @@ export function Grid({
     const loop = () => {
       autoRaf.current = null;
       if (!dragLive.current) return;
-      // arm only once the pointer actually travelled — holding still (even in
+      // arm only once the pointer actually travelled: holding still (even in
       // the edge zone) is a click, not a drag
       if (!dragMoved.current) {
         const dxm = pointer.current.x - dragStart.current.x;
@@ -1382,7 +1382,7 @@ export function Grid({
 
 
   /** stage a value (or NULL/DEFAULT) for every editable cell in the selection
-   * — ONE batched store write, ONE undo step */
+   * (ONE batched store write, ONE undo step) */
   const setSelectionValue = useCallback(
     (value: string | null, useDefault = false) => {
       const rect = sel.rect;
@@ -1410,7 +1410,7 @@ export function Grid({
     [sel.rect, editMap, rows, statement.index, rowAt, colAt],
   );
 
-  /** revert every staged edit inside the selection — one undo step */
+  /** revert every staged edit inside the selection: one undo step */
   const revertSelection = useCallback(() => {
     const rect = sel.rect;
     if (!rect) return;
@@ -1477,7 +1477,7 @@ export function Grid({
   }, [sel.rect, pending, rows, statement.index, rowAt, colAt, editMap]);
 
   /** ⌘V: paste a TSV block (Excel/Sheets) anchored at the selection's
-   * top-left, or a single value into the whole selection — STAGED, so ⌘S
+   * top-left, or a single value into the whole selection: STAGED, so ⌘S
    * previews the generated SQL before anything touches the DB */
   const pasteIntoSelection = useCallback((text: string) => {
     const rect = sel.rect;
@@ -1485,7 +1485,7 @@ export function Grid({
     const batch = [];
     const isBlock = /[\t\r\n]/.test(text);
     if (isBlock) {
-      // our ⌘C (and Excel/Sheets) quote fields containing tab/newline/quote —
+      // our ⌘C (and Excel/Sheets) quote fields containing tab/newline/quote:
       // parse the convention back or a copied json cell pastes as "[""x""]"
       // and a quoted newline splits one cell into two rows. Malformed
       // (non-TSV) text falls back to the naive split.
@@ -1551,8 +1551,8 @@ export function Grid({
       if (editing) return; // cell editor owns the keyboard
       if (record !== null) return; // record view modal owns the keyboard
       if (draftPop !== null) return; // draft-cell pop owns the keyboard (CM
-      // targets are contenteditable — the tag check below never catches them)
-      // embedded inputs (draft band, future controls) own their keys — the
+      // targets are contenteditable: the tag check below never catches them)
+      // embedded inputs (draft band, future controls) own their keys: the
       // grammar was eating Backspace/Tab/arrows and staging NULLs while typing
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
@@ -1563,7 +1563,7 @@ export function Grid({
         colVirt.scrollToIndex(next.c);
       };
       if (e.key === "Escape" && copyBuildRun.current != null) {
-        // cancel an in-flight chunked ⌘C — the clipboard still holds the OLD
+        // cancel an in-flight chunked ⌘C: the clipboard still holds the OLD
         // content; the user asked for this one, so say so plainly (the
         // "result changed" wording belongs to the remount-abandon path only)
         e.preventDefault();
@@ -1574,12 +1574,12 @@ export function Grid({
       }
       if (e.key === "Escape" && showDraft) {
         // grid-focused Esc: an EMPTY draft band closes; one with typed values
-        // refocuses instead — a stray Esc must never eat half-typed data
+        // refocuses instead: a stray Esc must never eat half-typed data
         // (discarding stays a deliberate act: Esc inside the band)
         const hasContent = draftHasContent(useBrowser.getState().draftRow);
         e.preventDefault();
         if (hasContent) {
-          // scroll first: the leading inputs may be virtualized out — focus
+          // scroll first: the leading inputs may be virtualized out. Focus
           // needs a mounted target (rAF lands after the remount render);
           // inputs stay mounted in every value state, so the first one is
           // always focusable
@@ -1629,7 +1629,7 @@ export function Grid({
         fillDown();
         return;
       }
-      // ⇧⌘D (discard staged edits) belongs to the window handler — fall through
+      // ⇧⌘D (discard staged edits) belongs to the window handler: fall through
 
       const moves: Record<string, [number, number]> = {
         ArrowUp: [-1, 0],
@@ -1678,7 +1678,7 @@ export function Grid({
         return;
       }
       if (e.key === " " && sel.focus && !meta) {
-        // Space = record view (⇧Space kept as an alias — it was the original
+        // Space = record view (⇧Space kept as an alias: it was the original
         // binding; both routes land on the same modal)
         e.preventDefault();
         setRecord({ rows: [sel.focus.r] });
@@ -1706,7 +1706,7 @@ export function Grid({
   );
 
   // a result row is deletable iff exactly one source table has a locator
-  // (PK or ctid) in the result — ambiguous for multi-table JOINs.
+  // (PK or ctid) in the result: ambiguous for multi-table JOINs.
   const deletableTableOid = useMemo(() => {
     if (!editMap || editMap === "loading" || editMap === "unavailable") return null;
     const oids = Object.keys(editMap.pk_cols).map(Number);
@@ -1728,7 +1728,7 @@ export function Grid({
       const dataR = rowAt(r);
       const row = rows[dataR];
       if (!row) continue; // never build a locator from a phantom row
-      // a truncated locator cell is only the display prefix — a WHERE built
+      // a truncated locator cell is only the display prefix: a WHERE built
       // from it matches 0 rows and fails with a misleading message
       if (pkCols.some((pc) => statement.truncated.has(`${dataR}:${pc}`))) {
         flashReadOnlyReason(TRUNCATED_LOCATOR_MSG);
@@ -1739,7 +1739,7 @@ export function Grid({
       locators.push(loc);
     }
     if (locators.length === 0) return;
-    // capture the result's OWN context BEFORE any await — a tab switch during
+    // capture the result's OWN context BEFORE any await: a tab switch during
     // the confirm modal / delete round trip must not aim the re-run or the
     // undo offer at another tab (same capture discipline as edits.ts commit())
     const {
@@ -1774,7 +1774,7 @@ export function Grid({
       // cached-mapping feed: the backend plans the DELETEs with zero catalog
       // round trips; a stale hint errors or mismatches → whole batch rolls
       // back. Names come from the snapshot of the profile the RESULT ran on
-      // (never the rail-active one — cross-database oids could collide).
+      // (never the rail-active one: cross-database oids could collide).
       const { buildEditMapHint } = await import("../lib/editHints");
       const resSnap = executedProfileId
         ? useSchema.getState().snapshots[executedProfileId]
@@ -1782,16 +1782,16 @@ export function Grid({
       const mapHint = buildEditMapHint(map, resSnap);
       const outcome = await ipc.deleteRows(sessionId, executedSql, statement.index, deletableTableOid, locators, mapHint);
       if (!outcome.committed) {
-        // backend rolled the batch back (a locator matched ≠ 1 row) — nothing changed
+        // backend rolled the batch back (a locator matched ≠ 1 row): nothing changed
         const msgs = [...new Set(outcome.results.filter((r) => !r.ok).map((r) => r.message).filter(Boolean))];
         useEdits.setState({ lastError: `delete rolled back. ${msgs.join("; ")}` });
         return;
       }
-      // re-run the exact query FIRST so the grid reflects the delete — run()'s
+      // re-run the exact query FIRST so the grid reflects the delete: run()'s
       // resetTab clears the tab's undo offer, so the fresh offer must only be
       // fetched after it (the old order let resetTab wipe it)
       if (useResults.getState().active === tabId) {
-        // the DELETE ran on the result's origin session — reload from the
+        // the DELETE ran on the result's origin session: reload from the
         // same profile, never the rail (write to A, repaint from B)
         await useResults
           .getState()
@@ -1809,7 +1809,7 @@ export function Grid({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sel.rect, deletableTableOid, editMap, rows, statement.index, statement.truncated, rowAt]);
 
-  // planner row estimates for the "Referenced by" submenu — fired when the
+  // planner row estimates for the "Referenced by" submenu: fired when the
   // context menu opens (labels read them by src key). EXPLAIN uses per-value
   // stats (MCV/histogram), so "≈ 1,240" is the estimate FOR THIS cell value.
   const [fkEstimates, setFkEstimates] = useState<Record<string, number>>({});
@@ -1940,13 +1940,13 @@ export function Grid({
     if (!f || !table) return;
     const dataR = rowAt(f.r);
     const prefill: Record<string, DraftCell> = {};
-    // a truncated cell holds only the display prefix — silently inserting it
+    // a truncated cell holds only the display prefix: silently inserting it
     // would corrupt the copy; leave those columns untouched (= DEFAULT) and say so
     const skippedCols: string[] = [];
     cols.forEach((c, i) => {
       if (c.name === "ctid" || table.pk.includes(c.name)) return;
       // identity-ALWAYS/generated columns render "auto" in the band (no
-      // input) — prefilling them would smuggle an invisible value into a
+      // input): prefilling them would smuggle an invisible value into a
       // guaranteed-fail INSERT
       const meta = table.columns.find((tc) => tc.name === c.name);
       if (meta?.identity === "a" || meta?.generated === "s") return;
@@ -1955,8 +1955,8 @@ export function Grid({
         return;
       }
       const v = rows[dataR][i];
-      // prefilled values are deliberate — a duplicated '' must insert '', not DEFAULT
-      // duplicated values are deliberate — NULL stays NULL, '' stays '' (the
+      // prefilled values are deliberate: a duplicated '' must insert '', not DEFAULT
+      // duplicated values are deliberate: NULL stays NULL, '' stays '' (the
       // empty-input=DEFAULT rule must not resolve a copied '' to DEFAULT)
       prefill[c.name] =
         v === null ? { text: "", state: "null" } : v === "" ? { text: "", state: "empty" } : { text: v };
@@ -1971,7 +1971,7 @@ export function Grid({
 
   const resizing = useRef<{ col: number; startX: number; startW: number } | null>(null);
   // resize drags are rAF-coalesced: one width write per frame off cached start
-  // metrics — a raw mousemove handler re-rendered the grid per pointer event
+  // metrics: a raw mousemove handler re-rendered the grid per pointer event
   const resizeRaf = useRef<number | null>(null);
   const resizeX = useRef(0);
   const onResizeStart = (viewCol: number, e: React.MouseEvent) => {
@@ -2001,7 +2001,7 @@ export function Grid({
       const r = resizing.current;
       resizing.current = null;
       if (!r) return;
-      // apply the final width synchronously — a pending frame may not have
+      // apply the final width synchronously: a pending frame may not have
       // flushed, and the persisted array must match what's on screen
       const w = Math.max(MIN_COL_W, r.startW + (resizeX.current - r.startX));
       const final = widthsRef.current.map((pw, i) => (i === r.col ? w : pw));
@@ -2013,7 +2013,7 @@ export function Grid({
   };
 
   // ---- header gestures: click = sort · drag = reorder · ⌘/⇧-click = select column ----
-  // browse sort chain (store contract — sortChain is the ordering truth)
+  // browse sort chain (store contract: sortChain is the ordering truth)
   const browserChain = useBrowser((s) => s.sortChain);
   const browseChainEff = useMemo(
     () => (insertable ? browseEffectiveChain(browserChain) : []),
@@ -2045,7 +2045,7 @@ export function Grid({
           ? viewOffsets[toView]
           : toView > fromView
             ? viewOffsets[toView + 1]
-            : viewOffsets[fromView]; // over itself — line sits at its own edge
+            : viewOffsets[fromView]; // over itself: line sits at its own edge
       return { toView, lineX };
     },
     [viewColFromX, viewOffsets],
@@ -2055,7 +2055,7 @@ export function Grid({
   const toggleSortTo = (dataC: number, dir: "asc" | "desc") => {
     const name = cols[dataC]?.name;
     if (!name) return;
-    // browser data is paged — its sort must be a real ORDER BY on the server
+    // browser data is paged: its sort must be a real ORDER BY on the server
     if (insertable) dispatchBrowseChain([{ key: name, dir }]);
     else setClientChain([{ key: dataC, dir }]);
   };
@@ -2074,7 +2074,7 @@ export function Grid({
       const cur = browseChainEff;
       if (e.altKey) {
         // catalog NOT NULL: the override is inert, but the emitted NULLS
-        // clause defeats the index (Seq Scan + Sort on every page) — refuse
+        // clause defeats the index (Seq Scan + Sort on every page): refuse
         // with a reason. Covers the implicit PK tiebreaker (PK ⇒ NOT NULL).
         const ci = browseTable?.columns.find((c) => c.name === name);
         if (ci?.not_null) {
@@ -2087,7 +2087,7 @@ export function Grid({
           return;
         }
         const next = altCycleNulls(cur, name);
-        if (next === cur) return; // ⌥ on an unsorted column — nothing to change
+        if (next === cur) return; // ⌥ on an unsorted column: nothing to change
         dispatchBrowseChain(next);
         return;
       }
@@ -2104,7 +2104,7 @@ export function Grid({
   };
 
   const onHeaderMouseDown = (viewC: number, e: React.MouseEvent) => {
-    // macOS ctrl+click is a context click — never a drag/select gesture
+    // macOS ctrl+click is a context click, never a drag/select gesture
     if (e.ctrlKey) return;
     if (e.button !== 0) return;
     if (e.metaKey || e.shiftKey) {
@@ -2123,7 +2123,7 @@ export function Grid({
         setReorderFrom(hd.fromView);
       }
       if (!hd.moved) return;
-      // live insertion indicator — the drop uses the SAME computation, so the
+      // live insertion indicator: the drop uses the SAME computation, so the
       // line is always exactly where the column will land
       if (dropRaf.current != null) return;
       dropRaf.current = requestAnimationFrame(() => {
@@ -2154,7 +2154,7 @@ export function Grid({
       if (toView == null || toView === hd.fromView) return;
       setColOrder((prev) => {
         // colOrder stays a FULL permutation; the gesture speaks VIEW (visible)
-        // indexes — map through viewCols so hidden columns keep their place
+        // indexes: map through viewCols so hidden columns keep their place
         const full = prev ?? cols.map((_, i) => i);
         const fromData = viewCols[hd.fromView];
         if (fromData === undefined) return prev;
@@ -2174,8 +2174,8 @@ export function Grid({
     !!rect && r >= rect.r0 && r <= rect.r1 && c >= rect.c0 && c <= rect.c1;
 
   /** header menu → value distribution. Browse tabs GROUP BY on the server
-   * (primary session preferred — ⌘. cancel targets the tab session; same
-   * pick as runExactCount — with the exact compiled WHERE the browse queries
+   * (primary session preferred: ⌘. cancel targets the tab session; same
+   * pick as runExactCount, with the exact compiled WHERE the browse queries
    * embed); editor results and json columns (no server equality) bucket
    * client-side over LOADED rows with an honest scope note. */
   const openHistogram = (dataC: number, point: { x: number; y: number }) => {
@@ -2199,7 +2199,7 @@ export function Grid({
           where: browseWhere(),
           note: null,
           // 42883 (no equality operator, domain-over-json class) falls back
-          // to client bucketing over these — with its own honest label
+          // to client bucketing over these, with its own honest label
           fallbackValues: values,
         },
       });
@@ -2243,11 +2243,11 @@ export function Grid({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editMap, snapshot, cols, colAt]);
-  // identity-stable per edited cell — FkPicker's fetch effect keys on it, and
+  // identity-stable per edited cell: FkPicker's fetch effect keys on it, and
   // a fresh object every Grid render would refetch on unrelated re-renders
   const editingFk = useMemo(
     () => (editing && editing.kind === "text" ? fkPickTargetFor(editing.c) : null),
-    // keyed on the CELL, not the editing object — draft keystrokes must not
+    // keyed on the CELL, not the editing object: draft keystrokes must not
     // churn the target identity
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [editing?.r, editing?.c, editing?.kind, fkPickTargetFor],
@@ -2263,11 +2263,11 @@ export function Grid({
       // so a keydown handler would never see it)
       onPaste={(e) => {
         // a paste INTO the draft band (or any embedded control) bubbles up
-        // here — swallowing it killed the input paste AND staged the clipboard
+        // here: swallowing it killed the input paste AND staged the clipboard
         // over the grid selection
         const t = e.target as HTMLElement;
         const tag = t.tagName;
-        // paste events bubble across portals — a ⌘V inside the record view /
+        // paste events bubble across portals: a ⌘V inside the record view /
         // draft pop (CodeMirror = contenteditable, invisible to tag checks)
         // must never ALSO stage over the grid selection
         if (
@@ -2288,7 +2288,7 @@ export function Grid({
       onContextMenu={(e) => {
         e.preventDefault();
         setHeaderMenu(null); // one menu at a time
-        // right-click OUTSIDE the selection retargets it to the hit cell —
+        // right-click OUTSIDE the selection retargets it to the hit cell:
         // the menu must act on the cell under the pointer, never on a
         // leftover selection somewhere else (and a bare right-click on a
         // cell now selects it instead of showing nothing)
@@ -2332,7 +2332,7 @@ export function Grid({
             if (p) startEdit(p.r, p.c);
           }}
         >
-          {/* column-drop insertion guide while reordering — hidden while its
+          {/* column-drop insertion guide while reordering: hidden while its
               x sits under the sticky rownum gutter (the line is content-
               positioned, the gutter viewport-pinned); the beacon dot tracks
               the visible top via --dropline-top (scroll re-renders keep both
@@ -2369,7 +2369,7 @@ export function Grid({
               const glyph = typeIcon(tn);
               const name = cols[dataC].name;
               // sort state from the CHAIN (browse: server chain via contract;
-              // editor: local client chain) — pos/nulls feed the badge
+              // editor: local client chain): pos/nulls feed the badge
               let sortDir: "asc" | "desc" | null = null;
               let sortPos = 0;
               let sortLen = 0;
@@ -2468,15 +2468,15 @@ export function Grid({
               ref={draftWheelRef}
               className="vgrid-draft"
               style={{ top: HEADER_H, height: DRAFT_H }}
-              // focus moving into the band clears the grid selection — a row
+              // focus moving into the band clears the grid selection: a row
               // left highlighted behind the draft reads as "that row is live"
               onFocusCapture={() => sel.reset()}
               onKeyDown={(e) => {
                 if (e.key === "Escape") {
                   e.preventDefault();
-                  e.stopPropagation(); // one layer only — the grid handler would re-fire
+                  e.stopPropagation(); // one layer only: the grid handler would re-fire
                   // a filled band arms: first Esc warns, second within 2s
-                  // discards — one stray Esc must never eat typed row data
+                  // discards: one stray Esc must never eat typed row data
                   // (the app's two-click arm grammar)
                   const hasContent = draftHasContent(useBrowser.getState().draftRow);
                   if (hasContent && Date.now() - draftEscArmed.current > 2000) {
@@ -2490,7 +2490,7 @@ export function Grid({
                   void commitDraft();
                 } else if (e.key === "Tab") {
                   // native Tab order breaks at the virtualization boundary
-                  // (the next input may not be mounted) — step through view
+                  // (the next input may not be mounted): step through view
                   // columns explicitly, skipping ctid and NULL-disabled cells
                   e.preventDefault();
                   e.stopPropagation();
@@ -2509,7 +2509,7 @@ export function Grid({
                   }
                   if (target < 0) return;
                   // pending ref survives the rAF missing (target still
-                  // unmounted after one frame) — the input's ref callback
+                  // unmounted after one frame): the input's ref callback
                   // consumes it on mount, whenever that lands
                   pendingDraftFocus.current = target;
                   colVirt.scrollToIndex(target);
@@ -2546,7 +2546,7 @@ export function Grid({
                       height: DRAFT_H,
                     }}
                     onContextMenu={(ev) => {
-                      // swallow both branches — bubbling to the grid
+                      // swallow both branches: bubbling to the grid
                       // container opens ITS cell menu on top of this one
                       ev.preventDefault();
                       ev.stopPropagation();
@@ -2562,7 +2562,7 @@ export function Grid({
                           className="vgrid-draft-input"
                           // a one-line input can't display newlines (WebKit
                           // strips them from .value, silently desyncing state)
-                          // — multiline drafts render a newline-glyph preview,
+                          // so multiline drafts render a newline-glyph preview,
                           // read-only, and edit through the pop-out instead. An
                           // explicit NULL/'' renders as the grid's chip; typing
                           // over it replaces the state with text
@@ -2573,7 +2573,7 @@ export function Grid({
                                 ? cell.text.replace(/\r\n?|\n/g, "⏎") // lint-ok: data marker, not the Return key
                                 : cell.text
                           }
-                          // empty = DEFAULT, always — the placeholder shows
+                          // empty = DEFAULT, always: the placeholder shows
                           // what that resolves to (the column's default
                           // expression / NULL / required)
                           placeholder={cell.state ? "" : draftPlaceholder(name)}
@@ -2596,7 +2596,7 @@ export function Grid({
                             // ⌫ on a chip resets to DEFAULT; ⌥⌫ on an EMPTY
                             // cell toggles NULL (the grid's Delete=NULL
                             // grammar, band edition). With text present, ⌥⌫
-                            // stays macOS word-delete — hijacking it there
+                            // stays macOS word-delete: hijacking it there
                             // destroyed typed text with no undo
                             if (ev.key === "Backspace" && ev.altKey && cell.text === "") {
                               ev.preventDefault();
@@ -2629,7 +2629,7 @@ export function Grid({
                               return;
                             }
                             // remount after a manual scroll unmounted the
-                            // focused input — refocus only when focus really
+                            // focused input: refocus only when focus really
                             // fell to body, never off a deliberate click
                             if (
                               lastDraftFocus.current === vc.index &&
@@ -2645,7 +2645,7 @@ export function Grid({
                           onChange={(e) => setDraftCell(name, { text: e.target.value })}
                           onPaste={(e) => {
                             // read-only multiline draft: the DOM holds the
-                            // preview glyphs, not the real text — edit in the pop-out
+                            // preview glyphs, not the real text: edit in the pop-out
                             if (multiline) {
                               e.preventDefault();
                               setDraftPop({ col: name, dataC: colAt(vc.index), text: cell.text });
@@ -2653,24 +2653,24 @@ export function Grid({
                             }
                             const raw = e.clipboardData.getData("text/plain");
                             // a lone trailing newline rides along with most
-                            // single-line copies — strip it so those stay a
+                            // single-line copies: strip it so those stay a
                             // native one-line paste (WebKit drops it anyway)
                             const text = raw.replace(/(?:\r\n?|\n)$/, "");
                             // single-line text → native single-input paste
                             if (!/[\t\r\n]/.test(text)) return;
                             e.preventDefault();
                             // our ⌘C (and Excel/Sheets) quote fields holding
-                            // tab/newline/quote — parse the convention back,
+                            // tab/newline/quote: parse the convention back,
                             // or a copied json cell lands as "[""x""]"; the
                             // naive split also broke a quoted newline into
                             // two fields. Non-TSV text → parsed is null.
                             const parsed = parseTsv(text);
                             // >1 field → a copied ROW: spread across the
                             // draft cells from this column on. Empty fields
-                            // stay untouched (= DEFAULT) — the spreadsheet
+                            // stay untouched (= DEFAULT): the spreadsheet
                             // convention; a deliberate '' is still reachable
                             // by typing in the cell. Malformed TSV falls back
-                            // to the naive first-line split — same as the
+                            // to the naive first-line split, same as the
                             // grid ⌘V path, tabbed text always spreads
                             const row0 =
                               parsed?.[0] ?? text.replace(/\r/g, "").split("\n")[0].split("\t");
@@ -2679,7 +2679,7 @@ export function Grid({
                               // too (identity/generated/ctid are ordinary
                               // data on ⌘C). Pasting a full row at the band's
                               // first cell must align from view 0 with autos
-                              // CONSUMING their value — skipping without
+                              // CONSUMING their value: skipping without
                               // consuming shifted every value one column left
                               // (silent wrong-column data). Partial pastes
                               // keep the anchored spread.
@@ -2729,14 +2729,14 @@ export function Grid({
                             // ONE value (a single quoted field unwraps; raw
                             // multiline text stays verbatim), inserted at the
                             // CARET into the existing text (replacing any
-                            // selection) — never over the whole cell. For
+                            // selection), never over the whole cell. For
                             // json/jsonb columns, merged valid JSON compacts
-                            // to one line (server-identical bytes) — unless it
+                            // to one line (server-identical bytes), unless it
                             // carries >2^53 ints, where the JS round-trip
                             // would silently rewrite digits (LOSSY_NUMS, same
                             // guard as the inspector). Everything else opens
                             // the pop-out with the merged text, staged
-                            // VERBATIM — a text column's whitespace is data
+                            // VERBATIM: a text column's whitespace is data
                             const value0 =
                               parsed && parsed.length === 1 && parsed[0].length === 1
                                 ? parsed[0][0]
@@ -2746,7 +2746,7 @@ export function Grid({
                             const end = el.selectionEnd ?? start;
                             const merged = el.value.slice(0, start) + value0 + el.value.slice(end);
                             // unquoting can leave a plain one-liner (field was
-                            // quoted only for an inner quote char) — that
+                            // quoted only for an inner quote char): that
                             // belongs in the input, not the pop-out
                             if (!/[\r\n]/.test(merged)) {
                               setDraftCell(name, { text: merged });
@@ -2763,7 +2763,7 @@ export function Grid({
                                 setDraftCell(name, { text: JSON.stringify(JSON.parse(trimmed)) });
                                 return;
                               } catch {
-                                /* not (yet) valid JSON — pop-out editor */
+                                /* not (yet) valid JSON: pop-out editor */
                               }
                             }
                             setDraftPop({ col: name, dataC: colAt(vc.index), text: merged });
@@ -2801,7 +2801,7 @@ export function Grid({
             ))}
           </div>
 
-          {/* cells — memoized; mouse events delegated to the container.
+          {/* cells: memoized; mouse events delegated to the container.
               vr/vc are VIEW positions (data-r/data-c feed the view-space
               selection); values and edit state resolve through the maps. */}
           {rowVirt.getVirtualItems().map((vr) =>
@@ -2839,7 +2839,7 @@ export function Grid({
             }),
           )}
 
-          {/* in-place cell editor — positioned from the view maps, NOT the
+          {/* in-place cell editor: positioned from the view maps, NOT the
               virtual items: the cell can scroll out of the virtual window
               while the editor is open, and a find()-miss fell back to 0,
               teleporting the editor to the grid origin */}
@@ -2880,7 +2880,7 @@ export function Grid({
             },
             { kind: "sep" },
             // identifier register: the menu belongs to the column it opened
-            // from — the name inlined in Title Case labels read as chrome
+            // from: the name inlined in Title Case labels read as chrome
             // (WRITING.md); it rides the mono hint slot where needed
             {
               kind: "item",
@@ -2911,7 +2911,7 @@ export function Grid({
               // hiding the LAST visible column would leave an unusable grid
               disabled: viewColLen <= 1,
               onSelect: () => {
-                // an invisible active sort is undiscoverable — drop this
+                // an invisible active sort is undiscoverable: drop this
                 // column's chain entry in BOTH modes (others keep their
                 // positions; badges renumber naturally)
                 if (insertable) {
@@ -3011,7 +3011,7 @@ export function Grid({
             ...fkMenuItems(),
             ...(insertable && sel.focus && browseTable?.kind === "r"
               ? ([
-                  // plain relations only — same gate as the Add-row button: a
+                  // plain relations only, same gate as the Add-row button: a
                   // view/matview draft could only fail at commit time
                   {
                     kind: "item",
@@ -3098,7 +3098,7 @@ export function Grid({
             const m = draftMeta.get(draftMenu.col);
             const cur = draftRow?.[draftMenu.col];
             // '' on an int/uuid/timestamp column would stage a guaranteed
-            // commit error — withhold the item entirely
+            // commit error: withhold the item entirely
             const textish = textFamily(m?.type);
             return [
               {
@@ -3137,7 +3137,7 @@ export function Grid({
           colName={draftPop.col}
           typeName={colType(draftPop.dataC)}
           initial={draftPop.text}
-          // opened from a paste/duplicate — the content IS the edit, so Stage
+          // opened from a paste/duplicate: the content IS the edit, so Stage
           // must never read as a no-change close
           startDirty
           onStage={(d) => {
@@ -3146,7 +3146,7 @@ export function Grid({
             if (t === "json" || t === "jsonb") {
               // parse = validation (invalid JSON fails HERE, not at commit);
               // compaction is display-only and skipped when the text carries
-              // >2^53 ints — the JS round-trip would rewrite their digits, so
+              // >2^53 ints: the JS round-trip would rewrite their digits, so
               // the exact typed bytes stage instead (the preview handles it)
               try {
                 const compact = JSON.stringify(JSON.parse(d));
@@ -3156,7 +3156,7 @@ export function Grid({
               }
             }
             // clearing all text in the pop means "make it empty", not
-            // DEFAULT — the pop was opened ON a value; the deliberate-''
+            // DEFAULT: the pop was opened ON a value; the deliberate-''
             // state keeps that intent for text columns (elsewhere '' isn't
             // a value, so DEFAULT is the only honest resolution)
             if (value === "" && textFamily(draftMeta.get(draftPop.col)?.type)) {
@@ -3173,7 +3173,7 @@ export function Grid({
 
       {histo !== null && (
         <Histogram
-          // fetch runs on mount — a different column/anchor must remount
+          // fetch runs on mount: a different column/anchor must remount
           key={`${histo.column}:${histo.mode.kind}:${histo.point.x},${histo.point.y}`}
           point={histo.point}
           column={histo.column}

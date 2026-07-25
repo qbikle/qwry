@@ -6,11 +6,11 @@ Fast, beautiful, local macOS PostgreSQL client. Tauri 2 (Rust) + React 19 + Type
 
 This repo is built across many Claude Code sessions by different agents.
 
-1. Read `docs/ROADMAP.md` — find the current phase and next unchecked item.
+1. Read `docs/ROADMAP.md`: find the current phase and next unchecked item.
 2. Read `docs/ARCHITECTURE.md` for the design you must fit into. Don't invent parallel structures.
    `docs/WRITING.md` (text registers), `docs/LESSONS.md` (bug-class law), and `docs/DESIGN.md`
    (pixel law: control taxonomy, states, contrast tiers, grid, icons, motion) bind every change;
-   when a request — including the user's own idea — violates one, say so and cite it: the pushback is wanted.
+   when a request violates one, even one from the maintainer, say so and cite it: the pushback is wanted.
    Chrome-touching waves run `bun scripts/design-lint.ts` and ship pixel evidence (DESIGN.md rules 9–10).
 3. Build the item. Verify it per the phase's verification gate.
 4. Tick the checkbox, append a dated session note at the bottom of ROADMAP.md (what was done, what's half-done, gotchas).
@@ -31,20 +31,21 @@ bunx tsc --noEmit                # TS typecheck
 
 ## Layout
 
-- `src/` — React frontend. Subdirs: `app/` shell, `stores/` zustand, `ipc/` typed Tauri bridge, `editor/` CodeMirror + completion engine, `grid/` virtualized results grid, `inspector/`, `sidebar/`, `browser/`, `palette/`, `explain/`, `design/` tokens+springs.
-- `src-tauri/src/` — Rust core. `driver/` DbDriver trait + `driver/postgres/`, `tunnel.rs` ssh, `secrets.rs` keychain, `appdb.rs` rusqlite app-state, `commands.rs` IPC handlers.
-- `docs/` — ARCHITECTURE.md (design truth), ROADMAP.md (phases + session log), DECISIONS.md (ADR-lite).
+- `src/`: React frontend. Subdirs: `app/` shell, `stores/` zustand, `ipc/` typed Tauri bridge, `editor/` CodeMirror + completion engine, `grid/` virtualized results grid, `inspector/`, `sidebar/`, `browser/`, `palette/`, `explain/`, `design/` tokens+springs.
+- `src-tauri/src/`: Rust core. `driver/` DbDriver trait + `driver/postgres/`, `tunnel.rs` ssh, `secrets.rs` keychain, `appdb.rs` rusqlite app-state, `commands.rs` IPC handlers.
+- `docs/`: ARCHITECTURE.md (design truth), ROADMAP.md (phases + session log), DECISIONS.md (ADR-lite).
 
 ## Conventions
 
 - Rust: `thiserror` error enums per module; no `unwrap()` outside tests; clippy clean.
 - TS: strict mode; no `any` without a comment explaining why; zustand stores in `src/stores/` only.
-- IPC types defined once in Rust, mirrored by hand in `src/ipc/types.ts` — keep in sync (check both when changing either).
+- IPC types defined once in Rust, mirrored by hand in `src/ipc/types.ts`; keep in sync (check both when changing either).
 - Springs/animation only via presets in `src/design/springs.ts`. Never animate scroll or typing.
 - Perf budgets are law: cold start <500ms, keystroke→completion <16ms, grid scroll 60fps minimum.
 
 ## Testing against a real DB
 
-User's staging Postgres creds: `source ~/.claude/.env.claude`, then
-`PGPASSWORD=$STAGING_DB_PASSWORD psql -h $STAGING_DB_HOST -U $STAGING_DB_USER -d crawler_data_production`.
-Staging is safe for read/write. NEVER point tests at prod ($PROD_*).
+Backend integration tests need a live PostgreSQL you control. Point
+`QWRY_TEST_HOST` / `QWRY_TEST_USER` / `QWRY_TEST_PASSWORD` / `QWRY_TEST_DB` at a
+disposable development database, NEVER at anything production. DDL-creating suites
+use `QWRY_TEST_DB2` and confine themselves to a `qwry_test` schema, dropped at teardown.

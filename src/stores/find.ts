@@ -1,5 +1,5 @@
 // Find-in-results (⌘F over the loaded grid rows). Honest by design: matches
-// are computed over the in-memory rows only — the bar says so when the result
+// are computed over the in-memory rows only; the bar says so when the result
 // is capped. Hits are computed by FindBar (which owns the debounce); the grid
 // reads hitSet/current for highlighting + scroll-to.
 import { create } from "zustand";
@@ -17,7 +17,7 @@ interface FindState {
   hits: FindHit[];
   hitSet: Set<string>; // "r:c"
   idx: number;
-  /** hit list stopped at the cap (not the row cap — the match cap) */
+  /** hit list stopped at the cap (not the row cap, the match cap) */
   hitCapped: boolean;
 
   openFind: () => void;

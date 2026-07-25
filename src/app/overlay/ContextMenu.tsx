@@ -18,7 +18,7 @@ export type MenuNode =
       kind: "item";
       label: string;
       /** identifier hints stay strings (mono, data register); shortcut hints
-       *  pass <Kbd chord=…/> (UI font, glyph register) — WRITING.md split */
+       *  pass <Kbd chord=…/> (UI font, glyph register): WRITING.md split */
       hint?: ReactNode;
       danger?: boolean;
       disabled?: boolean;
@@ -89,7 +89,7 @@ export function ContextMenu({
     }
   }, [openSub]);
 
-  // long menus scroll — keyboard nav must keep the active row visible
+  // long menus scroll: keyboard nav must keep the active row visible
   useEffect(() => {
     itemEls.current[active]?.scrollIntoView({ block: "nearest" });
   }, [active]);
@@ -107,7 +107,7 @@ export function ContextMenu({
       e.stopImmediatePropagation();
     };
     if (openSub !== null) {
-      // the submenu filter input owns the keyboard while focused — the parent's
+      // the submenu filter input owns the keyboard while focused: the parent's
       // nav state indexes the UNFILTERED list, so Enter here would activate
       // whatever sat at the stale index instead of the visible match
       const ae = document.activeElement;
@@ -158,7 +158,7 @@ export function ContextMenu({
             className="ctx-menu"
             role="menu"
             {...menuIn}
-            // the submenu anchor is a one-shot rect — scrolling the parent
+            // the submenu anchor is a one-shot rect: scrolling the parent
             // would leave it floating detached, so close it instead
             onScroll={() => setOpenSub(null)}
           >
@@ -213,7 +213,7 @@ export function ContextMenu({
               active={subActive}
               // above the parent layer's full-screen catcher (dynamic z from the
               // overlay stack) or the submenu is mouse-dead; ties at the ceiling
-              // resolve by DOM order — the portal mounts after the layer
+              // resolve by DOM order: the portal mounts after the layer
               z={layerZ != null ? Math.min(layerZ + 1, MAX_OVERLAY_Z) : undefined}
               onHover={setSubActive}
               onActivate={activate}
@@ -225,7 +225,7 @@ export function ContextMenu({
   );
 }
 
-/** A submenu panel — positioned + clamped, but no backdrop/stack of its own;
+/** A submenu panel: positioned + clamped, but no backdrop/stack of its own;
  *  the parent ContextMenu owns close + keyboard. Portaled above the parent. */
 function SubPanel({
   point,
@@ -238,14 +238,14 @@ function SubPanel({
   point: { x: number; y: number; leftEdge: number };
   items: MenuNode[];
   active: number;
-  /** parent layer z + 1 — must beat the parent's full-screen click catcher */
+  /** parent layer z + 1: must beat the parent's full-screen click catcher */
   z?: number;
   onHover: (i: number) => void;
   onActivate: (node: MenuNode) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   // custom positioning: stay ATTACHED to the parent item's right edge and
-  // SLIDE vertically to fit — the generic clamp's edge-flip sent a tall panel
+  // SLIDE vertically to fit: the generic clamp's edge-flip sent a tall panel
   // way above the item, visually detached from what opened it
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   useLayoutEffect(() => {
@@ -265,10 +265,10 @@ function SubPanel({
   const [query, setQuery] = useState("");
   const searchEl = useRef<HTMLInputElement>(null);
   // scrollIntoView must clear the sticky search input or keyboard nav hides
-  // the active row under it — measured (zoom-safe), ~34px incl. margins
+  // the active row under it. Measured (zoom-safe), ~34px incl. margins
   const [stickyH, setStickyH] = useState(34);
 
-  // a "Referenced by" on user_id can list dozens of tables — filter + scroll
+  // a "Referenced by" on user_id can list dozens of tables: filter + scroll
   const itemCount = items.filter((it) => it.kind === "item").length;
   const searchable = itemCount > 12;
 
@@ -311,7 +311,7 @@ function SubPanel({
             onChange={(e) => setQuery(e.target.value)}
             onMouseDown={(e) => e.stopPropagation()}
             onKeyDown={(e) => {
-              // portals bubble through the REACT tree — without this, typing
+              // portals bubble through the REACT tree: without this, typing
               // here reaches the grid underneath and seeds a cell editor
               e.stopPropagation();
               if (e.key === "Enter") {

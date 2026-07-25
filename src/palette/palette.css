@@ -36,7 +36,7 @@
   color: var(--fg);
   user-select: text;
 }
-/* underline-style input: the underline is the focus treatment — kill the
+/* underline-style input: the underline is the focus treatment: kill the
    global ring (bare outline:none loses to input:focus-visible) */
 .pal [cmdk-input]:focus-visible {
   outline: none;
@@ -79,7 +79,7 @@
   color: color-mix(in srgb, var(--accent-fg) 72%, transparent);
 }
 
-/* icons sit a contrast tier below the label (color, never a raw opacity dim —
+/* icons sit a contrast tier below the label (color, never a raw opacity dim,
    DESIGN.md rule 3); the selected row hands them its own foreground */
 .pal [cmdk-item] svg {
   flex-shrink: 0;
@@ -103,7 +103,7 @@
   margin-left: auto;
   display: inline-flex;
   align-items: center;
-  height: 20px; /* matches the .kbd-cap geometry — one boxed-hint height */
+  height: 20px; /* matches the .kbd-cap geometry, one boxed-hint height */
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   color: var(--fg-muted);
@@ -138,17 +138,17 @@
 }
 
 
-/* detail + check together: only the first takes the auto push — two autos
+/* detail + check together: only the first takes the auto push: two autos
    split the free space and strand the detail mid-row */
 .pal-detail ~ .pal-check { margin-left: var(--sp-2); }
 
-/* the tab you're already on — named, not checkmarked */
+/* the tab you're already on: named, not checkmarked */
 .pal-tab-active {
   color: var(--accent);
   font-weight: 600;
 }
 
-/* selected row's background IS the accent — the accent-colored active-tab
+/* selected row's background IS the accent: the accent-colored active-tab
    name would vanish into it; --accent-fg is the theme's auto-contrast
    (white on dark accents, near-black on light ones) */
 .pal [cmdk-item][data-selected="true"] .pal-tab-active {

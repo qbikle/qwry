@@ -22,7 +22,7 @@
 .v2-breadcrumb {
   margin-right: auto;
   font-size: var(--text-sm);
-  /* neutral glass gray (lighter in dark, darker in light) — inactive
+  /* neutral glass gray (lighter in dark, darker in light): inactive
      segments; the ACTIVE segment stays full --fg via .crumb-strong */
   color: var(--fg-glass, var(--fg-muted));
   font-weight: 550;
@@ -31,8 +31,8 @@
   text-overflow: ellipsis;
   pointer-events: none;
 }
-/* GLASS surface (high transparency only — [data-glassy] from the settings
-   slider): the backdrop is the wallpaper, not a theme color — a same-theme
+/* GLASS surface (high transparency only: [data-glassy] from the settings
+   slider): the backdrop is the wallpaper, not a theme color. A same-theme
    halo guarantees contrast on opposing backdrops (light theme over a dark
    desktop) and vanishes on matching ones */
 :root[data-glassy] .v2-breadcrumb {
@@ -43,7 +43,7 @@
 
 /* glass-context iconbtn variant (DESIGN.md rule 3 note), active only under
    [data-glassy]: buttons on high-transparency titlebar glass carry a
-   translucent theme chip — fg alone can't guarantee contrast over an
+   translucent theme chip: fg alone can't guarantee contrast over an
    arbitrary wallpaper. At low transparency the theme wash IS the surface and
    the bare ghost look stays. Scoped under .v2-titlebar to out-specific the
    .iconbtn base (tokens.css loads last); iconbtn's opaque bg-hover/bg-active
@@ -64,7 +64,7 @@
     color-mix(in srgb, var(--bg-panel) 72%, transparent);
 }
 /* NOT glassy: the theme wash is the surface, so the active tool drops the
-   boxy accent chip — the ICON alone carries the accent. The chip returns
+   boxy accent chip: the ICON alone carries the accent. The chip returns
    under [data-glassy], where the button must bring its own surface */
 :root:not([data-glassy]) .v2-titlebar .v2-tool.active {
   background: transparent;
@@ -73,7 +73,7 @@
   background: var(--bg-hover);
 }
 
-/* the prod chip's soft tints have the same glass problem — re-seat each
+/* the prod chip's soft tints have the same glass problem: re-seat each
    state's tint on the translucent theme chip (gradient layers above color) */
 :root[data-glassy] .v2-titlebar .prod-chip.locked {
   background:
@@ -114,7 +114,7 @@
   overflow: hidden;
 }
 .card::after {
-  /* the light bevel lip — floated 2px INSIDE the edge so it reads as a
+  /* the light bevel lip, floated 2px INSIDE the edge so it reads as a
      separate facet instead of fusing with the border into one crisp line */
   content: "";
   position: absolute;
@@ -124,7 +124,7 @@
   pointer-events: none;
 }
 .card::before {
-  /* faint top inner highlight — the Linear/Arc sheen */
+  /* faint top inner highlight: the Linear/Arc sheen */
   content: "";
   position: absolute;
   inset: 0;
@@ -150,7 +150,7 @@
   display: flex;
   flex-direction: column;
 }
-/* programmatic focus target (overlay-close restore fallback) — no ring */
+/* programmatic focus target (overlay-close restore fallback): no ring */
 .main-card:focus {
   outline: none;
 }
@@ -305,7 +305,7 @@
 
 .inspector-resize {
   position: absolute;
-  /* fully inside the card — .card overflow:hidden clips anything hanging
+  /* fully inside the card: .card overflow:hidden clips anything hanging
      outside, leaving a clipped strip that isn't hit-testable */
   left: 0;
   top: 0;
@@ -322,7 +322,7 @@
 .sidebar-resize {
   position: absolute;
   top: 0;
-  right: 0; /* inside the card — .card overflow:hidden clips a gutter overhang */
+  right: 0; /* inside the card: .card overflow:hidden clips a gutter overhang */
   width: 4px; /* slim: shares the edge with the tree's overlay scrollbar */
   height: 100%;
   cursor: col-resize;

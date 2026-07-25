@@ -100,7 +100,7 @@ pub enum QueryEvent {
         message: String,
         position: Option<u32>,
         code: Option<String>,
-        /// PG DETAIL field — often the actual answer ("Key (email)=(x) exists")
+        /// PG DETAIL field, often the actual answer ("Key (email)=(x) exists")
         detail: Option<String>,
         /// PG HINT field
         hint: Option<String>,

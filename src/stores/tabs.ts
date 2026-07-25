@@ -15,23 +15,23 @@ export interface Tab {
   name: string;
   sql: string;
   position: number;
-  /** link to a saved query — keeps names/sql in sync */
+  /** link to a saved query; keeps names/sql in sync */
   saved_id: string | null;
   /** "query" = SQL editor tab; "table" = data-browser tab (session-only) */
   kind: "query" | "table";
   /** the browsed table when kind === "table" */
   table: TableInfo | null;
   /** owning connection. null = legacy tab from before per-connection
-   * workspaces — visible under every connection until first edited under one
+   * workspaces: visible under every connection until first edited under one
    * (adopt-on-touch), so no pre-existing tab ever silently disappears. */
   profile_id: string | null;
-  /** backing .sql file on disk — SESSION-ONLY: the appdb tabs table has no
+  /** backing .sql file on disk. SESSION-ONLY: the appdb tabs table has no
    * column for it (tabs_save strips to the appdb fields), so a restart drops
    * the link but never the text */
   file_path?: string;
-  /** exact text last read from / written to file_path — dirty dot = drift */
+  /** exact text last read from / written to file_path; dirty dot = drift */
   file_saved_sql?: string;
-  /** file mtime at open/last save — ⇧⌘S compares before overwriting so an
+  /** file mtime at open/last save; ⇧⌘S compares before overwriting so an
    * external edit is never silently clobbered (session-only, like file_path) */
   file_mtime_ms?: number;
 }
@@ -52,7 +52,7 @@ interface TabsState {
   tabs: Tab[];
   activeId: string | null;
   loaded: boolean;
-  /** the last tabs_save failed — surfaced so persistence can never lie */
+  /** the last tabs_save failed; surfaced so persistence can never lie */
   saveError: boolean;
   /** most-recently-closed first; ⇧⌘T pops */
   closedStack: ClosedTab[];
@@ -66,7 +66,7 @@ interface TabsState {
   openFileTab: (path: string, contents: string, mtimeMs?: number) => string;
   closeTab: (id: string) => void;
   select: (id: string) => void;
-  /** stamp a legacy tab (profile_id null) into the active workspace —
+  /** stamp a legacy tab (profile_id null) into the active workspace:
    * adopt-on-touch, persisted; no-op for owned tabs or with no connection */
   adoptTab: (id: string) => void;
   /** drag-reorder: move VISIBLE index `from` to sit at VISIBLE boundary `to` */
@@ -75,17 +75,17 @@ interface TabsState {
   cycle: (dir: 1 | -1) => void;
   restoreClosed: () => void;
   rename: (id: string, name: string) => void;
-  /** pinned tab ids — pinned tabs are visible under EVERY connection and
+  /** pinned tab ids: pinned tabs are visible under EVERY connection and
    * survive bulk closes / middle-click; explicit X still closes */
   pinned: Set<string>;
   togglePin: (id: string) => void;
-  /** bulk close — scoped to the CURRENT connection's visible tabs */
+  /** bulk close, scoped to the CURRENT connection's visible tabs */
   closeOthers: (id: string) => void;
   closeToRight: (id: string) => void;
   closeAll: () => void;
   /** ⌘S: persist the active tab into the saved-queries sidebar */
   saveActive: () => Promise<void>;
-  /** a profile was deleted — close its tabs (pins become orphans, kept) */
+  /** a profile was deleted: close its tabs (pins become orphans, kept) */
   purgeProfileTabs: (profileId: string) => void;
 }
 
@@ -93,7 +93,7 @@ interface TabsState {
 // Per-connection visibility. A tab is visible under profile `pid` when it
 // belongs to it, is pinned (cross-connection by design), or is a legacy
 // pre-workspace tab (profile_id null). With no active profile everything is
-// visible — the tab UI is hidden then, but invariants stay simple.
+// visible; the tab UI is hidden then, but invariants stay simple.
 export function isTabVisible(t: Tab, pinned: ReadonlySet<string>, pid: string | null): boolean {
   if (!pid) return true;
   return t.profile_id === pid || t.profile_id === null || pinned.has(t.id);
@@ -106,10 +106,10 @@ export function visibleTabs(tabs: Tab[], pinned: ReadonlySet<string>, pid: strin
 const activePid = () => useConnections.getState().activeProfileId;
 
 /** ⌘T contract: a new tab lands you TYPING. The editor (which may only mount
- * on the next render — zero-tab state) consumes this and focuses itself. */
+ * on the next render, zero-tab state) consumes this and focuses itself. */
 export const editorFocusSignal = { current: false };
 
-// per-connection "last active tab" memory (localStorage — UI nicety only)
+// per-connection "last active tab" memory (localStorage, UI nicety only)
 const ACTIVE_KEY = "qwry.activeTabByProfile";
 function readActiveMap(): Record<string, string> {
   try {
@@ -131,11 +131,11 @@ let saveRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
 function doSave(): Promise<void> {
   const { tabs, loaded } = useTabs.getState();
-  // NEVER persist before load succeeded — tabs_save is replace-all, so a
+  // NEVER persist before load succeeded: tabs_save is replace-all, so a
   // failed startup load followed by a save would WIPE every saved tab
   if (!loaded) return Promise.resolve();
   // table tabs are session-only; persist query tabs only, stripped to the
-  // appdb fields. Dedupe by id as insurance — one duplicated tab must never
+  // appdb fields. Dedupe by id as insurance: one duplicated tab must never
   // wedge saving forever (tabs.id is a PRIMARY KEY in a replace-all write)
   const seen = new Set<string>();
   const rows = tabs
@@ -153,7 +153,7 @@ function doSave(): Promise<void> {
       if (useTabs.getState().saveError) useTabs.setState({ saveError: false });
     })
     .catch((e) => {
-      // surface + retry — a silently failing save would lie about safety
+      // surface + retry; a silently failing save would lie about safety
       console.error("tabs_save failed", e);
       useTabs.setState({ saveError: true });
       if (saveRetryTimer) clearTimeout(saveRetryTimer);
@@ -169,7 +169,7 @@ function persist() {
   }, 600);
 }
 
-/** fire any debounced save NOW — window blur / close must not lose the last
+/** fire any debounced save NOW: window blur / close must not lose the last
  * ≤600ms of typing */
 export function flushTabs(): Promise<void> {
   if (saveTimer) {
@@ -185,7 +185,7 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") void flushTabs();
 });
 
-/** first-run tour — seeded once into a fresh appdb (no profiles, no tabs) */
+/** first-run tour, seeded once into a fresh appdb (no profiles, no tabs) */
 const WELCOME_SQL = `-- welcome to qwry
 -- ⌘K palette · ⌘T new tab · ⌘↩ run the statement under the cursor
 -- connect via the + in the rail, then try:
@@ -215,7 +215,7 @@ const asClosed = (t: Tab): ClosedTab => ({
   file_mtime_ms: t.file_mtime_ms,
 });
 
-/** a file-backed tab whose buffer drifted from its on-disk copy — closing it
+/** a file-backed tab whose buffer drifted from its on-disk copy: closing it
  * is honest about DISK only (the text itself persists in the app db) */
 export function fileDrifted(t: Tab): boolean {
   return t.file_path != null && t.sql !== t.file_saved_sql;
@@ -268,13 +268,13 @@ export const useTabs = create<TabsState>((set, get) => ({
   closedStack: [],
 
   load: async () => {
-    // load exactly once — a second call (HMR remount, StrictMode) must not
+    // load exactly once: a second call (HMR remount, StrictMode) must not
     // re-merge in-memory tabs with the disk rows: that duplicates every tab
     // WITH ITS ID, which breaks close (filter removes both) and tabs_save
     // (PRIMARY KEY violation → permanent "not saving")
     if (get().loaded) return;
     try {
-      // appdb only stores query tabs (no kind/table) — normalize on the way in
+      // appdb only stores query tabs (no kind/table); normalize on the way in
       const rows = await invoke<Omit<Tab, "kind" | "table">[]>("tabs_list");
       const restored: Tab[] = rows.map((r) => ({
         ...r,
@@ -282,7 +282,7 @@ export const useTabs = create<TabsState>((set, get) => ({
         table: null,
         profile_id: r.profile_id ?? null,
       }));
-      // a failed first load may have left the user typing into a scratch tab —
+      // a failed first load may have left the user typing into a scratch tab;
       // carry any non-empty buffer over (never a tab that's already on disk)
       const restoredIds = new Set(restored.map((t) => t.id));
       const scratch = get().tabs.filter(
@@ -293,7 +293,7 @@ export const useTabs = create<TabsState>((set, get) => ({
       // welcome tab. The profiles read is our own (loadProfiles races this
       // load, so the connections store may not be populated yet). profile_id
       // stays null → visible under whichever connection is created first.
-      // Not persisted here — it enters the appdb only if the user edits it;
+      // Not persisted here: it enters the appdb only if the user edits it;
       // any profile or persisted tab on later launches skips the seed.
       if (tabs.length === 0) {
         const profiles = await profilesList().catch(() => null);
@@ -301,18 +301,18 @@ export const useTabs = create<TabsState>((set, get) => ({
           tabs.push({ ...blank(1, null), name: "welcome", sql: WELCOME_SQL });
         }
       }
-      // launch happens on the home surface (no profile) — every tab is
+      // launch happens on the home surface (no profile): every tab is
       // visible; the per-profile active tab is applied on connect
       const remembered = localStorage.getItem("qwry.activeTab");
       const first = tabs.find((t) => t.id === remembered) ?? tabs[0] ?? null;
       // prune pin ids whose tabs no longer exist (X-closed, or session-only
-      // table tabs) — otherwise qwry.pinnedTabs grows forever
+      // table tabs); otherwise qwry.pinnedTabs grows forever
       const pinned = new Set([...get().pinned].filter((id) => tabs.some((t) => t.id === id)));
       localStorage.setItem("qwry.pinnedTabs", JSON.stringify([...pinned]));
       set({ tabs, activeId: first?.id ?? null, loaded: true, pinned });
       useConnections.getState().setSql(first?.sql ?? "");
     } catch (e) {
-      // keep loaded=false — persist() is gated on it, so the saved tabs on
+      // keep loaded=false: persist() is gated on it, so the saved tabs on
       // disk stay untouched; give the user a scratch tab and retry
       console.error("tabs_list failed, retrying", e);
       set({ saveError: true }); // scratchless: empty strip is fine now
@@ -337,7 +337,7 @@ export const useTabs = create<TabsState>((set, get) => ({
 
   openFileTab: (path, contents, mtimeMs) => {
     const { tabs, pinned } = get();
-    // the same file twice focuses the existing tab — never a duplicate.
+    // the same file twice focuses the existing tab, never a duplicate.
     // Scoped to the VISIBLE strip: a foreign workspace's tab must not be
     // focused invisibly (reopening there gets its own tab instead).
     const existing = visibleTabs(tabs, pinned, activePid()).find((t) => t.file_path === path);
@@ -345,7 +345,7 @@ export const useTabs = create<TabsState>((set, get) => ({
       const clean = existing.sql === existing.file_saved_sql;
       const diskChanged = contents !== existing.file_saved_sql;
       if (clean && diskChanged) {
-        // the tab tracks its file faithfully — adopt the fresh disk contents
+        // the tab tracks its file faithfully: adopt the fresh disk contents
         // instead of silently discarding the re-read
         set((s) => ({
           tabs: s.tabs.map((t) =>
@@ -356,7 +356,7 @@ export const useTabs = create<TabsState>((set, get) => ({
         }));
         persist();
       } else if (clean) {
-        // contents unchanged — just refresh the save-conflict baseline
+        // contents unchanged; just refresh the save-conflict baseline
         set((s) => ({
           tabs: s.tabs.map((t) =>
             t.id === existing.id ? { ...t, file_mtime_ms: mtimeMs ?? t.file_mtime_ms } : t,
@@ -367,7 +367,7 @@ export const useTabs = create<TabsState>((set, get) => ({
       editorFocusSignal.current = true;
       if (!clean && diskChanged) {
         // dirty tab + changed file: keep the buffer AND the old baseline (so
-        // ⇧⌘S still prompts before clobbering the newer disk version) — but
+        // ⇧⌘S still prompts before clobbering the newer disk version), but
         // say so instead of silently discarding the read
         void import("./danger").then(({ confirmDanger }) =>
           confirmDanger(
@@ -425,7 +425,7 @@ export const useTabs = create<TabsState>((set, get) => ({
       closing && (closing.sql.trim() !== "" || closing.kind === "table")
         ? [asClosed(closing), ...closedStack].slice(0, 20)
         : closedStack;
-    // an X-closed pin is gone — a dangling id would resurrect on nothing
+    // an X-closed pin is gone; a dangling id would resurrect on nothing
     if (pinned.has(id)) {
       const nextPinned = new Set(pinned);
       nextPinned.delete(id);
@@ -435,7 +435,7 @@ export const useTabs = create<TabsState>((set, get) => ({
     const next = tabs.filter((t) => t.id !== id);
     const pid = activePid();
     const visNext = visibleTabs(next, get().pinned, pid);
-    // closing the LAST visible tab leaves an empty strip — a phoenix scratch
+    // closing the LAST visible tab leaves an empty strip. A phoenix scratch
     // tab that always came back was more annoying than an empty state
     if (visNext.length === 0) {
       set({ tabs: next, activeId: null, closedStack: remember });
@@ -446,7 +446,7 @@ export const useTabs = create<TabsState>((set, get) => ({
     let newActive = activeId;
     let fallback: Tab | null = null;
     if (activeId === id) {
-      // neighbor within the VISIBLE strip, not the global array — closing a
+      // neighbor within the VISIBLE strip, not the global array: closing a
       // tab must never teleport focus to another connection's hidden tab
       const visAll = visibleTabs(tabs, get().pinned, pid);
       const visIdx = visAll.findIndex((t) => t.id === id);
@@ -454,7 +454,7 @@ export const useTabs = create<TabsState>((set, get) => ({
       newActive = fallback.id;
       rememberActive(pid, fallback.id);
     }
-    // activeId before setSql — same order as select/closeAll, so the editor's
+    // activeId before setSql: same order as select/closeAll, so the editor's
     // subscribers land on the fallback tab instead of the dying one's doc
     set({ tabs: next, activeId: newActive, closedStack: remember });
     if (fallback) useConnections.getState().setSql(fallback.sql);
@@ -477,7 +477,7 @@ export const useTabs = create<TabsState>((set, get) => ({
       pinned.delete(id);
       // unpinning returns the tab to its home connection. If that home is
       // gone (deleted profile / legacy null while connected), adopt the
-      // CURRENT one — a tab visible nowhere would be lost alive.
+      // CURRENT one; a tab visible nowhere would be lost alive.
       const t = get().tabs.find((x) => x.id === id);
       const profiles = useConnections.getState().profiles;
       if (t && pid && (t.profile_id === null || !profiles.some((p) => p.id === t.profile_id))) {
@@ -491,7 +491,7 @@ export const useTabs = create<TabsState>((set, get) => ({
     }
     localStorage.setItem("qwry.pinnedTabs", JSON.stringify([...pinned]));
     set({ pinned });
-    // unpinning a foreign tab removes it from THIS strip — refocus if needed
+    // unpinning a foreign tab removes it from THIS strip; refocus if needed
     ensureActiveVisible();
   },
 
@@ -556,12 +556,12 @@ export const useTabs = create<TabsState>((set, get) => ({
   select: (id) => {
     const t = get().tabs.find((t) => t.id === id);
     if (!t) return;
-    // invariant: activeId is always a member of the visible strip — selecting
+    // invariant: activeId is always a member of the visible strip; selecting
     // a tab hidden under this workspace would render foreign state with no
     // tab lit in the strip; refuse instead of silently leaking across
     if (!isTabVisible(t, get().pinned, activePid())) {
       // unconditional: a refused select in the field is the breadcrumb that
-      // finds the next unscoped-lookup bug (cheap — this path never fires
+      // finds the next unscoped-lookup bug (cheap: this path never fires
       // in normal use)
       console.error("select refused: tab not visible in the active workspace", id);
       return;
@@ -584,7 +584,7 @@ export const useTabs = create<TabsState>((set, get) => ({
 
   moveTab: (from, to) => {
     // indexes speak the VISIBLE strip; the global array holds every
-    // connection's tabs — anchor-splice, same technique as column reorder
+    // connection's tabs: anchor-splice, same technique as column reorder
     // over hidden columns, so invisible tabs keep their relative slots
     const { tabs, pinned } = get();
     const vis = visibleTabs(tabs, pinned, activePid());
@@ -623,7 +623,7 @@ export const useTabs = create<TabsState>((set, get) => ({
       // reopen as a real table tab (re-runs the browse; adopts current conn)
       void import("./browser").then(({ useBrowser }) => useBrowser.getState().openTable(top.table!));
     } else {
-      // ⇧⌘T means "bring it back HERE" — newTab stamps the current profile;
+      // ⇧⌘T means "bring it back HERE": newTab stamps the current profile;
       // the saved-query link survives so the restored tab still syncs
       get().newTab(top.sql, top.name, top.saved_id);
       // a file-backed tab keeps its disk link (and dirty state) through ⇧⌘T
@@ -649,7 +649,7 @@ export const useTabs = create<TabsState>((set, get) => ({
     set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, name } : t)) }));
     const t = get().tabs.find((t) => t.id === id);
     if (t?.saved_id) {
-      // keep the sidebar entry's NAME in sync — never its SQL: the tab's
+      // keep the sidebar entry's NAME in sync, never its SQL: the tab's
       // buffer may hold an unsaved draft, and a mere rename must not push
       // that draft over the saved query (⌘S is the only sql-update path)
       void import("./saved").then(({ useSaved }) => {
@@ -677,7 +677,7 @@ export const useTabs = create<TabsState>((set, get) => ({
 
   purgeProfileTabs: (profileId) => {
     // deleted profile: its unpinned tabs die (sessions already torn down by
-    // deleteProfile); its PINNED tabs stay as orphans — cross-connection by
+    // deleteProfile); its PINNED tabs stay as orphans; cross-connection by
     // design, badged "origin deleted" until unpinned (which adopts).
     const { tabs, pinned } = get();
     const dying = tabs.filter((t) => t.profile_id === profileId && !pinned.has(t.id));
@@ -699,7 +699,7 @@ function ensureActiveVisible() {
     rememberActive(pid, target.id);
     useConnections.getState().setSql(target.sql);
   } else {
-    // no tabs here — empty strip, empty editor state (⌘T when needed)
+    // no tabs here: empty strip, empty editor state (⌘T when needed)
     useTabs.setState({ activeId: null });
     useConnections.getState().setSql("");
   }
@@ -713,7 +713,7 @@ useConnections.subscribe((s, prev) => {
 });
 
 // ---------------------------------------------------------------------------
-// .sql files on disk — File ▸ Open… ⌘O / File ▸ Save ⇧⌘S / window drops
+// .sql files on disk: File ▸ Open… ⌘O / File ▸ Save ⇧⌘S / window drops
 
 const MB = 1024 * 1024;
 const OPEN_CONFIRM_BYTES = 8 * MB;
@@ -724,7 +724,7 @@ export async function openFilePaths(paths: string[]): Promise<void> {
   for (const path of paths) {
     try {
       // stat before read: gate huge files instead of freezing the editor
-      // (stat failure falls through — the read itself reports real errors)
+      // (stat failure falls through; the read itself reports real errors)
       const stat = await fileStat(path).catch(() => null);
       if (stat && stat.size > OPEN_REFUSE_BYTES) {
         const { confirmDanger } = await import("./danger");
@@ -784,7 +784,7 @@ export async function saveActiveToFile(): Promise<void> {
   // the store text is kept in sync with the editor per keystroke, so this IS
   // the buffer (no editor round trip needed)
   const sql = tab.sql;
-  // conflict check: the file moved on disk since we opened/last saved it —
+  // conflict check: the file moved on disk since we opened/last saved it;
   // never silently clobber an external edit (no baseline stamp = no check)
   if (!firstSave && tab.file_mtime_ms != null) {
     const stat = await fileStat(dest).catch(() => null);
@@ -806,7 +806,7 @@ export async function saveActiveToFile(): Promise<void> {
     await confirmDanger("Couldn’t Save File", `${dest}\n${String(e)}`, "OK");
     return;
   }
-  // re-stat AFTER the write — the fresh mtime is the new conflict baseline
+  // re-stat AFTER the write: the fresh mtime is the new conflict baseline
   const written = await fileStat(dest).catch(() => null);
   const name = firstSave ? dest.split("/").pop() || tab.name : tab.name;
   useTabs.setState((s) => ({

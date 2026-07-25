@@ -46,7 +46,7 @@ const blankEdits = (): TabEdits => ({
 });
 const UNDO_CAP = 100;
 
-/** the post-commit inverse-SQL undo offer ("Committed … — Undo"). Stamped
+/** the post-commit inverse-SQL undo offer ("Committed …" + Undo). Stamped
  * with the tab AND the exact session that committed: it dies with that
  * session (never offered across reconnects), on DDL, on TTL expiry, and a
  * newer commit on the profile supersedes it (only the latest is offered). */
@@ -64,7 +64,7 @@ interface EditsState extends TabEdits {
   byTab: Record<string, TabEdits>;
   active: string;
   committing: boolean;
-  /** inverse-SQL undo offer for the latest committed batch (global — one
+  /** inverse-SQL undo offer for the latest committed batch (global: one
    * commit at a time, mirrors `committing`) */
   undoOffer: UndoOffer | null;
   undoing: boolean;
@@ -81,7 +81,7 @@ interface EditsState extends TabEdits {
   syncActive: (tabId: string) => void;
   resetTab: (tabId: string) => void;
   ensureMap: (stmtIndex: number) => void;
-  /** DDL ran on this connection — background-refresh every tab's cached
+  /** DDL ran on this connection: background-refresh every tab's cached
    * editability maps (stale-while-revalidate; failures keep the old map) */
   refreshMapsAfterDdl: () => void;
   setEdit: (e: PendingEdit) => void;
@@ -110,7 +110,7 @@ function sessionAndSql(): { sessionId: string; sql: string } | null {
 const DECLINED = Symbol("declined");
 
 /** resolve a LIVE session for commit/preview. The result's executedSessionId
- * may be dead (network drop, dev rebuild) — re-resolve a session ON THE
+ * may be dead (network drop, dev rebuild): re-resolve a session ON THE
  * PROFILE THE RESULT CAME FROM. Never the active rail selection: clicking
  * another connected profile (staging→prod!) must not redirect a ⌘S commit
  * to a different database. */
@@ -122,11 +122,11 @@ async function liveSessionId(tabId: string): Promise<string | typeof DECLINED | 
   if (profileId && tabId) {
     const sid = await conn.ensureTabSession(profileId, tabId);
     if (sid) {
-      // a REBUILT session gets stamped back — pg-notice routing keys on
+      // a REBUILT session gets stamped back: pg-notice routing keys on
       // executedSessionId, so trigger NOTICEs raised during a commit on the
       // new session would otherwise match no tab and vanish
       if (tab && tab.executedSessionId !== sid) {
-        // the executed session died and this one was built fresh — any open
+        // the executed session died and this one was built fresh: any open
         // transaction died with it; writing against current state needs consent
         const { confirmDanger } = await import("./danger");
         const ok = await confirmDanger(
@@ -152,7 +152,7 @@ async function liveSessionId(tabId: string): Promise<string | typeof DECLINED | 
 }
 
 /** ctid row-movement guard: rows move under UPDATE/VACUUM FULL, so a ctid
- * locator alone could hit a different row — pin identity with the row's old
+ * locator alone could hit a different row: pin identity with the row's old
  * values (every same-table column in the result; truncated cells excluded,
  * their displayed prefix isn't the stored value). The backend ANDs these into
  * the locator, so a moved row becomes matched ≠ 1 instead of a wrong row. */
@@ -177,7 +177,7 @@ export const TRUNCATED_LOCATOR_MSG =
   "locator value is truncated. Cannot safely identify this row";
 
 /** group pending edits into RowEdit payloads for one statement (active tab).
- * `used[i]` is the PendingEdit behind `rowEdits[i]` — results from the backend
+ * `used[i]` is the PendingEdit behind `rowEdits[i]`. Results from the backend
  * come back in this order, so mapping against `used` (not the unfiltered
  * input) can never patch the wrong cell when a non-editable edit was dropped. */
 function buildRowEdits(
@@ -186,7 +186,7 @@ function buildRowEdits(
   stmtIndex: number,
   tabId: string,
 ): { rowEdits: RowEdit[]; used: PendingEdit[]; truncatedLocators: number } {
-  // read the EDIT'S OWN tab — the top-level mirror follows whichever tab is
+  // read the EDIT'S OWN tab: the top-level mirror follows whichever tab is
   // active, and the user can switch tabs while a commit is in flight; PK
   // values pulled from another tab's rows would write through the WRONG row
   const res = useResults.getState();
@@ -201,7 +201,7 @@ function buildRowEdits(
     const colMeta = map.columns[e.col];
     if (!colMeta?.editable) continue;
     const pkColIdxs = map.pk_cols[colMeta.table_oid] ?? [];
-    // a truncated locator cell holds only the display prefix (>8KB text PK) —
+    // a truncated locator cell holds only the display prefix (>8KB text PK):
     // a WHERE built from it matches 0 rows with a misleading message; refuse
     if (pkColIdxs.some((pc) => stmt.truncated.has(`${e.row}:${pc}`))) {
       truncatedLocators++;
@@ -240,7 +240,7 @@ function writeEdits(set: SetFn, tabId: string, partial: Partial<TabEdits> | ((t:
 // ---- cached-mapping feed (perf batch A/B) -----------------------------------
 
 /** SQLSTATE class 42 (undefined column/table/function, …) = the cached
- * mapping is schema-stale — refetch it; reads may retry, writes may NOT */
+ * mapping is schema-stale: refetch it; reads may retry, writes may NOT */
 const isSchemaErr = (e: unknown): boolean => {
   const code = (e as { code?: string | null } | null)?.code;
   return typeof code === "string" && code.startsWith("42");
@@ -267,7 +267,7 @@ async function refetchMap(
     writeEdits(set, tabId, (t) => ({ maps: { ...t.maps, [stmtIndex]: map } }));
     return map;
   } catch {
-    return null; // keep the old map — commit-time verification still guards
+    return null; // keep the old map; commit-time verification still guards
   }
 }
 
@@ -278,7 +278,7 @@ interface PreviewEntry {
   hint: EditMapHint | null;
 }
 
-/** the exact inputs the open preview was generated from — commit reuses them
+/** the exact inputs the open preview was generated from; commit reuses them
  * so the executed SQL is byte-for-byte what the modal showed (same backend
  * generator + same inputs). Invalidated whenever pending edits change. */
 let previewPayload: {
@@ -326,7 +326,7 @@ function buildEntries(
   return { entries, skipped, truncatedLocators };
 }
 
-/** frontend TTL for the undo toast — slightly under the backend's 15-minute
+/** frontend TTL for the undo toast: slightly under the backend's 15-minute
  * row TTL (which stays the source of truth at undo_log_take time) */
 const UNDO_OFFER_TTL_MS = 14.5 * 60 * 1000;
 let undoOfferTimer: number | null = null;
@@ -352,18 +352,18 @@ function setUndoOffer(offer: UndoOffer | null) {
   }
 }
 
-/** fetch the newest undo row for the profile and surface it — only when it
+/** fetch the newest undo row for the profile and surface it, only when it
  * was written by the EXACT session this tab committed on (session-stamped) */
 export async function refreshUndoOffer(tabId: string, sessionId: string, profileId: string) {
   const seq = ++offerSeq;
   try {
     const row = await ipc.undoLogLatest(profileId);
-    if (seq !== offerSeq) return; // superseded while in flight — stay stale-silent
+    if (seq !== offerSeq) return; // superseded while in flight; stay stale-silent
     if (row && row.session_key === sessionId) {
       setUndoOffer({ id: row.id, description: row.description, tabId, sessionId, profileId });
     }
   } catch {
-    /* no offer — never let the undo surface break the commit path */
+    /* no offer; never let the undo surface break the commit path */
   }
 }
 
@@ -382,7 +382,7 @@ export const useEdits = create<EditsState>((set, get) => ({
   resetTab: (tabId) => {
     writeEdits(set, tabId, blankEdits());
     if (tabId === get().active) set({ preview: null, lastError: null });
-    // the tab's result context is gone — its undo offer goes with it
+    // the tab's result context is gone; its undo offer goes with it
     if (get().undoOffer?.tabId === tabId) setUndoOffer(null);
   },
 
@@ -392,7 +392,7 @@ export const useEdits = create<EditsState>((set, get) => ({
     const ctx = sessionAndSql();
     if (!ctx) return;
     writeEdits(set, tabId, (t) => ({ maps: { ...t.maps, [stmtIndex]: "loading" } }));
-    // snapshot identity hints let the backend skip its pg_class trip — the
+    // snapshot identity hints let the backend skip its pg_class trip; the
     // map lands after ONE round trip (the prepare)
     const snap = snapshotFor(tabId);
     const hints = snap ? tableIdentityHints(snap) : null;
@@ -406,7 +406,7 @@ export const useEdits = create<EditsState>((set, get) => ({
 
   refreshMapsAfterDdl: () => {
     // schema drift invalidates the undo offer (same DDL-sniff signal that
-    // refreshes the editability maps) — a revert against a shifted schema
+    // refreshes the editability maps): a revert against a shifted schema
     // would only roll back honestly, but don't even offer it
     if (get().undoOffer) setUndoOffer(null);
     const res = useResults.getState();
@@ -498,7 +498,7 @@ export const useEdits = create<EditsState>((set, get) => ({
     const tab = get().byTab[tabId] ?? blankEdits();
     if (!sql || Object.keys(tab.pending).length === 0) return;
     previewPayload = null;
-    // modal opens INSTANTLY in a loading state — resolving the session may
+    // modal opens INSTANTLY in a loading state: resolving the session may
     // cross the tunnel (1-2s on a bastion); making ⌘S wait for that read as
     // "the app is sluggish". With a warm mapping the preview itself is
     // generated with ZERO server round trips.
@@ -530,13 +530,13 @@ export const useEdits = create<EditsState>((set, get) => ({
         statements = await gen(entries);
       } catch (e) {
         // schema drifted under the cached mapping → refetch the maps once
-        // (server truth), rebuild, retry silently. Preview is a read — safe.
+        // (server truth), rebuild, retry silently. Preview is a read, safe.
         if (!isSchemaErr(e)) throw e;
         for (const en of entries) await refetchMap(set, tabId, en.stmtIndex);
         ({ entries, truncatedLocators } = buildEntries(get().byTab[tabId] ?? blankEdits(), tabId));
         statements = await gen(entries);
       }
-      if (!get().preview?.loading) return; // closed mid-fetch — don't reopen
+      if (!get().preview?.loading) return; // closed mid-fetch; don't reopen
       previewPayload = {
         sql,
         pendingSig: pendingSig((get().byTab[tabId] ?? blankEdits()).pending),
@@ -577,7 +577,7 @@ export const useEdits = create<EditsState>((set, get) => ({
       set({ committing: false, lastError: "no live connection" });
       return;
     }
-    // the await above can take seconds (reconnect) — if the tab's result set
+    // the await above can take seconds (reconnect): if the tab's result set
     // was replaced meanwhile, PK locators would be built from the NEW query's
     // rows at the OLD map's column positions. Abort instead.
     if (useResults.getState().byTab[tabId]?.executedSql !== sql) {
@@ -587,7 +587,7 @@ export const useEdits = create<EditsState>((set, get) => ({
 
     // byte-for-byte contract: when committing from an open preview, run the
     // EXACT inputs the preview SQL was generated from (same rowEdits + same
-    // mapping hint through the same backend generator = identical SQL) —
+    // mapping hint through the same backend generator = identical SQL):
     // a snapshot refresh between ⌘S and Enter can't shift the plan.
     const sig = pendingSig(tab.pending);
     const stashed =
@@ -616,7 +616,7 @@ export const useEdits = create<EditsState>((set, get) => ({
       } catch (e) {
         if (isSchemaErr(e)) {
           // the batch rolled back server-side; the mapping is schema-stale.
-          // NEVER auto-retry a write — regenerate the preview below.
+          // NEVER auto-retry a write; regenerate the preview below.
           schemaChanged = true;
         } else {
           threw = true;
@@ -626,7 +626,7 @@ export const useEdits = create<EditsState>((set, get) => ({
       }
       const { used } = en;
       if (outcome.committed) {
-        // patch the EDIT'S tab explicitly — the user may have switched tabs
+        // patch the EDIT'S tab explicitly: the user may have switched tabs
         // while the commit round trip was in flight
         useResults.getState().patchStatement(
           en.stmtIndex,
@@ -641,7 +641,7 @@ export const useEdits = create<EditsState>((set, get) => ({
           tabId,
         );
         // browse tabs: a patched sort/tiebreak key column invalidates the
-        // pinned keyset — the next page must re-run, not seek from the
+        // pinned keyset: the next page must re-run, not seek from the
         // patched value (dynamic import mirrors the existing store wiring)
         {
           const stmtCols =
@@ -686,7 +686,7 @@ export const useEdits = create<EditsState>((set, get) => ({
         `${truncatedLocators} edit${truncatedLocators === 1 ? "" : "s"} skipped. ${TRUNCATED_LOCATOR_MSG}`,
       );
     }
-    // clear ONLY what actually committed — even when a later statement failed;
+    // clear ONLY what actually committed, even when a later statement failed;
     // rolled-back and skipped edits stay staged so work is never silently lost
     writeEdits(set, tabId, (t) => {
       const pending = { ...t.pending };
@@ -764,21 +764,21 @@ export const useEdits = create<EditsState>((set, get) => ({
       setUndoOffer(null); // single-shot: the row is consumed either way
       if (out.committed) {
         set({ undoing: false, lastError: null });
-        // refresh the grid with the exact SQL this result came from — AWAITED
+        // refresh the grid with the exact SQL this result came from, AWAITED
         // so its resetTab has already fired before the redo offer is fetched
         // (the old fire-and-forget order let resetTab wipe the fresh offer)
         const rt = useResults.getState().byTab[offer.tabId];
         if (rt?.executedSql && useResults.getState().active === offer.tabId) {
-          // the undo committed on the OFFER's profile — reload from there,
+          // the undo committed on the OFFER's profile: reload from there,
           // not the rail, or the reverted rows repaint from another database
           await useResults
             .getState()
             .run(rt.executedSql, rt.executedOffset, { profileId: offer.profileId });
         }
-        // the undo commit wrote its own undo row — redo emerges as the next offer
+        // the undo commit wrote its own undo row; redo emerges as the next offer
         void refreshUndoOffer(offer.tabId, offer.sessionId, offer.profileId);
       } else {
-        // stale undo: the verified batch rolled back fully — say so honestly
+        // stale undo: the verified batch rolled back fully; say so honestly
         set({ undoing: false, lastError: out.message ?? "undo rolled back" });
       }
     } catch (e) {

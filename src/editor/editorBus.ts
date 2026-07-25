@@ -1,6 +1,6 @@
 // Mutable registries the mounted SqlEditor fills in, split out so the shell
 // (App, Palette) can read them without statically importing the CodeMirror
-// bundle — the editor loads lazily; until it mounts these are null/false,
+// bundle: the editor loads lazily; until it mounts these are null/false,
 // which is also the correct answer (nothing to run/format yet).
 
 /** what ⌘↩ / the Run button should execute: the selection if any, else the
@@ -11,7 +11,7 @@ export const editorRunText: {
   current: (() => { text: string; offset: number }) | null;
 } = { current: null };
 
-/** true while the buffer time-machine shows a snapshot — run/save/format on
+/** true while the buffer time-machine shows a snapshot: run/save/format on
  * the (invisible) parked draft are swallowed everywhere via this flag */
 export const editorTimeTraveling = { current: false };
 

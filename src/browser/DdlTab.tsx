@@ -6,7 +6,7 @@ import type { TableInfo } from "../stores/schema";
 import { useConnections } from "../stores/connections";
 import "./browser.css";
 
-/** TableBrowser's header Refresh routes here while DDL is active — same
+/** TableBrowser's header Refresh routes here while DDL is active, same
  * pattern as StructureTab's structureRefresh */
 export const ddlRefresh = { current: null as null | (() => void) };
 

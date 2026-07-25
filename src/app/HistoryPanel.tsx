@@ -11,7 +11,7 @@ import { Modal } from "./overlay/Overlay";
 import "./app.css";
 import "./history.css";
 
-/** appdb stamps UTC "YYYY-MM-DD HH:MM:SS" — normalize to a parseable ISO */
+/** appdb stamps UTC "YYYY-MM-DD HH:MM:SS": normalize to a parseable ISO */
 const parseTs = (iso: string): Date =>
   new Date(iso.endsWith("Z") ? iso : iso.replace(" ", "T") + "Z");
 
@@ -40,7 +40,7 @@ function dayLabel(d: Date): string {
 const norm = (sql: string) => sql.replace(/\s+/g, " ").trim();
 
 const STATUS_FILTERS: (HistoryStatus | "all")[] = ["all", "ok", "error", "cancelled"];
-/** chip display text — the filter VALUES above stay lowercase code tokens */
+/** chip display text. The filter VALUES above stay lowercase code tokens */
 const STATUS_CHIP: Record<HistoryStatus | "all", string> = {
   all: "All",
   ok: "OK",
@@ -60,11 +60,11 @@ interface Run {
   size: number;
   headId: number;
   member: boolean;
-  /** non-ok runs hidden under a collapsed head — surfaced on the badge */
+  /** non-ok runs hidden under a collapsed head, surfaced on the badge */
   hiddenErrs: number;
 }
 
-/** ⌘Y — searchable query history across every connection */
+/** ⌘Y: searchable query history across every connection */
 export function HistoryPanel({ onClose }: { onClose: () => void }) {
   const profiles = useConnections((s) => s.profiles);
   const [query, setQuery] = useState("");
@@ -95,7 +95,7 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
         })
         .catch(() => {
           if (stale) return;
-          // an empty list would lie — say the fetch failed
+          // an empty list would lie: say the fetch failed
           setRows([]);
           setFetchError(true);
         });
@@ -111,7 +111,7 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
     [rows, statusFilter],
   );
 
-  // group adjacent runs of the same RAW SQL on the same connection — raw
+  // group adjacent runs of the same RAW SQL on the same connection. Raw
   // equality, never normalized: whitespace inside string literals is data,
   // and two queries differing only there must not collapse into one entry
   const groups = useMemo(() => {
@@ -209,7 +209,7 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
                 className={`history-xn${expanded.has(run.headId) ? " active" : ""}${run.hiddenErrs > 0 ? " has-err" : ""}`}
                 title={`${run.size} ${
                   // a status-chip filter can glue runs that were NOT adjacent
-                  // in real history — don't claim "consecutive" there
+                  // in real history: don't claim "consecutive" there
                   statusFilter === "all"
                     ? "consecutive identical runs"
                     : "identical runs (may be non-consecutive, the list is filtered)"

@@ -43,7 +43,7 @@
   },
   {
    "title": "Palette caps tables at first 400 BEFORE filtering \u2014 most tables unfindable at scale",
-   "detail": "Palette.tsx:208 snapshot.tables.slice(0,400) then lets cmdk filter the rendered 400. On a 50-schema / 2000-table DB (user's crawler_data_production shape), any table past index 400 in snapshot order can never be found via \u2318K \u2014 the palette lies by showing 'No results' for a table that exists. Fix: shouldFilter={false} for the tables group, run your own fuzzy match over ALL tables against query, render top ~50; same pattern keeps per-keystroke cost bounded.",
+   "detail": "Palette.tsx:208 snapshot.tables.slice(0,400) then lets cmdk filter the rendered 400. On a 50-schema / 2000-table DB (a large real-world shape), any table past index 400 in snapshot order can never be found via \u2318K \u2014 the palette lies by showing 'No results' for a table that exists. Fix: shouldFilter={false} for the tables group, run your own fuzzy match over ALL tables against query, render top ~50; same pattern keeps per-keystroke cost bounded.",
    "severity": "P0",
    "effort": "S",
    "kind": "bug"

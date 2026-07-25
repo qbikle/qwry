@@ -1,4 +1,4 @@
-// Mirrors src-tauri/src/driver/mod.rs — keep in sync by hand (see CLAUDE.md).
+// Mirrors src-tauri/src/driver/mod.rs; keep in sync by hand.
 
 export interface Profile {
   id: string;
@@ -57,13 +57,13 @@ export interface DriverError {
   message: string;
   position: number | null;
   code: string | null;
-  /** PG DETAIL — often the actual answer ("Key (email)=(x) already exists") */
+  /** PG DETAIL: often the actual answer ("Key (email)=(x) already exists") */
   detail?: string | null;
   /** PG HINT */
   hint?: string | null;
 }
 
-/** schema + relation name carried SEPARATELY — never split a dotted string */
+/** schema + relation name carried SEPARATELY; never split a dotted string */
 export interface TableRef {
   schema: string;
   name: string;
@@ -88,7 +88,7 @@ export interface EditabilityMap {
   statement_index: number;
   columns: ColumnEditMeta[];
   pk_cols: Record<number, number[]>;
-  /** table_oid → "schema.name" (display only — SQL identity is table_refs) */
+  /** table_oid → "schema.name" (display only; SQL identity is table_refs) */
   tables: Record<number, string>;
   table_refs: Record<number, TableRef>;
 }
@@ -100,12 +100,12 @@ export interface RowEdit {
   /** SET col = DEFAULT (value ignored) */
   use_default?: boolean;
   pk: [number, string | null][];
-  /** old-value predicates ANDed into the WHERE — the ctid row-movement guard */
+  /** old-value predicates ANDed into the WHERE: the ctid row-movement guard */
   guard?: [number, string | null][];
 }
 
 /** oid → identity from the schema snapshot (mirror of Rust TableIdentityHint).
- * Lets `editability` skip its pg_class round trip — 1 RTT (the prepare). */
+ * Lets `editability` skip its pg_class round trip: 1 RTT (the prepare). */
 export interface TableIdentityHint {
   table_oid: number;
   schema: string;
@@ -157,7 +157,7 @@ export interface EditOutcome {
 // ---- inverse-SQL undo (mirrors appdb::UndoLogRow / edit::UndoOutcome) ------
 
 /** one persisted undo offer; revert_sql holds the structured revert plan
- * (JSON) the backend regenerates SQL from — the frontend never reads it */
+ * (JSON) the backend regenerates SQL from; the frontend never reads it */
 export interface UndoLogRow {
   id: number;
   profile_id: string;
@@ -169,7 +169,7 @@ export interface UndoLogRow {
 }
 
 /** outcome of applying an undo: committed, or rolled back with an honest
- * message ("undo no longer matches — data changed since") */
+ * message ("undo no longer matches … data changed since") */
 export interface UndoOutcome {
   committed: boolean;
   message: string | null;
@@ -195,10 +195,10 @@ export interface IndexStatInfo {
   name: string;
   definition: string;
   /** a bare CREATE UNIQUE INDEX has no pg_constraint row yet still enforces
-   * uniqueness — drop-candidacy must exclude unique indexes too */
+   * uniqueness; drop-candidacy must exclude unique indexes too */
   is_unique: boolean;
   is_primary: boolean;
-  /** a constraint owns this index — never-used badge must skip it */
+  /** a constraint owns this index; never-used badge must skip it */
   backs_constraint: boolean;
   size_bytes: number;
   size_pretty: string;
@@ -221,7 +221,7 @@ export interface TableSizes {
   total_pretty: string;
 }
 
-/** pg_stat_all_tables row (NOT user_tables — matviews vanish there) */
+/** pg_stat_all_tables row (NOT user_tables: matviews vanish there) */
 export interface RelActivity {
   n_live_tup: number | null;
   n_dead_tup: number | null;
@@ -238,7 +238,7 @@ export interface ColumnComment {
   comment: string;
 }
 
-/** live pg_attribute row — the Columns section renders these instead of the
+/** live pg_attribute row: the Columns section renders these instead of the
  * (possibly stale) snapshot copy the tab carries */
 export interface ColumnStatInfo {
   name: string;
@@ -246,7 +246,7 @@ export interface ColumnStatInfo {
   /** format_type(atttypid, atttypmod) */
   data_type: string;
   not_null: boolean;
-  /** pg_get_expr(adbin) — the generation expression for generated columns */
+  /** pg_get_expr(adbin): the generation expression for generated columns */
   default: string | null;
   /** attidentity: '' none, 'a' always, 'd' by default */
   identity: string;
@@ -263,7 +263,7 @@ export interface TableStats {
   activity: RelActivity | null;
   comment: string | null;
   column_comments: ColumnComment[];
-  /** live column list — supersedes the snapshot while the tab is open */
+  /** live column list; supersedes the snapshot while the tab is open */
   columns: ColumnStatInfo[];
 }
 
@@ -282,7 +282,7 @@ export interface CsvPreview {
   field_count: number;
 }
 
-/** file identity snapshot (mtime + size) — mirrors import.rs FileStat.
+/** file identity snapshot (mtime + size). Mirrors import.rs FileStat.
  * Returned by `file_stat` and by validate-run ImportReports; feed it back as
  * `expected_stat` on the commit run to catch the file changing in between. */
 export interface FileStat {
@@ -309,7 +309,7 @@ export interface ImportSpec {
   null_token: string | null;
   /** validate = always rolls back; commit = one all-or-nothing transaction */
   mode: "validate" | "commit";
-  /** commit only: the FileStat the validate run reported — the backend
+  /** commit only: the FileStat the validate run reported; the backend
    * refuses with "file changed since validation" on any mismatch */
   expected_stat?: FileStat | null;
 }
@@ -332,14 +332,14 @@ export interface ImportReport {
   /** validate: rows that passed; commit: rows persisted (0 unless committed) */
   ok_rows: number;
   errors: ImportRowIssue[];
-  /** error collection stopped at the cap — "…and possibly more" */
+  /** error collection stopped at the cap: "…and possibly more" */
   more_errors: boolean;
   committed: boolean;
-  /** commit resolution: "unknown" = the connection was lost during COMMIT —
+  /** commit resolution: "unknown" = the connection was lost during COMMIT;
    * the import may or may not have been applied (never claim a rollback).
    * Absent/other values mean `committed` is authoritative. */
   outcome?: "committed" | "rolled_back" | "unknown" | null;
-  /** file identity at validate time (validate runs only) — feed back as
+  /** file identity at validate time (validate runs only); feed back as
    * `expected_stat` on the commit run */
   file_stat?: FileStat | null;
 }

@@ -2,7 +2,7 @@ import { EditorView } from "@codemirror/view";
 import type { FormatOptionsWithLanguage } from "sql-formatter";
 import { useSettings } from "../stores/settings";
 
-/** curated formatter styles — each is a full sql-formatter option set; the
+/** curated formatter styles: each is a full sql-formatter option set; the
  * keyword-case setting is layered on top of whichever preset runs */
 export const FORMAT_PRESETS: {
   id: string;
@@ -57,7 +57,7 @@ function buildOptions(presetId: string): FormatOptionsWithLanguage {
   };
 }
 
-/** collapse a statement to (near) one line. Hand-rolled lexer — strings,
+/** collapse a statement to (near) one line. Hand-rolled lexer: strings,
  * dollar-quotes, quoted identifiers and comments pass through verbatim; a line
  * comment keeps its newline (eating it would swallow the rest of the SQL). */
 export function minifySql(src: string): string {
@@ -78,7 +78,7 @@ export function minifySql(src: string): string {
       pendingSpace = true;
       continue;
     }
-    // line comment — verbatim, newline preserved
+    // line comment: verbatim, newline preserved
     if (c === "-" && src[i + 1] === "-") {
       const end = src.indexOf("\n", i);
       emit(end === -1 ? src.slice(i) : src.slice(i, end));
@@ -86,7 +86,7 @@ export function minifySql(src: string): string {
       i = end === -1 ? n : end + 1;
       continue;
     }
-    // block comment — verbatim (may be a hint / anything)
+    // block comment: verbatim (may be a hint / anything)
     if (c === "/" && src[i + 1] === "*") {
       const end = src.indexOf("*/", i + 2);
       emit(end === -1 ? src.slice(i) : src.slice(i, end + 2));
@@ -125,7 +125,7 @@ export function minifySql(src: string): string {
   return out.trim();
 }
 
-/** apply a transform to the selection (if any) else the whole buffer —
+/** apply a transform to the selection (if any) else the whole buffer:
  * ONE dispatch so ⌘Z restores the pre-format text exactly */
 function applyToBuffer(view: EditorView, transform: (src: string) => string): boolean {
   const sel = view.state.selection.main;
@@ -136,7 +136,7 @@ function applyToBuffer(view: EditorView, transform: (src: string) => string): bo
   try {
     out = transform(src);
   } catch {
-    return true; // unparseable fragment — leave the text alone
+    return true; // unparseable fragment: leave the text alone
   }
   if (out === src) return true;
   view.dispatch({
@@ -149,7 +149,7 @@ function applyToBuffer(view: EditorView, transform: (src: string) => string): bo
 }
 
 /** format with a specific preset (context-menu submenu). sql-formatter is
- * loaded on first use — it's ~an eighth of the whole bundle and ⇧⌘F is rare;
+ * loaded on first use: it's ~an eighth of the whole bundle and ⇧⌘F is rare;
  * the buffer snapshot is taken AFTER the load so a keystroke typed during the
  * import is never clobbered by a format of stale text */
 export async function formatWithPreset(view: EditorView, presetId: string): Promise<void> {
@@ -157,7 +157,7 @@ export async function formatWithPreset(view: EditorView, presetId: string): Prom
   applyToBuffer(view, (src) => format(src, buildOptions(presetId)));
 }
 
-/** ⇧⌘F / menu — the user's default preset */
+/** ⇧⌘F / menu: the user's default preset */
 export function formatDefault(view: EditorView): Promise<void> {
   return formatWithPreset(view, useSettings.getState().formatPreset);
 }

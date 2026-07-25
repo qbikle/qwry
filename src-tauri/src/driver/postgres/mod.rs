@@ -19,36 +19,36 @@ pub struct PgSession {
     tls: TlsChoice,
     conn_handle: tokio::task::JoinHandle<()>,
     /// connect config kept so cancel escalation can open a FRESH connection
-    /// with the same creds/address — cancel must never depend on the busy
+    /// with the same creds/address; cancel must never depend on the busy
     /// session's health
     cfg: tokio_postgres::Config,
     /// control-lane config (SSH-tunneled sessions): same destination through
     /// a SECOND ssh process, so cancel's new connection can't queue behind
     /// data-lane row bytes (head-of-line blocking on one ssh TCP connection)
     control_cfg: Option<tokio_postgres::Config>,
-    /// the control lane's raw address — token_cancel dials it directly
+    /// the control lane's raw address; token_cancel dials it directly
     /// (CancelToken::cancel_query would redial the stored data-lane socket)
     control_addr: Option<(String, u16)>,
     /// on_close callback, shared with the connection task: exactly one taker
     /// ever fires it, so a unilateral abort and a natural death cannot both
     /// report the session's end
     on_close: CloseNotifier,
-    /// set once abort_connection ran — disconnect skips the cancel ladder
+    /// set once abort_connection ran; disconnect skips the cancel ladder
     /// for an already-dead connection instead of dialing for ~8s
     aborted: std::sync::atomic::AtomicBool,
     /// server backend pid, captured at connect (pg_backend_pid()); target of
     /// pg_cancel_backend / pg_terminate_backend escalation
     backend_pid: AtomicI32,
-    /// backend_start (pg_stat_activity, wire text), captured with the pid —
+    /// backend_start (pg_stat_activity, wire text), captured with the pid;
     /// escalation matches BOTH so a recycled pid is never signaled
     backend_start: Mutex<String>,
-    /// server_version_num captured at connect (0 = unknown) — the frontend
+    /// server_version_num captured at connect (0 = unknown); the frontend
     /// gates ctid keyset pagination on it (tid btree ops are PG 14+)
     server_version_num: AtomicI64,
-    /// full server_version string — keys the appdb pg_catalog function cache
+    /// full server_version string; keys the appdb pg_catalog function cache
     /// (pg_catalog contents only change with the server build)
     server_version: Mutex<String>,
-    /// TxState as u8 — authoritative transaction status (see driver::TxState)
+    /// TxState as u8: authoritative transaction status (see driver::TxState)
     tx: AtomicU8,
     /// count of statements currently executing on this session (a counter, not
     /// a flag: overlapping work must not false-clear completion detection)
@@ -81,9 +81,9 @@ fn pg_config(
     let (host, port) = addr.unwrap_or((profile.host.as_str(), profile.port));
     let mut cfg = tokio_postgres::Config::new();
     // standard_conforming_strings: generated edit SQL escapes literals by
-    // doubling quotes only. statement_timeout: user-tunable via Settings —
+    // doubling quotes only. statement_timeout: user-tunable via Settings;
     // a dead tunnel or runaway query must never hang a session forever.
-    // is_prod: SAFE MODE — the session starts read-only at the SERVER; a
+    // is_prod: SAFE MODE. The session starts read-only at the SERVER; a
     // stray UPDATE on a prod-flagged connection errors before touching data
     // (per-tab unlock runs SET default_transaction_read_only = off).
     let mut opts = format!(
@@ -94,7 +94,7 @@ fn pg_config(
     if profile.is_prod {
         opts.push_str(" -c default_transaction_read_only=on");
     }
-    // sslmode=require must actually REQUIRE — tokio-postgres defaults to
+    // sslmode=require must actually REQUIRE: tokio-postgres defaults to
     // Prefer, which silently downgrades to plaintext when the server says N
     match profile.sslmode.as_str() {
         "require" => {
@@ -112,7 +112,7 @@ fn pg_config(
         .password(password)
         .application_name("qwry")
         .options(&opts)
-        // dead-peer detection in ~60s instead of the kernel's 2h default —
+        // dead-peer detection in ~60s instead of the kernel's 2h default:
         // the SSH-tunnel-drop case must fail fast, not spin forever
         .keepalives(true)
         .keepalives_idle(std::time::Duration::from_secs(30))
@@ -137,7 +137,7 @@ fn connect_err(e: tokio_postgres::Error) -> DriverError {
 /// being dropped on the floor. When the connection ends (server drop /
 /// network error) `on_close` fires with the error text when there is one.
 /// An intentional disconnect aborts this task (PgSession::drop) before it
-/// reaches `on_close`, so it only signals a real death — the frontend uses it
+/// reaches `on_close`, so it only signals a real death; the frontend uses it
 /// to flip the connection's status dot.
 fn spawn_session<S, T>(
     client: Client,
@@ -160,7 +160,7 @@ where
                 Some(Ok(tokio_postgres::AsyncMessage::Notice(db))) => {
                     on_notice(db.severity().to_string(), db.message().to_string());
                 }
-                Some(Ok(_)) => {} // LISTEN notifications etc. — not ours (yet)
+                Some(Ok(_)) => {} // LISTEN notifications etc., not ours (yet)
                 Some(Err(e)) => {
                     eprintln!("pg connection error: {e}");
                     break Some(match e.as_db_error() {
@@ -230,12 +230,12 @@ pub async fn connect(
                     );
                 }
                 // a server-sent error (bad password, pg_hba, missing db…) is the real
-                // reason — a plain retry would only mask it with a confusing
+                // reason; a plain retry would only mask it with a confusing
                 // "no encryption"/SSL error, so surface the true cause now
                 Err(e) if !try_plain || e.as_db_error().is_some() => {
                     return Err(connect_err(e));
                 }
-                Err(_) => {} // TLS negotiation/transport failure — fall through to plain
+                Err(_) => {} // TLS negotiation/transport failure: fall through to plain
             }
         }
 
@@ -250,7 +250,7 @@ pub async fn connect(
         session.control_addr = Some((host.to_string(), port));
     }
 
-    // capture the backend identity now — cancel escalation targets it from a
+    // capture the backend identity now: cancel escalation targets it from a
     // fresh connection, so it must be known before any query can get stuck.
     // backend_start rides along: pid + start time together name THIS backend,
     // so a recycled pid can never be cancelled/terminated by mistake.
@@ -274,7 +274,7 @@ pub async fn connect(
     if let Ok(mut s) = session.backend_start.lock() {
         *s = start;
     }
-    // best-effort — 0/"" means unknown and only disables version-gated paths
+    // best-effort: 0/"" means unknown and only disables version-gated paths
     let vnum: i64 = row
         .and_then(|r| r.get(2).cloned().flatten())
         .and_then(|v| v.parse().ok())
@@ -289,7 +289,7 @@ pub async fn connect(
     Ok(session)
 }
 
-/// RAII busy marker — cancel escalation polls it to see whether the query died
+/// RAII busy marker: cancel escalation polls it to see whether the query died
 struct BusyGuard<'a>(&'a AtomicUsize);
 impl<'a> BusyGuard<'a> {
     fn new(counter: &'a AtomicUsize) -> Self {
@@ -304,7 +304,7 @@ impl Drop for BusyGuard<'_> {
 }
 
 /// Tx-control head: the verb plus the two tokens after PG's optional
-/// `WORK`/`TRANSACTION` filler (opt_transaction in the grammar) —
+/// `WORK`/`TRANSACTION` filler (opt_transaction in the grammar):
 /// `ROLLBACK WORK TO SAVEPOINT sp` and `ROLLBACK TO SAVEPOINT sp` must read
 /// the same. The filler is only skipped after COMMIT/END/ROLLBACK/ABORT
 /// (`PREPARE TRANSACTION` needs its literal second token).
@@ -352,7 +352,7 @@ fn fold_tx(state: TxState, sql: &str) -> TxState {
     }
 }
 
-/// state after a statement ERRORED: inside an explicit tx PG aborts it —
+/// state after a statement ERRORED: inside an explicit tx PG aborts it,
 /// except a failed COMMIT/END (deferred constraint fired at commit time),
 /// which still ends the tx: the server rolls back and returns to idle.
 /// AND CHAIN keeps the conservative fold (the chained tx state is murky).
@@ -437,7 +437,7 @@ impl PgSession {
     }
 
     /// Execute one or more statements via the simple protocol.
-    /// All values arrive as wire text — universal across every PG type, and
+    /// All values arrive as wire text: universal across every PG type, and
     /// multi-statement strings work natively. (P2 replaces this with streaming.)
     pub async fn execute_simple(&self, sql: &str) -> Result<ExecOutcome> {
         let start = Instant::now();
@@ -456,7 +456,7 @@ impl PgSession {
                 // before it, then apply the per-statement error outcome. A
                 // multi-statement error WITHOUT a position falls back to the
                 // position-blind conservative classifier (any BEGIN head, or
-                // an already-open tx → FailedTx) — only edit batches flow
+                // an already-open tx → FailedTx); only edit batches flow
                 // through here today, and those never put tx control after
                 // the wrapper, so the fallback cannot mis-fold them.
                 let spans = splitter::split_statement_spans(sql);
@@ -552,7 +552,7 @@ impl PgSession {
             statements.push(stmt);
         }
 
-        // simple_query gives one round trip for the whole batch — per-statement
+        // simple_query gives one round trip for the whole batch; per-statement
         // timing lands with the P2 streaming executor.
         let n = statements.len().max(1) as f64;
         for stmt in &mut statements {
@@ -562,15 +562,15 @@ impl PgSession {
         Ok(ExecOutcome { statements })
     }
 
-    /// protocol-level cancel via the CancelToken (opens a new connection —
+    /// protocol-level cancel via the CancelToken (opens a new connection;
     /// through a dead tunnel it would hang forever, hence the hard deadline).
     /// Tunneled sessions dial the CONTROL lane themselves and hand the stream
-    /// to `cancel_query_raw` — `cancel_query` would redial the stored
+    /// to `cancel_query_raw`; `cancel_query` would redial the stored
     /// data-lane address, whose handshake queues behind buffered row bytes
     /// when a bulk result saturates the tunnel.
     pub(crate) async fn token_cancel(&self) -> Result<()> {
         let token = self.cancel.clone();
-        // control lane first, on its OWN short budget — a half-dead lane
+        // control lane first, on its OWN short budget: a half-dead lane
         // (local listener still accepts, remote channel gone) must fail over
         // to the data lane instead of eating the whole deadline or committing
         // to an EPIPE once the local dial succeeded
@@ -641,7 +641,7 @@ impl PgSession {
         }
     }
 
-    /// (pid, backend_start) captured at connect — out-of-band signals match
+    /// (pid, backend_start) captured at connect; out-of-band signals match
     /// BOTH via pg_stat_activity so a recycled pid is never signaled
     fn backend_identity(&self) -> Option<(i32, String)> {
         let pid = self.backend_pid();
@@ -674,7 +674,7 @@ impl PgSession {
             .map_err(|e| DriverError::Internal(format!("out-of-band cancel failed: {e}")))
     }
 
-    /// pg_terminate_backend over a fresh connection — kills the server
+    /// pg_terminate_backend over a fresh connection: kills the server
     /// process outright. Never called automatically; the UI offers it as the
     /// last tier behind an explicit confirm.
     pub async fn terminate_backend(&self) -> Result<()> {
@@ -687,7 +687,7 @@ impl PgSession {
     }
 
     /// Runs a control statement on a one-shot connection. Tunneled sessions
-    /// go through the CONTROL lane (its own ssh process — a saturated data
+    /// go through the CONTROL lane (its own ssh process; a saturated data
     /// lane can't starve the handshake); if the control lane itself is
     /// unreachable, fall back to the data lane rather than not signaling.
     async fn run_on_fresh_connection(&self, sql: &str) -> Result<()> {
@@ -703,7 +703,7 @@ impl PgSession {
             {
                 Ok(Ok(())) => return Ok(()),
                 // transport-level connect failure or sub-timeout: the lane is
-                // dead — retry on the data lane. A server-sent refusal or a
+                // dead: retry on the data lane. A server-sent refusal or a
                 // query error would only repeat there, so those return.
                 Ok(Err((true, _))) | Err(_) => {}
                 Ok(Err((false, e))) => return Err(e),
@@ -722,7 +722,7 @@ impl PgSession {
 
     /// Hard client-side kill: abort the connection driver task, so every
     /// in-flight query on this session errors out NOW ("connection closed")
-    /// instead of draining the wire to completion. Silent — on_close is
+    /// instead of draining the wire to completion. Silent: on_close is
     /// disarmed first (the disconnect path already removed the session and
     /// must not emit a death event for it).
     pub fn abort_connection(&self) {
@@ -733,14 +733,14 @@ impl PgSession {
         self.conn_handle.abort();
     }
 
-    /// true once the connection was unilaterally killed — cancel ladders
+    /// true once the connection was unilaterally killed; cancel ladders
     /// against it are pointless dialing
     pub fn is_aborted(&self) -> bool {
         self.aborted.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// `abort_connection`, but fire on_close (frontend `session-closed`)
-    /// first — for unilateral kills (terminate tier, row-cap abort) where
+    /// first: for unilateral kills (terminate tier, row-cap abort) where
     /// the UI must learn the session is gone so it can flip the status dot
     /// and rebuild lazily. The shared notifier guarantees a racing natural
     /// death and this abort report at most once between them.
@@ -756,7 +756,7 @@ impl PgSession {
 
 /// one-shot signal connection for the cancel/terminate escalation. The bool
 /// in the error is true when the CONNECTION failed at the transport level
-/// (lane unreachable / timed out) — the caller may retry on another lane;
+/// (lane unreachable / timed out): the caller may retry on another lane;
 /// false means the server answered (auth refusal, query error) and a retry
 /// elsewhere would only repeat it.
 async fn signal_over(

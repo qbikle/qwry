@@ -1,8 +1,8 @@
-// CSV/TSV import wizard — three steps in one modal: file+parse (sniffed
+// CSV/TSV import wizard. Three steps in one modal: file+parse (sniffed
 // delimiter/header, both overridable), column mapping (source → target,
 // unmapped targets take their DEFAULT), then a dry-run validate that ALWAYS
 // rolls back before the real all-or-nothing commit. Parsing, casting and
-// batching all live in Rust (src-tauri/src/import.rs) — the wizard only
+// batching all live in Rust (src-tauri/src/import.rs); the wizard only
 // drives it and renders the honest report.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
@@ -41,7 +41,7 @@ const NULL_SENTENCE: Record<ImportNullMode, string> = {
 };
 
 /** the import binds to the BROWSE TAB's own session and the profile its rows
- * came from — NEVER the rail-active profile or any fallback session: a rail
+ * came from, NEVER the rail-active profile or any fallback session: a rail
  * click mid-wizard must not redirect the import to a different database.
  * Absent or dead session → the caller refuses honestly. */
 function browseSession(): { tabId: string; sessionId: string; profileId: string } | null {
@@ -49,7 +49,7 @@ function browseSession(): { tabId: string; sessionId: string; profileId: string 
   if (!tabId) return null;
   const rt = useResults.getState().byTab[tabId];
   if (!rt?.executedSessionId || !rt.executedProfileId) return null;
-  // the session must still be live — a reaped session id would just error late
+  // the session must still be live; a reaped session id would just error late
   const alive = Object.values(useConnections.getState().tabSessions).includes(
     rt.executedSessionId,
   );
@@ -59,8 +59,8 @@ function browseSession(): { tabId: string; sessionId: string; profileId: string 
 }
 
 /** the commit-phase refusal when the file's stat no longer matches the
- * validate-time `expected_stat` (backend: "file changed since validation —
- * validate again before committing") — routed into a forced re-validate */
+ * validate-time `expected_stat` (backend: "file changed since validation,
+ * validate again before committing"), routed into a forced re-validate */
 const STAT_MISMATCH_RE = /changed since validation|file .*changed|stat.*mismatch/i;
 
 function errText(e: unknown): { message: string; code: string | null } {
@@ -90,13 +90,13 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
   const [report, setReport] = useState<ImportReport | null>(null);
   const [commitReport, setCommitReport] = useState<ImportReport | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
-  // the backend refused the commit because the file changed after validate —
+  // the backend refused the commit because the file changed after validate;
   // shown while the forced re-validate runs (and after it lands)
   const [statNotice, setStatNotice] = useState<string | null>(null);
   // explicit user overrides survive re-sniffs (delimiter change re-sniffs the
   // header only while the user hasn't decided it)
   const headerOverride = useRef<boolean | null>(null);
-  // the user touched the mapping by hand — preview reloads must only FILL
+  // the user touched the mapping by hand, so preview reloads must only FILL
   // unmapped slots, never discard the hand-tuned ones
   const handTuned = useRef(false);
   const sessionRef = useRef<string | null>(null);
@@ -113,7 +113,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
     return p ? p.name || p.host : null;
   });
 
-  // GENERATED ALWAYS columns can't be inserted into — not offered as targets
+  // GENERATED ALWAYS columns can't be inserted into, so not offered as targets
   const insertable = useMemo(
     () => table.columns.filter((c) => c.generated !== "s" && c.identity !== "a"),
     [table],
@@ -155,7 +155,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
 
   // auto-map whenever a fresh preview lands: by name when the file has a
   // header, by position when it doesn't. A reload after hand-tuning only
-  // FILLS unmapped slots — it never discards what the user set.
+  // FILLS unmapped slots; it never discards what the user set.
   useEffect(() => {
     if (!preview) {
       setMapping([]);
@@ -188,7 +188,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
 
   const setMap = (i: number, target: string | null) => {
     handTuned.current = true;
-    // stealing a target already mapped elsewhere unmaps the other source —
+    // stealing a target already mapped elsewhere unmaps the other source:
     // one target column can only be fed by one source
     setMapping((m) => m.map((t, j) => (j === i ? target : t === target ? null : t)));
     invalidateRuns();
@@ -196,7 +196,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
 
   const mappedCount = mapping.filter(Boolean).length;
   const unmappedDefaulted = table.columns.filter((c) => !mapping.includes(c.name));
-  // identity BY DEFAULT ('d') columns self-fill from their sequence — an
+  // identity BY DEFAULT ('d') columns self-fill from their sequence, so an
   // unmapped one is fine, not a "rows will fail" case
   const unmappedRequired = insertable.filter(
     (c) => c.not_null && c.default == null && c.identity !== "d" && !mapping.includes(c.name),
@@ -223,7 +223,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
     null_mode: nullMode,
     null_token: nullMode === "custom" ? nullToken : null,
     mode,
-    // commit proves it writes the exact bytes validate rehearsed — the
+    // commit proves it writes the exact bytes validate rehearsed; the
     // backend refuses on any stat drift ("file changed since validation")
     expected_stat: mode === "commit" ? (report?.file_stat ?? null) : null,
   });
@@ -244,7 +244,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
         setReport(rep);
       } else {
         setCommitReport(rep);
-        // reload reads where the COPY landed — the import's bound origin,
+        // reload reads where the COPY landed: the import's bound origin,
         // never the rail (refresh() alone follows the rail selection)
         if (rep.committed) useBrowser.getState().reloadAfterWrite(ctx.tabId, ctx.profileId);
       }
@@ -252,7 +252,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
       const msg = errText(e).message;
       if (mode === "commit" && STAT_MISMATCH_RE.test(msg)) {
         // the backend refused: the file changed after validate. The old
-        // rehearsal proved nothing — force a fresh validate (the step-3
+        // rehearsal proved nothing: force a fresh validate (the step-3
         // effect re-runs it once report is cleared) and say why.
         setReport(null);
         setCommitReport(null);
@@ -268,7 +268,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
     }
   };
 
-  // entering step 3 rehearses the whole file first — commit stays gated on a
+  // entering step 3 rehearses the whole file first; commit stays gated on a
   // clean validate
   useEffect(() => {
     if (step === 3 && !report && phase === "idle" && !runError && !commitReport) {
@@ -280,7 +280,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
 
   const running = phase !== "idle";
   const done = commitReport?.committed === true;
-  // the connection died during COMMIT — the server may or may not have
+  // the connection died during COMMIT: the server may or may not have
   // applied it; never claim a rollback, never offer a blind retry
   const indeterminate = commitReport != null && !commitReport.committed && commitReport.outcome === "unknown";
   const canCommit =
@@ -306,7 +306,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
     <Modal
       label="Import CSV"
       onClose={() => {
-        // a run in flight keeps the modal up — Cancel run stops the server work
+        // a run in flight keeps the modal up; Cancel run stops the server work
         if (!running) onClose();
       }}
     >
@@ -531,7 +531,7 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
                 <div className="imp-runline">
                   {phase === "validating"
                     ? // once every row streamed, validate is bisecting the failed
-                      // batch — say so instead of freezing the bar at 100%
+                      // batch; say so instead of freezing the bar at 100%
                       progress && progress.total > 0 && progress.processed >= progress.total
                       ? "Locating failed rows…"
                       : "Validating · dry run, always rolls back…"

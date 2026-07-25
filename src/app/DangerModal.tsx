@@ -17,7 +17,7 @@ export function DangerModal() {
       label={prompt.title}
       onClose={() => resolve(false)}
       // Mac destructive-confirm grammar (Postico): Esc AND plain Enter are the
-      // SAFE action (Cancel) — Enter must never fire a destructive confirm.
+      // SAFE action (Cancel): Enter must never fire a destructive confirm.
       // The confirm needs the deliberate ⌘⌫ chord, shown on the button.
       onKey={(e) => {
         if (e.key === "Enter") {

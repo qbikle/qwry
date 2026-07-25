@@ -1,5 +1,5 @@
 //! Editable-results pipeline. After a SELECT runs (simple protocol, text
-//! values), we `prepare()` the same statement — the RowDescription gives each
+//! values), we `prepare()` the same statement: the RowDescription gives each
 //! result column's source table OID + attnum WITHOUT re-executing. Columns map
 //! back to real tables; if a table's full PK is present in the result set, its
 //! cells are editable and edits become `UPDATE … WHERE pk = …` in one
@@ -10,7 +10,7 @@
 //! EditabilityMap it fetched at result time + column names from the schema
 //! snapshot), so planning needs ZERO catalog trips, and the whole commit runs
 //! as ONE `BEGIN; UPDATE₁; …; UPDATEₙ` simple-query message verified from the
-//! result stream, then ONE COMMIT/ROLLBACK — 2 RTTs regardless of N. A missing
+//! result stream, then ONE COMMIT/ROLLBACK: 2 RTTs regardless of N. A missing
 //! or incomplete hint falls back to full server-side derivation. Trust model:
 //! a stale hint can only produce (a) a SQL error → the whole batch rolls back,
 //! or (b) a locator matching ≠ 1 row → the whole batch rolls back; the
@@ -18,7 +18,7 @@
 //!
 //! Transaction safety: when the session already sits inside the USER's open
 //! transaction, the batch is wrapped in SAVEPOINT/RELEASE instead of
-//! BEGIN/COMMIT — the user's transaction is never committed or rolled back by
+//! BEGIN/COMMIT: the user's transaction is never committed or rolled back by
 //! an edit. The verified-batch contract is identical in both modes, but ONLY
 //! Own-mode (BEGIN…COMMIT) batches mint undo plans: a RELEASE'd savepoint is
 //! not durable (the user's ROLLBACK resurrects the pre-edit state), so a
@@ -31,14 +31,14 @@
 //! same statement (`UPDATE t AS __t SET … FROM (SELECT <changed cols> FROM t
 //! WHERE <locator+guards> FOR UPDATE) AS __old WHERE <locator+guards on __t>
 //! RETURNING __old.<changed>, __t.<changed>, __t.<locator>`), and every DELETE
-//! captures the whole row via `RETURNING *` — zero extra round trips. The
+//! captures the whole row via `RETURNING *`: zero extra round trips. The
 //! FOR UPDATE lock makes the captured old values the exact pre-update tuple
 //! (a concurrent writer can't slip between capture and write). A committed
 //! batch yields a structured `UndoPlan` (never parsed SQL) that regenerates
 //! its revert statements through THIS generator and re-enters the same
 //! verified pipeline: a stale undo (data changed since) matches ≠ 1 and rolls
 //! back honestly. Applying an undo captures again, so redo emerges naturally.
-//! PG 14-17 grammar only — PG 18's OLD/NEW RETURNING is deliberately unused.
+//! PG 14-17 grammar only; PG 18's OLD/NEW RETURNING is deliberately unused.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -60,7 +60,7 @@ pub struct ColumnEditMeta {
     /// human reason when not editable
     pub reason: Option<String>,
     pub type_name: String,
-    /// SQL-safe cast target (quoted/schema-qualified when needed) — what the
+    /// SQL-safe cast target (quoted/schema-qualified when needed): what the
     /// generated `::cast` uses; `type_name` stays the bare display name
     pub cast: String,
     /// this result column is the table's `ctid` (used as a row locator)
@@ -69,7 +69,7 @@ pub struct ColumnEditMeta {
     pub warn: Option<String>,
 }
 
-/// schema + relation name carried SEPARATELY end-to-end — a name containing a
+/// schema + relation name carried SEPARATELY end-to-end: a name containing a
 /// literal dot must never be reassembled by splitting a dotted string
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TableRef {
@@ -83,13 +83,13 @@ pub struct EditabilityMap {
     pub columns: Vec<ColumnEditMeta>,
     /// per source table_oid: which result columns hold its full PK
     pub pk_cols: HashMap<u32, Vec<u32>>,
-    /// table_oid → "schema.name" (display only — SQL generation uses table_refs)
+    /// table_oid → "schema.name" (display only; SQL generation uses table_refs)
     pub tables: HashMap<u32, String>,
     /// table_oid → separate schema/name identity
     pub table_refs: HashMap<u32, TableRef>,
 }
 
-/// Frontend-supplied identity of one table (from the schema snapshot) — lets
+/// Frontend-supplied identity of one table (from the schema snapshot); lets
 /// `editability` skip its pg_class/pg_index round trip when every OID the
 /// prepared statement references is covered. Stale data self-corrects: the
 /// commit path verifies matched==1 per row and rolls back on any mismatch.
@@ -134,7 +134,7 @@ pub struct ColumnMapHint {
     pub name: Option<String>,
 }
 
-/// Frontend-supplied mapping for the plan/apply/delete paths — the
+/// Frontend-supplied mapping for the plan/apply/delete paths: the
 /// EditabilityMap it already fetched plus attnum→name from the snapshot.
 /// When present and complete, planning does zero catalog round trips.
 #[derive(Debug, Clone, Deserialize)]
@@ -156,7 +156,7 @@ pub struct RowEdit {
     pub use_default: bool,
     /// (result-column index, text value) pairs identifying the row by PK
     pub pk: Vec<(u32, Option<String>)>,
-    /// extra old-value predicates ANDed into the WHERE — the ctid guard: rows
+    /// extra old-value predicates ANDed into the WHERE (the ctid guard): rows
     /// move under UPDATE/VACUUM FULL, so a ctid locator alone could write a
     /// different row; old values pin the identity (mismatch → 0 rows → rollback)
     #[serde(default)]
@@ -175,7 +175,7 @@ pub struct EditResult {
 pub struct EditOutcome {
     pub results: Vec<EditResult>,
     pub committed: bool,
-    /// revert plan for a committed batch — consumed by the undo-log write in
+    /// revert plan for a committed batch; consumed by the undo-log write in
     /// commands.rs, never serialized to the frontend
     #[serde(skip)]
     pub revert: Option<UndoPlan>,
@@ -191,7 +191,7 @@ struct PlannedUpdate {
     meta: CaptureMeta,
 }
 
-/// Fully resolved mapping the planners run on — either converted from a
+/// Fully resolved mapping the planners run on: either converted from a
 /// frontend hint (zero round trips) or derived server-side (prepare +
 /// pg_class + one bulk pg_attribute trip).
 struct ResolvedMap {
@@ -199,7 +199,7 @@ struct ResolvedMap {
     tables: HashMap<u32, TableRef>,
     /// (table_oid, attnum) → real column name
     names: HashMap<(u32, i16), String>,
-    /// names came from a frontend hint (snapshot-donated) — generated SQL
+    /// names came from a frontend hint (snapshot-donated); generated SQL
     /// must carry attname-verification predicates (see `NameGuards`)
     hinted: bool,
 }
@@ -270,7 +270,7 @@ fn cast_fallback(type_name: &str) -> String {
     }
 }
 
-/// types with no (or no stable) `=` operator — compared via ::text instead
+/// types with no (or no stable) `=` operator; compared via ::text instead
 fn stable_equality(type_name: &str) -> bool {
     let base = type_name.strip_prefix('_').unwrap_or(type_name);
     !matches!(
@@ -282,7 +282,7 @@ fn stable_equality(type_name: &str) -> bool {
 /// NULL-safe equality predicate on one column: `IS NULL` for a NULL old value,
 /// indexable `=` otherwise; ::text comparison for types without equality.
 /// `qual` prefixes the column with a table alias (the capture grammar's outer
-/// WHERE must qualify — the FROM subselect exposes the same column names).
+/// WHERE must qualify: the FROM subselect exposes the same column names).
 fn eq_pred_parts(
     qual: Option<&str>,
     name: &str,
@@ -327,7 +327,7 @@ pub struct UndoCol {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureMeta {
     pub table: TableRef,
-    /// pg_class oid of `table` at capture time — backs the relname identity
+    /// pg_class oid of `table` at capture time; backs the relname identity
     /// probe on guarded SQL; 0 (plans persisted before the probe existed)
     /// skips it
     #[serde(default)]
@@ -335,7 +335,7 @@ pub struct CaptureMeta {
     pub sets: Vec<UndoCol>,
     pub locator: Vec<UndoCol>,
     pub guards: Vec<UndoCol>,
-    /// (table_oid, attnum, expected attname) — ANDed into the WHERE so an
+    /// (table_oid, attnum, expected attname): ANDed into the WHERE so an
     /// external RENAME+ADD between commit and undo matches 0, never hijacks
     pub name_guards: Vec<(u32, i16, String)>,
 }
@@ -349,7 +349,7 @@ pub enum UndoStmt {
     Update(CaptureMeta),
     /// re-create a deleted row. `skip` = GENERATED / identity-ALWAYS column
     /// names excluded from the INSERT (OVERRIDING SYSTEM VALUE deliberately
-    /// not used — an identity-ALWAYS column gets a fresh value; honesty over
+    /// not used: an identity-ALWAYS column gets a fresh value; honesty over
     /// magic). `cols` carries EVERY captured column with type identity.
     /// The generated SQL is existence-gated (`INSERT … SELECT … WHERE NOT
     /// EXISTS`, locator = `pk` when captured, else ALL column values) so a
@@ -380,7 +380,7 @@ pub enum UndoStmt {
         table_oid: u32,
         locator: Vec<UndoCol>,
         guards: Vec<UndoCol>,
-        /// full column identity list — the next inverse INSERT rebuilds from
+        /// full column identity list; the next inverse INSERT rebuilds from
         /// this (values refreshed from the DELETE's RETURNING *)
         cols: Vec<UndoCol>,
         skip: Vec<String>,
@@ -391,7 +391,7 @@ pub enum UndoStmt {
     },
 }
 
-/// A committed batch's revert plan — the persisted undo artifact (stored as
+/// A committed batch's revert plan: the persisted undo artifact (stored as
 /// JSON in appdb `undo_log.revert_sql`; SQL is regenerated from it at undo
 /// time by the same generator that built the commit).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -434,20 +434,20 @@ fn name_guard_preds(name_guards: &[(u32, i16, String)]) -> impl Iterator<Item = 
 }
 
 /// relation-identity probe: verifies oid→relname so an external
-/// rename+recreate (same name, new oid — or oid reuse under a new name) can
+/// rename+recreate (same name, new oid, or oid reuse under a new name) can
 /// never retarget guarded SQL; a dropped oid yields NULL → matches 0
 fn relname_guard(oid: u32, name: &str) -> String {
     format!("(SELECT relname FROM pg_class WHERE oid = {oid}) = {}", ql(name))
 }
 
 /// The capture-form UPDATE. One result set, RETURNING one row per updated
-/// target row — matched==1 verification is unchanged from the plain grammar:
+/// target row; matched==1 verification is unchanged from the plain grammar:
 /// the FROM subselect and the outer WHERE carry the IDENTICAL predicate set,
 /// so for the only committing case (locator matches exactly one row) both
 /// sides are the same single row and the join multiplies nothing; an empty
 /// subselect (guards failed) updates zero rows. RETURNING layout:
 /// `__old.<sets>` (old values) · `__t.<sets>` (new values) · `__t.<locator>`
-/// (post-update locator — the NEW ctid after row movement).
+/// (post-update locator: the NEW ctid after row movement).
 /// `include_name_guards`: attname + relname identity probes ride the inner
 /// WHERE only (row-independent gates; doubling them adds nothing to counting).
 fn build_capture_update(meta: &CaptureMeta, include_name_guards: bool) -> String {
@@ -504,8 +504,8 @@ fn build_capture_update(meta: &CaptureMeta, include_name_guards: bool) -> String
 
 /// Build the inverse of an applied capture-form UPDATE from its RETURNING
 /// row. Used at commit time (revert = restore old values) AND at undo time
-/// (redo = restore the undone values) — perfectly symmetric. Returns None if
-/// the row doesn't hold the expected capture layout (accounting drift —
+/// (redo = restore the undone values); perfectly symmetric. Returns None if
+/// the row doesn't hold the expected capture layout (accounting drift:
 /// refuse a revert rather than persist a wrong one).
 fn inverse_of_update(meta: &CaptureMeta, row: &[Option<String>]) -> Option<UndoStmt> {
     let n = meta.sets.len();
@@ -532,7 +532,7 @@ fn inverse_of_update(meta: &CaptureMeta, row: &[Option<String>]) -> Option<UndoS
     let set_names: HashSet<&str> = meta.sets.iter().map(|c| c.name.as_str()).collect();
     let loc_names: HashSet<&str> = meta.locator.iter().map(|c| c.name.as_str()).collect();
     // pins for the revert: the values we just wrote (server-normalized wire
-    // text from RETURNING, not our input literals — '1.50'::numeric etc.)
+    // text from RETURNING, not our input literals: '1.50'::numeric etc.)
     // plus every original guard column we did NOT touch, at its old value
     let mut guards: Vec<UndoCol> = meta
         .sets
@@ -561,13 +561,13 @@ fn inverse_of_update(meta: &CaptureMeta, row: &[Option<String>]) -> Option<UndoS
 /// statement carries a RETURNING and must match exactly 1 row.
 fn revert_stmt_sql(stmt: &UndoStmt) -> String {
     match stmt {
-        // persisted name guards are deliberate — always include them
+        // persisted name guards are deliberate: always include them
         UndoStmt::Update(meta) => build_capture_update(meta, true),
         UndoStmt::Insert { table, table_oid, cols, skip, pk, name_guards } => {
             let insertable: Vec<&UndoCol> =
                 cols.iter().filter(|c| !skip.contains(&c.name)).collect();
             if insertable.is_empty() {
-                // all-generated table — DEFAULT VALUES takes no WHERE, so
+                // all-generated table: DEFAULT VALUES takes no WHERE, so
                 // this vanishing edge stays ungated
                 format!("INSERT INTO {} DEFAULT VALUES RETURNING ctid::text", table_path(table))
             } else {
@@ -583,7 +583,7 @@ fn revert_stmt_sql(stmt: &UndoStmt) -> String {
                     .join(", ");
                 // existence gate: a row equal to what we'd re-create (by PK
                 // when captured, else by every captured value) blocks the
-                // insert — 0 rows → the matched==1 verification rolls the
+                // insert: 0 rows → the matched==1 verification rolls the
                 // whole undo back instead of minting a near-duplicate
                 let by_pk: Vec<&UndoCol> = pk
                     .iter()
@@ -708,7 +708,7 @@ fn build_delete_revert(
 }
 
 /// Inverse of one just-applied revert statement, from its verified result
-/// (exactly 1 RETURNING row — the caller checked). Update ↔ Update via the
+/// (exactly 1 RETURNING row; the caller checked). Update ↔ Update via the
 /// shared capture layout; Insert → Delete via the returned ctid + value pins;
 /// Delete → Insert via its RETURNING * matched back by column name.
 fn build_inverse(stmt: &UndoStmt, res: &StatementResult) -> Option<UndoStmt> {
@@ -768,7 +768,7 @@ fn build_inverse(stmt: &UndoStmt, res: &StatementResult) -> Option<UndoStmt> {
 /// attnum→name pair can go stale in a way row locators can't catch (RENAME
 /// the old column + ADD COLUMN under the old name → the generated SQL hits
 /// the WRONG column and still matches 1 row), so every hint-named column a
-/// statement uses gets an attname probe ANDed into its WHERE — a mismatch
+/// statement uses gets an attname probe ANDed into its WHERE: a mismatch
 /// matches 0 rows and the existing verify-then-commit machinery rolls the
 /// whole batch back. `tables` carries the oid→relname probe per distinct
 /// table for the same reason (rename+recreate must never retarget).
@@ -809,7 +809,7 @@ impl NameGuards {
     }
 }
 
-/// mismatch message for a hint-fed statement that matched 0 rows — the name
+/// mismatch message for a hint-fed statement that matched 0 rows; the name
 /// guards make "column identity changed" one of the honest causes
 fn hinted_zero_matched() -> String {
     "0 rows matched (expected 1) — row locator stale or column identity changed; \
@@ -844,9 +844,9 @@ fn next_edit_savepoint() -> String {
 
 /// how the verified batch is transaction-wrapped
 enum BatchTx {
-    /// session was idle — our own BEGIN…COMMIT
+    /// session was idle: our own BEGIN…COMMIT
     Own,
-    /// inside the user's open transaction — SAVEPOINT/RELEASE under a unique
+    /// inside the user's open transaction: SAVEPOINT/RELEASE under a unique
     /// per-batch name, NEVER commit
     Savepoint(String),
 }
@@ -868,7 +868,7 @@ impl PgSession {
             .ok_or_else(|| DriverError::Internal("statement index out of range".into()))?;
 
         let prepared = {
-            // busy-marked like any statement — cancel escalation's completion
+            // busy-marked like any statement: cancel escalation's completion
             // polling must see catalog work on this session too
             let _busy = super::BusyGuard::new(&self.busy);
             self.client.prepare(stmt_sql).await
@@ -1189,7 +1189,7 @@ impl PgSession {
         })
     }
 
-    /// Generate the UPDATE statements for a set of edits (no execution) — for
+    /// Generate the UPDATE statements for a set of edits (no execution), for
     /// the commit-preview modal. One statement per edited row. With a complete
     /// `map_hint` this touches the server ZERO times, and `apply_edits` run on
     /// the same inputs generates byte-identical SQL (same function).
@@ -1211,11 +1211,11 @@ impl PgSession {
     /// sent as a single `BEGIN; UPDATE₁; …; UPDATEₙ` simple-query message (the
     /// simple protocol executes in order on this session), each UPDATE's
     /// RETURNING row count is verified from the result stream, then COMMIT (or
-    /// ROLLBACK) as the second round trip — 2 RTTs regardless of N. Any
+    /// ROLLBACK) as the second round trip: 2 RTTs regardless of N. Any
     /// mismatch or error rolls the whole batch back: a stale ctid / duplicated
     /// PK / stale column mapping can never partially write and report success.
     /// Inside the user's open transaction the wrapper is SAVEPOINT/RELEASE.
-    /// Values are text with a cast to the column's type — psql semantics.
+    /// Values are text with a cast to the column's type: psql semantics.
     pub async fn apply_edits(
         &self,
         sql: &str,
@@ -1275,7 +1275,7 @@ impl PgSession {
 
         if mismatch {
             self.undo_batch(&mode).await;
-            // nothing was applied — flip the would-have-succeeded rows too
+            // nothing was applied: flip the would-have-succeeded rows too
             for r in results.iter_mut() {
                 if r.ok {
                     *r = EditResult {
@@ -1287,7 +1287,7 @@ impl PgSession {
             }
             return Ok(EditOutcome { results, committed: false, revert: None });
         }
-        // revert plan from the captured old values — refused (None) rather
+        // revert plan from the captured old values; refused (None) rather
         // than persisted wrong if any row misses the capture layout. Only
         // Own-mode batches mint one: a savepoint-mode RELEASE is not durable
         // (the user's ROLLBACK resurrects state), so no undo is ever offered
@@ -1330,7 +1330,7 @@ impl PgSession {
     /// `apply_edits`: one wrapped batch, every DELETE must match exactly one
     /// row or the whole batch rolls back. Each DELETE captures the full row
     /// via `RETURNING *`; a catalog probe (column names, types, generated/
-    /// identity-ALWAYS flags) rides the same batch — its result set is
+    /// identity-ALWAYS flags) rides the same batch; its result set is
     /// accounted for explicitly, so the n+1 verification stays exact.
     pub async fn delete_rows(
         &self,
@@ -1381,7 +1381,7 @@ impl PgSession {
         }
         // rides the batch (zero extra round trips): column identity + skip
         // flags + attnum/PK membership for the revert INSERTs (existence gate
-        // + schema-identity probes). DDL can't shift it mid-batch — the
+        // + schema-identity probes). DDL can't shift it mid-batch: the
         // DELETEs' ROW EXCLUSIVE lock blocks ALTER TABLE until we finish.
         let probe = format!(
             "SELECT a.attname, (a.attgenerated <> '' OR a.attidentity = 'a')::text, \
@@ -1399,7 +1399,7 @@ impl PgSession {
         let (mut out, mode) = self
             .run_verified_batch(deletes.iter().map(|d| d.as_str()).chain(std::iter::once(probe.as_str())))
             .await?;
-        // n deletes + the probe — run_verified_batch verified the total count
+        // n deletes + the probe; run_verified_batch verified the total count
         let probe_out = out.pop();
 
         let mut results = Vec::with_capacity(rows.len());
@@ -1450,7 +1450,7 @@ impl PgSession {
         }
     }
 
-    /// Apply a persisted revert plan as one verified batch on this session —
+    /// Apply a persisted revert plan as one verified batch on this session,
     /// the same pipeline as commits: SAVEPOINT-wrapped inside a user tx,
     /// per-statement RETURNING counts, full rollback on any mismatch with an
     /// honest message. On success the captured values yield the inverse plan
@@ -1477,7 +1477,7 @@ impl PgSession {
                     UndoOutcome {
                         committed: false,
                         message: Some(
-                            "undo no longer matches — data changed since; rolled back".into(),
+                            "undo no longer matches (data changed since); rolled back".into(),
                         ),
                     },
                     None,
@@ -1490,7 +1490,7 @@ impl PgSession {
         }
         match self.finish_batch(&mode).await {
             Ok(()) => {
-                // no redo row for a savepoint-mode undo — like any batch
+                // no redo row for a savepoint-mode undo: like any batch
                 // inside the user's open transaction it isn't durable
                 let redo_plan = if redo_complete && !matches!(mode, BatchTx::Savepoint(_)) {
                     Some(UndoPlan {
@@ -1588,15 +1588,15 @@ impl PgSession {
     /// (finish=COMMIT, undo=ROLLBACK); inside the user's transaction →
     /// SAVEPOINT (finish=RELEASE, undo=ROLLBACK TO + RELEASE) so the outer
     /// transaction is NEVER committed or rolled back.
-    /// Any error (SQL or protocol) undoes the batch before returning Err —
+    /// Any error (SQL or protocol) undoes the batch before returning Err:
     /// it can never half-apply.
-    /// an edit/delete batch must never start inside an aborted transaction —
+    /// an edit/delete batch must never start inside an aborted transaction:
     /// even our SAVEPOINT would fail there, and the only honest fix is the
     /// user's own ROLLBACK
     fn refuse_failed_tx(&self) -> Result<()> {
         if self.tx_state() == TxState::FailedTx {
             return Err(DriverError::Internal(
-                "current transaction is aborted — ROLLBACK first".into(),
+                "current transaction is aborted; ROLLBACK first".into(),
             ));
         }
         Ok(())
@@ -1640,7 +1640,7 @@ impl PgSession {
                 return Err(e);
             }
         };
-        // wrapper statements + n statements, in order — anything else means
+        // wrapper statements + n statements, in order; anything else means
         // our accounting of the message stream is wrong, and verification
         // would misattribute counts to rows. Refuse and undo.
         if out.statements.len() != n + wrapped {
@@ -1668,7 +1668,7 @@ impl PgSession {
     }
 
     /// make the batch durable (Own: COMMIT) or fold it into the user's open
-    /// transaction (Savepoint: RELEASE — their COMMIT decides durability)
+    /// transaction (Savepoint: RELEASE; their COMMIT decides durability)
     async fn finish_batch(&self, mode: &BatchTx) -> Result<()> {
         let sql = match mode {
             BatchTx::Own => "COMMIT".to_string(),
@@ -1678,7 +1678,7 @@ impl PgSession {
     }
 
     /// Insert one row. Columns the user left untouched are omitted so table
-    /// defaults apply. Values are text literals — Postgres coerces them to the
+    /// defaults apply. Values are text literals; Postgres coerces them to the
     /// target column type on INSERT (same as typing them in psql).
     pub async fn insert_row(
         &self,
@@ -1737,7 +1737,7 @@ fn readonly_reason(f: &TableFacts) -> String {
 
 /// Group edits by (table, row) and build ONE `UPDATE … SET a=, b=, …
 /// WHERE pk RETURNING a::text, b::text` per row. Pure function of the
-/// resolved map — no I/O. Returns each planned statement plus the original
+/// resolved map, no I/O. Returns each planned statement plus the original
 /// edit indices in RETURNING-column order, so callers can map results back
 /// to the cells the user touched.
 fn plan_edits(map: &ResolvedMap, edits: &[RowEdit]) -> Result<Vec<PlannedUpdate>> {
@@ -1756,7 +1756,7 @@ fn plan_edits(map: &ResolvedMap, edits: &[RowEdit]) -> Result<Vec<PlannedUpdate>
         map.col_meta(e.col)
             .filter(|m| m.editable && m.table_oid == e.table_oid)
             .ok_or_else(|| DriverError::Internal(format!("column {} not editable", e.col)))?;
-        // length-prefixed value components — an unescaped separator would let
+        // length-prefixed value components: an unescaped separator would let
         // two composite text PKs collide into one group and write one row's
         // edit into the other (("v|1=w","z") vs ("v","w|1=z"))
         let mut sig = e.table_oid.to_string();
@@ -1985,7 +1985,7 @@ mod tests {
         assert!(sql.contains(r#""ctid" = '(0,1)'::tid"#), "{sql}");
         assert!(sql.contains(r#""id" = '4'::int4"#), "{sql}");
         assert!(sql.contains(r#""Name" IS NULL"#), "{sql}");
-        // json has no equality operator — compared via ::text
+        // json has no equality operator; compared via ::text
         assert!(sql.contains(r#""doc"::text = '{"k":1}'"#), "{sql}");
     }
 
@@ -2003,7 +2003,7 @@ mod tests {
         let planned = plan_edits(&map, &edits).unwrap();
         let sql = &planned[0].sql;
         // capture grammar carries the full WHERE twice (inner FOR UPDATE
-        // subselect + outer) — the locator must appear exactly once in EACH,
+        // subselect + outer); the locator must appear exactly once in EACH,
         // never duplicated by the guard repeating it
         assert_eq!(sql.matches(r#""id" ="#).count(), 2, "{sql}");
     }
@@ -2044,7 +2044,7 @@ mod tests {
     #[test]
     fn group_signature_separator_collision() {
         // the audit pair: ("v|1=w","z") and ("v","w|1=z") built identical
-        // unescaped signatures — they must plan as TWO updates, never one
+        // unescaped signatures: they must plan as TWO updates, never one
         let map = text_pk_map();
         let edits = vec![
             RowEdit {

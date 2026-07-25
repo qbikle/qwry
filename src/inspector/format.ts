@@ -1,7 +1,7 @@
 // Structured-value detection + JSON syntax highlighting for the inspector.
 
 /** parse a Postgres array literal ({a,b,"c d",NULL,{1,2}}) into a JS array;
- * undefined when the text isn't a clean array literal — never fabricate
+ * undefined when the text isn't a clean array literal: never fabricate
  * structure for something we couldn't actually parse */
 export function parsePgArray(text: string): unknown[] | undefined {
   let i = 0;
@@ -68,10 +68,10 @@ export function jsToPgArray(v: unknown): string {
 
 /** if a cell is structured (JSON or a PG array), return it parsed; else
  * undefined. STRICT on the column type: a text cell that merely looks like
- * JSON must never be treated as JSON — editing it through the JSON path
+ * JSON must never be treated as JSON: editing it through the JSON path
  * re-serializes and corrupts the text (the '[draft]' class of bug). While the
  * editability map is loading, typeName is undefined and everything renders as
- * plain text — briefly less pretty, never wrong. */
+ * plain text: briefly less pretty, never wrong. */
 export function structuredValue(value: string | null | undefined, typeName?: string): unknown | undefined {
   if (value == null) return undefined;
   const t = value.trim();

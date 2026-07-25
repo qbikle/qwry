@@ -22,7 +22,7 @@ const jsonTheme = EditorView.theme({
   },
 });
 
-/** colorized JSON view/editor via CodeMirror — reliable colours for both
+/** colorized JSON view/editor via CodeMirror: reliable colours for both
  * viewing (readOnly) and editing. */
 export function JsonField({
   value,
@@ -39,10 +39,10 @@ export function JsonField({
   /** focus on mount with the caret AFTER the value */
   autoFocus?: boolean;
   /** opt-in ⌘F: CM search panel + keymap (the editor's own machinery).
-   *  OFF by default — RecordView/ValuePop instances must not grow a second
+   *  OFF by default: RecordView/ValuePop instances must not grow a second
    *  ⌘F claim inside modals. Constant per call site (read once at mount). */
   searchable?: boolean;
-  /** observe the live EditorView (null on unmount) — lets the owner open
+  /** observe the live EditorView (null on unmount): lets the owner open
    *  the search panel from a shell-level ⌘F without reaching into the DOM */
   onView?: (view: EditorView | null) => void;
   onChange?: (v: string) => void;
@@ -96,7 +96,7 @@ export function JsonField({
               },
             ]),
           ),
-          // the editor's own find machinery (search({top}) + searchKeymap) —
+          // the editor's own find machinery (search({top}) + searchKeymap):
           // ⌘F/⌘G/Esc behave identically to the SQL editor's panel
           ...(searchable ? [search({ top: true }), keymap.of(searchKeymap)] : []),
           json(),

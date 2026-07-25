@@ -1,4 +1,4 @@
-// postgres:// DSN parser for paste-to-create. Regex-based (not new URL()) —
+// postgres:// DSN parser for paste-to-create. Regex-based (not new URL()):
 // WHATWG URL handling of non-special schemes varies across engines.
 export interface ParsedDsn {
   user?: string;
