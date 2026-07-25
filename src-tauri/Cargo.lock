@@ -3221,7 +3221,7 @@ dependencies = [
 
 [[package]]
 name = "qwry"
-version = "0.9.7"
+version = "0.9.7-alpha.1"
 dependencies = [
  "async-trait",
  "csv",

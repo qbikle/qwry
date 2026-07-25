@@ -42,4 +42,5 @@ jobs:
           releaseName: "qwry ${{ github.ref_name }}"
           releaseBody: "See the session log in docs/ROADMAP.md for what changed."
           releaseDraft: false
-          prerelease: false
+          # tags with a prerelease suffix (e.g. v0.9.7-alpha.1) publish as a GitHub pre-release
+          prerelease: ${{ contains(github.ref_name, '-') }}
