@@ -121,4 +121,4 @@ PostgreSQL only for now (the driver trait is in place for SQLite/MySQL later). m
 
 ## License
 
-Released under the [MIT License](LICENSE). Copyright (c) 2026 Manish Gudewar.
+Released under the [Apache License 2.0](LICENSE). Copyright (c) 2026 Manish Gudewar.
