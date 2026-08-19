@@ -102,7 +102,7 @@ If that still complains, clear every extended attribute on the bundle:
 xattr -cr /Applications/qwry.app
 ```
 
-Then open it normally. Once is enough — the flag doesn't come back. A notarized build ships the day the Apple Developer Program stops costing more than the app does.
+Then open it normally. Once is enough; the flag doesn't come back. A notarized build ships the day the Apple Developer Program stops costing more than the app does.
 
 ## Architecture
 
