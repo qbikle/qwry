@@ -88,6 +88,22 @@ bun run tauri build    # produces the .app and .dmg under src-tauri/target
 
 `bun run tauri dev` runs the app with hot reload.
 
+### "qwry is damaged and can't be opened"
+
+It isn't. That's Gatekeeper's phrasing for "this developer hasn't paid Apple $99 a year," which is a fair description of me. If you got the `.dmg` from someone instead of building it yourself, macOS quarantined it on the way in. Free it:
+
+```sh
+xattr -d com.apple.quarantine /Applications/qwry.app
+```
+
+If that still complains, clear every extended attribute on the bundle:
+
+```sh
+xattr -cr /Applications/qwry.app
+```
+
+Then open it normally. Once is enough — the flag doesn't come back. A notarized build ships the day the Apple Developer Program stops costing more than the app does.
+
 ## Architecture
 
 The Rust core (`src-tauri/src/`) owns everything that touches a database. A `DbDriver` trait fronts the PostgreSQL implementation, which speaks tokio-postgres over the **simple protocol** so every value arrives as psql-identical wire text, with no lossy client-side type conversion. Results stream to the frontend in batches over Tauri channels. The driver tracks transaction state authoritatively, cancels queries out-of-band (`pg_cancel_backend` from a fresh connection, so a busy session can never block its own cancel), and derives editability maps from `prepare()` metadata. Around it: SSH tunnels via the system `ssh` (honours `~/.ssh/config`), credentials in the macOS Keychain, and app state in SQLite with numbered migrations.
