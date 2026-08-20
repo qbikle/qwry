@@ -603,6 +603,24 @@
   padding: 2px 0 var(--sp-2);
 }
 
+/* rebuilt-session chip: informative accent by default; warn tier when an
+   open transaction died with the old session. Hover carries the full story. */
+.ep-rebuilt {
+  display: inline-block;
+  align-self: flex-start;
+  margin: 0 0 var(--sp-2);
+  padding: 2px 8px;
+  font-size: var(--text-sm);
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 4px;
+  cursor: help;
+}
+.ep-rebuilt.tx {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
 .ep-actions {
   display: flex;
   justify-content: flex-end;

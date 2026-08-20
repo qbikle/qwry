@@ -60,6 +60,23 @@ export function EditPreview() {
             commits to <strong>{origin ? origin.name || origin.host : "a deleted connection"}</strong>
           </div>
         )}
+        {preview.rebuilt && (
+          // inline, never a stacked dialog: the second modal read as buggy
+          // and its Enter=Cancel ate the commit mid-keystroke. "tx" escalates:
+          // an open transaction died with the old session.
+          <div
+            className={`ep-rebuilt${preview.rebuilt === "tx" ? " tx" : ""}`}
+            title={
+              preview.rebuilt === "tx"
+                ? "The session this result ran on died holding an open transaction. Its uncommitted work is gone; this commit runs against the current database state, and every row is still verified before writing."
+                : "The session this result ran on died and was rebuilt. This commit runs against the current database state, and every row is still verified before writing."
+            }
+          >
+            ⟲ {preview.rebuilt === "tx"
+              ? "Connection was rebuilt · the open transaction is gone"
+              : "Connection was rebuilt · commits against current state"}
+          </div>
+        )}
         {preview.notice && <div className="ep-notice">⚠ {preview.notice}</div>}
         {preview.loading ? (
           <div className="ep-loading">Building preview…</div>
@@ -89,7 +106,7 @@ export function EditPreview() {
               "Committing…"
             ) : (
               <>
-                Commit <Kbd chord="return" />
+                {preview.rebuilt === "tx" ? "Commit Anyway" : "Commit"} <Kbd chord="return" />
               </>
             )}
           </button>

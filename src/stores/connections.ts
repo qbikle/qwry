@@ -80,6 +80,20 @@ function replenishSpare(profileId: string) {
   spareInflight.set(profileId, p);
 }
 
+/** sessions that died while holding an OPEN TRANSACTION, by session id (ids
+ * are never reused, so no clearing logic — FIFO-capped instead). The commit
+ * path consults this to decide whether a rebuilt session deserves a real
+ * warning (the tx's staged reality is gone) or just an informational chip. */
+const deadTxSessions = new Set<string>();
+export const sessionDiedWithTx = (sessionId: string) => deadTxSessions.has(sessionId);
+function noteDeadTx(sessionId: string) {
+  deadTxSessions.add(sessionId);
+  if (deadTxSessions.size > 100) {
+    const oldest = deadTxSessions.values().next().value;
+    if (oldest !== undefined) deadTxSessions.delete(oldest);
+  }
+}
+
 /** profiles the USER connected (and hasn't manually disconnected since): the
  * only ones self-heal may resurrect. A manual Disconnect is a decision; heal
  * must never overturn it. Module state, not store: policy, not render state. */
@@ -413,6 +427,8 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
       const entry = Object.entries(get().tabSessions).find(([, sid]) => sid === sessionId);
       if (!entry) return; // already forgotten (tab closed etc.)
       const [key] = entry;
+      // an open transaction died with it: the commit path warns off this
+      if (get().txTabs[key]) noteDeadTx(sessionId);
       set((s) => {
         const { [key]: _s, ...tabSessions } = s.tabSessions;
         const { [key]: _t, ...txTabs } = s.txTabs;

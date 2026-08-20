@@ -174,6 +174,18 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
               <RefreshCw size={12} /> Refresh Schema <kbd>⌘R</kbd>
             </Command.Item>
             <Command.Item
+              value="refresh connection reconnect heal"
+              onSelect={() => {
+                const pid = useConnections.getState().activeProfileId;
+                if (pid) {
+                  void import("../stores/heal").then(({ requestHeal }) => requestHeal(pid));
+                }
+                close();
+              }}
+            >
+              <RefreshCw size={12} /> Refresh Connection <kbd>⇧⌘R</kbd>
+            </Command.Item>
+            <Command.Item
               value="save query bookmark"
               onSelect={() => {
                 void useTabs.getState().saveActive();

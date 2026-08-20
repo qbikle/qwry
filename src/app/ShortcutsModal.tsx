@@ -53,6 +53,7 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
       ["⌘,", "Settings"],
       ["⌘I", "Inspector"],
       ["⌘R", "Refresh schema"],
+      ["⇧⌘R", "Refresh connection"],
       ["⌘+ / ⌘−", "Zoom UI in / out"],
       ["⌘0", "Reset zoom"],
       ["⌘?", "This cheatsheet"],

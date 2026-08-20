@@ -681,6 +681,25 @@ export function App() {
           }
         });
       }
+      if (e.metaKey && e.shiftKey && !e.altKey && e.key.toLowerCase() === "r") {
+        // ⇧⌘R: the whole-connection sibling of ⌘R — probe every session,
+        // rebuild the dead ones, re-warm the spare, refresh the schema.
+        // The escape hatch for "anything feels stale".
+        e.preventDefault();
+        void Promise.all([
+          import("../stores/heal"),
+          import("../stores/connections"),
+          import("../stores/schema"),
+        ]).then(([{ requestHeal }, { useConnections }, { useSchema }]) => {
+          const { activeProfileId, sessions } = useConnections.getState();
+          if (!activeProfileId) return;
+          requestHeal(activeProfileId);
+          // a live primary refreshes schema NOW; a dead one gets its refresh
+          // from the heal's gentle reconnect itself
+          const sid = sessions[activeProfileId];
+          if (sid) void useSchema.getState().fetch(activeProfileId, sid);
+        });
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => {
