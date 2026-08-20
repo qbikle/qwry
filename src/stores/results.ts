@@ -3,6 +3,7 @@ import * as ipc from "../ipc/commands";
 import type { ColumnMeta, DriverError, QueryEvent } from "../ipc/types";
 import { headToken } from "../editor/statements";
 import { terminatedSessions } from "./sessionFlags";
+import { dropTabQueryScroll } from "../grid/scrollMemory";
 import { useConnections } from "./connections";
 import { useTabs } from "./tabs";
 
@@ -323,6 +324,7 @@ export const useResults = create<ResultsState>((set, get) => ({
     }
 
     if (pendingRows) pendingRows.delete(tabId);
+    dropTabQueryScroll(tabId); // a fresh run reads from the top
     writeTab(set, tabId, {
       statements: [],
       activeStatement: 0,
@@ -562,6 +564,7 @@ useTabs.subscribe((s, p) => {
     for (const id of prevTabIds) {
       if (!ids.has(id)) {
         useResults.getState().clearTab(id);
+        dropTabQueryScroll(id);
         void import("./edits").then(({ useEdits }) => useEdits.getState().resetTab(id));
         void import("./browser").then(({ useBrowser }) => useBrowser.getState().clearTab(id));
       }
