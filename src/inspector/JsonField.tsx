@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
-import { EditorState, Prec } from "@codemirror/state";
+import { EditorState, Prec, Transaction } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
+import { history, historyKeymap } from "@codemirror/commands";
 import { json } from "@codemirror/lang-json";
 import { closeSearchPanel, search, searchKeymap, searchPanelOpen } from "@codemirror/search";
 import { qwryHighlight } from "../editor/theme";
@@ -99,6 +100,10 @@ export function JsonField({
           // the editor's own find machinery (search({top}) + searchKeymap):
           // ⌘F/⌘G/Esc behave identically to the SQL editor's panel
           ...(searchable ? [search({ top: true }), keymap.of(searchKeymap)] : []),
+          // without history() ⌘Z falls through to the browser's contenteditable
+          // undo, which mutates the DOM behind CM's back: cursor jumps, text stays
+          history(),
+          keymap.of(historyKeymap),
           json(),
           qwryHighlight,
           EditorView.lineWrapping,
@@ -126,11 +131,16 @@ export function JsonField({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readOnly]);
 
-  // reflect external value changes (cell switch / discard) without a loop
+  // reflect external value changes (cell switch / discard) without a loop.
+  // addToHistory:false — an external reset isn't a user edit; ⌘Z must never
+  // resurrect a discarded draft or a previous cell's value
   useEffect(() => {
     const v = viewRef.current;
     if (v && v.state.doc.toString() !== value) {
-      v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: value } });
+      v.dispatch({
+        changes: { from: 0, to: v.state.doc.length, insert: value },
+        annotations: Transaction.addToHistory.of(false),
+      });
     }
   }, [value]);
 
