@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { EditorState, Prec, type Extension, type Text } from "@codemirror/state";
+import { EditorState, Prec, type Extension, type StateEffect, type Text } from "@codemirror/state";
 import {
   EditorView,
   keymap,
@@ -666,7 +666,10 @@ export function SqlEditor() {
     // state: a doc-replace lands on the shared undo stack, so ⌘Z in tab B
     // would restore tab A's SQL into B and persist it (cross-tab corruption).
     // Cache dies with this effect, so a theme remount starts states fresh.
-    const tabStates = new Map<string, EditorState>();
+    // Scroll parks alongside: EditorState carries no viewport, so a bare
+    // setState lands at the top. scrollSnapshot() is position-anchored to the
+    // state it was taken on: only ever dispatched onto that SAME cached state.
+    const tabStates = new Map<string, { state: EditorState; scroll: StateEffect<unknown> | null }>();
     let currentTab = useTabs.getState().activeId;
     const unsubTabs = useTabs.subscribe((s) => {
       if (s.activeId === currentTab) {
@@ -677,8 +680,11 @@ export function SqlEditor() {
         return;
       }
       // a tab switch mid-time-travel parks the OLD tab's LIVE state (never
-      // the read-only viewing state); the ⌥↑ walk dies with tab focus
+      // the read-only viewing state); the ⌥↑ walk dies with tab focus.
+      // Mid-travel the view shows a snapshot, so its scroll belongs to the
+      // viewing state, not the parked draft: park no scroll there
       const parked = ttState ? ttState.draftState : view.state;
+      const parkedScroll = ttState ? null : view.scrollSnapshot();
       if (ttState) {
         ttState = null;
         editorTimeTraveling.current = false;
@@ -688,16 +694,16 @@ export function SqlEditor() {
       // buffer + store show a snapshot): park it before it dies
       if (walk && walk.idx !== 0) parkDraft(currentTab, walk.draft, walk.snaps[0]);
       walk = null;
-      if (currentTab) tabStates.set(currentTab, parked);
+      if (currentTab) tabStates.set(currentTab, { state: parked, scroll: parkedScroll });
       currentTab = s.activeId;
       const next = s.tabs.find((t) => t.id === s.activeId);
       if (!next) return;
       const cached = tabStates.get(next.id);
       // stale-cache guard: the tab's sql is kept in sync with the doc while
       // active, so a mismatch means something changed it while inactive
-      view.setState(
-        cached && docEqualsString(cached.doc, next.sql) ? cached : makeState(next.sql),
-      );
+      const cacheValid = !!cached && docEqualsString(cached.state.doc, next.sql);
+      view.setState(cacheValid ? cached.state : makeState(next.sql));
+      if (cacheValid && cached.scroll) view.dispatch({ effects: cached.scroll });
       // setState bypasses the update listener: the synced-string identity is
       // stale now, and a cached state may carry diagnostics we didn't count
       lastSyncedSql = null;

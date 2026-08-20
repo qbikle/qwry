@@ -10,6 +10,7 @@ import * as ipc from "../ipc/commands";
 import type { EditabilityMap } from "../ipc/types";
 import { formatCells, parseTsv, type CopyFormat } from "./clipboard";
 import { useSelection, type DragMode, type SelRect } from "./useSelection";
+import { readQueryScroll, saveQueryScroll } from "./scrollMemory";
 import { typeIcon } from "./typeIcon";
 import { draftHasContent, useBrowser, type DraftCell } from "../stores/browser";
 import { useTabs } from "../stores/tabs";
@@ -483,6 +484,25 @@ export function Grid({
     if (saved) el.scrollLeft = saved; // clamps to content width natively
     return () => {
       browseScrollLeft.set(tabId, el.scrollLeft);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [insertable]);
+  useLayoutEffect(() => {
+    // query tabs: BOTH axes survive the tab-switch remount (the data under
+    // the grid didn't change, only the mount did). Browse keeps its own
+    // horizontal-only rule above (a reload means new order, top is honest).
+    if (insertable) return;
+    const tabId = useResults.getState().active;
+    const el = scrollRef.current;
+    if (!tabId || !el) return;
+    const key = `${tabId}:${statement.index}`;
+    const saved = readQueryScroll(key);
+    if (saved) {
+      el.scrollTop = saved.top; // clamps to content natively
+      el.scrollLeft = saved.left;
+    }
+    return () => {
+      saveQueryScroll(key, el.scrollTop, el.scrollLeft);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [insertable]);
