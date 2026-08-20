@@ -321,6 +321,7 @@ pub fn run() {
             commands::buffer_snapshots_clear,
             commands::fetch_cell,
             commands::session_info,
+            commands::session_probe,
             commands::terminate_backend,
             commands::insert_row,
             import::csv_preview,

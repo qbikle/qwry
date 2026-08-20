@@ -195,6 +195,10 @@ export interface SessionInfo {
 export const sessionInfo = (sessionId: string) =>
   invoke<SessionInfo>("session_info", { sessionId });
 
+/** liveness check for the heal loop: true = alive; unknown id = dead */
+export const sessionProbe = (sessionId: string) =>
+  invoke<boolean>("session_probe", { sessionId });
+
 /** pg_terminate_backend via a fresh control connection: the last cancel
  * tier; only ever offered behind an explicit confirm */
 export const terminateBackend = (sessionId: string) =>

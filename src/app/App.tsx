@@ -3,6 +3,7 @@ import { motion } from "motion/react";
 import { Lock, LockOpen, PanelRight, SwatchBook } from "lucide-react";
 import { panelIn, swapIn } from "../design/springs";
 import { useUI } from "../stores/ui";
+import "../stores/heal"; // side effects: wake/focus/death self-heal triggers
 import { ThemePicker } from "./ThemePicker";
 import { useConnections } from "../stores/connections";
 import { useInspector } from "../stores/inspector";

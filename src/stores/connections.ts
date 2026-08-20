@@ -80,6 +80,15 @@ function replenishSpare(profileId: string) {
   spareInflight.set(profileId, p);
 }
 
+/** profiles the USER connected (and hasn't manually disconnected since): the
+ * only ones self-heal may resurrect. A manual Disconnect is a decision; heal
+ * must never overturn it. Module state, not store: policy, not render state. */
+const healArmed = new Set<string>();
+export const isHealArmed = (profileId: string) => healArmed.has(profileId);
+
+/** one heal per profile at a time; concurrent triggers join the same pass */
+const healInflight = new Map<string, Promise<boolean>>();
+
 function dropSpare(profileId: string) {
   const sid = spareSessions.get(profileId);
   if (sid) {
@@ -147,6 +156,10 @@ interface ConnectionsState {
   /** a profile was repointed: close its live sessions + drop its tunnel so the
    * next connect uses the new host/creds */
   invalidateProfile: (profileId: string) => Promise<void>;
+  /** probe-first self-heal (wake from sleep, tunnel death): rebuilds ONLY the
+   * sessions that actually died, quiet on failure (no toast, no surface
+   * moves); true = the profile ended green. Triggers live in stores/heal.ts. */
+  healProfile: (profileId: string) => Promise<boolean>;
 }
 
 /** fields that decide what/where we connect to: a change here means any live
@@ -198,6 +211,7 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
     // full teardown FIRST: spare + primary + per-tab sessions + state, and
     // flip connState before the delete so an in-flight replenishSpare can't
     // mint a fresh backend session for a profile that no longer exists
+    healArmed.delete(id);
     bumpEpoch(id);
     dropSpare(id);
     set((s) => ({ connState: { ...s.connState, [id]: "disconnected" } }));
@@ -239,6 +253,16 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
   setEditing: (p) => set({ editing: p }),
   setHome: (homeMode) => set({ homeMode }),
   editConnection: (p) => set({ editing: p, homeMode: "edit" }),
+
+  healProfile: (profileId) => {
+    const existing = healInflight.get(profileId);
+    if (existing) return existing;
+    const pass = healInner(profileId, set, get).finally(() => {
+      if (healInflight.get(profileId) === pass) healInflight.delete(profileId);
+    });
+    healInflight.set(profileId, pass);
+    return pass;
+  },
 
   connect: (profileId) => {
     // concurrent calls (double-click, run + explain racing a reconnect) share
@@ -420,6 +444,8 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
 
   invalidateProfile: async (profileId) => {
     const prefix = `${profileId}::`;
+    // a manual disconnect/repoint is a decision: self-heal must not overturn it
+    healArmed.delete(profileId);
     // any handshake still in flight belongs to the OLD identity: it must
     // neither be joined nor allowed to install what it produces
     bumpEpoch(profileId);
@@ -512,6 +538,8 @@ async function connectInner(
     }));
     // an old spare belongs to the previous primary/tunnel epoch
     dropSpare(profileId);
+    // a user connect arms self-heal (stores/heal.ts) until a manual disconnect
+    healArmed.add(profileId);
     // schema cache powers sidebar + completion; fire and forget
     void import("./schema").then(({ useSchema }) =>
       useSchema.getState().fetch(profileId, sessionId),
@@ -529,6 +557,100 @@ async function connectInner(
       errorProfileId: profileId,
     }));
   }
+}
+
+/** Probe-first self-heal for one profile (wake from sleep, tunnel death,
+ * server-side kill). LIVE sessions are untouched: a primary-only death must
+ * never wipe sibling tabs' open transactions, which is exactly what
+ * connectInner's full ceremony would do — so the reconnect here is a gentle
+ * install, no tab wipe, no surface moves (connect()'s activeProfileId /
+ * homeMode flips belong to the user's own click). Quiet by design: no error
+ * toast; failure leaves the dot honest and the caller's backoff retries. */
+async function healInner(
+  profileId: string,
+  set: SetState,
+  get: () => ConnectionsState,
+): Promise<boolean> {
+  const epoch = epochOf(profileId);
+  // a user-initiated connect owns the outcome; join it instead of racing it
+  const userAttempt = inflightConnects.get(profileId);
+  if (userAttempt) {
+    await userAttempt.catch(() => {});
+    return !!get().sessions[profileId] && epochOf(profileId) === epoch;
+  }
+  const primary = get().sessions[profileId] ?? null;
+  const prefix = `${profileId}::`;
+  const tabEntries = Object.entries(get().tabSessions).filter(([k]) => k.startsWith(prefix));
+  const spare = spareSessions.get(profileId) ?? null;
+  const probes = await Promise.all(
+    [...(primary ? [primary] : []), ...tabEntries.map(([, sid]) => sid), ...(spare ? [spare] : [])].map(
+      async (sid) => [sid, await ipc.sessionProbe(sid).catch(() => false)] as const,
+    ),
+  );
+  if (epochOf(profileId) !== epoch) return false; // repointed/deleted mid-probe
+  const alive = new Map(probes);
+  // dead tab sessions: silent per-session teardown (the reason-less path
+  // never toasts); LIVE tabs keep their sessions and open transactions
+  for (const [, sid] of tabEntries) {
+    if (alive.get(sid) === false) get().markDisconnected(profileId, sid, null);
+  }
+  let healed = true;
+  if (!primary || alive.get(primary) === false) {
+    if (primary) {
+      dropSession(primary);
+      set((s) => ({ sessions: (({ [profileId]: _g, ...rest }) => rest)(s.sessions) }));
+    }
+    set((s) => ({ connState: { ...s.connState, [profileId]: "connecting" } }));
+    // registered in inflightConnects so a user's click mid-heal JOINS this
+    // attempt (two parallel ipc.connects leak the loser's backend session).
+    // The joiner skips connectInner's surface ceremony — benign: a second
+    // click lands on an already-green profile and switches instantly.
+    const attempt = (async () => {
+      const sid = await ipc.connect(profileId);
+      if (epochOf(profileId) !== epoch) {
+        dropSession(sid);
+        return;
+      }
+      set((s) => ({
+        sessions: { ...s.sessions, [profileId]: sid },
+        connState: { ...s.connState, [profileId]: "connected" },
+      }));
+      // the schema may have moved while we were gone; refresh behind the heal
+      void import("./schema").then(({ useSchema }) => useSchema.getState().fetch(profileId, sid));
+    })();
+    const shared = attempt.catch(() => {});
+    inflightConnects.set(profileId, shared);
+    void shared.finally(() => {
+      if (inflightConnects.get(profileId) === shared) inflightConnects.delete(profileId);
+    });
+    try {
+      await attempt;
+      healed = !!get().sessions[profileId] && epochOf(profileId) === epoch;
+    } catch {
+      if (epochOf(profileId) === epoch) {
+        set((s) => ({ connState: { ...s.connState, [profileId]: "disconnected" } }));
+      }
+      healed = false;
+    }
+  } else if (get().connState[profileId] !== "connected") {
+    // transport is fine: make the dot tell the truth (a stale "disconnected"
+    // can linger when only a tab session died during sleep)
+    set((s) => ({ connState: { ...s.connState, [profileId]: "connected" } }));
+  }
+  // the spare AFTER the transport verdict: a dead spare's replacement must
+  // ride the LIVE tunnel, not a doomed handshake through the dead one
+  if (spare && alive.get(spare) === false) get().markDisconnected(profileId, spare, null);
+  if (!healed) return false;
+  healArmed.add(profileId);
+  replenishSpare(profileId);
+  // eager active-tab warm: back at the laptop, the first ⌘↩/⌘S pays no
+  // handshake. Other tabs rebuild lazily off the fresh spare.
+  const { useTabs } = await import("./tabs");
+  const tabId = useTabs.getState().activeId;
+  if (tabId && get().activeProfileId === profileId && !get().tabSessions[skey(profileId, tabId)]) {
+    void get().ensureTabSession(profileId, tabId);
+  }
+  return true;
 }
 
 /** open explicit transactions across a profile's tab sessions */

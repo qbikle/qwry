@@ -723,6 +723,18 @@ pub async fn session_info(state: State<'_, AppState>, session_id: String) -> Res
     })
 }
 
+/// Liveness check for the frontend heal loop: true = alive (an unknown id is
+/// dead: already reaped). Dead sessions are NOT torn down here; the caller
+/// routes through the store's markDisconnected so per-tab bookkeeping (open
+/// transactions, spare replacement) happens exactly once, frontend-side.
+#[tauri::command]
+pub async fn session_probe(state: State<'_, AppState>, session_id: String) -> Result<bool> {
+    match state.session(&session_id) {
+        Some(s) => Ok(s.probe().await),
+        None => Ok(false),
+    }
+}
+
 /// pg_terminate_backend over a fresh control connection: the last cancel
 /// tier. Only ever run on explicit user action. The tier's contract is
 /// "this session is dead, fresh one next run": whether or not the server-side
