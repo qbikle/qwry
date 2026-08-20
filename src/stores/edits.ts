@@ -4,7 +4,7 @@ import * as ipc from "../ipc/commands";
 import type { EditabilityMap, EditMapHint, EditOutcome, RowEdit } from "../ipc/types";
 import { buildEditMapHint, tableIdentityHints } from "../lib/editHints";
 import { useResults } from "./results";
-import { skey, useConnections } from "./connections";
+import { sessionDiedWithTx, skey, useConnections } from "./connections";
 import { useSchema, type SchemaSnapshot } from "./schema";
 
 export interface PendingEdit {
@@ -75,6 +75,9 @@ interface EditsState extends TabEdits {
     /** commit hit a schema-shaped error → the SQL was regenerated from a
      * fresh map and must be re-reviewed (writes are never auto-retried) */
     notice?: string | null;
+    /** the result's session died and a fresh one answers this commit; "tx"
+     * escalates the inline chip (an open transaction died with it) */
+    rebuilt?: RebuiltKind;
   } | null;
   lastError: string | null;
 
@@ -106,15 +109,22 @@ function sessionAndSql(): { sessionId: string; sql: string } | null {
   return { sessionId, sql: res.executedSql };
 }
 
-/** the user declined writing through a rebuilt session */
-const DECLINED = Symbol("declined");
+/** how a resolved session relates to the one the result ran on: null = same
+ * session; "info" = rebuilt (autocommit result, the verified pipeline is the
+ * real safety); "tx" = rebuilt AND the dead session held an open transaction
+ * (its staged reality is gone — this deserves a real warning) */
+export type RebuiltKind = "info" | "tx" | null;
 
 /** resolve a LIVE session for commit/preview. The result's executedSessionId
  * may be dead (network drop, dev rebuild): re-resolve a session ON THE
  * PROFILE THE RESULT CAME FROM. Never the active rail selection: clicking
  * another connected profile (staging→prod!) must not redirect a ⌘S commit
- * to a different database. */
-async function liveSessionId(tabId: string): Promise<string | typeof DECLINED | null> {
+ * to a different database.
+ * Consent for a rebuilt session is the PREVIEW SURFACE's concern now: this
+ * returns what happened and the modal says it inline. The old confirmDanger
+ * here stacked on the open preview (read as buggy, and its Enter=Cancel ate
+ * the commit the user was mid-keystroke on). */
+async function liveSessionId(tabId: string): Promise<{ sid: string; rebuilt: RebuiltKind } | null> {
   const conn = useConnections.getState();
   const res = useResults.getState();
   const tab = res.byTab[tabId];
@@ -122,19 +132,13 @@ async function liveSessionId(tabId: string): Promise<string | typeof DECLINED | 
   if (profileId && tabId) {
     const sid = await conn.ensureTabSession(profileId, tabId);
     if (sid) {
+      let rebuilt: RebuiltKind = null;
       // a REBUILT session gets stamped back: pg-notice routing keys on
       // executedSessionId, so trigger NOTICEs raised during a commit on the
       // new session would otherwise match no tab and vanish
       if (tab && tab.executedSessionId !== sid) {
-        // the executed session died and this one was built fresh: any open
-        // transaction died with it; writing against current state needs consent
-        const { confirmDanger } = await import("./danger");
-        const ok = await confirmDanger(
-          "Connection Was Rebuilt",
-          "The connection this result ran on was rebuilt (any open transaction is gone).\nCommit against the current database state?",
-          "Commit",
-        );
-        if (!ok) return DECLINED;
+        rebuilt =
+          tab.executedSessionId && sessionDiedWithTx(tab.executedSessionId) ? "tx" : "info";
         useResults.setState((st) => {
           const cur = st.byTab[tabId];
           if (!cur) return st;
@@ -145,10 +149,14 @@ async function liveSessionId(tabId: string): Promise<string | typeof DECLINED | 
           };
         });
       }
-      return sid;
+      return { sid, rebuilt };
     }
   }
-  return tab?.executedSessionId ?? null;
+  // no session could be resolved. The old fallback handed back the DEAD
+  // executedSessionId, and the backend's NoSession error surfaced as a
+  // baffling red strip under a green dot; an honest null reads as
+  // "no live connection" instead.
+  return null;
 }
 
 /** ctid row-movement guard: rows move under UPDATE/VACUUM FULL, so a ctid
@@ -503,15 +511,12 @@ export const useEdits = create<EditsState>((set, get) => ({
     // "the app is sluggish". With a warm mapping the preview itself is
     // generated with ZERO server round trips.
     set({ preview: { statements: [], error: null, loading: true } });
-    const sessionId = await liveSessionId(tabId);
-    if (sessionId === DECLINED) {
-      set({ preview: null });
-      return;
-    }
-    if (!sessionId) {
+    const live = await liveSessionId(tabId);
+    if (!live) {
       set({ preview: { statements: [], error: "no live connection" } });
       return;
     }
+    const { sid: sessionId, rebuilt } = live;
     if (!get().preview?.loading) return; // user Esc'd while we were fetching
 
     const gen = async (entries: PreviewEntry[]) => {
@@ -546,6 +551,7 @@ export const useEdits = create<EditsState>((set, get) => ({
       set({
         preview: {
           statements,
+          rebuilt,
           error: statements.length === 0 && truncatedLocators > 0 ? TRUNCATED_LOCATOR_MSG : null,
           notice:
             statements.length > 0 && truncatedLocators > 0
@@ -568,15 +574,15 @@ export const useEdits = create<EditsState>((set, get) => ({
     const edits = Object.values(tab.pending);
     if (!sql || edits.length === 0 || get().committing) return;
     set({ committing: true, lastError: null });
-    const sessionId = await liveSessionId(tabId);
-    if (sessionId === DECLINED) {
-      set({ committing: false });
-      return;
-    }
-    if (!sessionId) {
+    // a rebuild detected HERE (between preview and Enter) restamps silently:
+    // the consent surface is the preview chip, and the verified pipeline
+    // refuses any row that moved regardless of which session carries it
+    const live = await liveSessionId(tabId);
+    if (!live) {
       set({ committing: false, lastError: "no live connection" });
       return;
     }
+    const sessionId = live.sid;
     // the await above can take seconds (reconnect): if the tab's result set
     // was replaced meanwhile, PK locators would be built from the NEW query's
     // rows at the OLD map's column positions. Abort instead.

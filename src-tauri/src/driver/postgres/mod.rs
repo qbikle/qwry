@@ -436,6 +436,26 @@ impl PgSession {
         self.busy.load(Ordering::Relaxed) > 0
     }
 
+    /// Liveness probe for the frontend heal loop. A BUSY session is alive by
+    /// definition: a probe would queue behind the running statement (simple
+    /// protocol serializes) and lie by timeout. Idle: one EMPTY simple-query
+    /// round trip — no parse, no tx side effects, and legal inside an aborted
+    /// transaction (`SELECT 1` is not: it would report a merely-failed tx as
+    /// dead and get a live session torn down).
+    pub async fn probe(&self) -> bool {
+        if self.busy() {
+            return true;
+        }
+        matches!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                self.client.batch_execute(""),
+            )
+            .await,
+            Ok(Ok(()))
+        )
+    }
+
     /// Execute one or more statements via the simple protocol.
     /// All values arrive as wire text: universal across every PG type, and
     /// multi-statement strings work natively. (P2 replaces this with streaming.)
