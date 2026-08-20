@@ -2414,7 +2414,7 @@ export function Grid({
               return (
                 <div
                   key={vc.key}
-                  className={`vgrid-hcell${reorderFrom === vc.index ? " reordering" : ""}${sortDir ? " sorted" : ""}`}
+                  className={`vgrid-hcell${reorderFrom === vc.index ? " reordering" : ""}${sortDir ? " sorted" : ""}${sel.rect && vc.index >= sel.rect.c0 && vc.index <= sel.rect.c1 ? " in-sel" : ""}`}
                   style={{
                     transform: `translateX(${vc.start + ROWNUM_W}px)`,
                     width: vc.size,
@@ -2811,7 +2811,7 @@ export function Grid({
             {rowVirt.getVirtualItems().map((vr) => (
               <div
                 key={vr.key}
-                className="vgrid-rownum"
+                className={`vgrid-rownum${sel.rect && vr.index >= sel.rect.r0 && vr.index <= sel.rect.r1 ? " in-sel" : ""}`}
                 style={{ top: vr.start, width: ROWNUM_W, height: ROW_H }}
                 onMouseDown={(e) => beginDrag(e, { r: vr.index, c: 0 }, "row")}
                 onMouseEnter={() => sel.dragOver({ r: vr.index, c: 0 })}

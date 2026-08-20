@@ -191,6 +191,21 @@
   cursor: pointer;
 }
 
+/* headers spanned by the selection rect echo it (spreadsheet convention).
+   --accent-soft is translucent (all themes): layered over each surface's
+   opaque bg or the cells sliding beneath the sticky chrome show through */
+.vgrid-hcell.in-sel {
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--bg-raised);
+}
+.vgrid-rownum.in-sel {
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--bg-panel);
+  color: var(--fg-muted);
+}
+.vgrid-hcell.in-sel:hover,
+.vgrid-rownum.in-sel:hover {
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--bg-active);
+}
+
 .vgrid-hcell {
   position: absolute;
   top: 0;
