@@ -337,6 +337,9 @@ export function RecordView({
               const v = effVal(0, i);
               const pretty = prettyCellValue(v, tn);
               const editingThis = edit?.col === i;
+              // multiline structured value renders as a JsonField box (same
+              // predicate as renderValue): the pencil anchors inside its corner
+              const boxed = pretty !== null && pretty !== v && pretty.includes("\n");
               return (
                 <div key={i} className={`rv-row${pe0 ? " dirty" : ""}`}>
                   {label}
@@ -352,13 +355,10 @@ export function RecordView({
                   ) : (
                     <span
                       className={`rv-val${pretty !== v ? " structured" : ""}${editable ? " editable" : ""}`}
-                      title={
-                        editable
-                          ? "Double-click to edit"
-                          : meta && !meta.editable
-                            ? (meta.reason ?? undefined)
-                            : undefined
-                      }
+                      // no "Double-click to edit" title: the header hint + the
+                      // pencil carry it, and a native tooltip trailing the
+                      // cursor across a JSON box reads as debris
+                      title={meta && !meta.editable ? (meta.reason ?? undefined) : undefined}
                       // double-click opens the editor (the grid/inspector
                       // convention); single click keeps the read-only-reason
                       // toggle and the truncated → inspector route
@@ -372,9 +372,16 @@ export function RecordView({
                         </span>
                       )}
                       {editable && (
-                        <span className="rv-pencil">
+                        <button
+                          className={`iconbtn rv-pencil${boxed ? " bordered rv-pencil-box" : ""}`}
+                          aria-label="Edit value"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openEdit(i);
+                          }}
+                        >
                           <Pencil size={12} />
-                        </span>
+                        </button>
                       )}
                     </span>
                   )}

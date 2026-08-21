@@ -526,7 +526,6 @@ export function Inspector() {
         ) : (
           <div
             className={`insp-value${canEdit ? " editable" : ""}`}
-            title={canEdit ? "Double-click to edit" : undefined}
             onDoubleClick={() => canEdit && setEditingText(value)}
           >
             {value}
