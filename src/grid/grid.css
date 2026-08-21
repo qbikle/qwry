@@ -1433,12 +1433,14 @@
   background: var(--bg-hover);
 }
 /* edit affordance: an .iconbtn (rule 1), hover-revealed; layout-only props
-   here. Inline flavour hugs the value without growing the row; the boxed
-   flavour (.rv-pencil-box, +.bordered) anchors INSIDE the JSON box corner
-   on the non-scrolling shell, so it holds still while the JSON scrolls */
+   here. Inline flavour is the 18px .iconbtn-sm so it fits the text line with
+   NO negative margins (those made one-line values scrollable: line box sizes
+   by margin box, scrollable overflow by border box); the boxed flavour
+   (.rv-pencil-box, +.bordered) anchors INSIDE the JSON box corner on the
+   non-scrolling shell, so it holds still while the JSON scrolls */
 .rv-pencil {
   visibility: hidden;
-  margin: -4px 0 -4px var(--sp-1);
+  margin-left: var(--sp-1);
   vertical-align: middle;
 }
 .rv-val.editable:hover .rv-pencil,
