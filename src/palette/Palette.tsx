@@ -178,7 +178,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
               onSelect={() => {
                 const pid = useConnections.getState().activeProfileId;
                 if (pid) {
-                  void import("../stores/heal").then(({ requestHeal }) => requestHeal(pid));
+                  void import("../stores/heal").then(({ requestHeal }) => requestHeal(pid, true));
                 }
                 close();
               }}

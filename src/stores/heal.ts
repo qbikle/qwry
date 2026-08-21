@@ -7,6 +7,7 @@
  * Loaded for its side effects from App. */
 import { listen } from "@tauri-apps/api/event";
 import { isHealArmed, useConnections } from "./connections";
+import { useRefreshFx } from "./refreshFx";
 
 const BACKOFF_MS = [2_000, 5_000, 15_000, 30_000];
 const attempts = new Map<string, number>();
@@ -19,13 +20,16 @@ function clearRetry(profileId: string) {
   attempts.delete(profileId);
 }
 
-/** kick a heal now; resets the backoff (a fresh death signal, not a retry) */
-export function requestHeal(profileId: string) {
+/** kick a heal now; resets the backoff (a fresh death signal, not a retry).
+ * manual = the user asked (⇧⌘R / palette): the db glyph acks the gesture
+ * and reports the verdict; background triggers stay visually silent unless
+ * they actually rebuilt something (refreshFx decides the shine) */
+export function requestHeal(profileId: string, manual = false) {
   clearRetry(profileId);
-  void run(profileId);
+  void run(profileId, manual);
 }
 
-async function run(profileId: string) {
+async function run(profileId: string, manual = false) {
   const c = useConnections.getState();
   // armed = the user connected and never manually disconnected since; heal
   // must never resurrect a connection the user chose to close
@@ -33,9 +37,14 @@ async function run(profileId: string) {
     clearRetry(profileId);
     return;
   }
-  const ok = await c.healProfile(profileId);
+  const fx = useRefreshFx.getState();
+  if (manual) fx.begin(profileId);
+  const { ok, rebuilt } = await c.healProfile(profileId);
   const after = useConnections.getState();
-  if (ok || !isHealArmed(profileId) || after.activeProfileId !== profileId) {
+  const stillHere = isHealArmed(profileId) && after.activeProfileId === profileId;
+  if (manual) fx.resolve(profileId, ok && stillHere);
+  else if (ok && rebuilt && stillHere) fx.autoShine(profileId);
+  if (ok || !stillHere) {
     clearRetry(profileId);
     return;
   }
