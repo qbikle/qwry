@@ -1067,6 +1067,13 @@
   border-radius: var(--radius-sm);
   background: var(--bg-panel);
 }
+/* the box is the ONLY inner scroller: rv-val's own 120px cap on top of it
+   stacked a third scroller (page + shell + content), so the first flick
+   bottomed out the content while the shell still clipped the box */
+.rv-val:has(> .jsonfield) {
+  max-height: none;
+  overflow: visible;
+}
 
 /* ValuePop's CodeMirror editor: same footprint as the textarea it replaces */
 .valuepop-cm {
@@ -1425,13 +1432,26 @@
 .rv-val.editable:hover {
   background: var(--bg-hover);
 }
+/* edit affordance: an .iconbtn (rule 1), hover-revealed; layout-only props
+   here. Inline flavour is the 18px .iconbtn-sm so it fits the text line with
+   NO negative margins (those made one-line values scrollable: line box sizes
+   by margin box, scrollable overflow by border box); the boxed flavour
+   (.rv-pencil-box, +.bordered) anchors INSIDE the JSON box corner on the
+   non-scrolling shell, so it holds still while the JSON scrolls */
 .rv-pencil {
   visibility: hidden;
   margin-left: var(--sp-1);
-  color: var(--fg-faint);
+  vertical-align: middle;
 }
-.rv-val.editable:hover .rv-pencil {
+.rv-val.editable:hover .rv-pencil,
+.rv-pencil:focus-visible {
   visibility: visible;
+}
+.rv-pencil-box {
+  position: absolute;
+  right: 12px;
+  bottom: 8px;
+  margin: 0;
 }
 .rv-nav {
   display: flex;

@@ -22,7 +22,7 @@ Every interactive control belongs to exactly one species. The species are:
 | species | base | notes |
 |---|---|---|
 | Action button | `.btnish` / `.btn` (tokens.css) | `.primary` filled accent, `.danger` filled danger; ONE idea of each |
-| Icon button | `.iconbtn` (tokens.css) | ghost by default; `.iconbtn-lg` 28px box; `.bordered` for standalone toolbars |
+| Icon button | `.iconbtn` (tokens.css) | ghost by default; `.iconbtn-lg` 28px box; `.iconbtn-sm` 18px inline-in-text tier (never shrink the 22px box with negative margins inside a scroller: line box sizes by margin box, scrollable overflow by border box → phantom scrollbars); `.bordered` for standalone toolbars |
 | Segmented control | recipe (no base class yet) | panel-inset bordered track, 2px gap, hover bg-hover, active = accent-soft; view-tab variants may keep neutral bg-active active (annotated). Extracting `.seg` is ledgered |
 | Chip / pill toggle | recipe (no base class yet) | radius-pill, border, active = accent-soft; `.chipish` extraction ledgered |
 | Dashed ghost (add/create) | existing dashed pattern | bg none, dashed border-strong → hover accent |
