@@ -204,6 +204,35 @@
   color: var(--fg);
   cursor: pointer;
   text-align: left;
+  /* anchors + clips the heal-success shine sweep */
+  position: relative;
+  overflow: hidden;
+}
+/* heal-success shine: one soft accent band wipes top→bottom across the
+   header. Re-keyed per shine (refreshFx.shineSeq); refreshFx decides when a
+   heal EARNED it — this class only ever means "the rebuild held" */
+.sb-shine {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    transparent 15%,
+    color-mix(in srgb, var(--accent) 18%, transparent) 50%,
+    transparent 85%
+  );
+  translate: 0 -100%;
+  animation: sb-shine calc(var(--dur-slow) * 2.5) var(--ease-std) forwards;
+}
+@keyframes sb-shine {
+  to {
+    translate: 0 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sb-shine {
+    animation: none;
+  }
 }
 .sb-dbhead:hover {
   background: var(--bg-hover);
