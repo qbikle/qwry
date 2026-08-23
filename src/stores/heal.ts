@@ -39,7 +39,15 @@ async function run(profileId: string, manual = false) {
   }
   const fx = useRefreshFx.getState();
   if (manual) fx.begin(profileId);
-  const { ok, rebuilt } = await c.healProfile(profileId);
+  // a rejection is a failed verdict, not an abandonment: the fx must always
+  // resolve (split discs never wedge) and the backoff chain must keep going
+  let ok = false;
+  let rebuilt = false;
+  try {
+    ({ ok, rebuilt } = await c.healProfile(profileId));
+  } catch {
+    /* verdict stays failed */
+  }
   const after = useConnections.getState();
   const stillHere = isHealArmed(profileId) && after.activeProfileId === profileId;
   if (manual) fx.resolve(profileId, ok && stillHere);

@@ -27,6 +27,10 @@ let gen = 0;
 let apartAt = 0;
 /** verdict that landed while the spin still owned the stage */
 let pendingOk: boolean | null = null;
+/** a manual ceremony is running (begin → resolve's clap): a background
+ * autoShine for the same profile must defer to it — the ceremony reports
+ * the same verdict, and its gen++ would orphan the ceremony's timers */
+let manualActive = false;
 /** independent of gen: a new gesture mid-shine must not orphan the close
  * (a stuck-open window replays on every remount forever) */
 let shineTimer: ReturnType<typeof setTimeout> | undefined;
@@ -72,7 +76,16 @@ export const useRefreshFx = create<RefreshFxState>((set, get) => ({
   begin: (profileId) => {
     const g = ++gen;
     pendingOk = null;
-    set((s) => ({ profileId, spinTurns: s.spinTurns + 1, apart: false, shining: false }));
+    manualActive = true;
+    // the counter is only meaningful to a glyph already resting at
+    // spinTurns × 360: an unmounted profile's glyph sits at 0°, so adopting
+    // a new profile restarts at 1 (0 → 360, exactly one revolution)
+    set((s) => ({
+      profileId,
+      spinTurns: s.profileId === profileId ? s.spinTurns + 1 : 1,
+      apart: false,
+      shining: false,
+    }));
     later(SPIN_MS, g, () => {
       apartAt = Date.now();
       set({ apart: true });
@@ -94,14 +107,26 @@ export const useRefreshFx = create<RefreshFxState>((set, get) => ({
     const wait = Math.max(0, MIN_APART_MS - (Date.now() - apartAt));
     later(wait, g, () => {
       set({ apart: false });
+      manualActive = false;
       if (ok) later(JOIN_SHINE_LAG_MS, g, () => shine(set));
     });
   },
   autoShine: (profileId) => {
     if (!AUTO_HEAL_SHINE) return;
+    // a background heal can JOIN a manual pass (connections.healInflight):
+    // both continuations fire on one verdict, and the manual ceremony will
+    // already report it — stomping in here would orphan its timers
+    if (manualActive && get().profileId === profileId) return;
     gen++;
     pendingOk = null;
-    set({ profileId, apart: false });
+    manualActive = false;
+    // adopting a profile whose glyph rests at 0°: spin stays untouched only
+    // when the counter still matches what that glyph is displaying
+    set((s) => ({
+      profileId,
+      spinTurns: s.profileId === profileId ? s.spinTurns : 0,
+      apart: false,
+    }));
     shine(set);
   },
 }));

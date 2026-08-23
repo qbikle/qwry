@@ -1440,14 +1440,16 @@
    (.rv-pencil-box, +.bordered) anchors INSIDE the JSON box corner on the
    non-scrolling shell, so it holds still while the JSON scrolls */
 .rv-pencil {
-  visibility: hidden;
+  /* opacity reveal, NOT visibility: a visibility-hidden button is out of
+     the tab order, so its own :focus-visible reveal could never fire */
+  opacity: 0;
   margin-left: var(--sp-1);
   vertical-align: middle;
   translate: 0 -1px; /* optical */ /* sits a hair low against the value text */
 }
 .rv-val.editable:hover .rv-pencil,
 .rv-pencil:focus-visible {
-  visibility: visible;
+  opacity: 1;
 }
 .rv-pencil-box {
   position: absolute;
