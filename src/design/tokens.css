@@ -287,7 +287,11 @@ button:disabled {
 .btnish.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) { filter: brightness(1.08); }
 
 /* the one icon-button skin (DESIGN.md rule 1): ghost 22px box by default;
-   .iconbtn-lg = 28px toolbar tier; .bordered = standalone-toolbar look */
+   .iconbtn-lg = 28px toolbar tier; .iconbtn-sm = 18px inline-in-text tier
+   (fits a text line WITHOUT negative margins: the line box sizes by margin
+   box but scrollable overflow by border box, so a taller box pulled in with
+   negative margins makes one-line values scrollable); .bordered =
+   standalone-toolbar look */
 .iconbtn {
   display: inline-flex;
   align-items: center;
@@ -306,6 +310,7 @@ button:disabled {
 .iconbtn:active:not(:disabled) { background: var(--bg-active); }
 .iconbtn.active { color: var(--accent); background: var(--accent-soft); }
 .iconbtn-lg { width: 28px; height: 28px; }
+.iconbtn-sm { width: 18px; height: 18px; }
 .iconbtn.bordered { border: 1px solid var(--border); background: var(--bg-raised); }
 .iconbtn.bordered:hover:not(:disabled) { border-color: var(--border-strong); background: var(--bg-hover); }
 
