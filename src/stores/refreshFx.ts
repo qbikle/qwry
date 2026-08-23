@@ -17,12 +17,19 @@ const SPIN_MS = 680;
 const MIN_APART_MS = 320;
 /** shine launches as the discs land, not while they travel */
 const JOIN_SHINE_LAG_MS = 180;
+/** the shine window: CSS sweep (dur-slow × 2.5 = 600ms) + a hair. The store
+ * closes it itself so a header REMOUNT (profile switch and back) can never
+ * replay a shine that already played */
+const SHINE_MS = 650;
 
 // generation guard: any new gesture orphans the previous timers
 let gen = 0;
 let apartAt = 0;
 /** verdict that landed while the spin still owned the stage */
 let pendingOk: boolean | null = null;
+/** independent of gen: a new gesture mid-shine must not orphan the close
+ * (a stuck-open window replays on every remount forever) */
+let shineTimer: ReturnType<typeof setTimeout> | undefined;
 const later = (ms: number, g: number, fn: () => void) => {
   setTimeout(() => {
     if (gen === g) fn();
@@ -37,7 +44,10 @@ interface RefreshFxState {
   spinTurns: number;
   /** discs split apart = a heal is in flight */
   apart: boolean;
-  /** bump = replay the shine (element re-keyed per value); 0 = never shone */
+  /** the shine is on stage right now (open for SHINE_MS, then the store
+   * closes it — render off this, never off shineSeq) */
+  shining: boolean;
+  /** re-keys the shine element so consecutive shines restart the sweep */
   shineSeq: number;
   /** manual gesture: spin now, split when the spin has read */
   begin: (profileId: string) => void;
@@ -47,15 +57,22 @@ interface RefreshFxState {
   autoShine: (profileId: string) => void;
 }
 
+const shine = (set: (fn: (s: RefreshFxState) => Partial<RefreshFxState>) => void) => {
+  set((s) => ({ shining: true, shineSeq: s.shineSeq + 1 }));
+  clearTimeout(shineTimer);
+  shineTimer = setTimeout(() => set(() => ({ shining: false })), SHINE_MS);
+};
+
 export const useRefreshFx = create<RefreshFxState>((set, get) => ({
   profileId: null,
   spinTurns: 0,
   apart: false,
+  shining: false,
   shineSeq: 0,
   begin: (profileId) => {
     const g = ++gen;
     pendingOk = null;
-    set((s) => ({ profileId, spinTurns: s.spinTurns + 1, apart: false }));
+    set((s) => ({ profileId, spinTurns: s.spinTurns + 1, apart: false, shining: false }));
     later(SPIN_MS, g, () => {
       apartAt = Date.now();
       set({ apart: true });
@@ -77,13 +94,14 @@ export const useRefreshFx = create<RefreshFxState>((set, get) => ({
     const wait = Math.max(0, MIN_APART_MS - (Date.now() - apartAt));
     later(wait, g, () => {
       set({ apart: false });
-      if (ok) later(JOIN_SHINE_LAG_MS, g, () => set((s) => ({ shineSeq: s.shineSeq + 1 })));
+      if (ok) later(JOIN_SHINE_LAG_MS, g, () => shine(set));
     });
   },
   autoShine: (profileId) => {
     if (!AUTO_HEAL_SHINE) return;
     gen++;
     pendingOk = null;
-    set((s) => ({ profileId, apart: false, shineSeq: s.shineSeq + 1 }));
+    set({ profileId, apart: false });
+    shine(set);
   },
 }));

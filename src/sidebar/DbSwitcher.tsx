@@ -97,8 +97,10 @@ export function DbSwitcher({ profileId, dbname, name }: { profileId: string; dbn
       </button>
       <ServerInfo profileId={profileId} />
       {/* on .dbsw (not the button) so the sweep also crosses the (i); its own
-          overflow box because .dbsw clipping would eat the switcher popover */}
-      {fxHere && fx.shineSeq > 0 && (
+          overflow box because .dbsw clipping would eat the switcher popover.
+          Gated on the TIMED window (fx.shining), never on shineSeq: a
+          remount after the window closed must not replay an old shine */}
+      {fxHere && fx.shining && (
         <span key={fx.shineSeq} className="sb-shine" aria-hidden="true" />
       )}
       {open && <div className="dbsw-backdrop" onMouseDown={() => setOpen(false)} />}
