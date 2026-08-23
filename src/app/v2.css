@@ -204,17 +204,22 @@
   color: var(--fg);
   cursor: pointer;
   text-align: left;
-  /* anchors + clips the heal-success shine sweep */
-  position: relative;
-  overflow: hidden;
 }
-/* heal-success shine: one soft accent band wipes top→bottom across the
-   header. Re-keyed per shine (refreshFx.shineSeq); refreshFx decides when a
-   heal EARNED it — this class only ever means "the rebuild held" */
+/* heal-success shine: one soft accent band wipes top→bottom across the WHOLE
+   header row (db glyph, name, chevron, the (i)). Re-keyed per shine
+   (refreshFx.shineSeq); refreshFx decides when a heal EARNED it — this class
+   only ever means "the rebuild held". Self-clipping wrapper: overflow on
+   .dbsw itself would eat the switcher popover */
 .sb-shine {
   position: absolute;
   inset: 0;
+  overflow: hidden;
   pointer-events: none;
+}
+.sb-shine::before {
+  content: "";
+  position: absolute;
+  inset: 0;
   background: linear-gradient(
     to bottom,
     transparent 15%,
@@ -230,7 +235,7 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .sb-shine {
+  .sb-shine::before {
     animation: none;
   }
 }

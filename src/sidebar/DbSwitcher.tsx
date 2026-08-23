@@ -91,14 +91,16 @@ export function DbSwitcher({ profileId, dbname, name }: { profileId: string; dbn
   return (
     <div className="dbsw">
       <button className="sb-dbhead" onClick={() => void toggle()} title={`${name} · ${dbname}`} disabled={busy}>
-        <DbGlyph apart={fxHere && fx.apart} />
+        <DbGlyph key={profileId} apart={fxHere && fx.apart} spinTurns={fxHere ? fx.spinTurns : 0} />
         <span className="sb-db-name">{dbname || name}</span>
         <ChevronDown size={12} className="sb-db-chev" />
-        {fxHere && fx.shineSeq > 0 && (
-          <span key={fx.shineSeq} className="sb-shine" aria-hidden="true" />
-        )}
       </button>
       <ServerInfo profileId={profileId} />
+      {/* on .dbsw (not the button) so the sweep also crosses the (i); its own
+          overflow box because .dbsw clipping would eat the switcher popover */}
+      {fxHere && fx.shineSeq > 0 && (
+        <span key={fx.shineSeq} className="sb-shine" aria-hidden="true" />
+      )}
       {open && <div className="dbsw-backdrop" onMouseDown={() => setOpen(false)} />}
       {open && (
         <motion.div className="dbsw-pop" {...menuIn}>
