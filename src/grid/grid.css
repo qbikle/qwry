@@ -1442,6 +1442,7 @@
   visibility: hidden;
   margin-left: var(--sp-1);
   vertical-align: middle;
+  translate: 0 -1px; /* optical */ /* sits a hair low against the value text */
 }
 .rv-val.editable:hover .rv-pencil,
 .rv-pencil:focus-visible {
@@ -1452,6 +1453,7 @@
   right: 12px;
   bottom: 8px;
   margin: 0;
+  translate: 0 0; /* the inline nudge is baseline-relative; anchored chip needs none */
 }
 .rv-nav {
   display: flex;
@@ -1474,12 +1476,15 @@
   cursor: pointer;
   transition: background var(--dur-quick) var(--ease-std), color var(--dur-quick) var(--ease-std);
 }
+/* the divider is an OVERLAP, not a dropped border: border-right:none gave
+   the first button a 21px content box vs 20px on the second, so the two
+   chevrons centered on different subpixel grids */
 .rv-navbtn:first-child {
   border-radius: var(--radius-sm) 0 0 var(--radius-sm);
-  border-right: none;
 }
 .rv-navbtn:last-child {
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  margin-left: -1px;
 }
 .rv-navbtn:hover:not(:disabled) {
   background: var(--bg-hover);
