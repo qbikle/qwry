@@ -374,7 +374,7 @@ export function RecordView({
                       {editable && (
                         <button
                           className={`iconbtn rv-pencil${boxed ? " bordered rv-pencil-box" : " iconbtn-sm"}`}
-                          aria-label="Edit value"
+                          aria-label="Edit Value"
                           onClick={(e) => {
                             e.stopPropagation();
                             openEdit(i);

@@ -693,7 +693,7 @@ export function App() {
         ]).then(([{ requestHeal }, { useConnections }, { useSchema }]) => {
           const { activeProfileId, sessions } = useConnections.getState();
           if (!activeProfileId) return;
-          requestHeal(activeProfileId);
+          requestHeal(activeProfileId, true);
           // a live primary refreshes schema NOW; a dead one gets its refresh
           // from the heal's gentle reconnect itself
           const sid = sessions[activeProfileId];

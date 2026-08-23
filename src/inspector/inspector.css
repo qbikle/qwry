@@ -325,14 +325,17 @@
   position: relative;
   display: inline-flex;
 }
-/* fused halves of the split button: must outrank .iconbtn.bordered */
+/* fused halves of the split button: must outrank .iconbtn.bordered. The
+   divider is a 1px border OVERLAP (rv-navbtn precedent): border-right:none
+   gives the halves unequal content boxes and the glyphs center on different
+   subpixel grids. Depends on --border staying opaque in every theme */
 .insp-copy button.insp-copy-main {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
-  border-right: none;
 }
 .insp-copy button.insp-copy-caret {
   width: 18px;
+  margin-left: -1px;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
 }
