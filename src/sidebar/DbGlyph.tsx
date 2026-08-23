@@ -24,7 +24,7 @@ export function DbGlyph({ apart, spinTurns }: { apart: boolean; spinTurns: numbe
       aria-hidden="true"
       initial={false}
       animate={{ rotate: spinTurns * 360 }}
-      transition={spring.pop}
+      transition={spring.turn}
     >
       <path d="M3 5V19A9 3 0 0 0 21 19V5" />
       <motion.path

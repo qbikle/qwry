@@ -10,9 +10,9 @@ import { create } from "zustand";
 
 /** trial flag: background heals gleam too; flip false for ⇧⌘R-only */
 const AUTO_HEAL_SHINE = true;
-/** the spin owns the stage before the stack opens (spring settles ~600ms;
- * splitting into its tail reads as one continuous move) */
-const SPIN_MS = 480;
+/** the spin owns the stage before the stack opens (spring.turn settles
+ * ~1s; splitting into its tail reads as one continuous move) */
+const SPIN_MS = 680;
 /** the split must READ before a fast verdict claps it shut */
 const MIN_APART_MS = 320;
 /** shine launches as the discs land, not while they travel */
