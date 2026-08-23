@@ -21,6 +21,10 @@ const INSTANT = { duration: 0 } as const;
 
 const POP = { type: "spring", stiffness: 520, damping: 32, mass: 0.8 } as const;
 const SNAPPY = { type: "spring", stiffness: 700, damping: 38, mass: 0.6 } as const;
+// long-travel rotations (a full revolution): slow build, fluid middle, soft
+// settle with a whisper of overshoot; POP-class springs read as a violent
+// snap over 360°
+const TURN = { type: "spring", stiffness: 130, damping: 19, mass: 1 } as const;
 const PANEL = { type: "spring", stiffness: 420, damping: 36, mass: 0.9 } as const;
 const RAIL = { type: "spring", stiffness: 600, damping: 24, mass: 0.6 } as const;
 const DRAWER = { type: "spring", stiffness: 520, damping: 40, mass: 0.8 } as const;
@@ -34,6 +38,10 @@ export const spring = {
   /** small UI bits (menus, chips) */
   get snappy() {
     return reduced ? INSTANT : SNAPPY;
+  },
+  /** long-travel rotations (⇧⌘R glyph revolution) */
+  get turn() {
+    return reduced ? INSTANT : TURN;
   },
 };
 

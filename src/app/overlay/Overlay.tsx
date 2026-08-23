@@ -111,6 +111,9 @@ export function Modal({
     const el = backdropRef.current;
     if (el && !el.contains(document.activeElement)) el.focus({ preventScroll: true });
   }, []);
+  // backdrop grace: the second click of a double-click that OPENED this modal
+  // lands on the fresh backdrop and would flash it open-shut
+  const mountedAt = useRef(Date.now());
   return createPortal(
     <div
       ref={backdropRef}
@@ -121,6 +124,7 @@ export function Modal({
       className={backdropClassName ?? "ov-backdrop"}
       style={z != null ? { zIndex: z } : undefined}
       onMouseDown={(e) => {
+        if (Date.now() - mountedAt.current < 250) return;
         if (dismissable && e.target === e.currentTarget) onClose();
       }}
     >

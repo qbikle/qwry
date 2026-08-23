@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { motion } from "motion/react";
-import { Check, ChevronDown, Database } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import { menuIn } from "../design/springs";
 import { useConnections } from "../stores/connections";
+import { useRefreshFx } from "../stores/refreshFx";
 import { useResults } from "../stores/results";
 import { useTabs } from "../stores/tabs";
 import * as ipc from "../ipc/commands";
+import { DbGlyph } from "./DbGlyph";
 import { ServerInfo } from "./ServerInfo";
 
 const LIST_DBS =
@@ -18,6 +20,8 @@ export function DbSwitcher({ profileId, dbname, name }: { profileId: string; dbn
   const [dbs, setDbs] = useState<string[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const fx = useRefreshFx();
+  const fxHere = fx.profileId === profileId;
 
   const toggle = async () => {
     if (open) {
@@ -87,11 +91,18 @@ export function DbSwitcher({ profileId, dbname, name }: { profileId: string; dbn
   return (
     <div className="dbsw">
       <button className="sb-dbhead" onClick={() => void toggle()} title={`${name} · ${dbname}`} disabled={busy}>
-        <Database size={16} className="sb-db-icon" />
+        <DbGlyph key={profileId} apart={fxHere && fx.apart} spinTurns={fxHere ? fx.spinTurns : 0} />
         <span className="sb-db-name">{dbname || name}</span>
         <ChevronDown size={12} className="sb-db-chev" />
       </button>
       <ServerInfo profileId={profileId} />
+      {/* on .dbsw (not the button) so the sweep also crosses the (i); its own
+          overflow box because .dbsw clipping would eat the switcher popover.
+          Gated on the TIMED window (fx.shining), never on shineSeq: a
+          remount after the window closed must not replay an old shine */}
+      {fxHere && fx.shining && (
+        <span key={fx.shineSeq} className="sb-shine" aria-hidden="true" />
+      )}
       {open && <div className="dbsw-backdrop" onMouseDown={() => setOpen(false)} />}
       {open && (
         <motion.div className="dbsw-pop" {...menuIn}>
