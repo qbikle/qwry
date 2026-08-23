@@ -1015,6 +1015,7 @@
 .status-rerun {
   display: grid;
   place-items: center;
+  padding: 0; /* WebKit UA button padding is asymmetric; see .rv-navbtn */
   width: 20px;
   height: 20px;
   border: none;
@@ -1468,6 +1469,9 @@
 .rv-navbtn {
   display: grid;
   place-items: center;
+  /* UA button padding is ASYMMETRIC in WebKit (2px top, 3px bottom): without
+     the reset the glyph centers in a content area shifted half a pixel up */
+  padding: 0;
   width: 22px;
   height: 22px;
   border: 1px solid var(--border);
