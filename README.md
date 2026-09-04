@@ -110,7 +110,7 @@ The Rust core (`src-tauri/src/`) owns everything that touches a database. A `DbD
 
 The frontend (`src/`) is React 19 with zustand stores, a CodeMirror 6 editor driven by a custom completion engine on lezer, and a hand-rolled virtualized grid on TanStack Virtual. All motion goes through spring presets; all styling through the token system in `src/design/tokens.css`. Perf budgets are enforced, not aspirational: cold start < 500 ms, keystroke-to-completion < 16 ms, 60 fps grid scroll minimum.
 
-The `docs/` directory is the project's memory. `ARCHITECTURE.md` is the design truth, `ROADMAP.md` holds the phase plan plus a dated session log of what was built and every gotcha hit along the way, `DECISIONS.md` is an ADR-lite ledger, and `GAPS.md` tracks known debt. Development happens wave-by-wave (implement, gate, adversarial audit, ship) and the docs are updated in the same wave, always. Read them first if you're contributing.
+The `docs/` directory is the project's memory. `ARCHITECTURE.md` is the design truth, `ROADMAP.md` holds what shipped and what is open as key points, `ROADMAP_log.md` the dated session log of what was built and every gotcha hit along the way, `DECISIONS.md` is an ADR-lite ledger, and `GAPS.md` tracks known debt. Development happens wave-by-wave (implement, gate, adversarial audit, ship) and the docs are updated in the same wave, always. Read them first if you're contributing.
 
 ## Development
 

@@ -26,7 +26,7 @@
    multi-connection UI testing (workspaces, pins, db switcher).
 4. Adversarial code-review passes over the wave diff; confirmed findings fixed
    before PR.
-5. Docs updated in the same wave: this file ticked, ROADMAP.md session note,
+5. Docs updated in the same wave: this file ticked, ROADMAP_log.md session note,
    DECISIONS.md for any ADR, ARCHITECTURE.md if design shifted.
 
 ---
@@ -249,7 +249,7 @@
 
 ---
 
-*Session log lives in ROADMAP.md as always. Tick items here; append dated wave
+*Session log lives in ROADMAP_log.md (moved 2026-09-05). Tick items here; append dated wave
 notes below as each wave actually ships.*
 
 ## Wave notes
