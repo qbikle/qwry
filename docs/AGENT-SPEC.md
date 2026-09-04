@@ -39,24 +39,36 @@ src/agent/
   prompt.ts        system prompt + rules (§6), frozen text, cache-friendly
   tools.ts         tool schemas (§5) + AgentTools interface
   tools.tauri.ts   AgentTools over Tauri commands (the app)
-  providers/       Provider interface + adapters (§7)
+  platform.ts      Platform interface: http relay, process spawn, MCP endpoint
+  platform.tauri.ts  Platform over Tauri commands (the app)
+  providers/       Provider interface + adapters (§7), presets, registry
   extract.ts       SQL/assumption/answer extraction from model text
 src/stores/agent.ts   zustand: threads, turns, chips, sanity, trace, status
-src-tauri/src/agent.rs   commands: agent_peek_values, agent_run_readonly,
-                         agent_probe (§5); reuses introspect + table_stats
+src-tauri/src/agent.rs        commands: agent_connect, agent_describe,
+                              agent_peek_values, agent_run_readonly (AST gate),
+                              agent_probe, agent_gate, agent_key_* (§5, §8)
+src-tauri/src/agent_http.rs   agent_http_stream: key-injecting SSE relay (§7)
+src-tauri/src/agent_claude.rs agent_claude_spawn/kill: the claude -p child
+src-tauri/src/agent_mcp.rs    streamable-HTTP MCP server for claude -p (§7)
+eval/tools.node.ts, eval/platform.node.ts   the same interfaces over pg/node
 ```
 
 Rules:
 1. Only Rust talks to PostgreSQL. No pg client in the frontend.
-2. `AgentTools` is an interface. `tools.tauri.ts` implements it for the app;
-   `eval/tools.node.ts` implements it over `pg` for headless evaluation
-   (EVAL.md). The loop never imports Tauri directly.
+2. `AgentTools` and `Platform` are interfaces. `tools.tauri.ts` /
+   `platform.tauri.ts` implement them for the app; `eval/tools.node.ts` /
+   `eval/platform.node.ts` implement them over `pg` and node for headless
+   evaluation (EVAL.md). Nothing under `src/agent/` except `*.tauri.ts`
+   imports Tauri or a store at runtime (a test enforces it).
 3. Agent sessions are dedicated PG sessions from the existing spare pool
    (ARCHITECTURE › Sessions), one per thread, with
    `default_transaction_read_only=on` set server-side **regardless of the
    prod flag** in v1. Cancel = the session's CancelToken (⌘. like queries).
 4. API keys live in the Keychain through `secrets.rs` (`agent:<provider>`
-   entries), never in appdb, settings, prompts, or logs.
+   entries), never in appdb, settings, prompts, or logs. Provider HTTP runs
+   through Rust (`agent_http_stream`), which injects the key: TS never
+   holds it, and Tauri's http scope never has to allowlist user-supplied
+   hosts (DECISIONS 2026-09-05). Only Rust talks to the network.
 5. IPC types once in Rust, mirrored in `src/ipc/types.ts` (CLAUDE.md rule).
 
 ## 3. Tier gating (measured)
@@ -168,20 +180,33 @@ interface Provider {
   chat(req: { system: string; messages: Msg[]; tools: ToolSchema[];
               model: string; signal: AbortSignal }): AsyncIterable<Event>
 }
-type Event = { text: string } | { toolCall: { id; name; args: string } }
+type Event = { text: string } | { thinking: string }
+           | { toolCall: { id; name; args: string } }
+           | { toolResult: { id; name; result: string; isError? } }   // ownsLoop providers only
            | { usage: { input; output; cacheRead?; cacheWrite? } } | { done: StopReason }
+           | { error: { kind: 'auth'|'rate'|'unreachable'|'provider'|'cancelled'; message; retryAfterMs? } }
 ```
+`thinking` (OpenAI-compatible `reasoning_content`, Anthropic `thinking_delta`)
+renders in the thinking strip and trace, never as answer text. A provider
+with `ownsLoop: true` executes tools itself and yields `toolResult`; the
+loop records those and never re-executes. Adapters reach the network only
+through `Platform.httpStream` / `Platform.spawn` (§2.4).
 
 v1 adapters, in build order:
 1. **OpenAI-compatible** (`base_url` + key): covers OpenAI, OpenRouter,
    llama.cpp `llama-server`, vLLM, Ollama, LM Studio, Groq, Mistral, Together,
-   Fireworks, DeepSeek, xAI. One adapter, many presets in the registry.
+   Fireworks, DeepSeek, xAI and **Gemini** (its OpenAI-compatible endpoint;
+   the native `functionCall` adapter is a research item, DECISIONS
+   2026-09-05). One adapter; quirks are data in `presets.ts`.
 2. **Anthropic**: native `tool_use` blocks, `cache_control` on the frozen
-   prefix, no sampling params on the 5-family.
-3. **Gemini**: `functionCall` parts.
-4. **Claude Code (`claude -p`)**: spawns the CLI with `--mcp-config` pointing
-   at qwry's own MCP server (`src-tauri` or a sidecar exposing §5 tools),
-   `--strict-mcp-config`, `--output-format stream-json`. No key needed.
+   prefix and the last tool, sampling params per model from the registry.
+3. **Claude Code (`claude -p`)**: `ownsLoop`. Spawns the CLI with
+   `--mcp-config` pointing at qwry's own streamable-HTTP MCP server
+   (`agent_mcp.rs`, per-thread bearer token), `--strict-mcp-config`,
+   `--tools ""`, `--allowedTools 'mcp__qwry__*'`, `--setting-sources ""`,
+   `--output-format stream-json --verbose`, `--system-prompt`,
+   `--session-id`/`--resume`; prompt on stdin. A not-`connected` MCP status
+   in `system/init` fails the turn before the model runs. No key needed.
 
 Provider-neutral rules: tool arguments are untrusted text → `JSON.parse` in a
 try, schema-validate, error text back to the model on failure; unknown tool
@@ -193,7 +218,11 @@ parallel turn in ONE message). Bedrock/Vertex/Foundry are a research item.
 
 1. Read-only in v1, twice: server-side `default_transaction_read_only=on`
    on agent sessions AND an AST gate (`pg_query` crate in `agent.rs`)
-   allowing only `SELECT`/`WITH … SELECT`/`EXPLAIN`. Both must pass.
+   allowing only one `SELECT`/`WITH … SELECT`/`EXPLAIN` statement, with
+   no data-modifying CTE, SELECT INTO, FOR UPDATE/SHARE (checked on every
+   SelectStmt incl. SubLinks) or deny-listed function (pg_sleep,
+   pg_terminate_backend, set_config, lo_*, pg_read_file, dblink…; read-only
+   does not stop these). Both must pass. Policy table: DECISIONS 2026-09-05.
 2. `statement_timeout` from the existing setting (default 10s); row caps §5.
 3. Secrets never enter prompts, logs, appdb, or the trace (redaction is not a
    fallback; the values are simply never read into TS).
@@ -223,8 +252,10 @@ they do for a query tab.
 
 ## 11. Open questions (decide during the workflow, record in DECISIONS.md)
 
-- MCP server for the `claude -p` provider: in-process Rust command surface vs
-  a sidecar; sidecar is simpler, Rust keeps one DB owner (§2.1).
+- ~~MCP server for the `claude -p` provider~~: closed 2026-09-05, in-process
+  streamable-HTTP server (`agent_mcp.rs`); see DECISIONS.
+- Widen the gate to `SHOW <setting>`? Harmless and read-only, but §8.1 is
+  spec-literal today.
 - Legacy-twin detection beyond comments: `_v\d+` note (§4.2) is v1; a
   qwry-side hint store is the v2 Knowledge layer.
 - Keyboard shortcut for the Ask panel (proposal in AGENT-UX §1).
