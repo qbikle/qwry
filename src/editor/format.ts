@@ -157,6 +157,19 @@ export async function formatWithPreset(view: EditorView, presetId: string): Prom
   applyToBuffer(view, (src) => format(src, buildOptions(presetId)));
 }
 
+/** format a bare SQL string with a preset (default: the user's); for read-only
+ * surfaces that show or copy SQL outside an editor (the Ask answer's SQL row).
+ * Same lazy import as the editor path. A statement the formatter rejects comes
+ * back unchanged. */
+export async function formatSqlText(src: string, presetId?: string): Promise<string> {
+  const { format } = await import("sql-formatter");
+  try {
+    return format(src, buildOptions(presetId ?? useSettings.getState().formatPreset));
+  } catch {
+    return src;
+  }
+}
+
 /** ⇧⌘F / menu: the user's default preset */
 export function formatDefault(view: EditorView): Promise<void> {
   return formatWithPreset(view, useSettings.getState().formatPreset);

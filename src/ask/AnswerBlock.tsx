@@ -22,7 +22,7 @@ import type { AgentRun } from "../agent/types";
 import { spring } from "../design/springs";
 import { Grid, GRID_HEADER_H, gridRowHeight } from "../grid/Grid";
 import { msText } from "../lib/duration";
-import { Avatar } from "../sidebar/avatar";
+import { avatarColor } from "../sidebar/avatar";
 import { useAgent, type Exchange } from "../stores/agent";
 import { useAsk } from "../stores/ask";
 import type { StatementState } from "../stores/results";
@@ -213,11 +213,12 @@ export function AnswerBlock({
         />
       )}
 
-      {/* the avatar is the block's one provenance mark (section 9): it stays
-          with the rows when the header has scrolled away (LESSONS 4) */}
+      {/* the connection's dot is the block's one provenance mark (section 9),
+          the titlebar's conn-dot at the same 8px: it stays with the rows when
+          the header has scrolled away (LESSONS 4) */}
       {!exchange.streaming && answer && (
         <div className="ans-foot" data-thread={threadId}>
-          <Avatar profile={profile} size={14} />
+          <span className="ans-dot" style={{ background: avatarColor(profile) }} aria-hidden="true" />
           <span className="ans-foot-meta">{footerStatus(answer.turns, answer.ms, model)}</span>
           <span className="ask-grow" />
           <button type="button" className="linkish" onClick={() => openTrace(exchange.id)}>

@@ -70,10 +70,10 @@ apply are omitted, never left as dead space (DESIGN rule 2 scope note):
 6. **Assumption chips** (§3).
 7. **Sanity line** (§4).
 8. **Follow-ups**: three chips (§6).
-9. **Footer**: avatar · turns · time · model · `Trace`. The 14px connection
-   avatar leads, `1 turn · 20.4 s · Sonnet 5` follows in the status register,
-   and the `Trace` link (§5) trails at the right edge. Nothing else: the
-   connection's name is not repeated (the avatar is the provenance mark, §9),
+9. **Footer**: dot · turns · time · model · `Trace`. The connection's 8px dot
+   (the titlebar's conn-dot) leads, `1 turn · 20.4 s · Sonnet 5` follows in the
+   status register, and the `Trace` link (§5) trails at the right edge. Nothing
+   else: the connection's name is not repeated (the dot is the provenance mark, §9),
    and the line fits at the 320 floor without wrapping (DESIGN rule 13).
 
 Streaming text renders as it arrives with no per-character animation
@@ -163,7 +163,7 @@ Keys are managed in Settings › Models; the picker never shows a key.
 
 The pane is bound to the active connection and says so once per zone (DESIGN
 rule 12): the sidebar's selection, the composer placeholder (`Ask about
-auth_new…`), and the 14px connection avatar leading every answer's footer,
+auth_new…`), and the connection's 8px dot leading every answer's footer,
 which is THE provenance mark for the block and stays with the rows when the
 header has scrolled away (LESSONS 4). The header carries no avatar, name or
 database. A prod connection is announced where prod is always announced, the

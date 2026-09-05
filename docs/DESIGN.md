@@ -97,9 +97,9 @@ annotation is a design decision, reviewable like any other.
 `--icon-sm: 12` (dense lists, tree, menus) · `--icon-md: 14` (toolbars,
 buttons) · `--icon-lg: 16` (headers, empty states). One size per surface;
 a list that mixes sizes is broken by definition. Documented exceptions:
-avatars/logos (14/22/40/44/64; 14 is the inline provenance mark that rides a
-text line, the Ask answer footer) and the grid's 11px type glyphs (data
-register).
+avatars/logos (22/40/44/64), the 8px connection dot (the titlebar's and the
+Ask footer's provenance mark: a mark, not an icon) and the grid's 11px type
+glyphs (data register).
 Baseline nudges (`translate: 0 1px` and friends) live INSIDE a component's
 own definition, never at use-sites; each one carries `/* optical */`.
 
@@ -166,7 +166,7 @@ A header answers "where am I": a title, at most one qualifier, and the zone's
 own actions as at most two icon buttons. Controls that configure an action
 sit beside that action (the model picker beside Send, never in the header); a
 status that belongs to the window stays in the window's chrome (PROD is the
-titlebar chip); provenance appears once per zone (the answer footer's avatar,
+titlebar chip); provenance appears once per zone (the answer footer's connection dot,
 not the header AND the footer). A strip holding two ideas is two strips, or
 one idea too many, and the strip's fixed height (rule 2) is not a licence to
 fill it. Precedent: the W2 Ask header, `icon · Ask · avatar · name · db ·
@@ -194,7 +194,7 @@ moment a second width was drawn.
 
 A fact renders in exactly one slot. Results in the grid, the query in the SQL
 row, interpretations in the assumption chips, timing in the status line,
-provenance in the footer avatar; prose never repeats any of them. Answer prose
+provenance in the footer's connection dot; prose never repeats any of them. Answer prose
 is one or two sentences of interpretation, what the numbers mean, not what
 they are; the model's text is chrome here, because the anatomy already
 carries the data. The rule binds chrome to chrome too: a name in the header

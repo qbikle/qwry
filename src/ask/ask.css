@@ -636,6 +636,11 @@
 .ask-ta::placeholder {
   color: var(--fg-muted);
 }
+/* tokens.css paints a ring on every textarea:focus-visible; here the box's
+   focus-within border is the one focus face (rule 2: one treatment, not two) */
+.ask-ta:focus-visible {
+  outline: none;
+}
 /* not connected: the one disabled look (rule 2); the placeholder says why */
 .ask-ta:disabled {
   opacity: var(--o-disabled);
@@ -864,6 +869,7 @@
   display: flex;
   flex-direction: column;
   background: var(--bg-panel);
+  z-index: 10; /* above the grid's sticky header and gutter (grid.css tops out at 9) */
   transform: translateX(100%);
   /* hidden once the slide-out ends so its controls leave the tab order */
   visibility: hidden;
@@ -974,7 +980,7 @@
   white-space: nowrap;
 }
 .trace-step-b {
-  margin: 0 var(--sp-2) var(--sp-2) 64px;
+  margin: 0 0 var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
   max-height: 220px;
   overflow: auto;
@@ -1036,6 +1042,15 @@
 .ans-sql-code {
   user-select: text;
   -webkit-user-select: text;
+}
+/* per-block provenance (AGENT-UX section 9): the connection's 8px dot leads
+   the footer's status line (the titlebar conn-dot at the same size) */
+.ans-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 /* ---- end AnswerBlock anatomy ---- */
 
