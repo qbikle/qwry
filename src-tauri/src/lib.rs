@@ -152,6 +152,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> 
     let view = SubmenuBuilder::new(app, "View")
         .item(&item("palette", "Command Palette", Some("Cmd+K"))?)
         .item(&item("inspector", "Toggle Inspector", Some("Cmd+I"))?)
+        .item(&item("ask", "Toggle Ask", Some("Cmd+J"))?)
         .item(&item("theme", "Theme…", None)?)
         .separator()
         // muda has no "Plus" key; Cmd+= is the canonical zoom-in accelerator

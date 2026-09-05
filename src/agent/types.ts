@@ -73,6 +73,9 @@ export interface SanityFragment {
   text: string;
   warn: boolean;
   sql?: string;
+  /** id of the tool call (trace step) that produced it, so the sanity line
+   * opens the trace at its probe structurally (LESSONS 4) */
+  stepId?: string;
 }
 
 /** One step of the trace drawer, in loop order (AGENT-UX 5). Everything the
@@ -109,7 +112,21 @@ export type TraceStep =
       result: string;
       isError: boolean;
     }
-  | { step: "verdict"; ms: number; verdict: Verdict };
+  | { step: "verdict"; ms: number; verdict: Verdict }
+  | {
+      /** the follow-up suggestions call (spec 4.6): one more model call after
+       * the verdict, shown here because nothing sent to a provider is hidden
+       * (spec 8.4) */
+      step: "followups";
+      ms: number;
+      /** the exact user message sent */
+      prompt: string;
+      /** the model's raw reply */
+      text: string;
+      /** the questions parsed out of it */
+      questions: string[];
+      usage?: TokenUsage;
+    };
 
 /** One Ask thread. Threads belong to a connection: switching connections
  * switches threads (AGENT-UX 1). `id` is a uuid, reused verbatim as the

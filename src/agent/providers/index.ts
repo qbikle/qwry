@@ -53,6 +53,7 @@ export {
 } from "./presets";
 export {
   MODEL_REGISTRY,
+  baseModelId,
   modelInfo,
   modelsForPreset,
   tierOf,

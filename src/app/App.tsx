@@ -1,12 +1,13 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
-import { Lock, LockOpen, PanelRight, SwatchBook } from "lucide-react";
+import { Lock, LockOpen, PanelRight, Sparkles, SwatchBook } from "lucide-react";
 import { panelIn, swapIn } from "../design/springs";
 import { useUI } from "../stores/ui";
 import "../stores/heal"; // side effects: wake/focus/death self-heal triggers
 import { ThemePicker } from "./ThemePicker";
 import { useConnections } from "../stores/connections";
 import { useInspector } from "../stores/inspector";
+import { ASK_W_MAX, ASK_W_MIN, useAsk } from "../stores/ask";
 import { openFilePaths, openSqlFileDialog, saveActiveToFile, useTabs } from "../stores/tabs";
 import { blankProfile, ConnectionRail } from "../sidebar/ConnectionRail";
 import { editorFormat, editorRunText, editorTimeTraveling } from "../editor/editorBus";
@@ -43,6 +44,21 @@ const TableBrowser = lazy(() => import("../browser/TableBrowser").then((m) => ({
 const ExplainView = lazy(() => import("../explain/ExplainView").then((m) => ({ default: m.ExplainView })));
 const HistoryPanel = lazy(() => import("./HistoryPanel").then((m) => ({ default: m.HistoryPanel })));
 const ShortcutsModal = lazy(() => import("./ShortcutsModal").then((m) => ({ default: m.ShortcutsModal })));
+const AskPanel = lazy(() => import("../ask/AskPanel").then((m) => ({ default: m.AskPanel })));
+
+/** the main card never drops under this through a side card (AGENT-UX
+ * section 1 width budget): opening Ask collapses the inspector instead,
+ * opening the inspector closes Ask, and a resize drag stops at the budget */
+const MAIN_MIN_W = 480;
+
+/** the widest a side card may be dragged to without taking the main card
+ * under MAIN_MIN_W: the main card's live width plus what the card holds now,
+ * less the floor. Never under the current width, so a window already tighter
+ * than the budget lets the card shrink but not widen */
+function sideCardDragCap(current: number): number {
+  const main = document.querySelector(".main-card")?.getBoundingClientRect().width ?? 0;
+  return Math.max(current, main + current - MAIN_MIN_W);
+}
 
 /** the sidebar card: DB header → tables → saved queries (shown when connected) */
 function SidebarCard({ profileId, dbname, name }: { profileId: string; dbname: string; name: string }) {
@@ -82,6 +98,48 @@ export function App() {
       document.querySelector<HTMLElement>(".main-card");
     (prev && document.contains(prev) ? prev : fallback)?.focus({ preventScroll: true });
   }, [inspectorOpen]);
+  // the Ask card: same shell contract as the inspector (width-animated
+  // sibling, never unmounts, focus pulled out on close from any path)
+  const askOpen = useAsk((s) => s.open);
+  const askWidth = useAsk((s) => s.width);
+  const askFixedRef = useRef<HTMLDivElement>(null);
+  const preAskFocus = useRef<HTMLElement | null>(null);
+  const [askResizing, setAskResizing] = useState(false);
+  useEffect(() => {
+    if (askOpen) return;
+    const el = askFixedRef.current;
+    if (!el || !el.contains(document.activeElement)) return;
+    const prev = preAskFocus.current;
+    preAskFocus.current = null;
+    const fallback =
+      document.querySelector<HTMLElement>(".main-card .cm-content") ??
+      document.querySelector<HTMLElement>(".main-card");
+    (prev && document.contains(prev) ? prev : fallback)?.focus({ preventScroll: true });
+  }, [askOpen]);
+  useEffect(() => {
+    document.documentElement.style.setProperty("--ask-w", `${askWidth}px`);
+  }, [askWidth]);
+  // width budget: the panel that just opened yields nothing; the OTHER side
+  // card collapses when the main card would drop under MAIN_MIN_W. Measured
+  // on the transition's first frame, so the main card still has its old width
+  // and the opening panel's width is projected from the store.
+  const prevAskOpen = useRef(askOpen);
+  const prevInspectorOpen = useRef(inspectorOpen);
+  useEffect(() => {
+    const askJustOpened = askOpen && !prevAskOpen.current;
+    const inspectorJustOpened = inspectorOpen && !prevInspectorOpen.current;
+    prevAskOpen.current = askOpen;
+    prevInspectorOpen.current = inspectorOpen;
+    if (!askOpen || !inspectorOpen || !(askJustOpened || inspectorJustOpened)) return;
+    const main = document.querySelector(".main-card")?.getBoundingClientRect().width ?? 0;
+    if (main === 0) return; // home mode: no side cards on screen
+    const gutter =
+      parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--gutter")) || 0;
+    const opening = askJustOpened ? useAsk.getState().width : useInspector.getState().width;
+    if (main - opening - gutter >= MAIN_MIN_W) return;
+    if (askJustOpened) useInspector.getState().toggle();
+    else useAsk.getState().setOpen(false);
+  }, [askOpen, inspectorOpen]);
   const explainOpen = useExplain((s) => s.open);
   // scalar selectors only: selecting the tab OBJECT re-rendered the entire
   // shell tree on every editor keystroke (setSql replaces the active tab
@@ -264,12 +322,61 @@ export function App() {
     if (ok) void setSessionWrites(pid, tabId, true);
   };
 
+  // ⌘J / titlebar / menu: open captures where focus was and asks the panel to
+  // focus its composer (state-owned, the panel is lazy); close hands focus back
+  const toggleAsk = () => {
+    const a = useAsk.getState();
+    if (!a.open) {
+      preAskFocus.current = document.activeElement as HTMLElement | null;
+      a.setOpen(true);
+      a.requestFocus();
+    } else {
+      a.setOpen(false);
+      const prev = preAskFocus.current;
+      preAskFocus.current = null;
+      if (prev && document.contains(prev)) prev.focus({ preventScroll: true });
+    }
+  };
+  /** the palette's `Ask`: opens (never closes) and focuses the composer */
+  const openAsk = () => {
+    const a = useAsk.getState();
+    if (!a.open) {
+      preAskFocus.current = document.activeElement as HTMLElement | null;
+      a.setOpen(true);
+    }
+    a.requestFocus();
+  };
+
+  const startAskResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setAskResizing(true);
+    const card = (e.currentTarget as HTMLElement).parentElement;
+    if (!card) return;
+    let w = useAsk.getState().width;
+    const onMove = (me: MouseEvent) => {
+      // the card's right edge is the anchor (the inspector may sit beyond it);
+      // the width budget caps the drag like it gates the open
+      const right = card.getBoundingClientRect().right;
+      w = Math.max(ASK_W_MIN, Math.min(ASK_W_MAX, sideCardDragCap(w), right - me.clientX));
+      document.documentElement.style.setProperty("--ask-w", `${w}px`);
+    };
+    const onUp = () => {
+      setAskResizing(false);
+      useAsk.getState().setWidth(w); // one store write, on release
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
   const startInspectorResize = (e: React.MouseEvent) => {
     e.preventDefault();
     setResizing(true); // suppress the width transition while dragging
     let w = useInspector.getState().width;
     const onMove = (me: MouseEvent) => {
-      w = Math.max(220, Math.min(640, window.innerWidth - me.clientX));
+      // the width budget caps the drag like it gates the open
+      w = Math.max(220, Math.min(640, sideCardDragCap(w), window.innerWidth - me.clientX));
       document.documentElement.style.setProperty("--inspector-w", `${w}px`);
       // the inspector's narrow mode reads the STORE width. Without this the
       // hints would only hide/show on release, not live during the drag
@@ -311,6 +418,7 @@ export function App() {
           void import("../grid/ResultsPane");
           void import("../inspector/Inspector");
           void import("../browser/TableBrowser");
+          void import("../ask/AskPanel");
         });
       });
     });
@@ -420,9 +528,25 @@ export function App() {
             if (editorTimeTraveling.current) break;
             void useResults.getState().run(useConnections.getState().sql, 0);
             break;
-          case "cancel":
-            void useResults.getState().cancel();
+          case "cancel": {
+            // ⌘. inside the Ask card cancels a streaming turn there; the
+            // editor's queries keep the chord everywhere else. The agent
+            // store is loaded only when the card actually has focus, so the
+            // editor path stays instant
+            const inAsk =
+              useAsk.getState().open && !!document.activeElement?.closest(".ask-fixed");
+            if (inAsk) {
+              void import("../stores/agent").then(({ useAgent }) => {
+                const a = useAgent.getState();
+                const tid = a.activeProfileId ? a.activeThread[a.activeProfileId] : null;
+                if (tid && a.busy[tid]) a.cancel();
+                else void useResults.getState().cancel();
+              });
+            } else {
+              void useResults.getState().cancel();
+            }
             break;
+          }
           case "explain":
             void useExplain.getState().run(editorRunText.current?.()?.text);
             break;
@@ -438,6 +562,9 @@ export function App() {
             break;
           case "inspector":
             useInspector.getState().toggle();
+            break;
+          case "ask":
+            toggleAsk();
             break;
           case "theme":
             useUI.getState().openThemePicker();
@@ -501,6 +628,9 @@ export function App() {
     // palette action → history panel (palette has no access to App state)
     const onOpenHistory = () => setHistoryOpen(true);
     window.addEventListener("qwry:open-history", onOpenHistory);
+    // palette `Ask` → open the card and focus its composer
+    const onOpenAsk = () => openAsk();
+    window.addEventListener("qwry:open-ask", onOpenAsk);
 
     const onKey = (e: KeyboardEvent) => {
       // CodeMirror (or another component) already handled it: don't double-fire
@@ -609,7 +739,10 @@ export function App() {
         // a CLOSED inspector never claims scope, even if focus lingers there
         const inInspector =
           useInspector.getState().open && !!t?.closest?.(".inspector-fixed");
-        if (!inInspector && useResults.getState().statements.length > 0) {
+        // the Ask card never claims the results FindBar: its grids are
+        // standalone and a find there would highlight another dataset's cells
+        const inAsk = useAsk.getState().open && !!t?.closest?.(".ask-fixed");
+        if (!inInspector && !inAsk && useResults.getState().statements.length > 0) {
           e.preventDefault();
           useFind.getState().openFind();
         }
@@ -648,6 +781,11 @@ export function App() {
           preInspectorFocus.current = null;
           if (prev && document.contains(prev)) prev.focus({ preventScroll: true });
         }
+      }
+      // ⌘J toggles the Ask card with the same focus discipline as ⌘I
+      if (e.metaKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "j") {
+        e.preventDefault();
+        toggleAsk();
       }
       if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "i") {
         // table browser: open (or toggle away) the inline new-row band
@@ -706,6 +844,7 @@ export function App() {
       disposed = true;
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("qwry:open-history", onOpenHistory);
+      window.removeEventListener("qwry:open-ask", onOpenAsk);
       unlistenClosed?.();
       unlistenClose?.();
       unlistenMenu?.();
@@ -758,6 +897,13 @@ export function App() {
           onClick={() => useUI.getState().openThemePicker()}
         >
           <SwatchBook size={14} />
+        </button>
+        <button
+          className={`v2-tool iconbtn iconbtn-lg${askOpen ? " active" : ""}`}
+          title="Ask ⌘J"
+          onClick={toggleAsk}
+        >
+          <Sparkles size={14} />
         </button>
         <button
           className={`v2-tool iconbtn iconbtn-lg${inspectorOpen ? " active" : ""}`}
@@ -833,6 +979,20 @@ export function App() {
 
 
             </motion.main>
+
+            <aside
+              className={`ask-card card${askOpen ? "" : " collapsed"}${askResizing ? " resizing" : ""}`}
+              style={{ width: askOpen ? "var(--ask-w)" : 0 }}
+            >
+              <div className="ask-resize" onMouseDown={startAskResize} />
+              {/* fixed-width content slides in as the card widens, like the
+                  inspector; the panel inside owns its own focus discipline */}
+              <div className="ask-fixed" style={{ width: "var(--ask-w)" }} ref={askFixedRef}>
+                <Suspense fallback={null}>
+                  {activeProfile && <AskPanel profile={activeProfile} connected={connected} />}
+                </Suspense>
+              </div>
+            </aside>
 
             <aside
               className={`inspector-card card${inspectorOpen ? "" : " collapsed"}${resizing ? " resizing" : ""}`}

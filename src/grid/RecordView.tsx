@@ -19,7 +19,7 @@ import { ChevronLeft, ChevronRight, Lock, Pencil } from "lucide-react";
 import { popIn } from "../design/springs";
 import { Modal, useOverlayLayer } from "../app/overlay/Overlay";
 import type { StatementState } from "../stores/results";
-import { editKey, useEdits } from "../stores/edits";
+import { editKey, useEdits, type PendingEdit } from "../stores/edits";
 import { useInspector } from "../stores/inspector";
 import { useConnections } from "../stores/connections";
 import { useSchema } from "../stores/schema";
@@ -41,8 +41,13 @@ interface EditState {
   startedNull: boolean;
 }
 
+/** readOnly hosts never read the results tab's staged edits (keyed by a
+ * statement index a standalone grid shares) */
+const NO_PENDING: Record<string, PendingEdit> = Object.freeze({});
+
 export function RecordView({
   statement,
+  readOnly = false,
   viewRows,
   rowAt,
   colAt,
@@ -54,6 +59,8 @@ export function RecordView({
   onClose,
 }: {
   statement: StatementState;
+  /** standalone grid (Ask): view only, no staged edits, no inspector hand-off */
+  readOnly?: boolean;
   /** one view row = record mode; two = diff mode (view-only) */
   viewRows: readonly [number] | readonly [number, number];
   rowAt: (view: number) => number;
@@ -68,7 +75,7 @@ export function RecordView({
   onStep: (dir: 1 | -1) => void;
   onClose: () => void;
 }) {
-  const pending = useEdits((s) => s.pending);
+  const pending = useEdits((s) => (readOnly ? NO_PENDING : s.pending));
   const [edit, setEdit] = useState<EditState | null>(null);
   const [popCol, setPopCol] = useState<number | null>(null);
   const [reasonCol, setReasonCol] = useState<number | null>(null);
@@ -119,6 +126,7 @@ export function RecordView({
   if (rowGone) return null;
 
   const openEdit = (i: number) => {
+    if (readOnly) return;
     const meta = editMetaOf(i);
     const truncated = statement.truncated.has(`${dataRs[0]}:${i}`);
     if (truncated) {
@@ -249,8 +257,8 @@ export function RecordView({
             ) : (
               <span className="rv-nav">
                 <span className="rv-keys">
-                  double-click value to edit · <Kbd chord="cmd+up" /> <Kbd chord="cmd+down" />{" "}
-                  walk
+                  {readOnly ? null : "double-click value to edit · "}
+                  <Kbd chord="cmd+up" /> <Kbd chord="cmd+down" /> walk
                 </span>
                 <span className="rv-step">
                   <button

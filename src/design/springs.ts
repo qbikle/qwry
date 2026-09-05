@@ -43,6 +43,12 @@ export const spring = {
   get turn() {
     return reduced ? INSTANT : TURN;
   },
+  /** shared-layout morphs: an element travelling to become another (the Ask
+   * suggestion chip → question echo, AGENT-UX section 6); PANEL-class so the
+   * travel settles instead of snapping */
+  get layout() {
+    return reduced ? INSTANT : PANEL;
+  },
 };
 
 export const popIn = {

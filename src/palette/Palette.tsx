@@ -15,6 +15,7 @@ import {
   Plus,
   RefreshCw,
   Settings,
+  Sparkles,
   SquareTerminal,
   Sun,
   SwatchBook,
@@ -161,6 +162,17 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
               }}
             >
               <PanelRight size={12} /> Toggle Inspector <kbd>⌘I</kbd>
+            </Command.Item>
+            <Command.Item
+              value="ask agent question"
+              onSelect={() => {
+                // opens the Ask card and focuses its composer (App owns the
+                // card; the palette has no access to its state)
+                window.dispatchEvent(new CustomEvent("qwry:open-ask"));
+                close();
+              }}
+            >
+              <Sparkles size={12} /> Ask <kbd>⌘J</kbd>
             </Command.Item>
             <Command.Item
               onSelect={() => {

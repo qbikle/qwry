@@ -415,20 +415,32 @@ test("listModels reads both the OpenAI and the Ollama shape and labels paths", a
   const platform = new FakePlatform({
     chunks: [
       JSON.stringify({
-        models: [{ id: "/Users/me/models/gguf/LFM2.5-2.6B-Q4_K_M.gguf" }],
+        models: [{ id: "/Users/me/models/gguf/Mystery-7B-Q4.gguf" }],
         object: "list",
-        data: [{ id: "/Users/me/models/gguf/LFM2.5-2.6B-Q4_K_M.gguf" }],
+        data: [
+          { id: "/Users/me/models/gguf/Mystery-7B-Q4.gguf" },
+          { id: "/Users/me/models/gguf/LFM2.5-2.6B-Q4_K_M.gguf" },
+        ],
       }),
     ],
   });
   const models = await listModels(platform, presetFor("llama-server"));
   expect(platform.requests[0].url).toBe("http://127.0.0.1:8080/v1/models");
   expect(models).toEqual([
+    // a path the registry has never seen: labelled from its file name, unknown
     {
-      id: "/Users/me/models/gguf/LFM2.5-2.6B-Q4_K_M.gguf",
-      label: "LFM2.5-2.6B-Q4_K_M",
+      id: "/Users/me/models/gguf/Mystery-7B-Q4.gguf",
+      label: "Mystery-7B-Q4",
       tier: "mid",
       known: false,
+    },
+    // a path whose file name IS a registry row: the row's label and tier, so
+    // the loop gates it as small and never runs the tool loop on it
+    {
+      id: "/Users/me/models/gguf/LFM2.5-2.6B-Q4_K_M.gguf",
+      label: "LFM2.5 2.6B (local)",
+      tier: "small",
+      known: true,
     },
   ]);
 });

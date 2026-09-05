@@ -62,12 +62,28 @@ export type AskErrorKind = "provider" | "sql" | "turncap" | "cancelled";
 export type AskEvent =
   | { type: "status"; phase: AskPhase }
   | { type: "toolStart"; id: string; name: ToolName; label: string; args: string }
-  | { type: "toolEnd"; id: string; name: ToolName; ms: number; isError: boolean }
+  | {
+      type: "toolEnd";
+      id: string;
+      name: ToolName;
+      ms: number;
+      isError: boolean;
+      /** the call's arguments and result text, so a finished chip can open in
+       * the trace drawer before the answer lands */
+      args: string;
+      result: string;
+    }
   | { type: "text"; delta: string }
   | { type: "thinking"; delta: string }
   | { type: "usage"; usage: TokenUsage }
   | { type: "answer"; answer: AskAnswer }
-  | { type: "error"; kind: AskErrorKind; message: string };
+  | {
+      type: "error";
+      kind: AskErrorKind;
+      message: string;
+      /** a rate-limited provider stated a wait (AGENT-UX 7) */
+      retryAfterMs?: number;
+    };
 
 export interface AskAnswer {
   verdict: Verdict;
@@ -76,6 +92,9 @@ export interface AskAnswer {
   run: AgentRun | null;
   assumptions: Assumption[];
   sanity: SanityFragment[];
+  /** three next questions (spec 4.6); empty until the store's follow-ups call
+   * lands, and always empty from the loop itself */
+  followUps: string[];
   trace: TraceStep[];
   /** the model's final prose, streamed already but kept for persistence */
   text: string;
@@ -280,6 +299,8 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
     extra: { sql: string | null; run: AgentRun | null; text: string; turns: number } & {
       assumptions?: Assumption[];
       sanity?: SanityFragment[];
+      /** the wait a rate-limited provider stated, forwarded to the UI */
+      retryAfterMs?: number;
     },
   ): AskAnswer => {
     trace.push({ step: "verdict", ms: Math.round(now() - started), verdict });
@@ -292,15 +313,22 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
       turns: extra.turns,
       assumptions: extra.assumptions ?? [],
       sanity: extra.sanity ?? [],
+      followUps: [],
       ms: Math.round(now() - started),
     };
     if (verdict.status !== "answered") {
+      // the ONE error emit per verdict: a failed verdict that carries SQL is
+      // a SQL failure (Fix It over the last statement), one without SQL is
+      // the provider's (Retry). The store keeps the last error it sees, so a
+      // second emit here would relabel every SQL failure as a provider one.
       const kind: AskErrorKind =
         verdict.status === "cancelled"
           ? "cancelled"
           : verdict.status === "turn_cap"
             ? "turncap"
-            : "provider";
+            : verdict.sql !== null
+              ? "sql"
+              : "provider";
       emit({
         type: "error",
         kind,
@@ -310,6 +338,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
             : verdict.status === "turn_cap"
               ? `stopped after ${verdict.turns} turns`
               : "cancelled",
+        ...(extra.retryAfterMs !== undefined ? { retryAfterMs: extra.retryAfterMs } : {}),
       });
     }
     emit({ type: "status", phase: "done" });
@@ -322,7 +351,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
   }
 
   const messages: Msg[] = [{ role: "user", content: userMsg }];
-  const peeked: string[] = [];
+  const peeked: { column: string; id: string }[] = [];
   const sanity: SanityFragment[] = [];
   // a box, not a `let`: the assignment happens inside the Promise.all callback
   // and control-flow narrowing does not follow a variable across that boundary
@@ -342,7 +371,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
       const openedAt = new Map<string, number>();
       let thinking = "";
       let stop: StopReason | null = null;
-      let failure: { kind: string; message: string } | null = null;
+      let failure: { kind: string; message: string; retryAfterMs?: number } | null = null;
       text = "";
 
       const stream = req.provider.chat({
@@ -391,6 +420,8 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
             name,
             ms,
             isError: !!ev.toolResult.isError,
+            args: calls.find((c) => c.id === ev.toolResult.id)?.args ?? "",
+            result: ev.toolResult.result,
           });
         } else if ("usage" in ev) {
           usage.input += ev.usage.input;
@@ -426,6 +457,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
           run: null,
           text,
           turns,
+          retryAfterMs: failure.retryAfterMs,
         });
       }
       if (req.signal.aborted) throw new Cancelled();
@@ -477,14 +509,14 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
                   out = { text: `ERROR: ${firstLine(e)}`, isError: true, result: null };
                 }
                 if (call.name === "peek_values" && typeof args.column === "string") {
-                  peeked.push(args.column);
+                  peeked.push({ column: args.column, id: call.id });
                 }
                 if (call.name === "run_sql" && !out.isError && out.result) {
                   runs.last = { sql: String(args.sql), run: out.result as AgentRun };
                 }
                 if (call.name === "probe" && Array.isArray(out.result)) {
                   for (const p of out.result as { fragment: SanityFragment | null }[]) {
-                    if (p.fragment) sanity.push(p.fragment);
+                    if (p.fragment) sanity.push({ ...p.fragment, stepId: call.id });
                   }
                 }
               }
@@ -499,7 +531,15 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
                 result: out.text,
                 isError: out.isError,
               });
-              emit({ type: "toolEnd", id: call.id, name, ms, isError: out.isError });
+              emit({
+                type: "toolEnd",
+                id: call.id,
+                name,
+                ms,
+                isError: out.isError,
+                args: call.args,
+                result: out.text,
+              });
               return { id: call.id, name: call.name, result: out.text, isError: out.isError };
             }),
           ),
@@ -562,7 +602,6 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
             messages.push({ role: "user", content: repairMessage(out.error ?? out.textForModel) });
             continue;
           }
-          emit({ type: "error", kind: "sql", message: out.error ?? out.textForModel });
           return finish(
             { status: "failed", sql, message: out.error ?? out.textForModel },
             { sql, run: null, text, turns },
@@ -595,6 +634,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
         run: runs.last?.run ?? null,
         text,
         turns,
+        sanity: sanityLine(peeked, sanity),
       });
     }
     return finish({ status: "failed", sql: null, message: firstLine(e) }, {
@@ -602,18 +642,24 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
       run: null,
       text,
       turns,
+      sanity: sanityLine(peeked, sanity),
     });
   }
 }
 
-/** "checked payment_status values" first, then whatever the probes showed. */
-function sanityLine(peeked: string[], probes: SanityFragment[]): SanityFragment[] {
+/** "checked payment_status values" first, then whatever the probes showed.
+ * Each fragment names the call that produced it; a column peeked twice keeps
+ * its first call. */
+function sanityLine(
+  peeked: { column: string; id: string }[],
+  probes: SanityFragment[],
+): SanityFragment[] {
   const seen = new Set<string>();
   const out: SanityFragment[] = [];
-  for (const col of peeked) {
-    if (seen.has(col)) continue;
-    seen.add(col);
-    out.push({ text: `checked ${col} values`, warn: false });
+  for (const { column, id } of peeked) {
+    if (seen.has(column)) continue;
+    seen.add(column);
+    out.push({ text: `checked ${column} values`, warn: false, stepId: id });
   }
   return [...out, ...probes];
 }
@@ -642,6 +688,7 @@ interface SmallCtx {
     extra: { sql: string | null; run: AgentRun | null; text: string; turns: number } & {
       assumptions?: Assumption[];
       sanity?: SanityFragment[];
+      retryAfterMs?: number;
     },
   ) => AskAnswer;
 }
@@ -677,7 +724,7 @@ async function runSmall(req: AskRequest, ctx: SmallCtx): Promise<AskAnswer> {
       emit({ type: "status", phase: "thinking" });
       const turnStart = now();
       text = "";
-      let failure: { kind: string; message: string } | null = null;
+      let failure: { kind: string; message: string; retryAfterMs?: number } | null = null;
       const stream = req.provider.chat({
         system: SMALL_SYSTEM_PROMPT,
         messages,
@@ -715,6 +762,7 @@ async function runSmall(req: AskRequest, ctx: SmallCtx): Promise<AskAnswer> {
           run: null,
           text,
           turns: attempt + 1,
+          retryAfterMs: failure.retryAfterMs,
         });
       }
 
@@ -749,7 +797,6 @@ async function runSmall(req: AskRequest, ctx: SmallCtx): Promise<AskAnswer> {
       }
     }
 
-    emit({ type: "error", kind: "sql", message: lastError });
     return finish({ status: "failed", sql, message: lastError }, {
       sql,
       run: null,

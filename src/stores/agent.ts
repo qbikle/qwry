@@ -29,8 +29,9 @@ import { useSettings } from "./settings";
 import { createTauriTools } from "../agent/tools.tauri";
 import { tauriPlatform } from "../agent/platform.tauri";
 import { providerFor, tierOf } from "../agent/providers/index";
-import type { ProviderId } from "../agent/providers/types";
+import type { Provider, ProviderId } from "../agent/providers/types";
 import { runAsk, type AskAnswer, type AskErrorKind, type AskEvent, type AskPhase } from "../agent/loop";
+import { suggestFollowUps } from "../agent/followups";
 import { buildAssumptions, extractSql } from "../agent/extract";
 import type {
   Assumption,
@@ -42,14 +43,18 @@ import type {
   TraceStep,
 } from "../agent/types";
 
-/** One tool call as the thinking strip shows it (AGENT-UX 2). `ms` is null
- * while the call is still running. */
+/** One tool call as the thinking strip shows it (AGENT-UX 2). `ms` and
+ * `result` are null while the call is still running; once it has both, the
+ * trace drawer can open the chip before the answer lands. */
 export interface ToolChip {
   id: string;
   name: ToolName;
   label: string;
   ms: number | null;
   isError: boolean;
+  /** raw argument JSON as the model wrote it */
+  args: string;
+  result: string | null;
 }
 
 /** One question and everything that came back for it. The question echo stays
@@ -63,7 +68,7 @@ export interface Exchange {
   thinking: string;
   chips: ToolChip[];
   answer: AskAnswer | null;
-  error: { kind: AskErrorKind; message: string } | null;
+  error: { kind: AskErrorKind; message: string; retryAfterMs?: number } | null;
   streaming: boolean;
   provider: string;
   model: string;
@@ -89,6 +94,11 @@ interface AgentState {
   ask: (question: string) => Promise<void>;
   cancel: () => void;
   toggleAssumption: (exchangeId: string, chipId: string) => Promise<void>;
+  /** Fix It (AGENT-UX 7): one more repair pass over a failed exchange, from
+   * the SQL as the user left it in the editable field */
+  fixIt: (exchangeId: string, sql: string) => Promise<void>;
+  /** the retry a provider error offers: the same question, asked again */
+  retry: (exchangeId: string) => Promise<void>;
   /** thread closed or connection disconnected: the session goes with it */
   closeThread: (threadId: string) => Promise<void>;
   dropProfile: (profileId: string) => Promise<void>;
@@ -107,15 +117,67 @@ const TITLE_CAP = 80;
 const title = (question: string) =>
   question.trim().length > TITLE_CAP ? `${question.trim().slice(0, TITLE_CAP)}…` : question.trim();
 
+export interface ModelChoice {
+  providerId: ProviderId;
+  model: string;
+  /** the provider's base URL override from Settings; absent = preset default */
+  baseUrl?: string;
+}
+
 /** The provider and model this connection asks with: its own override first,
- * then the app-wide choice (AGENT-SPEC section 9). */
-function modelChoice(profileId: string): { providerId: ProviderId; model: string } | null {
+ * then the app-wide choice (AGENT-SPEC section 9), plus the provider's base
+ * URL override so the run reaches the URL Settings probed. Exported for the
+ * panel's empty-state switch and the picker pill, which show the same
+ * resolution. */
+export function modelChoice(profileId: string): ModelChoice | null {
   const s = useSettings.getState();
   const per = s.agentByConn[profileId];
   const provider = per?.provider ?? s.agentProvider;
   const model = per?.model ?? s.agentModel;
   if (!provider || !model) return null;
-  return { providerId: provider as ProviderId, model };
+  const baseUrl = s.agentBaseUrls[provider];
+  return baseUrl
+    ? { providerId: provider as ProviderId, model, baseUrl }
+    : { providerId: provider as ProviderId, model };
+}
+
+/** A failed verdict reloaded from appdb, in the shape the failure block
+ * reads. `agent_answers` keeps the status and the SQL but not the error text
+ * or the turn count, so the messages say only what is known (LESSONS 9). */
+function errorFromStatus(
+  status: string | undefined,
+  sql: string | null,
+): Exchange["error"] {
+  switch (status) {
+    case "failed":
+      return sql !== null
+        ? { kind: "sql", message: "the query failed. The error text is not kept in the history" }
+        : { kind: "provider", message: "the run failed. The error text is not kept in the history" };
+    case "turn_cap":
+      return { kind: "turncap", message: "stopped at the turn cap" };
+    case "cancelled":
+      return { kind: "cancelled", message: "cancelled" };
+    default:
+      return null;
+  }
+}
+
+function verdictFromStatus(
+  status: string | undefined,
+  sql: string | null,
+  rowCount: number | null,
+  message: string,
+): AskAnswer["verdict"] {
+  switch (status) {
+    case "failed":
+      return { status: "failed", sql, message };
+    case "turn_cap":
+      return { status: "turn_cap", sql, turns: 0 };
+    case "cancelled":
+      return { status: "cancelled", sql };
+    default:
+      return { status: "answered", sql, rowCount };
+  }
 }
 
 const parseJson = <T,>(raw: string | null | undefined, fallback: T): T => {
@@ -200,12 +262,16 @@ export const useAgent = create<AgentState>((set, get) => ({
       if (turn.role !== "assistant") continue;
       const current = exchanges[exchanges.length - 1];
       if (!current) continue;
-      const { sql } = extractSql(turn.content);
       const stored = byTurn.get(turn.id);
+      // the SQL the verdict recorded is the truth; the model's text is the
+      // fallback for a turn with no answer row
+      const sql = stored?.sql ?? extractSql(turn.content).sql;
+      const error = errorFromStatus(stored?.status, sql);
       current.turnId = turn.id;
       current.text = turn.content;
+      current.error = error;
       current.answer = {
-        verdict: { status: "answered", sql, rowCount: stored?.row_count ?? null },
+        verdict: verdictFromStatus(stored?.status, sql, stored?.row_count ?? null, error?.message ?? ""),
         sql,
         run: null,
         // the recorded chips are the ones the user last saw, toggles included;
@@ -214,6 +280,7 @@ export const useAgent = create<AgentState>((set, get) => ({
           ? parseJson<Assumption[]>(stored.assumptions_json, [])
           : buildAssumptions({ text: turn.content, sql, question: current.question }),
         sanity: parseJson<SanityFragment[]>(stored?.sanity_json, []),
+        followUps: [],
         trace: traceFromTurn(turn),
         text: turn.content,
         turns: 0,
@@ -226,6 +293,28 @@ export const useAgent = create<AgentState>((set, get) => ({
       };
     }
     set((s) => ({ exchanges: { ...s.exchanges, [threadId]: exchanges } }));
+    // follow-ups are not persisted (appdb has no column for them yet): the
+    // newest answered exchange gets them recomputed, older ones go without
+    const last = exchanges[exchanges.length - 1];
+    const choice = modelChoice(profileId);
+    if (last?.answer && last.answer.verdict.status === "answered" && choice) {
+      let provider: Provider | null = null;
+      try {
+        provider = providerFor(choice, tauriPlatform);
+      } catch {
+        // an unusable model choice costs the reloaded chips, never the thread
+      }
+      if (provider) {
+        void followUpsInto(set, get, {
+          threadId,
+          exchangeId: last.id,
+          landed: last.answer,
+          provider,
+          model: choice.model,
+          signal: new AbortController().signal,
+        });
+      }
+    }
   },
 
   deleteThread: async (profileId, threadId) => {
@@ -258,6 +347,10 @@ export const useAgent = create<AgentState>((set, get) => ({
     const choice = modelChoice(profileId);
 
     let threadId = get().activeThread[profileId];
+    // a question typed into a busy thread would abort the live run through
+    // the controller swap in runInto(); the composer refuses it, and so does
+    // the store, so no caller can cancel an answer by accident
+    if (threadId && get().busy[threadId]) return;
     if (!threadId) {
       const row = await agentThreadCreate(profileId, title(text));
       threadId = row.id;
@@ -331,6 +424,7 @@ export const useAgent = create<AgentState>((set, get) => ({
     if (!profileId) return;
     const threadId = get().activeThread[profileId];
     if (!threadId) return;
+    if (get().busy[threadId]) return;
     const exchange = (get().exchanges[threadId] ?? []).find((e) => e.id === exchangeId);
     const chip = exchange?.answer?.assumptions.find((a) => a.id === chipId);
     if (!exchange || !chip) return;
@@ -347,16 +441,7 @@ export const useAgent = create<AgentState>((set, get) => ({
       `${exchange.question}\n\nAdditional constraint: ` +
       (flipped ? `apply this assumption: ${chip.label}` : `do not apply this assumption: ${chip.label}`);
 
-    set((s) => ({
-      exchanges: {
-        ...s.exchanges,
-        [threadId]: (s.exchanges[threadId] ?? []).map((e) =>
-          e.id === exchangeId ? { ...e, streaming: true, chips: [], error: null } : e,
-        ),
-      },
-      busy: { ...s.busy, [threadId]: true },
-    }));
-
+    rearm(set, threadId, exchangeId);
     await runInto(set, get, {
       profileId,
       threadId,
@@ -367,6 +452,49 @@ export const useAgent = create<AgentState>((set, get) => ({
       choice,
       persistUserTurn: false,
       flip: { id: chipId, label: chip.label, active: flipped },
+    });
+  },
+
+  fixIt: async (exchangeId, sql) => {
+    const found = locateExchange(get, exchangeId);
+    if (!found) return;
+    const { profileId, threadId, exchange, snapshot, choice } = found;
+    const reason = exchange.error?.message ?? "the last query failed";
+    // the same re-ask shape as a chip toggle: the model gets the question, the
+    // failure, and the user's corrected SQL as the starting point; it never
+    // gets someone else's query silently rewritten for it
+    const askText =
+      `${exchange.question}\n\nThe previous attempt failed: ${reason}\n` +
+      `Start from this SQL, corrected where needed:\n${sql.trim()}`;
+    rearm(set, threadId, exchangeId);
+    await runInto(set, get, {
+      profileId,
+      threadId,
+      exchangeId,
+      question: exchange.question,
+      askText,
+      snapshot,
+      choice,
+      persistUserTurn: false,
+    });
+  },
+
+  retry: async (exchangeId) => {
+    const found = locateExchange(get, exchangeId);
+    if (!found) return;
+    const { profileId, threadId, exchange, snapshot, choice } = found;
+    rearm(set, threadId, exchangeId);
+    await runInto(set, get, {
+      profileId,
+      threadId,
+      exchangeId,
+      question: exchange.question,
+      askText: exchange.question,
+      snapshot,
+      choice,
+      // a provider failure never reached persist(): the user turn is still
+      // unwritten, so this run writes it; a persisted exchange keeps its rows
+      persistUserTurn: exchange.turnId === null,
     });
   },
 
@@ -393,6 +521,39 @@ export const useAgent = create<AgentState>((set, get) => ({
 // ---- the one place a run is driven ----------------------------------------
 
 type Setter = (fn: (s: AgentState) => Partial<AgentState>) => void;
+
+/** Everything a re-run of an existing exchange depends on, captured in one
+ * go BEFORE any await (LESSONS 3). Null when the exchange is gone or the
+ * connection has no schema or model to run with. */
+function locateExchange(get: () => AgentState, exchangeId: string) {
+  const profileId = get().activeProfileId;
+  if (!profileId) return null;
+  const threadId = get().activeThread[profileId];
+  if (!threadId || get().busy[threadId]) return null;
+  const exchange = (get().exchanges[threadId] ?? []).find((e) => e.id === exchangeId);
+  if (!exchange) return null;
+  const snapshot = useSchema.getState().snapshots[profileId];
+  const choice = modelChoice(profileId);
+  if (!snapshot || !choice) return null;
+  return { profileId, threadId, exchange, snapshot, choice };
+}
+
+/** put an exchange back into its streaming shape for a re-run: the new run's
+ * prose streams fresh (text deltas append, so the old text would otherwise be
+ * its prefix); the previous answer stays until the new one replaces it */
+function rearm(set: Setter, threadId: string, exchangeId: string) {
+  set((s) => ({
+    exchanges: {
+      ...s.exchanges,
+      [threadId]: (s.exchanges[threadId] ?? []).map((e) =>
+        e.id === exchangeId
+          ? { ...e, streaming: true, chips: [], error: null, text: "", thinking: "" }
+          : e,
+      ),
+    },
+    busy: { ...s.busy, [threadId]: true },
+  }));
+}
 
 function patchExchange(
   set: Setter,
@@ -432,7 +593,7 @@ interface RunArgs {
   /** what the model is asked, which a chip toggle extends */
   askText: string;
   snapshot: ReturnType<typeof useSchema.getState>["snapshots"][string];
-  choice: { providerId: ProviderId; model: string };
+  choice: ModelChoice;
   persistUserTurn: boolean;
   flip?: { id: string; label: string; active: boolean };
 }
@@ -472,14 +633,27 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
       case "toolStart":
         patchExchange(set, threadId, exchangeId, (e) => ({
           ...e,
-          chips: [...e.chips, { id: ev.id, name: ev.name, label: ev.label, ms: null, isError: false }],
+          chips: [
+            ...e.chips,
+            {
+              id: ev.id,
+              name: ev.name,
+              label: ev.label,
+              ms: null,
+              isError: false,
+              args: ev.args,
+              result: null,
+            },
+          ],
         }));
         break;
       case "toolEnd":
         patchExchange(set, threadId, exchangeId, (e) => ({
           ...e,
           chips: e.chips.map((c) =>
-            c.id === ev.id ? { ...c, ms: ev.ms, isError: ev.isError } : c,
+            c.id === ev.id
+              ? { ...c, ms: ev.ms, isError: ev.isError, args: ev.args || c.args, result: ev.result }
+              : c,
           ),
         }));
         break;
@@ -495,7 +669,10 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
       case "error":
         patchExchange(set, threadId, exchangeId, (e) => ({
           ...e,
-          error: { kind: ev.kind, message: ev.message },
+          error:
+            ev.retryAfterMs !== undefined
+              ? { kind: ev.kind, message: ev.message, retryAfterMs: ev.retryAfterMs }
+              : { kind: ev.kind, message: ev.message },
         }));
         break;
       default:
@@ -504,11 +681,11 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
   };
 
   let answer: AskAnswer;
+  let provider: Provider;
   try {
-    const provider = providerFor(
-      { providerId: args.choice.providerId, model: args.choice.model },
-      tauriPlatform,
-    );
+    // a persisted provider id no adapter claims throws here, inside the same
+    // net as the run: the exchange fails with the message, busy clears
+    provider = providerFor(args.choice, tauriPlatform);
     answer = await runAsk({
       question: args.askText,
       snapshot: args.snapshot,
@@ -538,17 +715,70 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
   const assumptions = args.flip
     ? applyFlip(answer.assumptions, args.flip)
     : answer.assumptions;
+  const landed: AskAnswer = { ...answer, assumptions };
   patchExchange(set, threadId, exchangeId, (e) => ({
     ...e,
     streaming: false,
     text: answer.text || e.text,
-    answer: { ...answer, assumptions },
+    answer: landed,
   }));
   if (mine) {
     set((s) => ({ busy: { ...s.busy, [threadId]: false }, phase: { ...s.phase, [threadId]: null } }));
   }
 
-  await persist(set, get, args, { ...answer, assumptions });
+  // the answer is on screen; the follow-up chips arrive when they exist
+  // (AGENT-UX 2), on the same signal so a cancel or a newer ask ends them
+  if (mine && answer.verdict.status === "answered") {
+    void followUpsInto(set, get, {
+      threadId,
+      exchangeId,
+      landed,
+      provider,
+      model: args.choice.model,
+      signal: controller.signal,
+    });
+  }
+
+  await persist(set, get, args, landed);
+}
+
+/** The follow-up call (AGENT-SPEC 4.6) for one landed answer. The patch lands
+ * only while that same answer object is still the exchange's: a re-run that
+ * replaced it in the meantime keeps its own state. The call is recorded as a
+ * trace step, because nothing sent to a provider is hidden (spec 8.4). */
+async function followUpsInto(
+  set: Setter,
+  get: () => AgentState,
+  args: {
+    threadId: string;
+    exchangeId: string;
+    landed: AskAnswer;
+    provider: Provider;
+    model: string;
+    signal: AbortSignal;
+  },
+) {
+  const { threadId, exchangeId, landed } = args;
+  if (args.provider.ownsLoop) return;
+  const exchange = (get().exchanges[threadId] ?? []).find((e) => e.id === exchangeId);
+  if (!exchange) return;
+  const asked = (get().exchanges[threadId] ?? []).map((e) => e.question);
+  const out = await suggestFollowUps({
+    question: exchange.question,
+    answer: landed.text,
+    sql: landed.sql,
+    asked,
+    provider: args.provider,
+    model: args.model,
+    signal: args.signal,
+  });
+  if (!out.step) return;
+  const step = out.step;
+  patchExchange(set, threadId, exchangeId, (e) =>
+    e.answer === landed
+      ? { ...e, answer: { ...landed, followUps: out.questions, trace: [...landed.trace, step] } }
+      : e,
+  );
 }
 
 /** The toggled chip keeps the state the user chose, whatever the re-run's own

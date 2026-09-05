@@ -10,8 +10,12 @@ law file wins and this file gets fixed.
 The **Ask panel** is a card in the shell, sibling of the inspector: it enters
 by animating its width so the main card reflows in lockstep (the inspector
 precedent), never by overlaying. Opened by a titlebar control, the palette
-(`Ask…`), and a chord (proposal: ⌘J; the keyboard map is the authority). It
+(`Ask`), and a chord (proposal: ⌘J; the keyboard map is the authority). It
 belongs to the active connection: switching connections switches threads.
+The components live in `src/ask/` (AskPanel and its parts, `ask.css`; UI
+state in `src/stores/ask.ts`), and the width budget is law: opening Ask when
+the main card would drop under 480px collapses the inspector, and opening the
+inspector under the same budget closes Ask.
 
 Empty state (no model configured): a setup card with the provider picker,
 key field (saved to Keychain), and one sentence of what Ask does. Empty state
@@ -96,8 +100,9 @@ Errors explain and propose; they do not apologise (WRITING errors register).
 ## 8. Provider and model picker
 
 In the Ask header: model name + tier badge (`small` · `mid` · `large`,
-WRITING data-state register). Tier explains itself on hover: what this tier
-can and cannot do, in one sentence each (from AGENT-SPEC §3). Per-connection
+WRITING data-state register). Tier explains itself on hover and by keyboard
+(the pill on focus, a popover row when the arrow keys make it hot): what this
+tier can and cannot do, in one sentence each (from AGENT-SPEC §3). Per-connection
 default is remembered. Keys are managed in Settings › Models; the picker
 never shows a key.
 

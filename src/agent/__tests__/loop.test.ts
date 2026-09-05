@@ -205,6 +205,10 @@ describe("the hybrid path", () => {
       "checked rating values",
       "release year 2006 → 2026",
     ]);
+    // each fragment names the call that produced it, and that call is a trace step
+    expect(answer.sanity.map((f) => f.stepId)).toEqual(["a", "b"]);
+    const toolIds = answer.trace.filter((s) => s.step === "tool").map((s) => s.id);
+    for (const f of answer.sanity) expect(f.stepId !== undefined && toolIds.includes(f.stepId)).toBe(true);
   });
 });
 
@@ -447,7 +451,65 @@ describe("the small tier", () => {
     const { answer, events } = await ask(provider, t, { tier: "small" });
     expect(answer.verdict.status).toBe("failed");
     expect(rec.calls.filter((c) => c.name === "runSql")).toHaveLength(3);
-    expect(events.some((e) => e.type === "error" && e.kind === "sql")).toBe(true);
+    // exactly one error event, and it is the SQL kind: the store keeps the
+    // LAST error it sees, so a trailing provider-kind emit would relabel every
+    // SQL failure as a provider one and hide the editable SQL + Fix It
+    const errors = events.filter((e) => e.type === "error");
+    expect(errors).toHaveLength(1);
+    expect(errors[errors.length - 1]).toMatchObject({ kind: "sql", message: "syntax error" });
+    expect(answer.followUps).toEqual([]);
+  });
+});
+
+describe("error events", () => {
+  test("a SQL failure on the hybrid path ends with ONE error event of kind sql", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const t = tools(rec, {
+      async runSql(sql) {
+        rec.calls.push({ name: "runSql", args: sql });
+        return { textForModel: "ERROR: syntax error", result: null, error: "syntax error" };
+      },
+    });
+    const provider = scripted([[{ text: "```sql\nSELECT bad\n```" }, done("stop")]], rec);
+    const { answer, events } = await ask(provider, t, { maxTurns: 2 });
+    expect(answer.verdict.status).toBe("failed");
+    const errors = events.filter((e) => e.type === "error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ kind: "sql" });
+  });
+
+  test("a provider failure carries the stated wait to the UI", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const provider = scripted(
+      [[{ error: { kind: "rate", message: "rate limited", retryAfterMs: 20_000 } }]],
+      rec,
+    );
+    const { answer, events } = await ask(provider, tools(rec));
+    expect(answer.verdict.status).toBe("failed");
+    const errors = events.filter((e) => e.type === "error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ kind: "provider", retryAfterMs: 20_000 });
+  });
+
+  test("a finished tool chip carries its arguments and result", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const provider = scripted(
+      [
+        [
+          { toolCall: { id: "c1", name: "describe_tables", args: '{"names":["film"]}' } },
+          done("toolCalls"),
+        ],
+        [{ text: "One.\n```sql\nSELECT count(*) FROM film\n```\nAssumptions: none" }, done("stop")],
+      ],
+      rec,
+    );
+    const { events } = await ask(provider, tools(rec));
+    const end = events.find((e) => e.type === "toolEnd");
+    expect(end).toMatchObject({
+      id: "c1",
+      args: '{"names":["film"]}',
+      result: expect.stringContaining("CREATE TABLE film"),
+    });
   });
 });
 

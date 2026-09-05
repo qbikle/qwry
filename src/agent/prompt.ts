@@ -70,3 +70,31 @@ export function smallAskMessage(schema: string, question: string): string {
 export function repairMessage(error: string): string {
   return `That query failed with this error:\n${error}\nFix it. Output ONLY the corrected SQL in a \`\`\`sql block.`;
 }
+
+/** The follow-up suggestions call (AGENT-SPEC section 4.6): one short model
+ * turn after the answer, no tools. Kept apart from SYSTEM_PROMPT so the
+ * cached prefix of the main loop never changes and PROMPT_VERSION stays tied
+ * to the measured prompts alone. */
+export const FOLLOWUP_SYSTEM_PROMPT =
+  "You suggest what a data analyst would ask next. Given a question about a PostgreSQL " +
+  "database, the answer and the SQL that produced it, write exactly three follow-up " +
+  "questions the same person could type next: each on its own line, each a complete " +
+  "question ending in a question mark, each answerable with SQL against the same " +
+  "database, none repeating the original question or each other. Output ONLY the three " +
+  "lines. No numbering, no bullets, no commentary.";
+
+/** The one user message of the follow-up call. `asked` is every question of
+ * the thread so far, so a suggestion never repeats one (AGENT-UX section 6). */
+export function followUpMessage(args: {
+  question: string;
+  answer: string;
+  sql: string | null;
+  asked: string[];
+}): string {
+  const asked = args.asked.filter((q) => q.trim() && q.trim() !== args.question.trim());
+  return (
+    `Question: ${args.question}\n\nAnswer:\n${args.answer.trim() || "(no prose)"}` +
+    (args.sql ? `\n\nSQL:\n${args.sql}` : "") +
+    (asked.length > 0 ? `\n\nAlready asked in this thread:\n${asked.join("\n")}` : "")
+  );
+}

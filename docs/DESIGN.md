@@ -97,7 +97,9 @@ annotation is a design decision, reviewable like any other.
 `--icon-sm: 12` (dense lists, tree, menus) · `--icon-md: 14` (toolbars,
 buttons) · `--icon-lg: 16` (headers, empty states). One size per surface;
 a list that mixes sizes is broken by definition. Documented exceptions:
-avatars/logos (22/40/44/64) and the grid's 11px type glyphs (data register).
+avatars/logos (14/22/40/44/64; 14 is the inline provenance mark that rides a
+text line, the Ask header and footer) and the grid's 11px type glyphs (data
+register).
 Baseline nudges (`translate: 0 1px` and friends) live INSIDE a component's
 own definition, never at use-sites; each one carries `/* optical */`.
 

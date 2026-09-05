@@ -44,6 +44,10 @@ src/agent/
   providers/       Provider interface + adapters (§7), presets, registry
   extract.ts       SQL/assumption/answer extraction from model text
 src/stores/agent.ts   zustand: threads, turns, chips, sanity, trace, status
+src/stores/ask.ts     zustand: the Ask card's UI state (open, width, trace, picker, draft)
+src/ask/              React components (AGENT-UX): AskPanel, AnswerBlock, ThinkingStrip,
+                      SqlRow, AssumptionChips, SanityLine, FollowUps, FailureBlock,
+                      TraceDrawer, ModelPicker, ModelsSettings, SetupCard, starters.ts, ask.css
 src-tauri/src/agent.rs        commands: agent_connect, agent_describe,
                               agent_peek_values, agent_run_readonly (AST gate),
                               agent_probe, agent_gate, agent_key_* (§5, §8)

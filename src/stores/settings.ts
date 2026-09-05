@@ -47,6 +47,12 @@ interface SettingsState {
   setAgentConnModel: (profileId: string, provider: string, model: string) => void;
   /** a deleted profile's model choice dies with it */
   dropAgentConn: (profileId: string) => void;
+  /** per-provider base URL overrides (local runtimes, gateways), sparse: an
+   * absent entry means the preset default; the loop and the probes read the
+   * same map so what Settings tested is what a run reaches */
+  agentBaseUrls: Record<string, string>;
+  /** null (or an empty string) drops the override */
+  setAgentBaseUrl: (providerId: string, url: string | null) => void;
 
   /** default ⇧⌘F style: id into FORMAT_PRESETS */
   formatPreset: string;
@@ -61,7 +67,10 @@ interface SettingsState {
 
   /** settings modal */
   settingsOpen: boolean;
-  setSettingsOpen: (v: boolean) => void;
+  /** the section a caller asked the modal to open scrolled to (`models` from
+   * the Ask picker); runtime only, cleared when the modal closes */
+  settingsSection: string | null;
+  setSettingsOpen: (v: boolean, section?: string) => void;
 
   /** gutter glass opacity 0.1–0.9 (lower = more see-through vibrancy) */
   glassAlpha: number;
@@ -175,6 +184,7 @@ function sanitizeSettings(persisted: unknown, current: SettingsState): SettingsS
     agentProvider: typeof p.agentProvider === "string" ? p.agentProvider : null,
     agentModel: typeof p.agentModel === "string" ? p.agentModel : null,
     agentByConn: sanitizeAgentConns(p.agentByConn),
+    agentBaseUrls: sanitizeBaseUrls(p.agentBaseUrls),
     formatPreset: typeof p.formatPreset === "string" ? p.formatPreset : current.formatPreset,
     formatKeywordCase: pick(
       p.formatKeywordCase,
@@ -209,6 +219,17 @@ function sanitizeAgentConns(v: unknown): Record<string, { provider: string; mode
     if (e && typeof e.provider === "string" && typeof e.model === "string") {
       out[k] = { provider: e.provider, model: e.model };
     }
+  }
+  return out;
+}
+
+/** persisted base URL overrides, one per provider; anything but a non-empty
+ * string is dropped, and a dropped entry means the preset default */
+function sanitizeBaseUrls(v: unknown): Record<string, string> {
+  if (typeof v !== "object" || v === null) return {};
+  const out: Record<string, string> = {};
+  for (const [k, raw] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof raw === "string" && raw.trim() !== "") out[k] = raw.trim();
   }
   return out;
 }
@@ -266,6 +287,15 @@ export const useSettings = create<SettingsState>()(
           delete next[profileId];
           return { agentByConn: next };
         }),
+      agentBaseUrls: {},
+      setAgentBaseUrl: (providerId, url) =>
+        set((s) => {
+          const next = { ...s.agentBaseUrls };
+          const trimmed = url?.trim() ?? "";
+          if (trimmed) next[providerId] = trimmed;
+          else delete next[providerId];
+          return { agentBaseUrls: next };
+        }),
 
       formatPreset: "standard",
       setFormatPreset: (formatPreset) => set({ formatPreset }),
@@ -276,7 +306,9 @@ export const useSettings = create<SettingsState>()(
       setUiZoom: (n) => set({ uiZoom: clampZoom(n) }),
 
       settingsOpen: false,
-      setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+      settingsSection: null,
+      setSettingsOpen: (settingsOpen, section) =>
+        set({ settingsOpen, settingsSection: settingsOpen ? section ?? null : null }),
 
       glassAlpha: 0.55,
       setGlass: (a) => set({ glassAlpha: Math.max(0, Math.min(1, a)) }),
@@ -352,6 +384,7 @@ export const useSettings = create<SettingsState>()(
         agentProvider: s.agentProvider,
         agentModel: s.agentModel,
         agentByConn: s.agentByConn,
+        agentBaseUrls: s.agentBaseUrls,
         formatPreset: s.formatPreset,
         formatKeywordCase: s.formatKeywordCase,
         uiZoom: s.uiZoom,

@@ -1,0 +1,1071 @@
+/* Ask panel (AGENT-UX). Geometry and hierarchy follow the locked sketch
+   (qwry-agent-lab/docs/ask-sketch.html); every literal below is a token or
+   carries an optical note (DESIGN.md rule 4). Class prefixes: ask- (shell),
+   ans- (answer anatomy), tchip (thinking-strip chips), chip (assumption /
+   suggestion pills), trace- (drawer), picker- (model picker). */
+
+/* ---- shell ------------------------------------------------------------- */
+.ask-panel {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  outline: none; /* programmatic focus target; controls inside keep their rings */
+  overflow: hidden;
+}
+
+/* header strip: fixed height (rule 2), tallest state is the picker pill */
+.ask-head {
+  height: 40px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-2) 0 var(--sp-3);
+  border-bottom: 1px solid var(--border);
+}
+.ask-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px; /* optical */ /* icon-label gap, matches .btnish */
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.ask-title svg {
+  color: var(--accent);
+}
+.ask-conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px; /* optical */
+  min-width: 0;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+.ask-conn-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* the read-only ceremony: .badge-ok, the titlebar prod chip's LOCKED tint,
+   never danger (danger = writes on, which Ask can never be) */
+.ask-ro {
+  flex-shrink: 0;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+.ask-grow {
+  margin-left: auto;
+}
+
+/* identifiers inside chrome wear data clothes (WRITING.md) */
+.ask-id {
+  font-family: var(--font-mono);
+  color: var(--fg);
+}
+
+/* ---- model picker (header pill + popover) ------------------------------- */
+/* Chip / pill species (rule 1): pill radius, border, hover bg-hover */
+.picker {
+  position: relative; /* the tier bubble hangs from the pill */
+  display: inline-flex;
+  align-items: center;
+  gap: 6px; /* optical */
+  height: 24px;
+  padding: 0 6px 0 8px; /* optical */ /* caret hugs the right edge */
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--fg);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  max-width: 180px;
+  transition:
+    border-color var(--dur-quick),
+    background var(--dur-quick);
+}
+.picker:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+.picker:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.picker.active {
+  border-color: var(--accent);
+}
+.picker-model {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.picker svg {
+  color: var(--fg-muted);
+  flex-shrink: 0;
+}
+/* tier badge: the one .badge, tinted per tier (data-state register,
+   lowercase): mid = .badge-accent, large = .badge-ok, small = the warn tint */
+.picker-tier {
+  text-transform: lowercase;
+  flex-shrink: 0;
+}
+.picker-tier.small {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+/* the popover is an AnchoredOverlay (portaled, escStack-registered, clamped):
+   the wrapper owns left/top, so this box only sizes and skins itself. It
+   hangs from the pill's right edge, hence the top-right origin. */
+.picker-pop {
+  width: 280px;
+  padding: var(--sp-1);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+  transform-origin: top right;
+}
+.picker-group {
+  padding: 6px 8px 2px; /* optical */ /* group heading proportion */
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+/* menu row species (rule 1): .hot = the keyboard/pointer highlight (the menu
+   is focusless, like ContextMenu), .active = the chosen model. Positioned so a
+   row's tier bubble hangs from the row, not from the badge. */
+.picker-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--row-y) var(--sp-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  text-align: left;
+}
+.picker-item.hot {
+  background: var(--bg-hover);
+}
+.picker-item:active:not(:disabled) {
+  background: var(--bg-active);
+}
+.picker-item.active {
+  color: var(--accent);
+}
+.picker-item svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+/* the check column stays reserved so labels align with and without a check */
+.picker-check {
+  display: inline-block;
+  width: var(--icon-sm);
+  flex-shrink: 0;
+}
+.picker-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* the hand-off row of a keyless provider: a hint-register row that acts,
+   tier 2 (not faint: it is enabled and load-bearing, rule 3) */
+.picker-item.picker-add {
+  color: var(--fg-muted);
+}
+.picker-item .ask-grow {
+  margin-left: auto;
+}
+.picker-ctx {
+  flex-shrink: 0;
+  color: var(--fg-muted);
+  font-size: var(--text-2xs);
+}
+.picker-foot {
+  margin-top: var(--sp-1);
+  padding: 6px 8px; /* optical */
+  border-top: 1px solid var(--border);
+  font-size: var(--text-xs);
+}
+/* tier bubble: a real styled tooltip (native title is unreliable in WKWebView).
+   Hangs from the nearest positioned ancestor: the pill in the header, the row
+   in the popover; the pill's max-width keeps it inside a 320px card. */
+.picker-bubble {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  width: max-content;
+  max-width: 220px;
+  padding: 6px 10px; /* optical */
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-pop);
+  color: var(--fg);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  line-height: 1.4;
+  text-align: left;
+  text-transform: none;
+  white-space: normal;
+  cursor: default;
+  z-index: 6;
+}
+.picker-item .picker-bubble {
+  right: var(--sp-2);
+  max-width: 240px;
+}
+
+/* ---- thread scroller ---------------------------------------------------- */
+.ask-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--sp-3) var(--sp-3) var(--sp-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+.ask-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.ask-scroll::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--radius-xs);
+}
+
+/* ---- answer block (AGENT-UX section 2) ---------------------------------- */
+.ans {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+/* sections appear with opacity, never height (section 2) */
+.ans > * {
+  animation: ans-in var(--dur-slow) var(--ease-std);
+}
+@keyframes ans-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.ans-echo {
+  font-weight: 550;
+  line-height: 1.4;
+  color: var(--fg);
+  user-select: text;
+}
+/* thinking strip: FIXED height (rule 2); chips scroll past the edge, never wrap */
+.ans-strip {
+  height: 24px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px; /* optical */
+  overflow: hidden;
+  white-space: nowrap;
+}
+/* tool chip: a status pill while running, a button once it can open the trace */
+.tchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px; /* optical */ /* dot-label gap */
+  height: 20px;
+  padding: 0 var(--sp-2);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--bg-raised);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  flex-shrink: 0;
+  transition:
+    background var(--dur-quick),
+    color var(--dur-quick);
+}
+.tchip.clickable {
+  cursor: pointer;
+}
+.tchip.clickable:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.tchip.clickable:active {
+  transform: scale(0.97);
+}
+.tchip-id {
+  font-family: var(--font-mono);
+  color: var(--fg);
+}
+.tchip.run {
+  color: var(--accent);
+}
+.tchip.error {
+  color: var(--danger);
+}
+.tchip-spin {
+  width: 9px; /* optical */
+  height: 9px; /* optical */
+  border: 1.5px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: tchip-spin 0.8s linear infinite; /* optical */ /* progress spinner, like tb-spin */
+}
+@keyframes tchip-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.tchip-ok {
+  width: 9px; /* optical */
+  height: 9px; /* optical */
+  border-radius: 50%;
+  background: var(--ok);
+}
+.tchip.error .tchip-ok {
+  background: var(--danger);
+}
+.ans-more {
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+.ans-text {
+  line-height: 1.5;
+  color: var(--fg);
+  user-select: text;
+  white-space: pre-wrap;
+}
+/* the live region exists before its text does (AGENT-UX section 12). Empty,
+   it leaves the flex flow so the column gap reserves nothing for it (rule 2)
+   yet stays in the accessibility tree: never display or visibility, which
+   would drop the region and lose the first announcement. animation: none
+   here re-arms the section fade for the moment the first delta lands. */
+.ans-text:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  animation: none;
+}
+.ans-text b {
+  font-weight: 650;
+}
+/* the grid slot: the real Grid mounts here in readOnly mode; the host sets
+   the height (header + up to six rows) so the answer scroller stays honest */
+.ans-grid {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+/* status register line: rows · ms, and the sanity line */
+.ans-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px; /* optical */
+  min-height: 16px;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+.ans-status .frag {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  margin: 0 -2px;
+  border-radius: var(--radius-xs);
+  color: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+.ans-status .frag:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.ans-status .frag:active {
+  background: var(--bg-active);
+}
+/* a warning fragment is tier 1 with the glyph; the rest sits at tier 2 */
+.ans-status .frag.warn {
+  color: var(--fg);
+}
+.ans-status .frag.warn svg {
+  color: var(--warn);
+}
+
+/* collapsed SQL row */
+.ans-sql {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.ans-sql-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  height: 28px;
+  padding: 0 var(--sp-2);
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  text-align: left;
+}
+.ans-sql-head:hover {
+  background: var(--bg-hover);
+}
+.ans-sql-head:active {
+  background: var(--bg-active);
+}
+.ans-sql-chev {
+  flex-shrink: 0;
+  transition: transform var(--dur-quick) var(--ease-std);
+}
+.ans-sql.open .ans-sql-chev {
+  transform: rotate(90deg);
+}
+.ans-sql-head code {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  color: var(--fg);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ans-sql-body {
+  border-top: 1px solid var(--border);
+}
+.ans-sql-body pre {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--lh-data);
+  overflow: auto;
+  user-select: text;
+}
+.ans-sql-actions {
+  display: flex;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
+  border-top: 1px solid var(--border);
+}
+
+/* assumption chips + follow-ups */
+.ans-label {
+  margin-bottom: var(--sp-1);
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+.ans-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px; /* optical */
+}
+/* Chip / pill toggle species (rule 1): radius-pill, border, active = accent-soft */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px; /* optical */
+  height: 24px;
+  padding: 0 10px; /* optical */ /* pill proportion */
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition:
+    background var(--dur-quick),
+    border-color var(--dur-quick),
+    color var(--dur-quick);
+}
+.chip:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.chip:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.chip.active {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--fg);
+}
+.chip.active svg {
+  color: var(--accent);
+}
+/* suggestion chip: the dashed-ghost species in pill shape (a question not yet
+   asked); hover turns the dash solid accent */
+.chip.q {
+  height: auto;
+  padding: var(--sp-1) 10px; /* optical */
+  border-style: dashed;
+  border-color: var(--border);
+  color: var(--fg);
+  line-height: 1.35;
+  white-space: normal;
+  text-align: left;
+}
+.chip.q:hover:not(:disabled) {
+  border-style: solid;
+  border-color: var(--accent);
+  background: transparent;
+}
+.chip.q svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+/* footer */
+.ans-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 20px;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+.ans-foot .ask-grow {
+  margin-left: auto;
+}
+
+/* ---- FailureBlock (AGENT-UX section 7): error register, editable SQL, actions
+   Fenced: owned by the trace + failure builder. */
+.ans-fail {
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--danger-soft);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+.ans-fail-title {
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--danger);
+}
+.ans-fail-msg {
+  margin-top: 2px;
+  color: var(--fg);
+  user-select: text;
+}
+/* Postgres DETAIL / HINT lines: the key wears the title's uppercase at tier 2,
+   the text stays tier 1 (it is the part that fixes the query) */
+.ans-fail-detail {
+  display: flex;
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+  color: var(--fg);
+  user-select: text;
+}
+.ans-fail-detail-k {
+  flex-shrink: 0;
+  min-width: 36px;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  line-height: 1.7; /* optical */ /* caps sit on the sentence baseline */
+}
+/* the editable SQL: a CodeMirror field (JsonField precedent); the editor's
+   own theme carries the mono, size and inner padding, the box carries the
+   border and the focus treatment */
+.ans-fixsql {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-app);
+  overflow: hidden;
+  transition: border-color var(--dur-quick);
+}
+.ans-fixsql:focus-within {
+  border-color: var(--accent);
+}
+.ans-fixsql .cm-editor {
+  user-select: text;
+  -webkit-user-select: text;
+}
+.ans-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+/* ---- end FailureBlock ---- */
+
+/* ---- docked input ------------------------------------------------------- */
+.ask-input {
+  flex-shrink: 0;
+  padding: var(--sp-2) var(--sp-3) var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+.ask-box {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-app);
+  transition: border-color var(--dur-quick);
+}
+.ask-box:focus-within {
+  border-color: var(--accent);
+}
+.ask-ta {
+  flex: 1;
+  min-width: 0;
+  min-height: 20px;
+  max-height: 96px;
+  padding: 0;
+  border: none;
+  background: none;
+  outline: none; /* .ask-box:focus-within carries the focus treatment */
+  resize: none;
+  line-height: 20px;
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  user-select: text;
+  -webkit-user-select: text;
+}
+/* the send / stop button: icon-button species box (28px tier) with the one
+   accent fill; .stop drops to the raised surface */
+.ask-send {
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--accent-fg);
+  transition:
+    background var(--dur-quick),
+    color var(--dur-quick),
+    filter var(--dur-quick);
+}
+.ask-send:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-fg);
+  filter: brightness(1.08);
+}
+.ask-send:active:not(:disabled) {
+  background: var(--accent);
+  transform: scale(0.97);
+}
+.ask-send.stop,
+.ask-send.stop:hover:not(:disabled) {
+  background: var(--bg-raised);
+  color: var(--fg);
+  filter: none;
+}
+.ask-send.stop:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+/* hint line: fixed height, text swaps inside (rule 2); tier 2, not faint */
+.ask-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 16px;
+  margin-top: 6px; /* optical */
+  padding: 0 var(--sp-1);
+  font-size: var(--text-2xs);
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ask-hint .ask-grow {
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- empty states ------------------------------------------------------- */
+.ask-empty {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  padding: var(--sp-6);
+  text-align: center;
+}
+.ask-empty-glyph {
+  color: var(--accent);
+  display: inline-flex;
+}
+.ask-empty-text {
+  margin: 0;
+  max-width: 280px;
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+.ask-setup {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  text-align: left;
+}
+.ask-setup-label {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+.ask-setup select,
+.ask-setup input {
+  width: 100%;
+  height: 28px;
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-app);
+  color: var(--fg);
+  font-size: var(--text-sm);
+}
+.ask-setup-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+/* the field grows, the action keeps the field's 28px height */
+.ask-setup-row input {
+  flex: 1;
+  min-width: 0;
+}
+.ask-setup-row .btnish {
+  flex-shrink: 0;
+  height: 28px;
+}
+.ask-setup input.ask-id {
+  font-size: var(--text-xs);
+}
+/* one slot for the Keychain sentence and, on failure, the error: feedback
+   never moves the form (rule 2, LESSONS 9) */
+.ask-setup-note {
+  min-height: 14px;
+  font-size: var(--text-2xs);
+  line-height: 1.4;
+  color: var(--fg-muted);
+}
+.ask-setup-note.error {
+  color: var(--danger);
+}
+.ask-starters {
+  display: flex;
+  flex-direction: column;
+  gap: 6px; /* optical */
+  width: 100%;
+}
+.ask-starters .chip.q {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+/* ---- ModelsSettings (Settings › Models) -----------------------------------
+   Fenced: owned by the picker + settings builder. Lives INSIDE SettingsModal
+   in the settings-section / settings-row skin; only the provider list needs
+   its own grid: name · field · status. */
+.ask-models {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) auto;
+  gap: var(--sp-2) var(--sp-3);
+  align-items: center;
+  font-size: var(--text-sm);
+}
+.ask-models-row {
+  display: contents;
+}
+.ask-models-name {
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ask-models-field {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+/* the settings input skin (.settings-timeout input), stretched */
+.ask-models-input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+}
+.ask-models-input.ask-id {
+  font-family: var(--font-mono);
+}
+.ask-models-input:focus {
+  outline: none; /* the border carries focus, like .ask-box */
+  border-color: var(--accent);
+}
+.ask-models-field .linkish {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+/* status register: dot + lowercase fragment; the column reserves its widest
+   face so a probe answer never reflows the list (rule 2) */
+.ask-models-st {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-width: 72px;
+  font-size: var(--text-2xs);
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+.ask-models-st.ok {
+  color: var(--ok);
+}
+.ask-models-st.err {
+  color: var(--danger);
+}
+.ask-models-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.ask-models-note {
+  margin-top: var(--sp-2);
+  line-height: 1.4;
+}
+/* ---- end ModelsSettings ---- */
+
+/* ---- TraceDrawer (slides over the thread, inside the card) ---------------
+   Fenced: owned by the trace + failure builder. Reduced motion is handled by
+   the global kill in tokens.css (transition-duration collapses; the
+   visibility delay stays so the closed drawer still leaves the tab order). */
+.trace {
+  position: absolute;
+  inset: 40px 0 0 0; /* below the header strip */
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  transform: translateX(100%);
+  /* hidden once the slide-out ends so its controls leave the tab order */
+  visibility: hidden;
+  transition:
+    transform var(--dur-slow) var(--ease-std),
+    visibility 0s linear var(--dur-slow);
+  outline: none; /* programmatic focus target (like .ask-panel); the controls inside keep their rings */
+}
+.trace.open {
+  transform: none;
+  visibility: visible;
+  transition: transform var(--dur-slow) var(--ease-std);
+}
+.trace-title {
+  color: var(--fg);
+}
+.trace-head {
+  height: 36px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-2);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-sm);
+}
+.trace-head .ask-grow {
+  margin-left: auto;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+.trace-steps {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--sp-2) var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.trace-step {
+  border-radius: var(--radius-sm);
+}
+/* list row species: hover = bg-hover */
+.trace-step-h {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  height: 28px;
+  padding: 0 var(--sp-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  text-align: left;
+}
+.trace-step-h:hover:not(.static) {
+  background: var(--bg-hover);
+}
+.trace-step-h:active:not(.static) {
+  background: var(--bg-active);
+}
+/* a chip of a run still streaming: its arguments and result arrive with the
+   answer, so the row is a list row, not a control (DESIGN rule 8) */
+.trace-step-h.static {
+  cursor: default;
+}
+.trace-kind {
+  width: 56px;
+  flex-shrink: 0;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+.trace-kind.model {
+  color: var(--syn-keyword);
+}
+.trace-kind.tool {
+  color: var(--accent);
+}
+.trace-kind.verdict {
+  color: var(--ok);
+}
+.trace-lbl {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.trace-lbl code {
+  font-family: var(--font-mono);
+}
+.trace-lbl .trace-err {
+  color: var(--danger);
+}
+.trace-ms {
+  flex-shrink: 0;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+.trace-step-b {
+  margin: 0 var(--sp-2) var(--sp-2) 64px;
+  padding: var(--sp-2) var(--sp-3);
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-app);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--lh-data);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+/* sub-labels inside a body (thinking / text, args / result): the kind
+   label's costume, smaller, tier 2 */
+.trace-sub {
+  margin-top: var(--sp-2);
+  font-family: var(--font-ui);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  user-select: none;
+}
+.trace-sub:first-child {
+  margin-top: 0;
+}
+/* status-register line for what the drawer cannot show yet or at all */
+.trace-empty {
+  padding: var(--sp-1) var(--sp-2);
+  color: var(--fg-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+}
+.trace-note {
+  flex-shrink: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border-top: 1px solid var(--border);
+  color: var(--fg-muted);
+  font-size: var(--text-2xs);
+  line-height: 1.4;
+}
+/* ---- end TraceDrawer ---- */
+
+/* ---- AnswerBlock anatomy (ThinkingStrip, SqlRow, footer provenance) ------
+   Fenced: owned by the answer-anatomy builder. */
+/* an overflowing strip keeps the newest chip at the right edge (an instant
+   scrollLeft assignment in ThinkingStrip, never animated); the clipped older
+   chips fade under a mask so the cut never reads as a broken pill */
+.ans-strip.overflow {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 24px);
+  mask-image: linear-gradient(to right, transparent, #000 24px);
+}
+/* the SQL row's editor register: a read-only CodeMirror view; its text stays
+   selectable inside a user-select:none body */
+.ans-sql-code {
+  user-select: text;
+  -webkit-user-select: text;
+}
+/* per-block provenance (AGENT-UX section 9): avatar + connection name lead
+   the footer's status line; the name ellipsises before the metadata does */
+.ans-prov {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-width: 0;
+  flex-shrink: 0;
+}
+.ans-prov-name {
+  max-width: 120px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* ---- end AnswerBlock anatomy ---- */
+
+@media (prefers-reduced-motion: reduce) {
+  .ans > * {
+    animation: none;
+  }
+}

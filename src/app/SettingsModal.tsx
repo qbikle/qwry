@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { motion } from "motion/react";
 import { Minus, Plus } from "lucide-react";
 import { popIn } from "../design/springs";
@@ -7,6 +8,12 @@ import { useUI } from "../stores/ui";
 import { Modal } from "./overlay/Overlay";
 import { Switch } from "../design/Switch";
 import "./app.css";
+
+// lazy like AskPanel: the provider registry and adapters stay out of the
+// cold-start path until Settings is opened (CLAUDE.md perf budgets)
+const ModelsSettings = lazy(() =>
+  import("../ask/ModelsSettings").then((m) => ({ default: m.ModelsSettings })),
+);
 
 const MODES: { id: Mode; label: string }[] = [
   { id: "dark", label: "Dark" },
@@ -38,6 +45,8 @@ export function SettingsModal() {
   const setGridFontSize = useSettings((s) => s.setGridFontSize);
   const gridDensity = useSettings((s) => s.gridDensity);
   const setGridDensity = useSettings((s) => s.setGridDensity);
+  const activeConnId = useSettings((s) => s.activeConnId);
+  const section = useSettings((s) => s.settingsSection);
 
   if (!open) return null;
 
@@ -219,6 +228,10 @@ export function SettingsModal() {
             </span>
           </div>
         </div>
+
+        <Suspense fallback={<div className="settings-section">Models</div>}>
+          <ModelsSettings profileId={activeConnId} reveal={section === "models"} />
+        </Suspense>
       </motion.div>
     </Modal>
   );
