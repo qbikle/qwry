@@ -162,6 +162,13 @@ const ENV_PASSTHROUGH: [&str; 7] = [
     "CLAUDE_CONFIG_DIR",
 ];
 
+/// Test-only view of the child's environment (the end-to-end MCP test spawns
+/// the real CLI with exactly what the app would give it).
+#[cfg(test)]
+pub(crate) fn child_env_for_tests() -> Vec<(String, String)> {
+    child_env()
+}
+
 fn child_env() -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = ENV_PASSTHROUGH
         .iter()

@@ -850,7 +850,94 @@ async fn gate(
     let Some(service) = service else {
         return Ok(refuse(StatusCode::UNAUTHORIZED, "unauthorized"));
     };
+    if req
+        .headers()
+        .get("mcp-method")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|m| m == "server/discover")
+    {
+        return Ok(decline_discover(req).await);
+    }
+    if std::env::var_os("QWRY_MCP_TRACE").is_some() {
+        return Ok(traced(service, req).await);
+    }
     TowerToHyperService::new(service).call(req).await
+}
+
+/// The 2026-07-28 revision is declined on purpose. rmcp 3.2.0 and Claude Code
+/// 2.1.261 both speak it, and together they fail: the CLI's `server/discover`
+/// probe succeeds, it then asks `tools/list` four times, receives the five
+/// tools each time, and still starts the model with an EMPTY tool list, which
+/// the model answers by writing tool calls as prose and inventing rows
+/// (measured 2026-09-05 with QWRY_MCP_TRACE=1). Refusing the probe with
+/// JSON-RPC "method not found" makes the CLI fall back to `initialize` at
+/// 2025-11-25, the revision every measured run (W0, the eval baseline) used.
+/// Re-test when either side ships a fix: the end-to-end test is
+/// `claude_p_end_to_end_lists_and_calls_the_tools`.
+async fn decline_discover(
+    req: Request<hyper::body::Incoming>,
+) -> Response<BoxBody<Bytes, Infallible>> {
+    let bytes = req
+        .into_body()
+        .collect()
+        .await
+        .map(|b| b.to_bytes())
+        .unwrap_or_default();
+    let id = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|v| v.get("id").cloned())
+        .unwrap_or(serde_json::Value::Null);
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {
+            "code": -32601,
+            "message": "server/discover is not offered here; initialize at 2025-11-25"
+        }
+    })
+    .to_string();
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "application/json")
+        .body(Full::new(Bytes::from(body)).map_err(|never| match never {}).boxed())
+        .unwrap_or_else(|_| refuse(StatusCode::INTERNAL_SERVER_ERROR, "response"))
+}
+
+/// Diagnostic only (`QWRY_MCP_TRACE=1`): every request and response on the
+/// wire, headers and bodies, to stderr. Buffers both bodies, so never on by
+/// default; it exists because the CLI reports a server it cannot use as
+/// "connected" and nothing else shows why.
+async fn traced(
+    service: McpService,
+    req: Request<hyper::body::Incoming>,
+) -> Response<BoxBody<Bytes, Infallible>> {
+    use http_body_util::{BodyExt, Full};
+    let (parts, body) = req.into_parts();
+    let bytes = body.collect().await.map(|b| b.to_bytes()).unwrap_or_default();
+    eprintln!(
+        "MCP> {} {} {:?}\nMCP> {}",
+        parts.method,
+        parts.uri,
+        parts.headers,
+        String::from_utf8_lossy(&bytes)
+    );
+    let req = Request::from_parts(parts, Full::new(bytes));
+    let resp = match TowerToHyperService::new(service).call(req).await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("MCP< service error: {e:?}");
+            return refuse(StatusCode::INTERNAL_SERVER_ERROR, "service error");
+        }
+    };
+    let (parts, body) = resp.into_parts();
+    let bytes = body.collect().await.map(|b| b.to_bytes()).unwrap_or_default();
+    eprintln!(
+        "MCP< {} {:?}\nMCP< {}",
+        parts.status,
+        parts.headers,
+        String::from_utf8_lossy(&bytes)
+    );
+    Response::from_parts(parts, Full::new(bytes).map_err(|never| match never {}).boxed())
 }
 
 /// Bind a fresh loopback listener and serve every connection on it until the
@@ -1385,6 +1472,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_discover_probe_is_declined_so_the_cli_falls_back_to_initialize() {
+        let endpoint = endpoint_for("session-discover", Arc::new(FakeTools));
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(&endpoint.url)
+            .header("authorization", format!("Bearer {}", endpoint.token))
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("mcp-method", "server/discover")
+            .header("mcp-protocol-version", "2026-07-28")
+            .body(r#"{"jsonrpc":"2.0","id":"server-discover-probe-1","method":"server/discover","params":{}}"#)
+            .send()
+            .await
+            .expect("post");
+        assert_eq!(resp.status(), 200);
+        let v: serde_json::Value = resp.json().await.expect("json");
+        assert_eq!(v["id"], "server-discover-probe-1");
+        assert_eq!(v["error"]["code"], -32601);
+        assert!(v["result"].is_null());
+    }
+
+    #[tokio::test]
     async fn initialize_and_tools_list_and_tools_call_over_http() {
         let endpoint = endpoint_for("session-1", Arc::new(FakeTools));
 
@@ -1468,9 +1577,11 @@ mod tests {
         .await;
         assert_eq!(notified.status(), 202);
 
-        // `claude -p` 2.1.260 opens with a `server/discover` preflight on the
-        // 2026-07-28 revision before falling back; the server must answer it,
-        // not 4xx the headers older revisions never defined (W0)
+        // `claude -p` opens with a `server/discover` preflight on the 2026-07-28
+        // revision; the gate DECLINES it with method-not-found (id echoed, HTTP
+        // 200) so the CLI falls back to `initialize` at 2025-11-25, the only
+        // revision measured to deliver the tools to the model (see
+        // decline_discover). Headers older revisions never defined still pass.
         let preflight = reqwest::Client::new()
             .post(&endpoint.url)
             .header("authorization", format!("Bearer {}", endpoint.token))
@@ -1490,12 +1601,10 @@ mod tests {
             .await
             .expect("preflight");
         assert_eq!(preflight.status(), 200);
-        let discovered: serde_json::Value = preflight.json().await.expect("discover json");
-        assert_eq!(
-            discovered["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
-            SERVER_NAME
-        );
-        assert!(discovered["result"]["capabilities"]["tools"].is_object());
+        let declined: serde_json::Value = preflight.json().await.expect("discover json");
+        assert_eq!(declined["id"], 6);
+        assert_eq!(declined["error"]["code"], -32601);
+        assert!(declined["result"].is_null());
 
         // the trace can say what the child reached for
         let log = agent_mcp_log(endpoint.token.clone()).await.expect("log");
@@ -1542,6 +1651,89 @@ mod tests {
     }
 
     /// End to end against the lab database: the MCP transport, the tool
+    /// The real `claude -p` against this server, with the exact flags the app
+    /// passes (claudecode.ts buildArgs): the only test that proves the model
+    /// SEES the five tools. Needs the maintainer's subscription, so it is
+    /// opt-in:  QWRY_TEST_CLAUDE=1 cargo test --lib -- --ignored claude_p_end
+    #[tokio::test]
+    #[ignore]
+    async fn claude_p_end_to_end_lists_and_calls_the_tools() {
+        if std::env::var("QWRY_TEST_CLAUDE").is_err() {
+            eprintln!("QWRY_TEST_CLAUDE unset, skipping");
+            return;
+        }
+        let endpoint = endpoint_for("e2e-session", Arc::new(FakeTools));
+        let mcp_config = serde_json::json!({
+            "mcpServers": { SERVER_NAME: {
+                "type": "http", "url": endpoint.url,
+                "headers": { "Authorization": format!("Bearer {}", endpoint.token) } } }
+        })
+        .to_string();
+        let mut cmd = tokio::process::Command::new("claude");
+        cmd.args([
+            "-p", "--model", "claude-haiku-4-5", "--output-format", "stream-json", "--verbose",
+            "--strict-mcp-config", "--mcp-config", &mcp_config, "--tools", "",
+            "--allowedTools", &format!("mcp__{SERVER_NAME}__*"), "--setting-sources", "",
+            "--max-turns", "4", "--system-prompt",
+            "You have MCP tools. Call list_tables exactly once, then answer with the number of tables.",
+        ])
+        .env_clear()
+        .envs(crate::agent_claude::child_env_for_tests())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+        let mut child = cmd.spawn().expect("spawn claude");
+        {
+            use tokio::io::AsyncWriteExt;
+            let mut stdin = child.stdin.take().expect("stdin");
+            stdin.write_all(b"How many tables are there?").await.expect("write");
+        }
+        let out = tokio::time::timeout(std::time::Duration::from_secs(120), child.wait_with_output())
+            .await
+            .expect("claude finished within 120s")
+            .expect("claude ran");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let mut init: Option<serde_json::Value> = None;
+        let mut tool_uses: Vec<String> = Vec::new();
+        for line in stdout.lines() {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+            if v["type"] == "system" && v["subtype"] == "init" {
+                init = Some(v.clone());
+            }
+            if v["type"] == "assistant" {
+                for b in v["message"]["content"].as_array().into_iter().flatten() {
+                    if b["type"] == "tool_use" {
+                        tool_uses.push(b["name"].as_str().unwrap_or_default().to_string());
+                    }
+                }
+            }
+        }
+        let init = init.unwrap_or_else(|| panic!("no system/init event; stderr: {stderr}"));
+        eprintln!("init.mcp_servers = {}", init["mcp_servers"]);
+        eprintln!("init.tools = {}", init["tools"]);
+        let tools: Vec<&str> = init["tools"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|t| t.as_str()).collect())
+            .unwrap_or_default();
+        assert_eq!(init["mcp_servers"][0]["status"], "connected", "server status");
+        assert!(
+            tools.iter().any(|t| *t == format!("mcp__{SERVER_NAME}__list_tables")),
+            "the model must see the MCP tools; saw {tools:?}"
+        );
+        assert!(
+            tool_uses.iter().any(|n| n.ends_with("list_tables")),
+            "expected a list_tables tool_use, saw {tool_uses:?}; stderr: {stderr}"
+        );
+        let served = registry()
+            .lock()
+            .expect("registry")
+            .tokens
+            .get(&endpoint.token)
+            .map(|t| t.log.lock().map(|l| l.len()).unwrap_or(0));
+        eprintln!("mcp calls served = {served:?}");
+    }
+
     /// dispatch and a real read-only query in one path. Run with
     ///   QWRY_TEST_HOST=127.0.0.1 QWRY_TEST_PORT=5455 QWRY_TEST_USER=lab \
     ///   QWRY_TEST_DB=pagila cargo test --lib -- --ignored mcp_over_the_lab

@@ -74,6 +74,8 @@ interface ClaudeLine {
   type?: string;
   subtype?: string;
   mcp_servers?: { name?: string; status?: string }[];
+  /** every tool the model can call this invocation, MCP ones as mcp__<server>__<tool> */
+  tools?: string[];
   message?: { id?: string; content?: ContentBlock[] };
   event?: {
     type?: string;
@@ -143,13 +145,20 @@ export function buildArgs(options: SpawnOptions): string[] {
   ];
 }
 
-/** Whether qwry's own MCP server came up in this invocation. Any status other
- * than connected, or no entry at all, is a hard failure. */
+/** Whether qwry's own MCP server came up in this invocation AND its tools
+ * reached the model. A connected server whose tools/list the CLI dropped
+ * leaves the model toolless; it then writes tool calls as prose and invents
+ * the results (seen live, 2026-09-05), so the tool list is checked too. Any
+ * other status, no entry, or no `mcp__qwry__*` tool is a hard failure. */
 export function mcpConnected(line: ClaudeLine): boolean {
-  return (line.mcp_servers ?? []).some(
-    (server) =>
-      server.name === MCP_SERVER_NAME && server.status === "connected",
+  const connected = (line.mcp_servers ?? []).some(
+    (server) => server.name === MCP_SERVER_NAME && server.status === "connected",
   );
+  if (!connected) return false;
+  // an init line without a tools array (older CLI shape) cannot be checked
+  // and is trusted; one WITH the array must list at least one of ours
+  if (!Array.isArray(line.tools)) return true;
+  return line.tools.some((t) => t.startsWith(TOOL_PREFIX));
 }
 
 function bareToolName(name: string | undefined): string {
