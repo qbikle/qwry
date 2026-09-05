@@ -109,17 +109,19 @@ function strip(): InteractSeed {
       JSON.stringify({ table: "public.users", column }),
       `${column}: 4 distinct values`,
     );
-  const probe = (id: string, sql: string, ms: number) =>
-    chip(id, "probe", "probe", ms, JSON.stringify({ sqls: [sql] }), "min | max\n2019-03-04 | 2026-09-05");
+  // the loop names a probe by what it measures (probeNoun): the chip reads
+  // `probe sent_at`, never bare `probe`
+  const probe = (id: string, noun: string, sql: string, ms: number) =>
+    chip(id, "probe", `probe ${noun}`, ms, JSON.stringify({ sqls: [sql] }), "min | max\n2019-03-04 | 2026-09-05");
   const chips: ToolChip[] = [
     describe("strip-1", "users", 388),
     peek("strip-2", "is_deleted", 61),
     describe("strip-3", "notification_history", 412),
     peek("strip-4", "channel", 74),
-    probe("strip-5", "SELECT min(sent_at), max(sent_at) FROM notification_history", 688),
+    probe("strip-5", "sent_at", "SELECT min(sent_at), max(sent_at) FROM notification_history", 688),
     describe("strip-6", "sessions", 302),
     peek("strip-7", "platform", 58),
-    probe("strip-8", "SELECT count(*) FROM sessions WHERE started_at > now() - interval '1 day'", 240),
+    probe("strip-8", "started_at", "SELECT count(*) FROM sessions WHERE started_at > now() - interval '1 day'", 240),
     { ...run, id: "strip-9" },
   ];
   const answer = prior.answer;

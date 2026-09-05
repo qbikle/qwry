@@ -17,6 +17,23 @@
 // button's tooltip carries them, through the one glyph renderer.
 // Focus is state-owned (LESSONS 7): useAsk.focusSeq, consumed with rAF so an
 // overlay's escStack restore lands first and loses.
+//
+// Sending (round 3, ask 1): the draft's text LIFTS out of the composer into
+// the new question bubble. ↩ renders a ghost of the text over the textarea
+// (.ask-ghost: same glyphs, same place, the bubble's padding and ring around
+// them) for one frame, then asks; the ghost carries a layout id of its own
+// and the echo the store appends takes the same id, so motion's shared
+// layout resumes the echo from the ghost's box (springs.layout, position
+// only) while the bubble's fill fades in behind the words (ask.css). The
+// draft clears in the very tick the exchange lands (a store subscription),
+// so the composer's reflow and the echo's mount are one commit and the echo
+// is measured where it will stay; until then the textarea keeps its text
+// unpainted under the ghost. A chip pick never renders a ghost (the chip is
+// the thing that travels, section 6); reduced motion renders none either.
+// The thread scroller is a motion element with `layoutScroll`, so the pin
+// that follows a landing is subtracted before any layoutId descendant is
+// measured: the older exchanges' chips hold still and only the travelling
+// node moves (the scroller's own comment, below).
 
 import {
   useCallback,
@@ -24,14 +41,17 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import { ArrowUp, History, Plus, Square } from "lucide-react";
 import { chordGlyphs } from "../design/Kbd";
+import { prefersReducedMotion, spring, swapIn } from "../design/springs";
 import type { Profile } from "../ipc/types";
 import { modelChoice, pendingTarget, retryLabel, useAgent, type Exchange } from "../stores/agent";
 import { useAsk } from "../stores/ask";
-import { useSchema } from "../stores/schema";
+import { useSchema, type SchemaSnapshot } from "../stores/schema";
 import { useSettings } from "../stores/settings";
 import { AnswerBlock } from "./AnswerBlock";
 import { FollowUps } from "./FollowUps";
@@ -40,11 +60,75 @@ import { RetryPill } from "./RetryPill";
 import { SetupCard } from "./SetupCard";
 import { ThreadsSheet } from "./ThreadsSheet";
 import { TraceDrawer } from "./TraceDrawer";
-import { starterQuestions } from "./starters";
+import { useStarters } from "./useStarters";
 import "./ask.css";
 
 const NO_EXCHANGES: Exchange[] = [];
 const COMPOSER_MAX_H = 96;
+
+/** a question on its way from the composer into the thread */
+interface Lift {
+  /** the layout id the ghost and the echo share; a nonce, never the
+   * question, so an older echo of the same text in the thread never pairs.
+   * Handed to exactly one echo: the exchange that lands (below), never one
+   * matched by text */
+  id: string;
+  /** the connection the question was typed toward (LESSONS 3, 4) */
+  profileId: string;
+  question: string;
+  /** the textarea's text as typed, so the ghost overlays it glyph for glyph */
+  raw: string;
+  /** the textarea's scroll at send: past four lines it shows its tail */
+  scrollTop: number;
+  /** exchanges in the thread at send; one more and the question has landed */
+  count: number;
+}
+
+/** the empty state (section 1): three starters docked above the composer and
+ * nothing else. Its own component so useStarters mounts with the empty state
+ * (each show advances the connection's cursor by three) and unmounts with it.
+ * The row re-keys when the three change (a generated pool landing mid-view, a
+ * deleted thread freeing a title) and the two triples CROSSFADE: popLayout
+ * parks the leaving row where it stood (absolute, inside .ask-starters) while
+ * the arriving row takes its place in the flow, both on the app's one
+ * content-swap preset (swapIn: the breadcrumb's and the results' crossfade,
+ * DESIGN rule 6). A picked chip never crosses: the whole empty state unmounts
+ * with the first exchange, so the chip's shared-layout travel into the echo
+ * (section 6) is untouched. Reduced motion is the instant swap */
+function Starters({
+  profileId,
+  snapshot,
+  asked,
+  connected,
+}: {
+  profileId: string;
+  snapshot: SchemaSnapshot | undefined;
+  asked: ReadonlySet<string>;
+  connected: boolean;
+}) {
+  const { questions, key } = useStarters(profileId, snapshot, asked);
+  return (
+    <div className="ask-starters">
+      <AnimatePresence mode="popLayout">
+        <motion.div
+          key={key}
+          className="ask-starters-row"
+          initial={swapIn.initial}
+          animate={swapIn.animate}
+          exit={{ opacity: 0 }}
+          transition={swapIn.transition}
+        >
+          <FollowUps
+            questions={questions}
+            asked={asked}
+            disabled={!connected}
+            onPick={(q) => void useAgent.getState().ask(q)}
+          />
+        </motion.div>
+      </AnimatePresence>
+    </div>
+  );
+}
 
 /** a chord as tooltip text: the same canon <Kbd> renders, joined bare */
 const chord = (spec: string) => chordGlyphs(spec).join("");
@@ -133,7 +217,72 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
   }, [exchangeCount, threadId]);
 
   const asked = useMemo(() => new Set(exchanges.map((e) => e.question)), [exchanges]);
-  const starters = useMemo(() => starterQuestions(snapshot, asked), [snapshot, asked]);
+
+  // the lift (file header): `lift` is the ghost's data from ↩ until the
+  // exchange lands, and the id the newest echo takes in the render that
+  // mounts it. `landed` is that render: the id goes to the exchange at the
+  // end of the thread and nowhere else. Never matched by question text: the
+  // user may retype the thread's latest question word for word, and that
+  // older echo, still the latest until the new one lands, must not wear the
+  // ghost's id beside the ghost (one node per shared id, DESIGN rule 6).
+  // `sending` refuses a second ↩ while one is on its way, so a new thread is
+  // never created twice
+  const [lift, setLift] = useState<Lift | null>(null);
+  const sending = useRef(false);
+  const landed = lift !== null && exchanges.length > lift.count;
+  useEffect(() => {
+    if (!landed) return;
+    sending.current = false;
+    setLift(null);
+  }, [landed]);
+  useEffect(() => {
+    if (!lift) return;
+    // the pane switched connections under a question on its way: it stays
+    // in its own composer, unsent (LESSONS 4)
+    if (lift.profileId !== profileId) {
+      sending.current = false;
+      setLift(null);
+      return;
+    }
+    // one frame with the ghost in the DOM: motion snapshots a layout node as
+    // it unmounts, and the echo that mounts in that same commit resumes from
+    // the snapshot. The draft clears inside the store notification that
+    // appends the exchange (same tick, one React commit): the textarea's
+    // shrink and the scroller's pin land before motion measures the echo.
+    // Anything typed after ↩ (a new thread's row takes a moment) stays
+    const id = requestAnimationFrame(() => {
+      let done = false;
+      const settle = () => {
+        if (done) return;
+        done = true;
+        unsub();
+      };
+      const unsub = useAgent.subscribe((s) => {
+        const tid = s.activeThread[profileId];
+        const n = tid ? (s.exchanges[tid] ?? []).length : 0;
+        if (n <= lift.count) return;
+        settle();
+        const a = useAsk.getState();
+        if (a.draftFor !== profileId) return;
+        const typed = a.drafts[profileId] ?? "";
+        a.setDraft(typed.startsWith(lift.raw) ? typed.slice(lift.raw.length) : "");
+      });
+      // ask() resolves without appending when it refuses (the thread went
+      // busy, the connection changed) and rejects when the thread cannot be
+      // created: either way the ghost leaves and the draft stays, unsent
+      useAgent
+        .getState()
+        .ask(lift.question)
+        .catch(() => {})
+        .finally(() => {
+          if (done) return;
+          settle();
+          sending.current = false;
+          setLift(null);
+        });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [lift, profileId]);
 
   // the retry pill targets the newest exchange with a pending assumption
   // set; it hides while the thread is busy (the Stop face is the one control
@@ -151,11 +300,29 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
 
   const canSend = connected && !busy && draft.trim() !== "";
   const send = useCallback(() => {
-    const q = (useAsk.getState().drafts[profileId] ?? "").trim();
+    if (sending.current) return;
+    const raw = useAsk.getState().drafts[profileId] ?? "";
+    const q = raw.trim();
     if (!q || !connected) return;
-    if (useAgent.getState().activeProfileId !== profileId) return;
-    useAsk.getState().setDraft("");
-    void useAgent.getState().ask(q);
+    const agent = useAgent.getState();
+    if (agent.activeProfileId !== profileId) return;
+    const tid = agent.activeThread[profileId];
+    if (tid && agent.busy[tid]) return;
+    // reduced motion: nothing travels, the bubble simply appears
+    if (prefersReducedMotion()) {
+      useAsk.getState().setDraft("");
+      void agent.ask(q);
+      return;
+    }
+    sending.current = true;
+    setLift({
+      id: `ask-lift:${crypto.randomUUID()}`,
+      profileId,
+      question: q,
+      raw,
+      scrollTop: taRef.current?.scrollTop ?? 0,
+      count: tid ? (agent.exchanges[tid] ?? []).length : 0,
+    });
   }, [connected, profileId]);
 
   const onComposerKey = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
@@ -235,20 +402,26 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
           onManage={openSettings}
         />
       ) : exchanges.length === 0 ? (
-        <div className="ask-starters">
-          <FollowUps
-            questions={starters}
-            asked={asked}
-            disabled={!connected}
-            onPick={(q) => void useAgent.getState().ask(q)}
-          />
-        </div>
+        <Starters profileId={profileId} snapshot={snapshot} asked={asked} connected={connected} />
       ) : (
         // a pending set reserves the pill's footprint at the scroller's end
         // (ask.css) for as long as the set lives, the run it starts included,
         // so the footer scrolls clear of the pill and the pill's leave and
-        // return around a cancelled retry move nothing
-        <div className="ask-scroll" ref={scrollRef} data-pill={pillFor !== null ? "" : undefined}>
+        // return around a cancelled retry move nothing.
+        // layoutScroll: the scroller declares its own scroll to motion's
+        // projection tree, which then measures every layoutId descendant
+        // (the follow-up chips, the echo) net of this element's scrollTop.
+        // Without it the pin below reads as a layout change: every chip of
+        // every older exchange springs up through its footer by the pinned
+        // distance while its plain siblings jump (DESIGN rule 2: an
+        // interaction that moves its own container). The scroller itself
+        // carries no layout prop, so it never animates or wears a transform
+        <motion.div
+          className="ask-scroll"
+          layoutScroll
+          ref={scrollRef}
+          data-pill={pillFor !== null ? "" : undefined}
+        >
           {exchanges.map((ex, i) => (
             <AnswerBlock
               key={ex.id}
@@ -259,18 +432,30 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
               busy={busy}
               phase={phase}
               asked={asked}
+              liftId={lift !== null && landed && i === exchanges.length - 1 ? lift.id : undefined}
             />
           ))}
-        </div>
+        </motion.div>
       )}
 
       {choice !== null && (
         <div className="ask-input">
           <RetryPill label={pillLabel} onApply={applyPill} />
+          {lift !== null && !landed && (
+            <motion.div
+              className="ask-ghost"
+              layoutId={lift.id}
+              layout="position"
+              transition={spring.layout}
+              aria-hidden="true"
+            >
+              <span style={{ translate: `0 ${-lift.scrollTop}px` }}>{lift.raw}</span>
+            </motion.div>
+          )}
           <div className="ask-box">
             <textarea
               ref={taRef}
-              className="ask-ta"
+              className={`ask-ta${lift !== null && !landed ? " ghosted" : ""}`}
               rows={1}
               placeholder={connected ? `Ask about ${profile.dbname}…` : "Connect to ask"}
               aria-label="Ask"

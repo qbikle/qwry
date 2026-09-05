@@ -6,15 +6,23 @@
 // so, DEV builds only:
 //
 //   /?harness=ask&state=<answer|empty|busy|picker|failure|disconnected|small
-//                       |pending|retry|strip|threads|scalar|kv|wide|trace>
+//                       |pending|retry|strip|threads|scalar|kv|wide|trace
+//                       |echo|echo-long|starters|starters-fallback
+//                       |qwrying|qwrying-trail|kv-wide>
 //             &w=<320|392|560>&theme=<dark|light>[&scroll=top|bottom]
 //
 // `scroll=top` parks the thread scroller at the question echo instead of the
 // pane's own mount position (pinned to the newest content): a 640px card
 // cannot hold the whole live answer, so the two ends are two frames. The
-// `strip` state parks at the top unless the URL says `scroll=bottom`: its
-// subject, the thinking strip, sits above the fold when the scroller is
-// pinned to the newest content.
+// `strip` and `kv-wide` states park at the top unless the URL says
+// `scroll=bottom`: their subject (the thinking strip; the one-row pairs) sits
+// above the fold when the scroller is pinned to the newest content.
+//
+// Round 3 (W2d): the `echo` states seed a whole thread of exchanges
+// (fixtures.echo.ts); the `starters` states seed the starter pools store
+// (fixtures.starters.ts), and every other state resets it, so a pool
+// persisted by an earlier harness page never reaches a frame; the strip
+// states (fixtures.strip.ts) carry their own busy / phase.
 //
 // scripts/ask-frames.ts drives headless Chrome over this route and writes
 // one PNG per state × width × theme. The dev build remains the final eyeball;
@@ -33,6 +41,7 @@ import { useAsk } from "../stores/ask";
 import { useSchema } from "../stores/schema";
 import { useSettings } from "../stores/settings";
 import { useSidePane } from "../stores/sidePane";
+import { useStarterPools } from "../stores/starters";
 import {
   FIXTURE,
   HARNESS_STATES,
@@ -43,8 +52,11 @@ import {
   type HarnessTheme,
 } from "./fixtures";
 import { ANATOMY_STATES, anatomyTraceFor, type AnatomyState } from "./fixtures.anatomy";
+import { ECHO_STATES, echoExchangesFor, type EchoState } from "./fixtures.echo";
 import { INTERACT_STATES, interactSeed, type InteractSeed, type InteractState } from "./fixtures.interact";
 import { SHELL_THREADS, shellAfterMount } from "./fixtures.shell";
+import { STARTER_STATES, startersSeed, type StarterState } from "./fixtures.starters";
+import { STRIP_STATES, stripSeed, type StripState } from "./fixtures.strip";
 import "../app/v2.css";
 import "./harness.css";
 
@@ -70,7 +82,8 @@ function paramsFrom(search: string): Params {
     state,
     w: (HARNESS_WIDTHS as readonly number[]).includes(w) ? w : 392,
     theme: theme === "light" ? "light" : "dark",
-    scroll: scroll === "top" || (scroll !== "bottom" && state === "strip") ? "top" : "bottom",
+    scroll:
+      scroll === "top" || (scroll !== "bottom" && (state === "strip" || state === "kv-wide")) ? "top" : "bottom",
   };
 }
 
@@ -80,14 +93,17 @@ function interactFor(state: HarnessState): InteractSeed | null {
 }
 
 /** every store the pane reads, filled before the first render; a state's
- * exchange is the thread's one exchange, the empty state has no thread. The
- * `threads` state lists the shell builder's five threads, the first of them
- * the fixture thread, so the answered exchange sits behind the sheet */
+ * exchange is the thread's one exchange (the echo states seed a whole thread),
+ * the empty state has no thread. The `threads` state lists the shell
+ * builder's five threads, the first of them the fixture thread, so the
+ * answered exchange sits behind the sheet */
 function seed({ state, w, theme }: Params) {
   const pid = FIXTURE.profile.id;
   const tid = FIXTURE.thread.id;
   const interact = interactFor(state);
   const exchange = interact?.exchange ?? exchangeFor(state);
+  const echo = (ECHO_STATES as readonly string[]).includes(state) ? echoExchangesFor(state as EchoState) : null;
+  const strip = (STRIP_STATES as readonly string[]).includes(state) ? stripSeed(state as StripState) : null;
   const choice = choiceFor(state);
 
   useSettings.setState({
@@ -114,13 +130,18 @@ function seed({ state, w, theme }: Params) {
   useAgent.setState({
     activeProfileId: pid,
     threads: { [pid]: state === "threads" ? SHELL_THREADS : [FIXTURE.thread] },
-    activeThread: { [pid]: exchange ? tid : null },
-    exchanges: exchange ? { [tid]: [exchange] } : {},
+    activeThread: { [pid]: exchange || echo ? tid : null },
+    exchanges: echo ? { [tid]: echo } : exchange ? { [tid]: [exchange] } : {},
     sessions: {},
     pending: interact?.pending ?? {},
-    phase: { [tid]: interact ? interact.phase : state === "busy" ? "tools" : null },
-    busy: { [tid]: interact ? interact.busy : state === "busy" },
+    phase: { [tid]: interact ? interact.phase : strip ? strip.phase : state === "busy" ? "tools" : null },
+    busy: { [tid]: interact ? interact.busy : strip ? strip.busy : state === "busy" },
   });
+  useStarterPools.setState(
+    (STARTER_STATES as readonly string[]).includes(state)
+      ? startersSeed(state as StarterState)
+      : { pools: {}, cursors: {} },
+  );
 
   useSidePane.setState({ mode: "ask", open: true, width: w });
   useAsk.setState({

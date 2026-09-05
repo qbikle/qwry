@@ -26,6 +26,15 @@
 // `kv`, `wide`, `trace`). Those files import `exchangeFor` from here and
 // call it only inside functions, so the import cycle never reads an
 // uninitialised binding.
+//
+// The round-3 states (W2d) follow the same shape: fixtures.echo.ts (`echo`,
+// `echo-long`: the question bubble over the sketch's discussion thread, read
+// by AskHarness as a whole thread of exchanges), fixtures.starters.ts
+// (`starters`, `starters-fallback`: the empty state over a seeded generated
+// pool and over none; AskHarness seeds the starter pools store from it) and
+// fixtures.strip.ts (`qwrying`, `qwrying-trail`: the waiting word alone and
+// trailing two chips; `kv-wide`: one row × three columns flowing as a row at
+// 560). fixtures.echo.ts and fixtures.strip.ts import nothing from here.
 
 import type { AskAnswer } from "../agent/loop";
 import type { AgentRun, Assumption, Thread, TraceStep } from "../agent/types";
@@ -34,6 +43,7 @@ import type { SchemaSnapshot, TableInfo } from "../stores/schema";
 import type { Exchange, ToolChip } from "../stores/agent";
 import { anatomyExchangeFor } from "./fixtures.anatomy";
 import { interactSeed } from "./fixtures.interact";
+import { stripSeed } from "./fixtures.strip";
 
 export type HarnessState =
   | "answer"
@@ -50,7 +60,14 @@ export type HarnessState =
   | "scalar"
   | "kv"
   | "wide"
-  | "trace";
+  | "trace"
+  | "echo"
+  | "echo-long"
+  | "starters"
+  | "starters-fallback"
+  | "qwrying"
+  | "qwrying-trail"
+  | "kv-wide";
 export const HARNESS_STATES: readonly HarnessState[] = [
   "answer",
   "empty",
@@ -67,6 +84,13 @@ export const HARNESS_STATES: readonly HarnessState[] = [
   "kv",
   "wide",
   "trace",
+  "echo",
+  "echo-long",
+  "starters",
+  "starters-fallback",
+  "qwrying",
+  "qwrying-trail",
+  "kv-wide",
 ];
 export const HARNESS_WIDTHS = [320, 392, 560] as const;
 export type HarnessTheme = "dark" | "light";
@@ -292,7 +316,7 @@ const chip = (
 ): ToolChip => ({ id, name, label, ms, isError, args, result });
 
 const describeChip = chip("call-1", "describe_tables", "describe notification_history", 412, DESCRIBE_ARGS, DESCRIBE_RESULT);
-const probeChip = chip("call-2", "probe", "probe", 688, PROBE_ARGS, PROBE_RESULT);
+const probeChip = chip("call-2", "probe", "probe sent_at", 688, PROBE_ARGS, PROBE_RESULT);
 const runChip = chip("call-3", "run_sql", "run", 1862, RUN_ARGS, RUN_RESULT);
 
 const tool = (c: ToolChip): TraceStep => ({
@@ -381,7 +405,7 @@ const busy: Exchange = {
   question: QUESTION,
   text: "",
   thinking: "",
-  chips: [describeChip, chip("call-2", "probe", "probe", null, PROBE_ARGS, null)],
+  chips: [describeChip, chip("call-2", "probe", "probe sent_at", null, PROBE_ARGS, null)],
   answer: null,
   error: null,
   streaming: true,
@@ -475,9 +499,11 @@ export const FIXTURE = {
   model: MODEL,
 } as const;
 
-/** the exchange a state shows; null for the configured empty states. The
- * Threads sheet sits over the sketch's answer; the round-2 builders' states
- * come from their own files */
+/** the exchange a state shows; null for the configured empty states (the
+ * starters states among them) and for the echo states, whose whole thread
+ * AskHarness reads from fixtures.echo.ts. The Threads sheet sits over the
+ * sketch's answer; the round-2 and round-3 builders' states come from their
+ * own files */
 export function exchangeFor(state: HarnessState): Exchange | null {
   switch (state) {
     case "answer":
@@ -491,6 +517,10 @@ export function exchangeFor(state: HarnessState): Exchange | null {
     case "empty":
     case "disconnected":
     case "small":
+    case "starters":
+    case "starters-fallback":
+    case "echo":
+    case "echo-long":
       return null;
     case "pending":
     case "retry":
@@ -501,6 +531,10 @@ export function exchangeFor(state: HarnessState): Exchange | null {
     case "wide":
     case "trace":
       return anatomyExchangeFor(state);
+    case "qwrying":
+    case "qwrying-trail":
+    case "kv-wide":
+      return stripSeed(state).exchange;
   }
 }
 

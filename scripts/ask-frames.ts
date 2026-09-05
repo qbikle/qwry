@@ -7,10 +7,11 @@
 //                             [--jobs 6]
 //
 //   --out      where the PNGs land; default
-//              ~/projects/qwry-agent-lab/docs/research/w2c-frames
+//              ~/projects/qwry-agent-lab/docs/research/w2d-frames
 //   --states   subset of answer,empty,busy,picker,failure,disconnected,small,
-//              pending,retry,strip,threads,scalar,kv,wide,trace (default: all
-//              fifteen)
+//              pending,retry,strip,threads,scalar,kv,wide,trace,echo,echo-long,
+//              starters,starters-fallback,qwrying,qwrying-trail,kv-wide
+//              (default: all twenty-two)
 //   --widths   subset of 320,392,560 (default: all three)
 //   --themes   subset of dark,light (default: both)
 //   --scroll   bottom (default): the pane as it mounts, pinned to the newest content,
@@ -18,8 +19,8 @@
 //              echo and the thinking strip instead (the 640px card cannot hold the
 //              whole live answer, so the two ends are two runs). Frames of a top run
 //              carry a -top suffix so the two sets sit side by side. The `strip`
-//              state parks at the top in both runs (the harness's own default for
-//              it: its subject sits above the fold)
+//              and `kv-wide` states park at the top in both runs (the harness's
+//              own default for them: their subject sits above the fold)
 //   --port     the vite dev server to use when one already answers (default 1420);
 //              otherwise vite is started on a free port for the run and stopped after
 //   --jobs     Chrome processes in flight at once (default 6)
@@ -75,6 +76,29 @@
 // rows × twelve columns, the grid scrolling both ways; trace = the answer
 // with its drawer open from the footer link, the context step expanded.
 //
+// Round 3 (the sketch's "Discussion" rows; fixtures.echo.ts,
+// fixtures.starters.ts, fixtures.strip.ts): echo = the sketch's discussion
+// thread, two exchanges, each question a tinted bubble at the right edge
+// (variant B) with the anatomy left; the bottom frame shows the second bubble
+// over the composer, the -top frame the first (both at 560-top); echo-long =
+// one exchange whose question wraps to five lines inside the bubble at 320;
+// starters = the configured empty state over a seeded generated pool at
+// cursor 3, so the SECOND triple shows (`Which channels have the highest open
+// rate?` · `How many sessions did each platform see this month?` · `Which
+// signup sources bring users who build wardrobes?`); starters-fallback = the
+// same with no pool: the heuristic twelve over the fixture schema from cursor
+// 0, minus the fixture thread's own title (a question already asked in a
+// thread of the connection is never a starter), so the triple reads `Which
+// users have the most notification histories?` · `How are notification
+// histories split by notification type?` · `How many users have no
+// notification histories?`, the `empty` state's three since the pool rotates;
+// qwrying = a question just sent, the strip holding `qwrying…` alone and the
+// Stop face; qwrying-trail = two landed chips and the word trailing them;
+// kv-wide = one row × three columns, name over value, a stack at 320 and a
+// row of pairs at 560 (parked at the top by default, like strip). Chrome runs
+// with reduced motion forced, so the two qwrying frames show the static word
+// by design; the sweep is the dev build's eyeball.
+//
 // The first frame runs alone so vite compiles the module graph once; the rest
 // run in parallel. Whole run: ~60 s warm for the full matrix.
 
@@ -84,7 +108,7 @@ import { join, resolve } from "node:path";
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const ROOT = resolve(import.meta.dir, "..");
-const DEFAULT_OUT = join(homedir(), "projects/qwry-agent-lab/docs/research/w2c-frames");
+const DEFAULT_OUT = join(homedir(), "projects/qwry-agent-lab/docs/research/w2d-frames");
 
 const ALL_STATES = [
   "answer",
@@ -102,6 +126,13 @@ const ALL_STATES = [
   "kv",
   "wide",
   "trace",
+  "echo",
+  "echo-long",
+  "starters",
+  "starters-fallback",
+  "qwrying",
+  "qwrying-trail",
+  "kv-wide",
 ] as const;
 const ALL_WIDTHS = [320, 392, 560] as const;
 const ALL_THEMES = ["dark", "light"] as const;

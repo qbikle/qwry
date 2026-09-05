@@ -2,8 +2,10 @@
 // cell is chrome around nothing, so a run of exactly one row renders as
 // values, not as a grid. One column: the value in the data register (mono,
 // tabular, the answer's one big number) with the column name as its caption.
-// Two to four columns: a stack of name over value. Five or more: the grid,
-// which is the honest shape for that many facts.
+// Two to four columns: name over value, one pair per column, stacked in a
+// single column until the slot is 480px wide and flowing as a row of pairs
+// from there (ask.css .ans-kv; the wrapper is the container the query reads).
+// Five or more: the grid, which is the honest shape for that many facts.
 //
 // The values are the grid's truth in the grid's registers: NULL and '' wear
 // the grid's own chips (grid.css), text stays wire text, and only a numeric
@@ -67,15 +69,17 @@ export function ScalarResult({ run }: { run: AgentRun }) {
     );
   }
   return (
-    <dl className="ans-kv">
-      {run.columns.map((name, i) => (
-        <div className="ans-kv-row" key={`${i}:${name}`}>
-          <dt className="ans-kv-k">{name}</dt>
-          <dd className="ans-kv-v">
-            <Value v={row[i] ?? null} />
-          </dd>
-        </div>
-      ))}
-    </dl>
+    <div className="ans-kv-slot">
+      <dl className="ans-kv">
+        {run.columns.map((name, i) => (
+          <div className="ans-kv-row" key={`${i}:${name}`}>
+            <dt className="ans-kv-k">{name}</dt>
+            <dd className="ans-kv-v">
+              <Value v={row[i] ?? null} />
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </div>
   );
 }

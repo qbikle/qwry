@@ -1,17 +1,23 @@
-// Starter suggestions for the empty state (AGENT-UX section 1): three
-// questions drawn from the connection's real nouns, phrased the way a person
-// would type them (table words de-snaked, `_v2` twins folded). "How many rows
-// in each table?" is never one of them. Pure, store-free and deterministic
-// per snapshot so it can be unit-tested against a fixture.
+// Starter suggestions for the empty state (AGENT-UX section 1): questions
+// drawn from the connection's real nouns, phrased the way a person would type
+// them (table words de-snaked, `_v2` twins folded). "How many rows in each
+// table?" is never one of them. Pure, store-free and deterministic per
+// snapshot so it can be unit-tested against a fixture.
+//
+// W2d: `starterPool` yields up to twelve, the instant fallback for the
+// model-generated pool (src/agent/starterPool.ts) and the pool the empty state
+// rotates through three at a time (useStarters.ts); `starterQuestions` keeps
+// its three-question contract as the pool's first triple. `rotateStarters` is
+// the one place a triple is cut from a pool, whichever pool it is.
 
 import type { FkInfo, SchemaSnapshot, TableInfo } from "../stores/schema";
+import { HOUSEKEEPING, LEGACY, STARTER_POOL_SIZE, SYSTEM_SCHEMAS } from "../agent/starterPool";
 
-const SYSTEM_SCHEMAS = new Set(["pg_catalog", "information_schema", "pg_toast"]);
-/** bookkeeping relations nobody asks questions about */
-const HOUSEKEEPING = /(migration|alembic_version|flyway|knex_|schema_version|ar_internal_metadata|spatial_ref_sys)/i;
 const TIME_COL = /(created|added|inserted|signed|placed|ordered|started|updated|_at$|_on$|date)/i;
 const STATUS_COL = /(status|state|kind|category|type|source|platform|channel|plan|tier|role)$/i;
 const TEXTISH = /^(text|character varying|varchar|citext|bpchar|character|name|USER-DEFINED)/i;
+
+export const STARTERS_SHOWN = 3;
 
 const isTime = (type: string) => /timestamp|date/i.test(type);
 
@@ -25,7 +31,7 @@ function candidates(snapshot: SchemaSnapshot): TableInfo[] {
       !SYSTEM_SCHEMAS.has(t.schema) &&
       !t.parent_oid &&
       !HOUSEKEEPING.test(t.name) &&
-      !/LEGACY/i.test(t.comment ?? ""),
+      !LEGACY.test(t.comment ?? ""),
   );
 }
 
@@ -35,7 +41,7 @@ const bySize = (a: TableInfo, b: TableInfo) =>
 
 /** The pool the questions draw from: the largest tables plus the FK hubs (the
  * tables most other tables point at), largest first. Ties break on name so
- * the same snapshot always yields the same three questions. */
+ * the same snapshot always yields the same questions. */
 function pool(snapshot: SchemaSnapshot, tables: TableInfo[]): TableInfo[] {
   const byKey = new Map(tables.map((t) => [key(t.schema, t.name), t]));
   const inbound = new Map<string, number>();
@@ -86,10 +92,69 @@ const statusCol = (t: TableInfo) =>
   t.columns.find((c) => STATUS_COL.test(c.name) && TEXTISH.test(c.type));
 const verb = (col: string) => (/created|signed|placed|ordered|started/i.test(col) ? "created" : "added");
 
-/** Three questions the user could have typed, from the schema's own names.
- * `asked` excludes questions already in the thread (section 6). Fewer than
- * three come back only when the schema offers nothing to say. */
-export function starterQuestions(
+/** one FK edge between two pool tables, child → parent */
+interface Edge {
+  child: TableInfo;
+  parent: TableInfo;
+}
+
+/** the pool's FK edges, parent with the most rows first (the hub is the
+ * interesting side), then the largest child; one edge per table pair */
+function edges(snapshot: SchemaSnapshot, byKey: Map<string, TableInfo>): Edge[] {
+  const out: Edge[] = [];
+  const seen = new Set<string>();
+  const sorted = [...snapshot.foreign_keys].sort(
+    (a: FkInfo, b: FkInfo) =>
+      bySize(byKey.get(key(a.dst_schema, a.dst_table)) ?? EMPTY, byKey.get(key(b.dst_schema, b.dst_table)) ?? EMPTY) ||
+      bySize(byKey.get(key(a.src_schema, a.src_table)) ?? EMPTY, byKey.get(key(b.src_schema, b.src_table)) ?? EMPTY),
+  );
+  for (const fk of sorted) {
+    const child = byKey.get(key(fk.src_schema, fk.src_table));
+    const parent = byKey.get(key(fk.dst_schema, fk.dst_table));
+    if (!child || !parent || child === parent) continue;
+    const k = `${key(child.schema, child.name)}>${key(parent.schema, parent.name)}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({ child, parent });
+  }
+  return out;
+}
+
+// ---- the shapes ---------------------------------------------------------------
+// each takes the i-th table or edge of its list and answers null past the end,
+// so the rounds below read as a plan rather than a wall of bounds checks
+
+const monthly = (t?: TableInfo) => {
+  const c = t && timeCol(t);
+  return c ? `How many ${noun(t.name)} were ${verb(c.name)} each month this year?` : null;
+};
+const recentDays = (t?: TableInfo) => {
+  const c = t && timeCol(t);
+  return c ? `How many ${noun(t.name)} were ${verb(c.name)} in the last 30 days?` : null;
+};
+const recent20 = (t?: TableInfo) => {
+  const c = t && timeCol(t);
+  return c ? `What are the 20 most recently ${verb(c.name)} ${noun(t.name)}?` : null;
+};
+const sample = (t?: TableInfo) => (t ? `What do 10 sample ${noun(t.name)} look like?` : null);
+const split = (t?: TableInfo) => {
+  const c = t && statusCol(t);
+  return c ? `How are ${noun(t.name)} split by ${words(c.name)}?` : null;
+};
+const commonest = (t?: TableInfo) => {
+  const c = t && statusCol(t);
+  return c ? `Which ${words(c.name)} is most common among ${noun(t.name)}?` : null;
+};
+const mostChildren = (e?: Edge) => (e ? `Which ${noun(e.parent.name)} have the most ${noun(e.child.name)}?` : null);
+const noChildren = (e?: Edge) => (e ? `How many ${noun(e.parent.name)} have no ${noun(e.child.name)}?` : null);
+
+/** Up to twelve questions the user could have typed, from the schema's own
+ * names: a trend, a join and a distribution first (the three the empty state
+ * always showed), then the same shapes over the next tables and edges with a
+ * second reading of each, then fills from the largest tables. `asked`
+ * excludes questions already in the thread (section 6). Fewer come back only
+ * when the schema offers nothing more to say. */
+export function starterPool(
   snapshot: SchemaSnapshot | undefined,
   asked: ReadonlySet<string> = new Set(),
 ): string[] {
@@ -98,52 +163,63 @@ export function starterQuestions(
   if (tables.length === 0) return [];
   const top = pool(snapshot, tables);
   const byKey = new Map(top.map((t) => [key(t.schema, t.name), t]));
+  const dated = top.filter((t) => timeCol(t));
+  const statused = top.filter((t) => statusCol(t));
+  const joins = edges(snapshot, byKey);
   const out: string[] = [];
-  const push = (q: string) => {
-    if (out.length < 3 && !asked.has(q) && !out.includes(q)) out.push(q);
+  const push = (q: string | null) => {
+    if (q && out.length < STARTER_POOL_SIZE && !asked.has(q) && !out.includes(q)) out.push(q);
   };
 
-  // a time-shaped question on the biggest dated table
-  for (const t of top) {
-    const c = timeCol(t);
-    if (c) {
-      push(`How many ${noun(t.name)} were ${verb(c.name)} each month this year?`);
-      break;
-    }
+  push(monthly(dated[0]));
+  push(mostChildren(joins[0]));
+  push(split(statused[0]));
+  const rounds = Math.max(dated.length, statused.length, joins.length);
+  for (let i = 0; i < rounds && out.length < STARTER_POOL_SIZE; i++) {
+    push(noChildren(joins[i]));
+    push(recentDays(dated[i]));
+    push(commonest(statused[i]));
+    push(monthly(dated[i + 1]));
+    push(mostChildren(joins[i + 1]));
+    push(split(statused[i + 1]));
   }
-  // a join-shaped question on the first FK edge between two pool tables,
-  // parent with the most children first (the hub is the interesting side)
-  const edges = [...snapshot.foreign_keys].sort(
-    (a: FkInfo, b: FkInfo) =>
-      bySize(byKey.get(key(a.dst_schema, a.dst_table)) ?? EMPTY, byKey.get(key(b.dst_schema, b.dst_table)) ?? EMPTY) ||
-      bySize(byKey.get(key(a.src_schema, a.src_table)) ?? EMPTY, byKey.get(key(b.src_schema, b.src_table)) ?? EMPTY),
-  );
-  for (const fk of edges) {
-    const child = byKey.get(key(fk.src_schema, fk.src_table));
-    const parent = byKey.get(key(fk.dst_schema, fk.dst_table));
-    if (child && parent && child !== parent) {
-      push(`Which ${noun(parent.name)} have the most ${noun(child.name)}?`);
-      break;
-    }
-  }
-  // a distribution question on a status-like column
-  for (const t of top) {
-    const c = statusCol(t);
-    if (c) {
-      push(`How are ${noun(t.name)} split by ${words(c.name)}?`);
-      break;
-    }
-  }
-  // fill from the largest tables until three
-  for (const t of top) {
-    if (out.length >= 3) break;
-    const c = timeCol(t);
-    push(
-      c
-        ? `What are the 20 most recently ${verb(c.name)} ${noun(t.name)}?`
-        : `What do 10 sample ${noun(t.name)} look like?`,
-    );
-  }
+  for (const t of top) push(timeCol(t) ? recent20(t) : sample(t));
+  for (const t of top) push(sample(t));
+  return out;
+}
+
+/** Three questions the user could have typed: the pool's first triple. */
+export function starterQuestions(
+  snapshot: SchemaSnapshot | undefined,
+  asked: ReadonlySet<string> = new Set(),
+): string[] {
+  return starterPool(snapshot, asked).slice(0, STARTERS_SHOWN);
+}
+
+/** the form two questions are compared in: case, spacing and a thread
+ * title's trailing ellipsis do not make a question new */
+export const questionKey = (q: string) =>
+  q
+    .trim()
+    .replace(/…$/, "")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+
+/** The triple shown from a pool, generated or heuristic: every question whose
+ * key is in `taken` (asked in any thread of the connection) is out, and the
+ * three start at `start` and wrap around what remains, so a cursor that keeps
+ * climbing keeps walking the pool. Fewer than three only when fewer remain. */
+export function rotateStarters(
+  pool: readonly string[],
+  taken: ReadonlySet<string>,
+  start: number,
+): string[] {
+  const open = pool.filter((q) => !taken.has(questionKey(q)));
+  const n = open.length;
+  if (n === 0) return [];
+  const from = ((Math.trunc(start) % n) + n) % n;
+  const out: string[] = [];
+  for (let i = 0; i < Math.min(STARTERS_SHOWN, n); i++) out.push(open[(from + i) % n]);
   return out;
 }
 

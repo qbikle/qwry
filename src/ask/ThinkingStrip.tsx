@@ -2,13 +2,26 @@
 // chips, the only loading UI. Chips enter with the chips preset from
 // springs.ts (section 10); the `run` chip wears the accent, an errored chip
 // the danger tier. Consecutive calls with the same label collapse into one
-// chip (`probe ×2`, `run ×3`), the way the sketch reads them. A chip is a
-// status pill while the exchange streams (there is no trace to open yet) and
-// becomes a button that opens the trace at its first call once it is done.
+// chip (`probe sent_at ×2`, `run ×3`), the way the sketch reads them. A chip
+// is a status pill while the exchange streams (there is no trace to open
+// yet) and becomes a button that opens the trace at its first call once it
+// is done.
 //
 // A chip still running when the turn stops (⌘. / Stop) shows a hollow ring,
 // never a spinner: a spinner on a cancelled exchange claims work that is not
 // happening (LESSONS 9).
+//
+// While the exchange streams with no chip running and no answer text yet
+// (just sent; the model thinking between calls) the row ends in `qwrying…`:
+// status text, never a chip, in the muted tier with a lighter band swept
+// across its letters (the sketch's .qwrying). The sweep is a Web Animations
+// tween on background-position with the token's easing, in a cadence that
+// never repeats exactly: a slow pass, a breath, a quick pass, sometimes a
+// second, a long breath, every span jittered ±20%. It cancels the instant
+// text streams, a chip starts or the strip unmounts; reduced motion is the
+// static word. (Round 3, ask 3: "no infinite transition something"; the old
+// lone `·` placeholder is gone.)
+//
 // Overflow never wraps and never grows the strip: the row scrolls sideways
 // with its scrollbar hidden (round 2, finding 5: the faded older chips were
 // unreachable). Both edges fade under a mask driven by the scroll position
@@ -16,25 +29,31 @@
 // ones wait past the right). A vertical wheel over the strip scrolls it
 // sideways, instantly, and is consumed only when the strip can still move
 // that way, so the thread scrolls as usual at either end. While the exchange
-// streams the newest chip is kept in view by an instant scrollLeft
-// assignment (never animated), until the user scrolls the strip themselves
-// during that stream: from then on the position is theirs. A landed
-// exchange rests at its newest chip too: the first layout of a strip that is
-// not streaming (a reloaded thread, a cancelled retry's restored chips)
-// parks at the end once, so the same answer wears one strip whether it was
-// streamed or reloaded (the sketch draws the newest-chip end at 320).
+// streams the newest chip (or the waiting word) is kept in view by an
+// instant scrollLeft assignment (never animated), until the user scrolls the
+// strip themselves during that stream: from then on the position is theirs.
+// A landed exchange rests at its newest chip too: the first layout of a
+// strip that is not streaming (a reloaded thread, a cancelled retry's
+// restored chips) parks at the end once, so the same answer wears one strip
+// whether it was streamed or reloaded (the sketch draws the newest-chip end
+// at 320).
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
-import { menuIn } from "../design/springs";
+import { menuIn, prefersReducedMotion } from "../design/springs";
 import type { ToolChip } from "../stores/agent";
 import type { AskPhase } from "../agent/loop";
 
 export interface ThinkingStripProps {
   chips: ToolChip[];
-  /** a turn is in flight: the strip may show a trailing `·` for the next call */
+  /** a turn is in flight */
   streaming: boolean;
   phase: AskPhase | null;
+  /** no answer text has arrived for this exchange (the caller sees the
+   * text, the strip does not): while the exchange streams with no chip
+   * running, the strip ends in `qwrying…`; the instant text streams the word
+   * goes. Omitted = not yet known, which the strip reads as no text yet */
+  waiting?: boolean;
   /** a finished chip was clicked: open the trace at that tool step */
   onChipClick?: (chipId: string) => void;
 }
@@ -88,8 +107,25 @@ export function groupChips(chips: ToolChip[]): ChipGroup[] {
 /** sub-pixel scroll positions count as the edge */
 const EDGE = 1;
 
-export function ThinkingStrip({ chips, streaming, onChipClick }: ThinkingStripProps) {
+/** the waiting word's sweep, in ms and odds: a slow pass, a breath, a quick
+ * pass, a second quick pass some of the time, a long breath; every span
+ * jittered by ±JITTER so the word never reads as a metronome */
+export const SWEEP = {
+  slow: 1800,
+  breath: 300,
+  quick: 650,
+  again: 0.4,
+  pause: 150,
+  long: 900,
+  jitter: 0.2,
+} as const;
+
+/** the band's travel: from off the right of the word to off its left */
+const SWEEP_FRAMES: Keyframe[] = [{ backgroundPosition: "120% 0" }, { backgroundPosition: "-40% 0" }];
+
+export function ThinkingStrip({ chips, streaming, waiting, onChipClick }: ThinkingStripProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const waitRef = useRef<HTMLSpanElement>(null);
   const [fade, setFade] = useState({ l: false, r: false });
   // the user took the strip's scroll during this stream: the newest chip
   // stops chasing the right edge until the next stream begins
@@ -101,6 +137,7 @@ export function ThinkingStrip({ chips, streaming, onChipClick }: ThinkingStripPr
   const groups = groupChips(chips);
   const anyRunning = chips.some((c) => c.ms === null);
   const clickable = !streaming && !!onChipClick;
+  const showWait = streaming && !anyRunning && waiting !== false;
 
   const measure = useCallback(() => {
     const el = ref.current;
@@ -111,10 +148,10 @@ export function ThinkingStrip({ chips, streaming, onChipClick }: ThinkingStripPr
     setFade((f) => (f.l === l && f.r === r ? f : { l, r }));
   }, []);
 
-  // every chip arrival: the newest chip into view (streaming, position not
-  // yet the user's; or the first layout of a landed strip, once), then the
-  // masks from the position. A stream's start hands the position back from
-  // the user before its first chip lands
+  // every chip arrival, and the word's: the newest into view (streaming,
+  // position not yet the user's; or the first layout of a landed strip,
+  // once), then the masks from the position. A stream's start hands the
+  // position back from the user before its first chip lands
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -124,7 +161,7 @@ export function ThinkingStrip({ chips, streaming, onChipClick }: ThinkingStripPr
     rested.current = !streaming;
     if (park && !userScrolled.current) el.scrollLeft = el.scrollWidth;
     measure();
-  }, [chips.length, streaming, measure]);
+  }, [chips.length, streaming, showWait, measure]);
 
   useEffect(() => {
     const el = ref.current;
@@ -158,6 +195,52 @@ export function ThinkingStrip({ chips, streaming, onChipClick }: ThinkingStripPr
     };
   }, [measure, streaming]);
 
+  // the sweep: one Web Animation per pass on the word itself, the cadence
+  // above between them; every pass reads the LIVE reduced-motion flag through
+  // the preset getter's source, so the static word is what a reduced-motion
+  // session ever sees. Cancelled with the word (cleanup) and on unmount
+  useEffect(() => {
+    const el = waitRef.current;
+    if (!showWait || !el || prefersReducedMotion() || typeof el.animate !== "function") return;
+    const easing = getComputedStyle(el).getPropertyValue("--ease-std").trim() || "ease-in-out";
+    let live = true;
+    let anim: Animation | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const jitter = (ms: number) => ms * (1 - SWEEP.jitter + Math.random() * 2 * SWEEP.jitter);
+    const pass = (ms: number) =>
+      new Promise<void>((resolve) => {
+        anim = el.animate(SWEEP_FRAMES, { duration: jitter(ms), easing });
+        anim.onfinish = () => resolve();
+        anim.oncancel = () => resolve();
+      });
+    const rest = (ms: number) =>
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, jitter(ms));
+      });
+    void (async () => {
+      while (live) {
+        await pass(SWEEP.slow);
+        if (!live) break;
+        await rest(SWEEP.breath);
+        if (!live) break;
+        await pass(SWEEP.quick);
+        if (!live) break;
+        if (Math.random() < SWEEP.again) {
+          await rest(SWEEP.pause);
+          if (!live) break;
+          await pass(SWEEP.quick);
+          if (!live) break;
+        }
+        await rest(SWEEP.long);
+      }
+    })();
+    return () => {
+      live = false;
+      anim?.cancel();
+      clearTimeout(timer);
+    };
+  }, [showWait]);
+
   return (
     <div
       ref={ref}
@@ -190,9 +273,9 @@ export function ThinkingStrip({ chips, streaming, onChipClick }: ThinkingStripPr
           {g.count > 1 && <span>×{g.count}</span>}
         </motion.button>
       ))}
-      {streaming && !anyRunning && (
-        <span className="ans-more" aria-hidden="true">
-          ·
+      {showWait && (
+        <span ref={waitRef} className="tchip-wait">
+          qwrying…
         </span>
       )}
     </div>

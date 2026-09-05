@@ -183,6 +183,8 @@
 }
 
 /* ---- thread scroller ---------------------------------------------------- */
+/* exchanges sit 28px apart: a bubble at the right and an answer at the left
+   need more air between them than the 20px the flat echo had (round 3) */
 .ask-scroll {
   flex: 1;
   min-height: 0;
@@ -190,7 +192,7 @@
   padding: var(--sp-3) var(--sp-3) var(--sp-2);
   display: flex;
   flex-direction: column;
-  gap: var(--sp-5);
+  gap: 28px;
 }
 /* while an assumption set is pending the retry pill floats over the
    scroller's last rows (.ask-retry): the scroller reserves the pill's
@@ -227,11 +229,81 @@
     opacity: 1;
   }
 }
+/* the question echo (section 2 item 1): the user's words in a bubble at the
+   right edge, the answer's anatomy staying left (the sketch's variant B: the
+   active-chip tint, one soft corner toward the answer). The fill and border
+   ride a pseudo so they can fade in BEHIND text that is already there: on
+   send the text travels from the composer into the bubble (AskPanel's
+   .ask-ghost, a shared-layout position spring) and the container follows;
+   the text itself never fades or scales. isolation keeps the pseudo's
+   negative z-index under the text and above nothing else */
 .ans-echo {
-  font-weight: 550;
-  line-height: 1.4;
+  position: relative;
+  isolation: isolate;
+  align-self: flex-end;
+  max-width: 86%;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid transparent; /* the ring the pseudo paints; keeps the geometry honest */
+  border-radius: 16px 16px 6px 16px; /* optical */ /* the small corner points at the answer */
+  font-weight: 450;
+  font-size: var(--text-md);
+  line-height: 1.45;
   color: var(--fg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   user-select: text;
+  -webkit-user-select: text;
+}
+/* the section fade belongs to the fill, not the words (the words arrive by
+   travelling) */
+.ans > .ans-echo {
+  animation: none;
+}
+.ans-echo::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  animation: ans-in var(--dur-slow) var(--ease-std);
+}
+/* the composer's ghost (AskPanel): for the frame between ↩ and the exchange
+   landing, the draft's text rendered over the textarea glyph for glyph (same
+   font, size, 20px lines, wrapping width) inside the bubble's own padding and
+   ring, so the ghost's box is the bubble's box at the composer and the echo
+   resumes from it with no jump. Positioned in .ask-input: --sp-2 / --sp-3 in
+   from its padding box is the textarea's text origin minus the bubble's
+   padding and border (.ask-input pads 8 / 12, .ask-box a 1px border then
+   8 / 12), and 100% less --sp-5 is the textarea's width plus that padding and
+   ring. Clipped at the textarea's own four-line height; a longer draft shows
+   its tail through the inner offset AskPanel writes */
+.ask-ghost {
+  position: absolute;
+  top: var(--sp-2);
+  left: var(--sp-3);
+  width: calc(100% - var(--sp-5));
+  max-height: calc(96px + var(--sp-4) + 2px);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid transparent;
+  overflow: hidden;
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  line-height: 20px;
+  color: var(--fg);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  pointer-events: none;
+}
+.ask-ghost > span {
+  display: block;
+}
+/* while the ghost shows, the textarea keeps its text (the box keeps its
+   height, the caret its place) but paints none of it: one set of glyphs */
+.ask-ta.ghosted {
+  color: transparent;
+  caret-color: var(--fg);
 }
 /* thinking strip: FIXED height (rule 2); chips scroll sideways past the
    edges, never wrap. The scrollbar is hidden (the masks say there is more,
@@ -337,9 +409,30 @@
 .tchip.error .tchip-ok {
   background: var(--danger);
 }
-.ans-more {
-  color: var(--fg-muted);
-  font-size: var(--text-xs);
+/* the waiting word (AGENT-UX section 2 item 2; round 3, ask 3): status
+   register, muted base, a lighter band swept across the letters by
+   ThinkingStrip (a Web Animation on background-position, the token's
+   easing). Parked at 120% the band sits off the text, so this rule as it
+   stands IS the reduced-motion face. Text, never a chip; never wraps */
+.tchip-wait {
+  flex-shrink: 0;
+  font-size: var(--text-sm);
+  color: transparent;
+  background-image: linear-gradient(
+    100deg,
+    var(--fg-muted) 0%,
+    var(--fg-muted) 40%,
+    var(--fg) 50%,
+    var(--fg-muted) 60%,
+    var(--fg-muted) 100%
+  );
+  background-size: 260% 100%;
+  background-position: 120% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .ans-text {
   line-height: 1.5;
@@ -406,20 +499,34 @@
   color: var(--fg-muted);
   overflow-wrap: anywhere;
 }
-/* one row, two to four columns: name over value, stacked */
+/* one row, two to four columns: name over value. A single column until the
+   slot is 480px wide, then a row of equal columns no narrower than 140px,
+   the pairs flowing into it (W2c gate S3: three pairs stacked beside empty
+   pane at 560; DESIGN rule 13, growth feeds content). The wrapper is the
+   container the query reads; the dl is the grid */
+.ans-kv-slot {
+  container-type: inline-size;
+}
 .ans-kv {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--sp-2);
   margin: 0;
   padding: var(--sp-1) 0;
   user-select: text;
   -webkit-user-select: text;
 }
+@container (min-width: 480px) {
+  .ans-kv {
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    column-gap: var(--sp-4);
+  }
+}
 .ans-kv-row {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 .ans-kv-k {
   font-family: var(--font-mono);
@@ -817,9 +924,15 @@
 
 /* ---- empty states ------------------------------------------------------- */
 /* configured, no thread: the three starters docked above the composer and
-   nothing else (rule 11). margin-top:auto on the chip row, not
-   justify-content, so a short pane still scrolls to the first chip */
+   nothing else (rule 11). margin-top:auto on the row, not justify-content,
+   so a short pane still scrolls to the first chip. Positioned because the
+   three rotate (useStarters) and the two triples crossfade (AskPanel's
+   Starters, AnimatePresence popLayout): motion parks the leaving row
+   absolutely at its measured offset inside THIS box while the arriving row
+   takes the flow; opacity is motion's, never a CSS animation here (an
+   animation outranks the inline opacity it writes) */
 .ask-starters {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -827,8 +940,15 @@
   flex-direction: column;
   padding: var(--sp-3);
 }
-.ask-starters > .ans-chips {
+.ask-starters-row {
   margin-top: auto;
+}
+/* the leaving row (motion stamps it while it fades) is not pressable: a chip
+   on its way out asks nothing (rule 8, LESSONS 9) */
+.ask-starters-row[data-motion-pop-id] {
+  pointer-events: none;
+}
+.ask-starters .ans-chips {
   flex-direction: column;
   flex-wrap: nowrap;
   align-items: stretch;
@@ -1180,7 +1300,8 @@
 /* ---- end AnswerBlock anatomy ---- */
 
 @media (prefers-reduced-motion: reduce) {
-  .ans > * {
+  .ans > *,
+  .ans-echo::before {
     animation: none;
   }
 }

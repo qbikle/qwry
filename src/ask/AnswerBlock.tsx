@@ -55,6 +55,13 @@ export interface AnswerBlockProps {
   phase: AskPhase | null;
   /** every question already asked in the thread (follow-ups never repeat one) */
   asked: ReadonlySet<string>;
+  /** the layout id the composer's ghost carried when this question was sent
+   * (AskPanel hands it to the one exchange that landed out of the ghost, in
+   * the render that mounts it; never to an older echo of the same text): the
+   * echo takes it so the text lifts out of the composer into the bubble;
+   * absent, the echo pairs with the suggestion chip of the same question
+   * (section 6) */
+  liftId?: string;
 }
 
 const TAB_TITLE_CAP = 40;
@@ -90,6 +97,7 @@ export function AnswerBlock({
   busy,
   phase,
   asked,
+  liftId,
 }: AnswerBlockProps) {
   const openTrace = useAsk((s) => s.openTrace);
   const pending = useAgent((s) => s.pending[exchange.id]);
@@ -122,20 +130,32 @@ export function AnswerBlock({
 
   return (
     <article className="ans" data-exchange={exchange.id}>
-      {/* the newest echo is what a picked suggestion morphs into (section 6);
-          older echoes drop the shared id so a repeated question never pairs */}
+      {/* the question echo: the user's words in a bubble at the right edge, the
+          anatomy below staying left (ask.css .ans-echo). The newest echo is
+          what the sent text or a picked suggestion travels into (section 6):
+          a send pairs through the ghost's own id (a nonce, so an older echo of
+          the same question in the thread never joins the pairing), a chip pick
+          through the question's id. Position-only: text never scales, so the
+          shared-layout spring carries the words and the bubble's fill fades in
+          behind them (a scaled glyph is a distorted glyph). Motion fixes a
+          node's id at mount, so a later change of this prop is inert. Older
+          echoes carry no id at all */}
       <motion.div
         className="ans-echo"
-        layoutId={isLatest ? questionLayoutId(exchange.question) : undefined}
+        layoutId={isLatest ? liftId ?? questionLayoutId(exchange.question) : undefined}
+        layout={isLatest ? "position" : undefined}
         transition={spring.layout}
       >
         {exchange.question}
       </motion.div>
 
+      {/* `waiting`: no answer text yet, so the strip may end in `qwrying…`
+          while nothing runs; the word leaves the instant text streams */}
       <ThinkingStrip
         chips={exchange.chips}
         streaming={exchange.streaming}
         phase={phase}
+        waiting={exchange.text.length === 0}
         onChipClick={(chipId) => openTrace(exchange.id, chipId)}
       />
 

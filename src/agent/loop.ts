@@ -36,6 +36,7 @@ import type {
 import type { SchemaSnapshot } from "../stores/schema";
 import { buildMeta, candidates, indexFor, recallOf } from "./context";
 import { isRisky } from "./risk";
+import { probeNoun } from "./probeNoun";
 import {
   PROMPT_VERSION,
   SMALL_SYSTEM_PROMPT,
@@ -199,8 +200,10 @@ function chipLabel(name: ToolName, args: Record<string, unknown>): string {
       return `peek ${typeof args.column === "string" ? args.column : ""}`.trim();
     case "run_sql":
       return "run";
-    case "probe":
-      return "probe";
+    case "probe": {
+      const noun = probeNoun(strings(args.sqls) ?? []);
+      return noun === null ? "probe" : `probe ${noun}`;
+    }
   }
 }
 

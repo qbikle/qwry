@@ -1,6 +1,7 @@
 import { EditorView } from "@codemirror/view";
 import type { FormatOptionsWithLanguage } from "sql-formatter";
 import { useSettings } from "../stores/settings";
+import { formatPostgres, postgresDialect } from "./sqlDialect";
 
 /** curated formatter styles: each is a full sql-formatter option set; the
  * keyword-case setting is layered on top of whichever preset runs */
@@ -151,20 +152,25 @@ function applyToBuffer(view: EditorView, transform: (src: string) => string): bo
 /** format with a specific preset (context-menu submenu). sql-formatter is
  * loaded on first use: it's ~an eighth of the whole bundle and ⇧⌘F is rare;
  * the buffer snapshot is taken AFTER the load so a keystroke typed during the
- * import is never clobbered by a format of stale text */
+ * import is never clobbered by a format of stale text. The same curated
+ * Postgres dialect as formatSqlText (sqlDialect.ts), so an alias like
+ * `AS month` keeps its case in the editor as it does in the Ask row */
 export async function formatWithPreset(view: EditorView, presetId: string): Promise<void> {
-  const { format } = await import("sql-formatter");
-  applyToBuffer(view, (src) => format(src, buildOptions(presetId)));
+  const mod = await import("sql-formatter");
+  const { language: _language, ...opts } = buildOptions(presetId);
+  applyToBuffer(view, (src) => mod.formatDialect(src, { ...opts, dialect: postgresDialect(mod) }));
 }
 
 /** format a bare SQL string with a preset (default: the user's); for read-only
  * surfaces that show or copy SQL outside an editor (the Ask answer's SQL row).
- * Same lazy import as the editor path. A statement the formatter rejects comes
- * back unchanged. */
+ * Same lazy import as the editor path, through the curated Postgres dialect
+ * (sqlDialect.ts: an alias like `AS month` keeps the model's case, so the row
+ * and Copy SQL agree with the grid header). A statement the formatter rejects
+ * comes back unchanged. */
 export async function formatSqlText(src: string, presetId?: string): Promise<string> {
-  const { format } = await import("sql-formatter");
+  const { language: _language, ...opts } = buildOptions(presetId ?? useSettings.getState().formatPreset);
   try {
-    return format(src, buildOptions(presetId ?? useSettings.getState().formatPreset));
+    return await formatPostgres(src, opts);
   } catch {
     return src;
   }
