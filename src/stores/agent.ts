@@ -73,6 +73,27 @@ export interface Exchange {
   streaming: boolean;
   provider: string;
   model: string;
+  /** present while a retry (applyPending, fixIt, retry) streams over this
+   * exchange: the landed shape it is replacing. A cancelled retry puts it back
+   * exactly (a Stop never costs an answer, AGENT-UX 7); any verdict drops it */
+  prior?: PriorAnswer;
+}
+
+/** What a retry replaces: kept whole so restorePrior() is exact. */
+export interface PriorAnswer {
+  text: string;
+  thinking: string;
+  chips: ToolChip[];
+  answer: AskAnswer | null;
+  error: Exchange["error"];
+}
+
+/** One assumption chip's wanted state, carried into a re-ask as a stated
+ * constraint and reapplied to the landed chips (applyFlips). */
+export interface Flip {
+  id: string;
+  label: string;
+  active: boolean;
 }
 
 interface AgentState {
@@ -86,6 +107,11 @@ interface AgentState {
   sessions: Record<string, string>;
   phase: Record<string, AskPhase | null>;
   busy: Record<string, boolean>;
+  /** per exchange, the chips whose WANTED state differs from the answer's
+   * (chip id → wanted active). A chip click writes here and nothing runs; the
+   * floating pill applies the whole set as ONE re-ask (applyPending). Keys
+   * return to the answer's state are deleted, so an empty set is no entry */
+  pending: Record<string, Record<string, boolean>>;
 
   setActiveProfile: (profileId: string | null) => void;
   loadThreads: (profileId: string) => Promise<void>;
@@ -94,7 +120,16 @@ interface AgentState {
   deleteThread: (profileId: string, threadId: string) => Promise<void>;
   ask: (question: string) => Promise<void>;
   cancel: () => void;
+  /** the W2 immediate re-run of one chip; kept for callers, no longer wired
+   * to a chip click (a click toggles the pending set instead) */
   toggleAssumption: (exchangeId: string, chipId: string) => Promise<void>;
+  /** flip a chip's wanted state; the key leaves when it returns to the
+   * answer's own state. Refused while the thread is busy */
+  togglePending: (exchangeId: string, chipId: string) => void;
+  discardPending: (exchangeId: string) => void;
+  /** the pill: one re-ask carrying every flip of the exchange's pending set
+   * as a constraint; the set stays until a verdict lands, so a cancel keeps it */
+  applyPending: (exchangeId: string) => Promise<void>;
   /** Fix It (AGENT-UX 7): one more repair pass over a failed exchange, from
    * the SQL as the user left it in the editable field */
   fixIt: (exchangeId: string, sql: string) => Promise<void>;
@@ -103,7 +138,15 @@ interface AgentState {
   /** thread closed or connection disconnected: the session goes with it */
   closeThread: (threadId: string) => Promise<void>;
   dropProfile: (profileId: string) => Promise<void>;
+  /** Delete All in the Threads sheet: every thread of the connection, one
+   * appdb delete each, then the list reloaded from appdb (the truth) */
+  deleteAllThreads: (profileId: string) => Promise<void>;
 }
+
+/** The loop entry runInto() drives. A seam, not a switch: the store's own
+ * tests stand a scripted loop in here (agent-pending.test.ts), because a bun
+ * module mock is process-global and reached the loop's own tests. */
+export const runner = { runAsk };
 
 /** Not state: an AbortController is not serialisable and nothing renders it. */
 const controllers = new Map<string, AbortController>();
@@ -215,6 +258,7 @@ export const useAgent = create<AgentState>((set, get) => ({
   sessions: {},
   phase: {},
   busy: {},
+  pending: {},
 
   setActiveProfile: (profileId) => set({ activeProfileId: profileId }),
 
@@ -323,9 +367,13 @@ export const useAgent = create<AgentState>((set, get) => ({
     await agentThreadDelete(threadId);
     set((s) => {
       const exchanges = { ...s.exchanges };
+      const gone = s.exchanges[threadId] ?? [];
       delete exchanges[threadId];
+      let pending = s.pending;
+      for (const e of gone) pending = without(pending, e.id);
       return {
         exchanges,
+        pending,
         threads: {
           ...s.threads,
           [profileId]: (s.threads[profileId] ?? []).filter((t) => t.id !== threadId),
@@ -452,7 +500,58 @@ export const useAgent = create<AgentState>((set, get) => ({
       snapshot,
       choice,
       persistUserTurn: false,
-      flip: { id: chipId, label: chip.label, active: flipped },
+      flips: [{ id: chipId, label: chip.label, active: flipped }],
+    });
+  },
+
+  togglePending: (exchangeId, chipId) => {
+    const found = findExchange(get, exchangeId);
+    if (!found || get().busy[found.threadId]) return;
+    const chip = found.exchange.answer?.assumptions.find((a) => a.id === chipId);
+    if (!chip) return;
+    set((s) => {
+      const mine = { ...(s.pending[exchangeId] ?? {}) };
+      const wanted = !(chipId in mine ? mine[chipId] : chip.active);
+      if (wanted === chip.active) delete mine[chipId];
+      else mine[chipId] = wanted;
+      return {
+        pending:
+          Object.keys(mine).length === 0
+            ? without(s.pending, exchangeId)
+            : { ...s.pending, [exchangeId]: mine },
+      };
+    });
+  },
+
+  discardPending: (exchangeId) => set((s) => ({ pending: without(s.pending, exchangeId) })),
+
+  applyPending: async (exchangeId) => {
+    const found = locateExchange(get, exchangeId);
+    if (!found) return;
+    const { profileId, threadId, exchange, snapshot, choice } = found;
+    const flips = pendingFlips(exchange, get().pending[exchangeId]);
+    if (flips.length === 0) return;
+    // the toggleAssumption shape, every flip listed: the model knows which
+    // predicate the words meant, and a text rewrite of its query is how a
+    // silent wrong answer gets made
+    const askText =
+      `${exchange.question}\n\nAdditional constraint${flips.length > 1 ? "s" : ""}: ` +
+      flips
+        .map((f) =>
+          f.active ? `apply this assumption: ${f.label}` : `do not apply this assumption: ${f.label}`,
+        )
+        .join("; ");
+    rearm(set, threadId, exchangeId);
+    await runInto(set, get, {
+      profileId,
+      threadId,
+      exchangeId,
+      question: exchange.question,
+      askText,
+      snapshot,
+      choice,
+      persistUserTurn: false,
+      flips,
     });
   },
 
@@ -517,6 +616,18 @@ export const useAgent = create<AgentState>((set, get) => ({
     for (const id of ids) await get().closeThread(id);
     set((s) => ({ activeThread: { ...s.activeThread, [profileId]: null } }));
   },
+
+  deleteAllThreads: async (profileId) => {
+    // ids captured before the first await (LESSONS 3); each delete goes
+    // through deleteThread so a session closes before its rows go, and a
+    // failure midway leaves the rest for the reload to show truthfully
+    const ids = (get().threads[profileId] ?? []).map((t) => t.id);
+    try {
+      for (const id of ids) await get().deleteThread(profileId, id);
+    } finally {
+      await get().loadThreads(profileId);
+    }
+  },
 }));
 
 // ---- the one place a run is driven ----------------------------------------
@@ -539,21 +650,115 @@ function locateExchange(get: () => AgentState, exchangeId: string) {
   return { profileId, threadId, exchange, snapshot, choice };
 }
 
-/** put an exchange back into its streaming shape for a re-run: the new run's
- * prose streams fresh (text deltas append, so the old text would otherwise be
- * its prefix); the previous answer stays until the new one replaces it */
+/** the exchange by id in the connection's active thread; null when gone */
+function findExchange(get: () => AgentState, exchangeId: string) {
+  const profileId = get().activeProfileId;
+  const threadId = profileId ? get().activeThread[profileId] : null;
+  if (!threadId) return null;
+  const exchange = (get().exchanges[threadId] ?? []).find((e) => e.id === exchangeId);
+  return exchange ? { threadId, exchange } : null;
+}
+
+/** put an exchange back into its streaming shape for a re-run, with its
+ * landed shape stashed as `prior`: the strip shows the new run's chips while
+ * the old prose, grid and footer stay on screen (text deltas are held back
+ * until the verdict, see runInto), and a cancel restores the stash exactly */
 function rearm(set: Setter, threadId: string, exchangeId: string) {
   set((s) => ({
     exchanges: {
       ...s.exchanges,
-      [threadId]: (s.exchanges[threadId] ?? []).map((e) =>
-        e.id === exchangeId
-          ? { ...e, streaming: true, chips: [], error: null, text: "", thinking: "" }
-          : e,
-      ),
+      [threadId]: (s.exchanges[threadId] ?? []).map((e) => (e.id === exchangeId ? stashPrior(e) : e)),
     },
     busy: { ...s.busy, [threadId]: true },
   }));
+}
+
+/** the retry's opening move: keep what is on screen, clear what the new run
+ * writes (chips, error, thinking); the text stays visible as the prior prose */
+export function stashPrior(e: Exchange): Exchange {
+  return {
+    ...e,
+    prior: { text: e.text, thinking: e.thinking, chips: e.chips, answer: e.answer, error: e.error },
+    streaming: true,
+    chips: [],
+    error: null,
+    thinking: "",
+  };
+}
+
+/** a cancelled retry: the exchange exactly as it was before rearm() */
+export function restorePrior(e: Exchange): Exchange {
+  if (!e.prior) return { ...e, streaming: false };
+  const { prior, ...rest } = e;
+  return {
+    ...rest,
+    text: prior.text,
+    thinking: prior.thinking,
+    chips: prior.chips,
+    answer: prior.answer,
+    error: prior.error,
+    streaming: false,
+  };
+}
+
+/** a verdict landed: the prior has been replaced */
+function dropPrior(e: Exchange): Exchange {
+  if (!e.prior) return e;
+  const { prior: _prior, ...rest } = e;
+  return rest;
+}
+
+function without<T>(map: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in map)) return map;
+  const next = { ...map };
+  delete next[key];
+  return next;
+}
+
+/** the flips a pending set asks of an answer's chips, in chip order; a chip
+ * the answer no longer has is dropped rather than invented */
+export function pendingFlips(exchange: Exchange, wanted: Record<string, boolean> | undefined): Flip[] {
+  if (!wanted) return [];
+  const out: Flip[] = [];
+  for (const c of exchange.answer?.assumptions ?? []) {
+    const w = wanted[c.id];
+    if (w !== undefined && w !== c.active) out.push({ id: c.id, label: c.label, active: w });
+  }
+  return out;
+}
+
+/** the retry pill's face for one exchange's pending set (control register:
+ * Title Case per WRITING rule 1, `with` lowercase as a short preposition; no
+ * ellipsis, it acts). Exactly one chip turned off names it in the singular;
+ * only chips turned off, the plural; any chip turned on is a change */
+export function retryLabel(pending: Record<string, boolean>): string {
+  const wanted = Object.values(pending);
+  if (wanted.length === 0 || wanted.some((on) => on)) return "Retry with Changes";
+  return wanted.length === 1 ? "Retry Without Assumption" : "Retry Without Assumptions";
+}
+
+/** the exchange the pill targets: the newest one with a non-empty pending set */
+export function pendingTarget(
+  exchanges: readonly Exchange[],
+  pending: Record<string, Record<string, boolean>>,
+): string | null {
+  for (let i = exchanges.length - 1; i >= 0; i--) {
+    const set = pending[exchanges[i].id];
+    if (set && Object.keys(set).length > 0) return exchanges[i].id;
+  }
+  return null;
+}
+
+/** a run that ended in a cancel: a retry puts its prior answer back exactly
+ * (nothing was lost, and the pending set stays so the pill returns); a fresh
+ * question keeps `cancelled` with its partial text (AGENT-UX 7) */
+function cancelExchange(set: Setter, threadId: string, exchangeId: string, clearBusy: boolean) {
+  patchExchange(set, threadId, exchangeId, (e) =>
+    e.prior
+      ? restorePrior(e)
+      : { ...e, streaming: false, error: { kind: "cancelled", message: "cancelled" } },
+  );
+  if (clearBusy) set((s) => ({ busy: { ...s.busy, [threadId]: false } }));
 }
 
 function patchExchange(
@@ -596,7 +801,9 @@ interface RunArgs {
   snapshot: ReturnType<typeof useSchema.getState>["snapshots"][string];
   choice: ModelChoice;
   persistUserTurn: boolean;
-  flip?: { id: string; label: string; active: boolean };
+  /** chip states the user chose, reapplied to the landed chips whatever the
+   * re-run's own Assumptions line said */
+  flips?: Flip[];
 }
 
 async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
@@ -615,7 +822,7 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
   if (cancelRequested.delete(threadId)) {
     // cancelled while connecting: the session is kept for the next question,
     // the question itself never reaches the model
-    failExchange(set, threadId, exchangeId, "cancelled", "cancelled");
+    cancelExchange(set, threadId, exchangeId, true);
     return;
   }
 
@@ -659,12 +866,16 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
         }));
         break;
       case "text":
-        patchExchange(set, threadId, exchangeId, (e) => ({ ...e, text: e.text + ev.delta }));
+        // a retry keeps the prior prose on screen until its verdict lands
+        // (the landed answer.text replaces it then); a fresh question streams
+        patchExchange(set, threadId, exchangeId, (e) =>
+          e.prior ? e : { ...e, text: e.text + ev.delta },
+        );
         break;
       case "narration":
         // a tool call closed the block: it belongs to the trace, and the answer
         // slot starts over for the block that follows (AGENT-UX 2.3)
-        patchExchange(set, threadId, exchangeId, (e) => ({ ...e, text: "" }));
+        patchExchange(set, threadId, exchangeId, (e) => (e.prior ? e : { ...e, text: "" }));
         break;
       case "thinking":
         patchExchange(set, threadId, exchangeId, (e) => ({
@@ -692,7 +903,7 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
     // a persisted provider id no adapter claims throws here, inside the same
     // net as the run: the exchange fails with the message, busy clears
     provider = providerFor(args.choice, tauriPlatform);
-    answer = await runAsk({
+    answer = await runner.runAsk({
       question: args.askText,
       snapshot: args.snapshot,
       tools: createTauriTools({ sessionId, snapshot: args.snapshot }),
@@ -707,30 +918,49 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
   } catch (e) {
     const mine = authoritative();
     if (mine) controllers.delete(threadId);
+    if (controller.signal.aborted) {
+      // the loop answers a cancel with a verdict; a throw under an aborted
+      // signal is the same cancel from outside it and settles the same way
+      cancelExchange(set, threadId, exchangeId, mine);
+      return;
+    }
     patchExchange(set, threadId, exchangeId, (x) => ({
-      ...x,
+      ...dropPrior(x),
       streaming: false,
       error: { kind: "provider", message: firstLine(e) },
     }));
+    set((s) => ({ pending: without(s.pending, exchangeId) }));
     if (mine) set((s) => ({ busy: { ...s.busy, [threadId]: false } }));
     return;
   }
   const mine = authoritative();
   if (mine) controllers.delete(threadId);
 
-  const assumptions = args.flip
-    ? applyFlip(answer.assumptions, args.flip)
-    : answer.assumptions;
-  const landed: AskAnswer = { ...answer, assumptions };
-  patchExchange(set, threadId, exchangeId, (e) => ({
-    ...e,
-    streaming: false,
-    text: answer.text || e.text,
-    answer: landed,
-  }));
+  const landed: AskAnswer = { ...answer, assumptions: applyFlips(answer.assumptions, args.flips ?? []) };
+  // a cancelled retry is no verdict on the question: the prior answer comes
+  // back exactly and its pending set stays, so the pill returns; every other
+  // verdict replaces the prior and settles the set (the landed chips already
+  // wear the flips)
+  const cancelledRetry =
+    answer.verdict.status === "cancelled" &&
+    !!(get().exchanges[threadId] ?? []).find((e) => e.id === exchangeId)?.prior;
+  if (cancelledRetry) {
+    patchExchange(set, threadId, exchangeId, restorePrior);
+  } else {
+    patchExchange(set, threadId, exchangeId, (e) => ({
+      ...dropPrior(e),
+      streaming: false,
+      text: answer.text || e.text,
+      answer: landed,
+    }));
+    set((s) => ({ pending: without(s.pending, exchangeId) }));
+  }
   if (mine) {
     set((s) => ({ busy: { ...s.busy, [threadId]: false }, phase: { ...s.phase, [threadId]: null } }));
   }
+  // the verdict on screen is still the prior one, and so is appdb's row: a
+  // cancelled retry must not write `cancelled` over an answered turn
+  if (cancelledRetry) return;
 
   // the answer is on screen; the follow-up chips arrive when they exist
   // (AGENT-UX 2), on the same signal so a cancel or a newer ask ends them
@@ -790,13 +1020,16 @@ async function followUpsInto(
 /** The toggled chip keeps the state the user chose, whatever the re-run's own
  * assumptions line said; if the model dropped it entirely, it is still shown,
  * because the user turned it off on purpose. */
-function applyFlip(
-  chips: Assumption[],
-  flip: { id: string; label: string; active: boolean },
-): Assumption[] {
+function applyFlip(chips: Assumption[], flip: Flip): Assumption[] {
   const hit = chips.find((c) => c.id === flip.id || c.label === flip.label);
   if (hit) return chips.map((c) => (c === hit ? { ...c, active: flip.active } : c));
   return [...chips, { id: flip.id, label: flip.label, source: "model", active: flip.active }];
+}
+
+export function applyFlips(chips: Assumption[], flips: readonly Flip[]): Assumption[] {
+  let out = chips;
+  for (const flip of flips) out = applyFlip(out, flip);
+  return out;
 }
 
 async function persist(set: Setter, get: () => AgentState, args: RunArgs, answer: AskAnswer) {

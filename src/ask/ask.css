@@ -192,6 +192,15 @@
   flex-direction: column;
   gap: var(--sp-5);
 }
+/* while an assumption set is pending the retry pill floats over the
+   scroller's last rows (.ask-retry): the scroller reserves the pill's
+   footprint (28px face + its gap above the composer + the same gap above the
+   pill) so the footer, its Trace link included, scrolls clear of it and
+   nothing under the pill is unreachable (LESSONS 8: floating chrome shrinks
+   the viewport) */
+.ask-scroll[data-pill] {
+  padding-bottom: calc(28px + var(--sp-2) + var(--sp-2));
+}
 .ask-scroll::-webkit-scrollbar {
   width: 8px;
 }
@@ -224,15 +233,43 @@
   color: var(--fg);
   user-select: text;
 }
-/* thinking strip: FIXED height (rule 2); chips scroll past the edge, never wrap */
+/* thinking strip: FIXED height (rule 2); chips scroll sideways past the
+   edges, never wrap. The scrollbar is hidden (the masks say there is more,
+   the wheel and the newest-chip follow move it); scroll is never animated */
 .ans-strip {
   height: 24px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 6px; /* optical */
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   white-space: nowrap;
+  scrollbar-width: none;
+}
+.ans-strip::-webkit-scrollbar {
+  display: none;
+}
+/* edge masks follow the scroll position (ThinkingStrip): the left fades once
+   older chips sit under it, the right while newer chips wait past it, so a
+   cut never reads as a broken pill and a fade always means reachable chips */
+.ans-strip.fade-l {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 24px);
+  mask-image: linear-gradient(to right, transparent, #000 24px);
+}
+.ans-strip.fade-r {
+  -webkit-mask-image: linear-gradient(to left, transparent, #000 24px);
+  mask-image: linear-gradient(to left, transparent, #000 24px);
+}
+.ans-strip.fade-l.fade-r {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 24px,
+    #000 calc(100% - 24px),
+    transparent
+  );
+  mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
 }
 /* tool chip: a status pill while running, a button once it can open the trace */
 .tchip {
@@ -319,12 +356,79 @@
 .ans-text b {
   font-weight: 650;
 }
-/* the grid slot: the real Grid mounts here in readOnly mode; the host sets
-   the height (header + up to six rows) so the answer scroller stays honest */
+/* the grid slot: the real Grid mounts here in readOnly mode and sizes itself
+   (header + up to six rows + its own horizontal scrollbar, Grid maxRows), so
+   the answer scroller stays honest and no slot height can hide a row */
 .ans-grid {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   overflow: hidden;
+}
+/* one row, one column: the value in the data register with the column name
+   as its caption (ScalarResult). Plain selectable text; ⌘C copies the
+   selection (rule 11: nothing to discover). NULL and '' wear the grid's own
+   chips (grid.css), so the two result shapes never disagree about a value */
+.ans-scalar {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--sp-2) 0;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.ans-scalar-v {
+  font-family: var(--font-mono);
+  font-size: 22px; /* optical */ /* the answer's one number, above the text ramp */
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+/* a value too long to read at a glance (ScalarResult GLANCE_CHARS) wears the
+   stacked form's register instead of shouting a URL at 22px */
+.ans-scalar-v.long {
+  font-size: var(--text-md);
+  font-weight: 500;
+  line-height: var(--lh-data);
+  white-space: pre-wrap;
+}
+.ans-scalar-k {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+/* one row, two to four columns: name over value, stacked */
+.ans-kv {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: var(--sp-1) 0;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.ans-kv-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ans-kv-k {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+.ans-kv-v {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  line-height: var(--lh-data);
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 /* status register line: rows · ms, and the sanity line */
 .ans-status {
@@ -598,10 +702,31 @@
 /* ---- end FailureBlock ---- */
 
 /* ---- docked composer: two rows, no hint line (rule 11) ------------------ */
+/* positioned so the retry pill can float over its top edge */
 .ask-input {
+  position: relative;
   flex-shrink: 0;
   padding: var(--sp-2) var(--sp-3) var(--sp-3);
   border-top: 1px solid var(--border);
+}
+/* the retry pill (RetryPill.tsx): Action button species in pill shape,
+   floating at the composer's top-right corner over the thread's last rows.
+   Never in the flow: it moves nothing and never covers the send button; the
+   scroller pads its own end by the pill's footprint while a set is pending
+   (.ask-scroll[data-pill]) so the footer scrolls clear. Above the grid's
+   sticky chrome (grid.css tops out at 9); the trace drawer follows it in the
+   DOM and wins the tie */
+.ask-retry {
+  position: absolute;
+  right: var(--sp-3);
+  bottom: calc(100% + var(--sp-2));
+  z-index: 10;
+  height: 28px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-pop);
+  font-weight: 600;
+  white-space: nowrap;
 }
 /* the box stacks the textarea over its control row (model pill · send) */
 .ask-box {
@@ -1030,13 +1155,6 @@
 
 /* ---- AnswerBlock anatomy (ThinkingStrip, SqlRow) ---------------------------
    Fenced: owned by the answer-anatomy builder. */
-/* an overflowing strip keeps the newest chip at the right edge (an instant
-   scrollLeft assignment in ThinkingStrip, never animated); the clipped older
-   chips fade under a mask so the cut never reads as a broken pill */
-.ans-strip.overflow {
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 24px);
-  mask-image: linear-gradient(to right, transparent, #000 24px);
-}
 /* the SQL row's editor register: a read-only CodeMirror view; its text stays
    selectable inside a user-select:none body */
 .ans-sql-code {

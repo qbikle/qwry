@@ -17,7 +17,11 @@
 //   plugin:event|listen / unlisten / emit  mocks' own event table (shouldMockEvents)
 //   agent_thread_list                       the fixture thread row: AskPanel calls
 //                                           loadThreads on mount, and the Threads
-//                                           button enables only with a row
+//                                           button enables only with a row; the
+//                                           `threads` state gets the shell builder's
+//                                           five rows (fixtures.shell.ts), else the
+//                                           mount would overwrite the seeded five
+//                                           with the one
 //   agent_key_has                           false: ModelPicker.loadSourceState asks
 //                                           per hosted provider; no key is saved
 //   agent_http_stream                       the llama.cpp preset's GET /models is
@@ -33,6 +37,9 @@ import type { Channel, InvokeArgs } from "@tauri-apps/api/core";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { HttpChunk, HttpDone } from "../ipc/types";
 import { FIXTURE, LOCAL_MODELS_JSON, LOCAL_MODELS_URL } from "./fixtures";
+import { SHELL_THREAD_ROWS } from "./fixtures.shell";
+
+const harnessState = () => new URLSearchParams(location.search).get("state");
 
 const record = (payload: InvokeArgs | undefined): Record<string, unknown> =>
   payload !== null && typeof payload === "object" && !Array.isArray(payload)
@@ -65,7 +72,7 @@ export function installTauriShim(): void {
     (cmd, payload) => {
       switch (cmd) {
         case "agent_thread_list":
-          return [FIXTURE.threadRow];
+          return harnessState() === "threads" ? SHELL_THREAD_ROWS : [FIXTURE.threadRow];
         case "agent_key_has":
           return false;
         case "agent_http_stream":

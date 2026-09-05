@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { Lock, LockOpen, MessageSquare, PanelRight, SwatchBook } from "lucide-react";
-import { panelIn, swapIn } from "../design/springs";
+import { panelIn, slideOffset, spring, swapIn } from "../design/springs";
 import { useUI } from "../stores/ui";
 import "../stores/heal"; // side effects: wake/focus/death self-heal triggers
 import { ThemePicker } from "./ThemePicker";
@@ -68,13 +68,52 @@ export function App() {
   // the one right pane: Inspector and Ask are its modes (AGENT-UX section 1).
   // Both mode holders stay mounted inside the card (the inspector keeps its
   // cell, the composer its draft); the card collapses to width 0 and the
-  // mode not showing is visibility-hidden, never unmounted.
+  // mode not showing is visibility-hidden once its exit settles, never
+  // unmounted.
   const paneOpen = useSidePane((s) => s.open);
   const paneMode = useSidePane((s) => s.mode);
   const paneWidth = useSidePane((s) => s.width);
   const inspectorFixedRef = useRef<HTMLDivElement>(null);
   const askFixedRef = useRef<HTMLDivElement>(null);
   const prePaneFocus = useRef<HTMLElement | null>(null);
+  // the mode swap animates (the locked sketch's motion note): Ask sits LEFT
+  // of the Inspector, the titlebar order, so on a switch the leaving holder
+  // slides 32px toward its own side and fades while the arriving one slides
+  // in from its side; both stay mounted and overlap, and the card's width
+  // never moves for the swap (the clamp, when there is one, rides the card's
+  // own CSS width transition alongside). `exiting` names the holder still on
+  // its way out: it keeps visibility until its spring settles, then the
+  // data-mode rule hides it so its controls leave the tab order. A switch
+  // that also opens or closes the card is instant: the width reveal is the
+  // motion there. Read off the store's own change (state, prev) so the render
+  // that moves the mode already carries the right transition
+  const [swap, setSwap] = useState<{ exiting: PaneMode | null; instant: boolean }>({
+    exiting: null,
+    instant: true,
+  });
+  useEffect(
+    () =>
+      useSidePane.subscribe((s, prev) => {
+        if (s.mode === prev.mode) return;
+        const instant = !prev.open || !s.open;
+        setSwap({ exiting: instant ? null : prev.mode, instant });
+      }),
+    [],
+  );
+  useEffect(() => {
+    if (!swap.exiting) return;
+    // a settled spring clears this itself (onAnimationComplete); the timer is
+    // the net under a completion that never fires, so a hidden holder never
+    // keeps its tab stops
+    const id = window.setTimeout(() => setSwap((x) => ({ ...x, exiting: null })), 800);
+    return () => window.clearTimeout(id);
+  }, [swap.exiting]);
+  const settled = (mode: PaneMode) => {
+    if (mode !== paneMode) setSwap((x) => (x.exiting === mode ? { ...x, exiting: null } : x));
+  };
+  const holderPose = (mode: PaneMode, side: "left" | "right") =>
+    mode === paneMode ? { x: 0, opacity: 1 } : { x: slideOffset(side), opacity: 0 };
+  const holderTransition = swap.instant ? { duration: 0 } : spring.slide;
   // focus never rests in a holder that is no longer visible. A close from
   // ANY path (titlebar, palette, a chord with a dead prev element) pulls
   // focus out of the now-invisible pane, or ⌘F and typing land in a hidden
@@ -938,12 +977,18 @@ export function App() {
             >
               <div className="side-resize" onMouseDown={startPaneResize} />
               {/* fixed-width mode holders so content slides in from the right
-                  as the card widens (the main card reflows in lockstep); the
-                  mode not showing is hidden by data-mode, never unmounted */}
-              <div
-                className="inspector-fixed"
+                  as the card widens (the main card reflows in lockstep); a
+                  mode switch slides the holders past each other (Ask on the
+                  left, Inspector on the right) and the one that left is
+                  hidden by data-mode once settled, never unmounted */}
+              <motion.div
+                className={`inspector-fixed${swap.exiting === "inspector" ? " exiting" : ""}`}
                 style={{ width: "var(--pane-w)", outline: "none" }}
                 ref={inspectorFixedRef}
+                initial={false}
+                animate={holderPose("inspector", "right")}
+                transition={holderTransition}
+                onAnimationComplete={() => settled("inspector")}
                 // click-to-focus so ⌘F scopes here: JsonTree rows are plain
                 // divs and WKWebView won't focus ancestors on click; explicit
                 // focus is the only engine-proof path. Inputs keep their own.
@@ -957,13 +1002,21 @@ export function App() {
                 <Suspense fallback={null}>
                   <Inspector />
                 </Suspense>
-              </div>
+              </motion.div>
               {/* the panel inside owns its own focus discipline */}
-              <div className="ask-fixed" style={{ width: "var(--pane-w)" }} ref={askFixedRef}>
+              <motion.div
+                className={`ask-fixed${swap.exiting === "ask" ? " exiting" : ""}`}
+                style={{ width: "var(--pane-w)" }}
+                ref={askFixedRef}
+                initial={false}
+                animate={holderPose("ask", "left")}
+                transition={holderTransition}
+                onAnimationComplete={() => settled("ask")}
+              >
                 <Suspense fallback={null}>
                   {activeProfile && <AskPanel profile={activeProfile} connected={connected} />}
                 </Suspense>
-              </div>
+              </motion.div>
             </aside>
           </>
         )}

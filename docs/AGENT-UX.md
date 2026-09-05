@@ -27,7 +27,17 @@ the composer placeholder names the database (`Ask about auth_new…`). The
 components live in `src/ask/` (AskPanel and its parts, `ask.css`).
 
 In Ask mode the pane header is `Ask` (a text title, no icon) and two icon
-buttons, `Threads` and `New Thread`; nothing else (DESIGN rule 12). The
+buttons, `Threads` and `New Thread`; nothing else (DESIGN rule 12). `Threads`
+opens a sheet over the thread (ThreadsSheet, the trace drawer's species and
+geometry: it slides in from the right below the header and the two never show
+together), never a menu: a header of back · `Threads` · `Delete All…`
+(soft-danger species; the ellipsis is earned, a confirm follows), then one
+row per thread of the connection, newest first, `title · relative time` with
+a delete revealed on hover and on the hot row. A row opens its thread and
+closes the sheet; ⌫ on the hot row deletes it through the app's danger
+confirm, ↩ opens it, Esc closes the sheet; the current thread's row is
+`.active`. Deleting the current thread selects the newest that remains, and
+the last delete leaves the pane's empty state. The
 composer at the bottom is two rows: the textarea, then a control row with the
 model pill at the left (§8) and the accent send button at the right, which
 becomes `Stop` while a turn runs and is the surface's cancel affordance
@@ -51,19 +61,32 @@ apply are omitted, never left as dead space (DESIGN rule 2 scope note):
 2. **Thinking strip**: a FIXED-height row (rule 2, stable chrome). Tool calls
    appear as chips as they run: `describe order_v2` · `peek payment_status` ·
    `run`. This is the trace made visible; it is the only "loading" UI. When
-   the chips outgrow the row the newest stays visible and the left edge fades
-   the older ones out; the strip never wraps.
+   the chips outgrow the row the strip scrolls sideways with its scrollbar
+   hidden; both edges fade from the scroll position (the left once older
+   chips sit under it, the right while newer ones wait past it), a vertical
+   wheel over the strip scrolls it, and every chip stays reachable. The
+   newest chip is followed only while the exchange streams, and only until
+   the user scrolls the strip themselves; the strip never wraps.
 3. **Answer text**: one or two sentences of interpretation, the model's LAST
    text block only. Before it renders, the SQL fence, the `Assumptions:` line
    and any markdown table are stripped (each has its own slot below, DESIGN
    rule 14); pre-tool narration from earlier turns ("Now retrieving…") is
    never concatenated into it. Bold and inline code render; headings, lists,
    tables and links do not. The raw text stays in the trace, untouched.
-4. **Result**: the existing results grid (one grid species app-wide) in its
-   read-only mode. When the columns' natural widths fit the slot, the last
-   column stretches to the right edge; otherwise the grid scrolls as it does
-   everywhere. Row count and timing follow in the status register through the
-   results pane's own formatter: `9 rows · 1861.9 ms`.
+4. **Result**: a run of exactly one row is values, not a grid (a table of one
+   cell is chrome around nothing): one column renders the value in the data
+   register (mono, tabular numerals, the answer's one number) with the column
+   name as its caption beneath, and a value too long to read at a glance drops
+   to the text register; two to four columns render as a stack of name over
+   value; five or more columns, and every result of more rows, is the existing
+   results grid (one grid species app-wide) in its read-only mode, sized to its
+   header plus up to six rows and scrolling inside for the rest, every promised
+   row clear of its own horizontal scrollbar. When the columns' natural widths
+   fit the slot, the last column stretches to the right edge; otherwise the
+   grid scrolls as it does everywhere. NULL and the empty string wear the
+   grid's own chips in every shape. Row count and timing follow in the status
+   register through the results pane's own formatter: `9 rows · 1861.9 ms`,
+   `1 row · 47.8 ms`.
 5. **SQL**: collapsed by default (one row: `SQL`, then the first line of the
    query, ellipsized); expand shows the query in the editor register with
    `Copy SQL` and `Open in Tab`.
@@ -90,10 +113,18 @@ register), at most six words: the prompt asks the model for that (`Added =
 sent_at`, not a quoted sentence). The row leads with `Assumed`; chips wrap
 onto further lines and a long label grows its pill downward (`min-height`
 24px, `line-height` 1.35), never clipping inside the pill or scrolling.
-Active = the assumption is in effect. Toggling re-runs the query with the
-assumption flipped; the thinking strip shows only the `run` chip. Chips are
-the product form of a measured fact: agents add filters unasked, and a hidden
-filter is a wrong answer that looks right.
+Active = the assumption is in effect. A click toggles the chip's WANTED state
+locally and runs nothing: the chip shows the wanted state, the answer stays
+as it is, and one floating pill appears over the composer's top edge, `Retry
+Without Assumption` (one chip off), `Retry Without Assumptions` (several
+off), `Retry with Changes` (any chip turned on). The pill runs every flip as
+one re-ask; clicking a chip back, or Esc over an empty composer, discards the
+set and the pill leaves. During that retry the new run's chips stream in the
+thinking strip above the previous answer, which stays on screen; Stop restores
+the previous answer exactly and the pill returns, a landed verdict replaces
+it. Chips are the product form of a measured fact: agents add filters
+unasked, and a hidden filter is a wrong answer that looks right; a chip that
+fired a run on click took the control away from the user.
 
 ## 4. Sanity line
 
@@ -109,7 +140,13 @@ ran, the line is absent.
 `Trace` in the footer opens a drawer listing every step the loop took, in
 the order the spec defines them: context (candidate tables, expandable to the
 exact text sent), each model turn (raw text), each tool call with its result,
-the verdict. Timing per step in the status register. This is a teaching
+the verdict. Timing per step in the status register. The drawer's header is
+`Trace` and the run's `1 turn · 20.4 s`, nothing else (DESIGN rule 12); the
+verdict row carries no time of its own, its ms being the run's total the
+header already states (rule 14); the one note strip belongs to Claude Code
+alone (`Claude Code’s harness prefix is not shown.`), since every other
+provider's trace is complete and a strip saying so is dead space (rule 11).
+This is a teaching
 surface (WRITING: keycaps allowed) and a trust surface: everything the model
 received is shown, nothing is summarised away.
 
@@ -132,6 +169,9 @@ Chips never repeat a question already asked in the thread.
   (`check the key in Settings › Models`), and a retry. Rate limits show the
   wait when the provider gives one.
 - Cancelled (⌘.): `cancelled` in the status register; partial text stays.
+- A cancelled retry (the pill, `Fix It`, `Retry`) is no verdict on the
+  question: the previous answer comes back untouched, text, grid, status,
+  SQL, chips and footer exactly as they were, and nothing is lost.
 
 Errors explain and propose; they do not apologise (WRITING errors register).
 
@@ -177,7 +217,15 @@ where the edit does happen (the grid, a query tab). Nowhere else.
 
 `springs.ts` presets only. Thinking-strip chips enter with `spring.snappy`;
 panel width with the inspector's spring; follow-up morph with the shared
-layout preset. One language (DESIGN rule 6).
+layout preset; the retry pill enters with the chips' preset and leaves as a
+fade. The mode swap (⌘I from Ask, ⌘J from Inspector) animates with
+`spring.slide`, ease-out and no bounce: Ask lives left of the Inspector (the
+titlebar order), so the leaving mode slides 32px toward its own side and
+fades while the arriving one slides in from its side; both holders stay
+mounted, the pane's width never moves for the swap (a floor clamp rides its
+own transition), and a switch that also opens or closes the pane is instant
+(the width reveal is the motion there). Reduced motion is a crossfade at the
+instant variant. One language (DESIGN rule 6).
 
 ## 11. Register
 
@@ -193,5 +241,8 @@ in tooltips and the Keyboard Shortcuts sheet, through `<Kbd>` (`Ask ↩`,
 ## 12. Accessibility
 
 Streamed answer text lives in a polite live region; chips are buttons with
-`aria-pressed`; the trace drawer traps focus like the inspector; every chord
-routes through `<Kbd>`.
+`aria-pressed` (the wanted state, §3); the trace drawer traps focus like the
+inspector; the Threads sheet is a listbox whose roving highlight is
+`aria-activedescendant` (the rows are never focused), Tab wraps inside it and
+focus returns to the header's `Threads` button on close; every chord routes
+through `<Kbd>`.

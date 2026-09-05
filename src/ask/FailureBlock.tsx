@@ -11,7 +11,8 @@
 // precedent): PostgreSQL highlighting through qwryHighlight, history, line
 // wrapping. ⌘↩ inside it is Fix It (claimed, or the window's Run would fire
 // too: the inspector's lesson); Esc hands focus back to the panel root. Every
-// other chord bubbles (LESSONS 10).
+// other chord bubbles (LESSONS 10). The chord rides the button's tooltip, not
+// its face, like Ask and Stop (AGENT-UX section 11, DESIGN rule 11).
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { EditorState, Prec, Transaction } from "@codemirror/state";
@@ -19,8 +20,11 @@ import { EditorView, drawSelection, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { PostgreSQL, sql as sqlLang } from "@codemirror/lang-sql";
 import type { AskErrorKind } from "../agent/loop";
-import { Kbd } from "../design/Kbd";
+import { chordGlyphs } from "../design/Kbd";
 import { qwryHighlight } from "../editor/theme";
+
+/** the chord as tooltip text: the same canon <Kbd> renders, joined bare */
+const FIX_TIP = `Fix It ${chordGlyphs("cmd+return").join("")}`;
 
 export interface FailureBlockProps {
   error: {
@@ -261,8 +265,8 @@ export function FailureBlock({
 
       <div className="ans-acts">
         {sql !== null && (
-          <button className="btnish primary" disabled={!canFix} onClick={fixIt}>
-            Fix It <Kbd chord="cmd+return" />
+          <button className="btnish primary" title={FIX_TIP} disabled={!canFix} onClick={fixIt}>
+            Fix It
           </button>
         )}
         {sql !== null && (

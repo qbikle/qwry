@@ -27,10 +27,10 @@ Every interactive control belongs to exactly one species. The species are:
 | Chip / pill toggle | recipe (no base class yet) | radius-pill, border, active = accent-soft; `.chipish` extraction ledgered |
 | Dashed ghost (add/create) | existing dashed pattern | bg none, dashed border-strong → hover accent |
 | Link button | `.linkish` | accent text + hover accent-soft fill; NEVER feedback-free |
-| Soft-danger button | recipe | danger-soft fill + danger text, for cancel/delete inside busy toolbars where filled `.danger` would shout (qb-cancel, tp-del-btn); full state matrix mandatory |
+| Soft-danger button | recipe; `.soft-danger` (threads.css) is its first class-based instance | danger-soft fill + danger text, for cancel/delete inside busy toolbars where filled `.danger` would shout (qb-cancel, tp-del-btn, `.soft-danger`); full state matrix mandatory |
 | Stepper (joined pair) | segmented-pair recipe | shared border, hairline divider, radius split, ghost-until-hover (CopySplit, rv-step) |
 | Menu row | ContextMenu / cmdk styles | highlight = accent fill, `.hot` |
-| List row / card | per-surface | hover = bg-hover minimum |
+| List row / card | per-surface (`.trow`, the Threads sheet's row) | hover = bg-hover minimum; `.hot` the transient highlight, `.active` the persistent selection |
 | Switch | `.switch` (tokens.css), rendered via `<Switch>` | macOS toggle for feature/setting rows; hidden native checkbox is the truth (role=switch, :has-derived states, spring knob). Native checkboxes remain the species for selection within content (filter rows, lists, CM search panels) |
 
 A new control joins a species or gets a new row in this table in the same PR.

@@ -1,13 +1,16 @@
 // The Ask pane's content (AGENT-UX section 1): a header that says where you
 // are (Ask · Threads · New Thread, DESIGN rule 12), the thread scroller of
 // answer blocks, the two-row composer (textarea, then model pill · send) and
-// the trace drawer sliding over the thread. The shell owns the pane (width,
-// mode, ⌘J, focus restore); this component owns everything inside it.
+// the two slide-overs, the trace drawer and the Threads sheet, over the
+// thread. The shell owns the pane (width, mode, ⌘J, focus restore); this
+// component owns everything inside it.
 //
 // Keyboard contract (W2 plan, "focus and keyboard"):
 //   ↩ sends, ⇧↩ newline; the composer stops only unmodified typing keys
 //   (LESSONS 10), every ⌘ chord bubbles to the window handler.
-//   Esc: close trace → close picker → blur the composer; never the pane.
+//   Esc: close the Threads sheet → close trace → close picker → discard the
+//   pending assumption set while the retry pill shows over an empty
+//   composer → blur the composer; never the pane.
 //   ⌘. while a turn streams cancels it when focus is inside the pane; the
 //   menu accelerator path routes here from App.tsx by the same focus test.
 // The chords are not written on the chrome (DESIGN rule 11): the send
@@ -21,21 +24,21 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
-  useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { ArrowUp, History, Plus, Square } from "lucide-react";
 import { chordGlyphs } from "../design/Kbd";
-import { ContextMenu, type MenuNode } from "../app/overlay/ContextMenu";
 import type { Profile } from "../ipc/types";
-import { modelChoice, useAgent, type Exchange } from "../stores/agent";
+import { modelChoice, pendingTarget, retryLabel, useAgent, type Exchange } from "../stores/agent";
 import { useAsk } from "../stores/ask";
 import { useSchema } from "../stores/schema";
 import { useSettings } from "../stores/settings";
 import { AnswerBlock } from "./AnswerBlock";
 import { FollowUps } from "./FollowUps";
 import { ModelPicker } from "./ModelPicker";
+import { RetryPill } from "./RetryPill";
 import { SetupCard } from "./SetupCard";
+import { ThreadsSheet } from "./ThreadsSheet";
 import { TraceDrawer } from "./TraceDrawer";
 import { starterQuestions } from "./starters";
 import "./ask.css";
@@ -85,6 +88,7 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
   const focusSeq = useAsk((s) => s.focusSeq);
   const traceOpenFor = useAsk((s) => s.traceOpenFor);
   const pickerOpen = useAsk((s) => s.pickerOpen);
+  const threadsOpen = useAsk((s) => s.threadsOpen);
 
   // a trace target from another thread (or a deleted exchange) closes itself
   const traceExchange = traceOpenFor
@@ -98,6 +102,7 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
   useEffect(() => {
     const a = useAsk.getState();
     a.closeTrace();
+    a.closeThreads();
     a.setPickerOpen(false);
     a.setDraftFor(profileId);
     return () => useAsk.getState().setDraftFor(null);
@@ -130,6 +135,20 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
   const asked = useMemo(() => new Set(exchanges.map((e) => e.question)), [exchanges]);
   const starters = useMemo(() => starterQuestions(snapshot, asked), [snapshot, asked]);
 
+  // the retry pill targets the newest exchange with a pending assumption
+  // set; it hides while the thread is busy (the Stop face is the one control
+  // then) and comes back when a cancelled retry restores the prior answer
+  const pending = useAgent((s) => s.pending);
+  const pillFor = useMemo(() => pendingTarget(exchanges, pending), [exchanges, pending]);
+  const pillLabel = pillFor !== null && !busy && connected ? retryLabel(pending[pillFor] ?? {}) : null;
+  const applyPill = useCallback(() => {
+    if (pillFor === null) return;
+    void useAgent.getState().applyPending(pillFor);
+    // the pill leaves with the run; the composer takes focus so ⌘. still
+    // reaches the pane and the next question has somewhere to go
+    useAsk.getState().requestFocus();
+  }, [pillFor]);
+
   const canSend = connected && !busy && draft.trim() !== "";
   const send = useCallback(() => {
     const q = (useAsk.getState().drafts[profileId] ?? "").trim();
@@ -154,8 +173,11 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
   const onRootKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Escape") {
       const a = useAsk.getState();
-      if (a.traceOpenFor) a.closeTrace();
+      if (a.threadsOpen) a.closeThreads();
+      else if (a.traceOpenFor) a.closeTrace();
       else if (a.pickerOpen) a.setPickerOpen(false);
+      else if (pillFor !== null && pillLabel !== null && (a.drafts[profileId] ?? "").trim() === "")
+        useAgent.getState().discardPending(pillFor);
       else if (document.activeElement === taRef.current)
         rootRef.current?.focus({ preventScroll: true });
       else return;
@@ -167,41 +189,6 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
       e.preventDefault();
       useAgent.getState().cancel();
     }
-  };
-
-  const [threadsMenu, setThreadsMenu] = useState<{ x: number; y: number } | null>(null);
-  const openThreadsMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
-    const r = e.currentTarget.getBoundingClientRect();
-    setThreadsMenu({ x: r.left, y: r.bottom + 4 });
-  };
-  const threadItems = (): MenuNode[] => {
-    const list = threads ?? [];
-    const items: MenuNode[] = list.map((t) => ({
-      kind: "item",
-      label: t.title,
-      hint: t.id === threadId ? "current" : undefined,
-      onSelect: () => void useAgent.getState().openThread(profileId, t.id),
-    }));
-    items.push({ kind: "sep" });
-    items.push({
-      kind: "item",
-      label: "Delete Current Thread…",
-      danger: true,
-      disabled: !threadId,
-      onSelect: () => {
-        const tid = threadId;
-        if (!tid) return;
-        void import("../stores/danger").then(async ({ confirmDanger }) => {
-          const ok = await confirmDanger(
-            "Delete This Thread?",
-            "Its questions and answers leave the history on this Mac.",
-            "Delete Thread",
-          );
-          if (ok) void useAgent.getState().deleteThread(profileId, tid);
-        });
-      },
-    });
-    return items;
   };
 
   const openSettings = () => useSettings.getState().setSettingsOpen(true, "models");
@@ -225,8 +212,9 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
         <button
           className="iconbtn"
           title="Threads"
+          aria-label="Threads"
           disabled={!threads || threads.length === 0}
-          onClick={openThreadsMenu}
+          onClick={() => useAsk.getState().openThreads()}
         >
           <History size={14} />
         </button>
@@ -256,7 +244,11 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
           />
         </div>
       ) : (
-        <div className="ask-scroll" ref={scrollRef}>
+        // a pending set reserves the pill's footprint at the scroller's end
+        // (ask.css) for as long as the set lives, the run it starts included,
+        // so the footer scrolls clear of the pill and the pill's leave and
+        // return around a cancelled retry move nothing
+        <div className="ask-scroll" ref={scrollRef} data-pill={pillFor !== null ? "" : undefined}>
           {exchanges.map((ex, i) => (
             <AnswerBlock
               key={ex.id}
@@ -274,6 +266,7 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
 
       {choice !== null && (
         <div className="ask-input">
+          <RetryPill label={pillLabel} onApply={applyPill} />
           <div className="ask-box">
             <textarea
               ref={taRef}
@@ -317,9 +310,11 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
         onClose={() => useAsk.getState().closeTrace()}
       />
 
-      {threadsMenu && (
-        <ContextMenu point={threadsMenu} items={threadItems()} onClose={() => setThreadsMenu(null)} />
-      )}
+      <ThreadsSheet
+        profileId={profileId}
+        open={threadsOpen}
+        onClose={() => useAsk.getState().closeThreads()}
+      />
     </div>
   );
 }

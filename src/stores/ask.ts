@@ -1,5 +1,6 @@
 // Ask UI state (AGENT-UX section 1). Chrome only: which trace is showing,
-// whether the picker is up, and the composer drafts, one per connection.
+// whether the Threads sheet or the picker is up, and the composer drafts,
+// one per connection.
 // Whether Ask is on screen and how wide it is belong to the one right pane
 // (src/stores/sidePane.ts: Ask is a MODE of it, not a card of its own); this
 // store mirrors `open` for its readers and clears its transient chrome when
@@ -28,6 +29,9 @@ interface AskState {
    * pane store is the truth and App.tsx drives it */
   open: boolean;
   traceOpenFor: TraceTarget | null;
+  /** the Threads sheet (ThreadsSheet.tsx) is over the thread; it and the
+   * trace are the pane's two slide-overs and never show together */
+  threadsOpen: boolean;
   pickerOpen: boolean;
   /** unsent composer text per connection (LESSONS 4: a draft typed toward one
    * connection carries that origin and never surfaces in another's
@@ -45,6 +49,8 @@ interface AskState {
 
   openTrace: (exchangeId: string, stepId?: string | null) => void;
   closeTrace: () => void;
+  openThreads: () => void;
+  closeThreads: () => void;
   setPickerOpen: (open: boolean) => void;
   setDraftFor: (profileId: string | null) => void;
   /** writes the on-screen connection's draft; a no-op with no composer on
@@ -61,14 +67,17 @@ const showing = () => {
 export const useAsk = create<AskState>()((set) => ({
   open: showing(),
   traceOpenFor: null,
+  threadsOpen: false,
   pickerOpen: false,
   drafts: {},
   draftFor: null,
   focusSeq: 0,
 
   openTrace: (exchangeId, stepId = null) =>
-    set({ traceOpenFor: { exchangeId, stepId }, pickerOpen: false }),
+    set({ traceOpenFor: { exchangeId, stepId }, threadsOpen: false, pickerOpen: false }),
   closeTrace: () => set({ traceOpenFor: null }),
+  openThreads: () => set({ threadsOpen: true, traceOpenFor: null, pickerOpen: false }),
+  closeThreads: () => set({ threadsOpen: false }),
   setPickerOpen: (pickerOpen) => set({ pickerOpen }),
   setDraftFor: (draftFor) => set({ draftFor }),
   setDraft: (text) =>
@@ -90,5 +99,7 @@ export const useAsk = create<AskState>()((set) => ({
 useSidePane.subscribe(() => {
   const open = showing();
   if (useAsk.getState().open === open) return;
-  useAsk.setState(open ? { open } : { open, traceOpenFor: null, pickerOpen: false });
+  useAsk.setState(
+    open ? { open } : { open, traceOpenFor: null, threadsOpen: false, pickerOpen: false },
+  );
 });

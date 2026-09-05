@@ -7,16 +7,19 @@
 //                             [--jobs 6]
 //
 //   --out      where the PNGs land; default
-//              ~/projects/qwry-agent-lab/docs/research/w2b-frames
-//   --states   subset of answer,empty,busy,picker,failure,disconnected,small
-//              (default: all seven)
+//              ~/projects/qwry-agent-lab/docs/research/w2c-frames
+//   --states   subset of answer,empty,busy,picker,failure,disconnected,small,
+//              pending,retry,strip,threads,scalar,kv,wide,trace (default: all
+//              fifteen)
 //   --widths   subset of 320,392,560 (default: all three)
 //   --themes   subset of dark,light (default: both)
 //   --scroll   bottom (default): the pane as it mounts, pinned to the newest content,
 //              the footer and composer in view; top: the scroller at the question
 //              echo and the thinking strip instead (the 640px card cannot hold the
 //              whole live answer, so the two ends are two runs). Frames of a top run
-//              carry a -top suffix so the two sets sit side by side
+//              carry a -top suffix so the two sets sit side by side. The `strip`
+//              state parks at the top in both runs (the harness's own default for
+//              it: its subject sits above the fold)
 //   --port     the vite dev server to use when one already answers (default 1420);
 //              otherwise vite is started on a free port for the run and stopped after
 //   --jobs     Chrome processes in flight at once (default 6)
@@ -41,7 +44,11 @@
 // SETTLED state, so every springs.ts preset is its instant variant and
 // tokens.css collapses the CSS transitions, which is the product's own settled
 // face, not a harness costume. Motion itself is the dev build's eyeball, never
-// a still's.
+// a still's. Focus emulation is on (Emulation.setFocusEmulationEnabled): a
+// headless page believes it has the window's focus, so the focus rings the
+// product paints when a surface focuses something on open (the Threads
+// sheet's hot row, the trace's focused step) render in the still instead of
+// being dropped by an unfocused document.
 //
 // The route: /?harness=ask&state=<state>&w=<width>&theme=<theme>[&scroll=top],
 // mounted by
@@ -56,8 +63,20 @@
 // starters with no session (textarea disabled, pill dimmed); small = the
 // starters under a small-tier choice (the one pill that wears a badge).
 //
+// Round 2 (the sketch's second row; fixtures.interact.ts, fixtures.shell.ts,
+// fixtures.anatomy.ts): pending = the answer with one assumption chip off and
+// the retry pill over the composer; retry = a retry streaming over the prior
+// answer, a running `run` chip in the strip and the Stop face, the old prose,
+// grid and footer still on screen; strip = nine tool chips scrolled to 120 so
+// both edge fades show (parked at the top by default); threads = the Threads
+// sheet over the answer, five threads, the current row .active and the second
+// .hot with its delete revealed; scalar = one row × one column as a value
+// with its caption; kv = one row × three columns, name over value; wide = six
+// rows × twelve columns, the grid scrolling both ways; trace = the answer
+// with its drawer open from the footer link, the context step expanded.
+//
 // The first frame runs alone so vite compiles the module graph once; the rest
-// run in parallel. Whole run: ~30 s warm, ~45 s cold.
+// run in parallel. Whole run: ~60 s warm for the full matrix.
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -65,9 +84,25 @@ import { join, resolve } from "node:path";
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const ROOT = resolve(import.meta.dir, "..");
-const DEFAULT_OUT = join(homedir(), "projects/qwry-agent-lab/docs/research/w2b-frames");
+const DEFAULT_OUT = join(homedir(), "projects/qwry-agent-lab/docs/research/w2c-frames");
 
-const ALL_STATES = ["answer", "empty", "busy", "picker", "failure", "disconnected", "small"] as const;
+const ALL_STATES = [
+  "answer",
+  "empty",
+  "busy",
+  "picker",
+  "failure",
+  "disconnected",
+  "small",
+  "pending",
+  "retry",
+  "strip",
+  "threads",
+  "scalar",
+  "kv",
+  "wide",
+  "trace",
+] as const;
 const ALL_WIDTHS = [320, 392, 560] as const;
 const ALL_THEMES = ["dark", "light"] as const;
 const SCROLLS = ["bottom", "top"] as const;
@@ -291,6 +326,8 @@ async function shoot(base: string, f: Frame): Promise<boolean> {
       mobile: false,
     });
     await cdp.send("Page.enable");
+    // the page believes it is the focused window, so :focus-visible paints
+    await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: true });
     await cdp.send("Page.navigate", { url });
     let ready = false;
     while (Date.now() < deadline && !ready) {

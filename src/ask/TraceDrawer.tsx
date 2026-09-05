@@ -2,9 +2,12 @@
 // (CSS transform, --dur-slow / --ease-std) and lists every step in loop order:
 // context (candidates, expandable to the exact block sent), each model turn
 // (raw text, thinking), each tool call with its arguments and result, the
-// verdict. Timing per step in the status register. Teaching surface: keycaps
-// allowed. Nothing is summarised away; `claude -p` gets the harness-prefix
-// note because that prefix is the one thing qwry cannot show.
+// verdict. Timing per step in the status register; the verdict row carries
+// none, its ms is the whole run and the header already states that (DESIGN
+// rule 14). Teaching surface: keycaps allowed. Nothing is summarised away,
+// and the drawer says nothing about that norm (rule 11): the one note strip
+// is Claude Code's, because its harness prefix is the one thing qwry cannot
+// show, and no other provider gets a strip at all.
 //
 // Focus (AGENT-UX 12, LESSONS 7): the drawer is a non-modal panel INSIDE the
 // card, so it does not use escStack (that stack makes every window chord
@@ -27,8 +30,10 @@ import {
 } from "react";
 import { ArrowLeft } from "lucide-react";
 import type { TraceStep } from "../agent/types";
+import { secondsText } from "../lib/duration";
 import type { Exchange } from "../stores/agent";
 import { useAsk } from "../stores/ask";
+import { revealRow } from "./revealRow";
 
 export interface TraceDrawerProps {
   open: boolean;
@@ -52,8 +57,6 @@ interface Row {
   kindLabel: string;
   label: ReactNode;
   ms: number | null;
-  /** the ms cell carries a word (the verdict's total) */
-  msNote?: string;
   body: ReactNode | null;
 }
 
@@ -228,25 +231,28 @@ function rowsFromTrace(exchange: Exchange, trace: TraceStep[], timed: boolean): 
         }
         if (v.status === "failed") lines.push(v.message);
         if (v.sql) lines.push(v.sql);
+        // no time cell: the verdict's ms is elapsed-since-start, the run's
+        // total, and the header prints that once (DESIGN rule 14)
         rows.push({
           key: "verdict",
           kind: "verdict",
           kindLabel: "verdict",
           label,
-          ms: ms(step.ms),
-          msNote: timed ? "total" : undefined,
+          ms: null,
           body: lines.length > 0 ? lines.join("\n\n") : head,
         });
         break;
       }
       case "followups":
         // the one model call made after the verdict (spec 4.6); shown because
-        // nothing sent to a provider is hidden (spec 8.4)
+        // nothing sent to a provider is hidden (spec 8.4). It is outside the
+        // loop's turn count, so its kind is the species, not an ordinal: the
+        // kind column is 56px and `FOLLOW-UPS` broke onto two lines in it
         rows.push({
           key: "followups",
           kind: "model",
-          kindLabel: "follow-ups",
-          label: plural(step.questions.length, "question", "questions"),
+          kindLabel: "model",
+          label: plural(step.questions.length, "follow-up", "follow-ups"),
           ms: ms(step.ms),
           body: (
             <>
@@ -305,14 +311,17 @@ export function TraceDrawer({ open, exchange, focusStepId, onClose }: TraceDrawe
     return rowsFromChips(exchange);
   }, [exchange, answer, timed]);
 
+  // the one qualifier (DESIGN rule 12): the run's turns and total, the footer's
+  // status line without the model. The step list beneath already shows what
+  // ran, so no count of any step kind rides here (rule 11: deleting `· 1 probe`
+  // loses nothing the TOOL rows do not say). A reloaded thread stores no
+  // turn count and may store no time; a zero of either is not printed
   const summary = useMemo(() => {
     if (!exchange) return "";
     if (!answer) return exchange.streaming ? "thinking" : "";
-    const probes = answer.trace.filter((t) => t.step === "tool" && t.name === "probe").length;
     const parts: string[] = [];
     if (answer.turns > 0) parts.push(plural(answer.turns, "turn", "turns"));
-    parts.push(`${(answer.ms / 1000).toFixed(1)}s`);
-    if (probes > 0) parts.push(plural(probes, "probe", "probes"));
+    if (answer.ms > 0) parts.push(secondsText(answer.ms));
     return parts.join(" · ");
   }, [exchange, answer]);
 
@@ -386,8 +395,10 @@ export function TraceDrawer({ open, exchange, focusStepId, onClose }: TraceDrawe
         }
       }
       (target ?? root).focus({ preventScroll: true });
-      // instant, never animated: the scroller belongs to the user
-      target?.scrollIntoView({ block: "nearest" });
+      // instant, never animated, and only the step list moves: the scroller
+      // belongs to the user, and the pane must never scroll sideways to
+      // meet a drawer still sliding in (revealRow)
+      revealRow(root.querySelector<HTMLElement>(".trace-steps"), target);
     });
     return () => cancelAnimationFrame(id);
     // firstKey is derived from rows, which change while a run streams; the
@@ -436,17 +447,18 @@ export function TraceDrawer({ open, exchange, focusStepId, onClose }: TraceDrawe
     rootRef.current?.focus({ preventScroll: true });
   };
 
-  const note =
-    exchange?.provider === "claude-code"
-      ? "Everything shown here is what qwry sent and received. Claude Code adds its own harness prefix that cannot be shown."
-      : "Everything the model received is shown here.";
+  // only the exception speaks (DESIGN rule 11): every other provider's trace
+  // is complete, and a strip saying so is dead space. One sentence that holds
+  // one line at the 320 floor (rule 13: the strip is chrome and is the same
+  // height at every width; ~50 characters of --text-2xs fit the floor)
+  const note = exchange?.provider === "claude-code" ? "Claude Code’s harness prefix is not shown." : null;
 
   return (
     <div
       ref={rootRef}
       className={`trace${open ? " open" : ""}`}
       role="region"
-      aria-label="How did it get this?"
+      aria-label="Trace"
       aria-hidden={!open}
       tabIndex={-1}
       onKeyDown={onKeyDown}
@@ -456,7 +468,7 @@ export function TraceDrawer({ open, exchange, focusStepId, onClose }: TraceDrawe
         <button className="iconbtn" title="Back" aria-label="Back" onClick={onClose}>
           <ArrowLeft size={14} />
         </button>
-        <span className="trace-title">How did it get this?</span>
+        <span className="trace-title">Trace</span>
         <span className="ask-grow">{summary}</span>
       </header>
 
@@ -467,12 +479,7 @@ export function TraceDrawer({ open, exchange, focusStepId, onClose }: TraceDrawe
             <>
               <span className={`trace-kind${row.kind === "context" ? "" : ` ${row.kind}`}`}>{row.kindLabel}</span>
               <span className="trace-lbl">{row.label}</span>
-              {row.ms !== null && (
-                <span className="trace-ms">
-                  {fmtMs(row.ms)}
-                  {row.msNote ? ` ${row.msNote}` : ""}
-                </span>
-              )}
+              {row.ms !== null && <span className="trace-ms">{fmtMs(row.ms)}</span>}
             </>
           );
           return (
@@ -498,7 +505,7 @@ export function TraceDrawer({ open, exchange, focusStepId, onClose }: TraceDrawe
         {exchange && answer && rows.length === 0 && <div className="trace-empty">no steps recorded</div>}
       </div>
 
-      <div className="trace-note">{note}</div>
+      {note && <div className="trace-note">{note}</div>}
     </div>
   );
 }

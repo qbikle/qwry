@@ -16,14 +16,41 @@
 // composer variants the sketch does not draw: no session (textarea disabled,
 // pill and starters dimmed) and a small-tier choice (the one pill that wears
 // a badge).
+//
+// The round-2 states (the sketch's "Round 2 · new states" row) live in
+// sibling files, one per builder, and are dispatched from `exchangeFor`:
+// fixtures.interact.ts (`pending`, `retry`, `strip`: the chips' pending set,
+// a retry over the prior answer, a nine-chip strip), fixtures.shell.ts
+// (`threads`: the Threads sheet over the answer; its seeds are read by
+// AskHarness and tauriShim directly) and fixtures.anatomy.ts (`scalar`,
+// `kv`, `wide`, `trace`). Those files import `exchangeFor` from here and
+// call it only inside functions, so the import cycle never reads an
+// uninitialised binding.
 
 import type { AskAnswer } from "../agent/loop";
 import type { AgentRun, Assumption, Thread, TraceStep } from "../agent/types";
 import type { AgentThread, Profile } from "../ipc/types";
 import type { SchemaSnapshot, TableInfo } from "../stores/schema";
 import type { Exchange, ToolChip } from "../stores/agent";
+import { anatomyExchangeFor } from "./fixtures.anatomy";
+import { interactSeed } from "./fixtures.interact";
 
-export type HarnessState = "answer" | "empty" | "busy" | "picker" | "failure" | "disconnected" | "small";
+export type HarnessState =
+  | "answer"
+  | "empty"
+  | "busy"
+  | "picker"
+  | "failure"
+  | "disconnected"
+  | "small"
+  | "pending"
+  | "retry"
+  | "strip"
+  | "threads"
+  | "scalar"
+  | "kv"
+  | "wide"
+  | "trace";
 export const HARNESS_STATES: readonly HarnessState[] = [
   "answer",
   "empty",
@@ -32,6 +59,14 @@ export const HARNESS_STATES: readonly HarnessState[] = [
   "failure",
   "disconnected",
   "small",
+  "pending",
+  "retry",
+  "strip",
+  "threads",
+  "scalar",
+  "kv",
+  "wide",
+  "trace",
 ];
 export const HARNESS_WIDTHS = [320, 392, 560] as const;
 export type HarnessTheme = "dark" | "light";
@@ -440,11 +475,14 @@ export const FIXTURE = {
   model: MODEL,
 } as const;
 
-/** the exchange a state shows; null for the configured empty states */
+/** the exchange a state shows; null for the configured empty states. The
+ * Threads sheet sits over the sketch's answer; the round-2 builders' states
+ * come from their own files */
 export function exchangeFor(state: HarnessState): Exchange | null {
   switch (state) {
     case "answer":
     case "picker":
+    case "threads":
       return answered;
     case "busy":
       return busy;
@@ -454,6 +492,15 @@ export function exchangeFor(state: HarnessState): Exchange | null {
     case "disconnected":
     case "small":
       return null;
+    case "pending":
+    case "retry":
+    case "strip":
+      return interactSeed(state).exchange;
+    case "scalar":
+    case "kv":
+    case "wide":
+    case "trace":
+      return anatomyExchangeFor(state);
   }
 }
 

@@ -56,12 +56,6 @@ const MIN_COL_W = 64;
 const MAX_COL_W = 480;
 const CHAR_W = 7.3; // SF Mono 12px approximation
 
-/** the two geometry facts a standalone host (the Ask card's answer grid)
- * needs to size its container: header height and the row height for a
- * density. ResultsPane never needs them (the grid fills its pane). */
-export const GRID_HEADER_H = HEADER_H;
-export const gridRowHeight = (d: "compact" | "normal" | "comfortable") => DENSITY_ROW_H[d];
-
 /** readOnly grids never subscribe to the edit singletons: these frozen
  * constants stand in so every downstream lookup stays a no-op */
 const EMPTY_PENDING: Record<string, PendingEdit> = Object.freeze({});
@@ -490,6 +484,7 @@ export function Grid({
   readOnly = false,
   colTypes,
   filterText: hostFilterText,
+  maxRows,
 }: {
   statement: StatementState;
   insertable?: boolean;
@@ -511,6 +506,12 @@ export function Grid({
   /** host-owned quick-filter text; readOnly only (the store is the results
    * status bar's) */
   filterText?: string;
+  /** readOnly only: the grid sizes ITSELF to the header plus up to this many
+   * view rows, plus its own horizontal scrollbar when one shows, instead of
+   * filling its container. A host-fixed slot cannot know the scrollbar's
+   * thickness (0 overlay, 15 classic), and a slot sized without it hid the
+   * last promised row behind the bar (the Ask card's one-row grid). */
+  maxRows?: number;
 }) {
   const insertable = insertableProp && !readOnly;
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -682,25 +683,37 @@ export function Grid({
   // that does not fit scrolls as everywhere else. `widths` stay the natural
   // ones (persisted by hand-resize); the stretch is layout only. The results
   // pane never observes: slotW stays 0 and layoutWidths IS colWidths.
+  // A filled grid fits by construction, so its horizontal overflow is locked:
+  // the last header's resize handle hangs 3px past the edge and a rounded
+  // clientWidth can sit above the true one, and either alone was a phantom
+  // scrollbar that ate the last row (classic bars) or a sideways wobble
+  // (overlay bars). hBar is the horizontal scrollbar's layout thickness,
+  // measured off the same element; maxRows adds it to the grid's own height.
   const [slotW, setSlotW] = useState(0);
+  const [hBar, setHBar] = useState(0);
   useLayoutEffect(() => {
     if (!readOnly) return;
     const el = scrollRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setSlotW(el.clientWidth));
+    const measure = () => {
+      setSlotW(el.clientWidth);
+      setHBar(el.offsetHeight - el.clientHeight);
+    };
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
-    setSlotW(el.clientWidth);
+    measure();
     return () => ro.disconnect();
   }, [readOnly]);
-  const layoutWidths = useMemo(() => {
-    if (!readOnly || slotW === 0 || viewColLen === 0) return colWidths;
+  const fill = useMemo((): { widths: number[]; filled: boolean } => {
+    if (!readOnly || slotW === 0 || viewColLen === 0) return { widths: colWidths, filled: false };
     let sum = 0;
     for (let i = 0; i < viewColLen; i++) sum += colWidths[colAt(i)];
     const spare = slotW - ROWNUM_W - sum;
-    if (spare <= 0) return colWidths;
+    if (spare < 0) return { widths: colWidths, filled: false };
     const last = colAt(viewColLen - 1);
-    return colWidths.map((w, i) => (i === last ? w + spare : w));
+    return { widths: colWidths.map((w, i) => (i === last ? w + spare : w)), filled: true };
   }, [readOnly, slotW, colWidths, viewColLen, colAt]);
+  const layoutWidths = fill.widths;
 
   // quick-filter over LOADED rows (view-level, same contract as client sort;
   // browser excluded: filtering one server page would lie). Perf shape:
@@ -2404,10 +2417,16 @@ export function Grid({
     [editing?.r, editing?.c, editing?.kind, fkPickTargetFor],
   );
 
+  // readOnly with maxRows: header + the promised rows + the horizontal bar's
+  // own thickness, so every promised row clears the bar (see the fill block)
+  const selfH =
+    readOnly && maxRows !== undefined ? HEADER_H + Math.min(viewLen, maxRows) * ROW_H + hBar : undefined;
+
   return (
     <div
       ref={containerRef}
       className="vgrid"
+      style={selfH !== undefined ? { height: selfH } : undefined}
       tabIndex={0}
       onKeyDown={onKeyDown}
       // ⌘V arrives as a native paste event (the app menu owns the accelerator,
@@ -2455,6 +2474,7 @@ export function Grid({
       <div
         ref={scrollRef}
         className="vgrid-scroll"
+        style={fill.filled ? { overflowX: "hidden" } : undefined}
         onScroll={(e) => {
           const el = e.currentTarget;
           if (

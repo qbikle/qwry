@@ -8,11 +8,14 @@
 // data it repeats stripped, timing prints through the status register's one
 // formatter, and the footer is avatar · turns · time · model · Trace.
 //
-// The grid slot mounts the app's ONE grid species in readOnly mode: the
-// turn's AgentRun becomes a StatementState from props alone, so the grid
-// never touches the results-tab singletons (LESSONS 4). The host sizes the
-// slot to the header plus up to six rows; the grid scrolls inside for the
-// rest, so the answer scroller stays honest.
+// The result slot: a run of one row and up to four columns renders as values
+// (ScalarResult: a table of one cell is chrome around nothing); anything
+// else mounts the app's ONE grid species in readOnly mode, the turn's
+// AgentRun as a StatementState from props alone, so the grid never touches
+// the results-tab singletons (LESSONS 4). The grid sizes itself to the header
+// plus up to six rows (maxRows) and scrolls inside for the rest, so the
+// answer scroller stays honest and the rows it promises clear its own
+// horizontal scrollbar.
 
 import { useMemo } from "react";
 import { motion } from "motion/react";
@@ -20,13 +23,12 @@ import { answerText, footerStatus, renderInline } from "../agent/display";
 import type { ProviderId } from "../agent/providers/types";
 import type { AgentRun } from "../agent/types";
 import { spring } from "../design/springs";
-import { Grid, GRID_HEADER_H, gridRowHeight } from "../grid/Grid";
+import { Grid } from "../grid/Grid";
 import { msText } from "../lib/duration";
 import { avatarColor } from "../sidebar/avatar";
 import { useAgent, type Exchange } from "../stores/agent";
 import { useAsk } from "../stores/ask";
 import type { StatementState } from "../stores/results";
-import { useSettings } from "../stores/settings";
 import { useTabs } from "../stores/tabs";
 import type { Profile } from "../ipc/types";
 import type { AskPhase } from "../agent/loop";
@@ -36,6 +38,7 @@ import { FollowUps, questionLayoutId } from "./FollowUps";
 import { modelLabel } from "./modelSources";
 import { SanityLine } from "./SanityLine";
 import { sanityStep } from "./sanityStep";
+import { isScalarRun, ScalarResult } from "./ScalarResult";
 import { SqlRow } from "./SqlRow";
 import { ThinkingStrip } from "./ThinkingStrip";
 
@@ -59,8 +62,6 @@ const tabTitle = (q: string) => (q.length > TAB_TITLE_CAP ? `${q.slice(0, TAB_TI
 
 /** rows the grid shows before it scrolls inside its slot */
 const GRID_ROWS_SHOWN = 6;
-/** the slot's own top and bottom hairline (.ans-grid border, border-box) */
-const GRID_HAIRLINES = 2;
 
 
 /** the turn's run as the grid's statement shape. Column types are not on the
@@ -91,7 +92,7 @@ export function AnswerBlock({
   asked,
 }: AnswerBlockProps) {
   const openTrace = useAsk((s) => s.openTrace);
-  const gridDensity = useSettings((s) => s.gridDensity);
+  const pending = useAgent((s) => s.pending[exchange.id]);
   const answer = exchange.answer;
   const run = answer?.run ?? null;
   // a SQL or turn-cap failure still returns an answer carrying the last SQL;
@@ -101,16 +102,12 @@ export function AnswerBlock({
 
   // identity-stable per run, or the grid re-estimates widths every render;
   // an empty result keeps the status line and drops the grid (no header-only
-  // chrome over nothing)
+  // chrome over nothing); a one-row result is values, not a grid
+  const scalar = run !== null && isScalarRun(run);
   const stmt = useMemo(
-    () => (run && run.rows.length > 0 ? statementFromRun(run, sql) : null),
+    () => (run && run.rows.length > 0 && !isScalarRun(run) ? statementFromRun(run, sql) : null),
     [run, sql],
   );
-  const gridHeight = stmt
-    ? GRID_HEADER_H +
-      Math.min(stmt.rows.length, GRID_ROWS_SHOWN) * gridRowHeight(gridDensity) +
-      GRID_HAIRLINES
-    : 0;
 
   const openInTab = (text: string) => {
     useTabs.getState().newTab(text, tabTitle(exchange.question));
@@ -153,9 +150,10 @@ export function AnswerBlock({
         {renderInline(answerText(exchange.text))}
       </div>
 
+      {scalar && run && <ScalarResult run={run} />}
       {stmt && (
-        <div className="ans-grid" style={{ height: gridHeight }}>
-          <Grid key={exchange.id} statement={stmt} readOnly />
+        <div className="ans-grid">
+          <Grid key={exchange.id} statement={stmt} readOnly maxRows={GRID_ROWS_SHOWN} />
         </div>
       )}
       {run && (
@@ -176,8 +174,9 @@ export function AnswerBlock({
       {!failed && answer && answer.assumptions.length > 0 && (
         <AssumptionChips
           assumptions={answer.assumptions}
+          pending={pending}
           disabled={busy}
-          onToggle={(chipId) => void useAgent.getState().toggleAssumption(exchange.id, chipId)}
+          onToggle={(chipId) => useAgent.getState().togglePending(exchange.id, chipId)}
         />
       )}
 
@@ -215,8 +214,9 @@ export function AnswerBlock({
 
       {/* the connection's dot is the block's one provenance mark (section 9),
           the titlebar's conn-dot at the same 8px: it stays with the rows when
-          the header has scrolled away (LESSONS 4) */}
-      {!exchange.streaming && answer && (
+          the header has scrolled away (LESSONS 4). A retry streams over the
+          prior answer, whose footer stays until the verdict replaces it */}
+      {(!exchange.streaming || exchange.prior !== undefined) && answer && (
         <div className="ans-foot" data-thread={threadId}>
           <span className="ans-dot" style={{ background: avatarColor(profile) }} aria-hidden="true" />
           <span className="ans-foot-meta">{footerStatus(answer.turns, answer.ms, model)}</span>

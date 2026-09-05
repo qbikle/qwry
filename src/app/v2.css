@@ -182,7 +182,11 @@
 /* the two mode holders sit on the same spot, anchored right so content
    slides in as the card widens; both stay mounted (the inspector keeps its
    cell, the composer its draft) and the one not on stage is hidden, so its
-   controls leave the tab order and take no clicks. The swap is instant */
+   controls leave the tab order and take no clicks. A mode switch is a
+   springs.ts slide (App.tsx writes the transform and opacity inline; Ask
+   leaves and returns on the left, the Inspector on the right) and the holder
+   on its way out wears .exiting until its spring settles, so both are seen
+   crossing while the card's width holds still */
 .inspector-fixed,
 .ask-fixed {
   position: absolute;
@@ -190,9 +194,21 @@
   right: 0;
   bottom: 0;
 }
-.side-card[data-mode="ask"] .inspector-fixed,
-.side-card[data-mode="inspector"] .ask-fixed {
+.side-card[data-mode="ask"] .inspector-fixed:not(.exiting),
+.side-card[data-mode="inspector"] .ask-fixed:not(.exiting) {
   visibility: hidden;
+}
+/* the arriving holder paints above the leaving one whichever way the swap
+   runs, and the leaving one, already fading, takes no clicks (it would sit
+   invisible over the arriving controls until its spring settles) */
+.inspector-fixed,
+.ask-fixed {
+  z-index: 1;
+}
+.inspector-fixed.exiting,
+.ask-fixed.exiting {
+  z-index: 0;
+  pointer-events: none;
 }
 /* once collapsed, the hidden controls must leave the tab order too; the
    delay lets the width transition finish first */
