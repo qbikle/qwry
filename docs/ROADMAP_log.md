@@ -42,7 +42,7 @@
 
 **Gotchas.**
 - The Workflow harness kills a subagent with no tool call for 3 minutes; the eval agent ran a 5-minute baseline in the foreground and died six times (~2.7 h). Long commands go in the background and get polled. Five parallel Opus fixers also hung after two tool calls each; the fixes were applied directly.
-- `claude -p` needs `--tools ""`, `--allowedTools 'mcp__qwry__*'` AND `--setting-sources ""`; a dead MCP server is exit 0 with a toolless model (check `system/init.mcp_servers`). `--max-turns` is per invocation and absent from `--help` (CLI 2.1.261).
+- `claude -p` spawned from the app needs `USER` in its environment (Keychain account = username), not just PATH + HOME: the first live Ask failed with "not signed in" until the env allowlist grew. Also: `--tools ""`, `--allowedTools 'mcp__qwry__*'` AND `--setting-sources ""`; a dead MCP server is exit 0 with a toolless model (check `system/init.mcp_servers`). `--max-turns` is per invocation and absent from `--help` (CLI 2.1.261).
 - `default_transaction_read_only` does not stop `pg_sleep` / `pg_terminate_backend` / `lo_import`: only the gate does, so agent sessions are refused by `execute`/`execute_stream` (session flag).
 - pg_query's `.nodes()` walker skips `into_clause`/`locking_clause`; the gate checks every SelectStmt itself (SubLink included).
 - Ask panel sketch (the locked picture for W2) lives at `qwry-agent-lab/docs/ask-sketch.html`, served on 127.0.0.1:5462.

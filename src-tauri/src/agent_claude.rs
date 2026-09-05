@@ -147,6 +147,44 @@ fn signal(pid: u32, sig: i32) {
 
 /// Spawn `claude` with `args`, write `stdin` to its stdin, relay each stdout
 /// line over `on_line`, and resolve when the child exits.
+/// What the `claude` child may see of the app's environment. `USER` is
+/// load-bearing, not cosmetic: the CLI keys its Keychain credentials on the
+/// username, and with only PATH + HOME it answers "Not logged in · Please run
+/// /login" (measured 2026-09-05 with `env -i`). `CLAUDE_CONFIG_DIR` rides
+/// along so a user's own override still points the child at the same login.
+const ENV_PASSTHROUGH: [&str; 7] = [
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "TMPDIR",
+    "LANG",
+    "CLAUDE_CONFIG_DIR",
+];
+
+fn child_env() -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = ENV_PASSTHROUGH
+        .iter()
+        .filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v)))
+        .collect();
+    if !out.iter().any(|(k, _)| k == "PATH") {
+        out.push(("PATH".into(), "/usr/bin:/bin".into()));
+    }
+    // launchd can start the app without USER; the home directory's last
+    // segment is the login name on every macOS install we ship to
+    if !out.iter().any(|(k, _)| k == "USER") {
+        let home = out.iter().find(|(k, _)| k == "HOME").map(|(_, v)| v.clone());
+        if let Some(user) = home
+            .as_deref()
+            .and_then(|h| std::path::Path::new(h).file_name())
+            .and_then(|s| s.to_str())
+        {
+            out.push(("USER".into(), user.to_string()));
+        }
+    }
+    out
+}
+
 #[tauri::command]
 pub async fn agent_claude_spawn(
     run_id: String,
@@ -157,18 +195,14 @@ pub async fn agent_claude_spawn(
     let started = Instant::now();
     let binary = resolve_claude()?;
 
-    // Inherit nothing but PATH and HOME: the app's own environment (Tauri
-    // vars, whatever launchd or a dev shell exported) is not context qwry
-    // asked to send, and §8.4 promises the trace shows everything that went in.
+    // The child gets an allowlist, never the app's whole environment (Tauri
+    // vars, whatever launchd or a dev shell exported, any API key a shell had
+    // lying around): §8.4 promises the trace shows everything that went in.
     let mut command = tokio::process::Command::new(&binary);
     command
         .args(&args)
         .env_clear()
-        .env(
-            "PATH",
-            std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".into()),
-        )
-        .env("HOME", std::env::var("HOME").unwrap_or_default())
+        .envs(child_env())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -290,6 +324,26 @@ pub async fn agent_claude_kill(run_id: String) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn child_env_carries_the_login_and_nothing_else() {
+        // process-global, so one test owns it: a stray key in the app's
+        // environment must never reach the child
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-must-not-leak");
+        std::env::set_var("QWRY_TEST_SENTINEL", "1");
+        let env = child_env();
+        let keys: Vec<&str> = env.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(keys.contains(&"PATH"));
+        assert!(keys.contains(&"HOME"));
+        assert!(keys.contains(&"USER"), "USER is what the CLI's keychain lookup needs");
+        assert!(!keys.contains(&"ANTHROPIC_API_KEY"));
+        assert!(!keys.contains(&"QWRY_TEST_SENTINEL"));
+        for k in &keys {
+            assert!(ENV_PASSTHROUGH.contains(k), "unexpected passthrough {k}");
+        }
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        std::env::remove_var("QWRY_TEST_SENTINEL");
+    }
 
     #[test]
     fn the_stderr_tail_is_capped_and_never_cuts_a_character() {
