@@ -97,11 +97,11 @@ Deduplicated across this file, `ROADMAP_v0.5.md`, `ROADMAP_v0.9.md` and `GAPS.md
 Law: [`AGENT-SPEC.md`](./AGENT-SPEC.md) (architecture, pipeline, tools, providers, safety, tiers) · [`AGENT-UX.md`](./AGENT-UX.md) (surfaces) · [`EVAL.md`](./EVAL.md) (benches + gates). Research basis: `~/projects/qwry-agent-lab` (measured 2026-09-01 → 09-05; hybrid pipeline 23/23 Haiku, 22/23 Sonnet on the 202-table staging schema). One phase ≈ one workflow; every UI phase ends with a running dev build and a maintainer taste stop.
 
 - **A1 · Ask (v1)** — read-only question → SQL → answer panel. Gate: `EVAL.md` PR gate green; staging hybrid ≥ 22/23 on mid and large tiers.
-  - Rust `agent.rs`: `agent_peek_values`, `agent_run_readonly` (`pg_query` AST gate + server-side read-only session), `agent_probe`; Keychain entries for provider keys
-  - TS `src/agent/`: loop, prefilter (IDF + FK hubs + 1-hop), risk classifier, prompt v1, tolerant extraction, appdb persistence (`agent_threads/turns/answers`)
-  - Providers in order: OpenAI-compatible (covers OpenRouter, llama.cpp, vLLM, Ollama, Groq, Mistral, …) → Anthropic → Gemini → `claude -p` via qwry MCP sidecar; model registry with tiers
-  - Small tier: one-shot pipeline + repair loop (no tool loop)
-  - Eval: `eval/` benches vendored, `scripts/agent-eval.ts` on the same loop, `eval/baseline.json`, CI job on Pagila
+  - ✓ (W1, 09-05) Rust `agent.rs`: `agent_connect` (gated read-only session), `agent_describe`, `agent_peek_values`, `agent_run_readonly` (`pg_query` AST gate + function deny-list), `agent_probe`; Keychain keys; `agent_http.rs` relay, `agent_claude.rs`, `agent_mcp.rs` (streamable-HTTP MCP)
+  - ✓ (W1, 09-05) TS `src/agent/`: loop, prefilter (IDF + FK hubs + 1-hop; Pagila recall 31/33, the two misses are two-hop joins), risk classifier, prompt v1, tolerant extraction, `src/stores/agent.ts` + appdb persistence
+  - ✓ (W1, 09-05) Providers: OpenAI-compatible (13 presets incl. Gemini) → Anthropic → `claude -p` via the in-process MCP server; registry with tiers; all HTTP through the Rust relay. Unverified live: every hosted preset (no keys on the build machine)
+  - ✓ (W1, 09-05) Small tier: one-shot pipeline + ≤2 repairs (no tool loop); unmeasured against a live local model in-app
+  - ✓ (W1, 09-05) Eval: `eval/` benches (Pagila 33 + hard 5 new, staging 23 + 5), `scripts/agent-eval.ts` on the same loop, `eval/baseline.json` (claude-code rows), CI job on Pagila (hosted row still to record)
   - UI: Ask panel card, answer anatomy, assumption chips, sanity line, trace drawer, follow-ups, Fix It, provider/model picker, Settings › Models
 - **A2 · Knowledge + Quiz** — table hints and legacy tags (optional write-back as `COMMENT ON`), business definitions, synonyms; query-history few-shot memory; Explain/audit any SQL; Quiz: guided Q&A flow, saved quick-asks in the palette, data-check quizzes (saved assertions, pass/fail)
 - **A3 · Collaborate** — canvas of blocks (query, table, chart, note, assumption) with inline comments read as agent turns; two-connection diff (same question on staging vs prod, now vs then); multi-DB analysis through an in-app join layer (aggregates only, never raw millions)

@@ -212,6 +212,9 @@ function renderMessages(
 function mapStopReason(finish: string): StopReason {
   if (finish === "tool_calls" || finish === "function_call") return "toolCalls";
   if (finish === "length" || finish === "max_tokens") return "maxTokens";
+  // a moderation cut is an incomplete answer too; thirteen presets share this
+  // adapter, so a silent "stop" here would read as a finished answer on all of them
+  if (finish === "content_filter") return "maxTokens";
   return "stop";
 }
 

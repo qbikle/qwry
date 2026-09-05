@@ -218,6 +218,24 @@ interface TokenEntry {
   tools: AgentTools;
 }
 
+/** What this listener actually served for one thread. The loop's trace counts
+ * every tool call INCLUDING the final `run_sql` it runs itself, so the trace
+ * alone cannot prove a `claude -p` child reached qwry's tools rather than
+ * Claude Code's own. This tally can: nothing increments it but a tools/call
+ * arriving over HTTP with that thread's bearer token. */
+export interface McpTally {
+  /** tools/call requests served, valid names and unknown ones alike */
+  calls: number;
+  byName: Record<string, number>;
+  /** names the child asked for that are not one of the five (AGENT-SPEC
+   * section 5): empty is the only acceptable value, and a non-empty one means
+   * the `--tools ""` / `--allowedTools` flags stopped holding */
+  unknown: string[];
+}
+
+/** The tally of a thread that was never served: zero, never undefined. */
+export const emptyTally = (): McpTally => ({ calls: 0, byName: {}, unknown: [] });
+
 const TOOLS_WIRE = schema.tools.map((t) => ({
   name: t.name,
   description: t.description,
@@ -225,6 +243,8 @@ const TOOLS_WIRE = schema.tools.map((t) => ({
 }));
 
 const TOOL_NAMES = TOOLS_WIRE.map((t) => t.name).join(", ");
+/** The five names of AGENT-SPEC section 5, from the one schema both sides read. */
+const KNOWN_TOOLS = new Set(TOOLS_WIRE.map((t) => t.name));
 
 function requireString(args: Record<string, unknown>, key: string): string {
   const v = args[key];
@@ -331,6 +351,9 @@ class McpRegistry {
   private listener: HttpServer | null = null;
   private port = 0;
   private readonly tokens = new Map<string, TokenEntry>();
+  /** kept per thread rather than per token, and never cleared with the token:
+   * the harness reads a question's tally after the thread has been released */
+  private readonly served = new Map<string, McpTally>();
 
   private handler = async (req: IncomingMessage, res: ServerResponse) => {
     if (!originAllowed(req.headers.origin)) {
@@ -352,9 +375,15 @@ class McpRegistry {
     );
     server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS_WIRE }));
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
+      const name = request.params.name;
+      const tally = this.served.get(entry.sessionRef) ?? emptyTally();
+      tally.calls += 1;
+      tally.byName[name] = (tally.byName[name] ?? 0) + 1;
+      if (!KNOWN_TOOLS.has(name) && !tally.unknown.includes(name)) tally.unknown.push(name);
+      this.served.set(entry.sessionRef, tally);
       const out = await dispatch(
         entry.tools,
-        request.params.name,
+        name,
         (request.params.arguments ?? {}) as Record<string, unknown>,
       );
       return { content: [{ type: "text" as const, text: out.text }], isError: out.isError };
@@ -399,6 +428,7 @@ class McpRegistry {
     const port = await this.ensureListener();
     const token = mintToken();
     this.tokens.set(token, { sessionRef, tools });
+    if (!this.served.has(sessionRef)) this.served.set(sessionRef, emptyTally());
     return {
       url: `http://127.0.0.1:${port}${MCP_PATH}`,
       token,
@@ -406,6 +436,12 @@ class McpRegistry {
         this.tokens.delete(token);
       },
     };
+  }
+
+  /** What the listener served for one thread. A thread that never opened an
+   * endpoint has no tally, which is a zero rather than a missing answer. */
+  tally(sessionRef: string): McpTally {
+    return this.served.get(sessionRef) ?? emptyTally();
   }
 
   /** Every listener dies with the process, but a bench run that finished
@@ -435,6 +471,10 @@ export function writeTempFile(name: string, contents: string): string {
 
 export interface NodePlatform extends Platform {
   writeTempFile(name: string, contents: string): string;
+  /** tools/call requests this listener served for one thread: the harness's
+   * only structural proof that a `claude -p` child spoke to qwry's five tools
+   * (AGENT-SPEC section 5) rather than to its host's own */
+  mcpCalls(sessionRef: string): McpTally;
   /** release the MCP listener when the run is over */
   stop(): void;
 }
@@ -451,6 +491,7 @@ export function createNodePlatform(init: NodePlatformInit): NodePlatform {
     },
     now: () => Date.now(),
     writeTempFile,
+    mcpCalls: (sessionRef) => registry.tally(sessionRef),
     stop: () => registry.stop(),
   };
 }

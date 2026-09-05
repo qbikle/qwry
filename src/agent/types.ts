@@ -100,7 +100,9 @@ export type TraceStep =
       step: "tool";
       ms: number;
       id: string;
-      name: ToolName;
+      /** one of the five for calls the loop made; whatever the provider
+       * reported for an `ownsLoop` provider, so a stray tool is visible */
+      name: ToolName | string;
       /** raw argument JSON as the model wrote it, untouched */
       args: string;
       /** the text the model got back */
@@ -139,13 +141,15 @@ export interface Turn {
 
 export interface ToolCallRecord {
   id: string;
-  name: ToolName;
+  /** one of the five, or whatever an `ownsLoop` provider reported */
+  name: ToolName | string;
   args: string;
 }
 
 export interface ToolResultRecord {
   id: string;
-  name: ToolName;
+  /** one of the five, or whatever an `ownsLoop` provider reported */
+  name: ToolName | string;
   result: string;
   isError: boolean;
 }

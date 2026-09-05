@@ -8,9 +8,14 @@
 //
 // Ported from qwry-agent-lab/agent_cc.py (`stem`, `toks`, `STOP`, `SYN`,
 // `candidates`, `index_for`, `gold_tables`) and harness.py (`introspect`).
-// The port is deliberately literal: EVAL baselines are tied to the measured
-// behaviour of these functions (28/28 recall on the 202-table staging schema),
-// so a "better" scoring rule is a re-measurement, not a refactor.
+// The port keeps the lab's scoring rule (IDF over table and column tokens,
+// base-name bonus, FK hubs, one-hop expansion, LEGACY exclusion): EVAL
+// baselines are tied to it (28/28 recall on the 202-table staging schema,
+// 31/33 on Pagila), so a "better" rule is a re-measurement, not a refactor.
+// Not byte-identical to the Python: buildMeta() reads the app's snapshot, which
+// excludes partition children, so the FK graph carries one edge per FK where
+// the lab's pg_constraint query saw one per partition (Pagila's payment). Hub
+// counts and the exact candidate ORDER differ; recall is pinned by test.
 //
 // Runtime-free by law (AGENT-SPEC section 2 rule 2): the only import is a TYPE
 // from the schema store, erased at compile time. A test enforces it.

@@ -1,5 +1,5 @@
 {
-  "note": "Measured baselines for the PR gate (EVAL.md section 4). A row is claimed by bench + model + provider + prompt_version; `bun scripts/agent-eval.ts --baseline` fails the run when it drops more than one question below `passed`, hits the turn cap at all, or falls below `recall`. Never move a row in the same PR as the change it measures. avg_turns is 1 on every claude-code row because that provider owns its own loop: one qwry turn covers the whole conversation, so turns compare only within a provider (EVAL.md section 6).",
+  "note": "Measured baselines for the PR gate (EVAL.md section 4). A row is claimed by bench + model + provider + prompt_version; `bun scripts/agent-eval.ts --baseline` fails the run when it drops more than one question below `passed`, hits the turn cap at all, or falls below `recall`. Never move a row in the same PR as the change it measures. avg_turns is 1 on every claude-code row because that provider owns its own loop: one qwry turn covers the whole conversation, so turns compare only within a provider (EVAL.md section 6). Every row is transcribed from the run artifact of the same name under eval/results/, `date` included: it is the harness's own `config.date`, so a row can be recomputed from its artifact and nothing else. That night's runs were spawned by a shell on UTC and so read 2026-09-04, one day behind the maintainer's local clock at the time (2026-09-05, 02:1x IST).",
   "runs": [
     {
       "bench": "eval/bench/pagila.json",
@@ -11,7 +11,7 @@
       "recall": 0.94,
       "turn_cap_hits": 0,
       "avg_turns": 1,
-      "date": "2026-09-05"
+      "date": "2026-09-04"
     },
     {
       "bench": "eval/bench/pagila.json",
@@ -23,7 +23,7 @@
       "recall": 0.94,
       "turn_cap_hits": 0,
       "avg_turns": 1,
-      "date": "2026-09-05"
+      "date": "2026-09-04"
     },
     {
       "bench": "eval/bench/pagila-hard.json",
@@ -35,7 +35,7 @@
       "recall": 1,
       "turn_cap_hits": 0,
       "avg_turns": 1,
-      "date": "2026-09-05"
+      "date": "2026-09-04"
     },
     {
       "bench": "eval/bench/pagila-hard.json",
@@ -47,7 +47,7 @@
       "recall": 1,
       "turn_cap_hits": 0,
       "avg_turns": 1,
-      "date": "2026-09-05"
+      "date": "2026-09-04"
     }
   ]
 }

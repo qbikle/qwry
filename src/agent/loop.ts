@@ -435,11 +435,14 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
       if (req.provider.ownsLoop) {
         for (const res of owned) {
           const call = calls.find((c) => c.id === res.id);
+          // the name is recorded as the provider reported it: a tool outside
+          // the five must show up in the trace by its own name, never be
+          // laundered into the run_sql count
           trace.push({
             step: "tool",
             ms: 0,
             id: res.id,
-            name: isName(res.name) ? res.name : "run_sql",
+            name: res.name,
             args: call?.args ?? "",
             result: res.result,
             isError: !!res.isError,
@@ -504,6 +507,18 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
         );
         messages.push({ role: "tool", results });
         continue;
+      }
+
+      // an `ownsLoop` provider that exhausted its own turn budget did not
+      // finish the conversation; the model's last text is not an answer
+      if (stop === "turnCap") {
+        return finish({ status: "turn_cap", sql: runs.last?.sql ?? null, turns }, {
+          sql: runs.last?.sql ?? null,
+          run: runs.last?.run ?? null,
+          text,
+          turns,
+          sanity: sanityLine(peeked, sanity),
+        });
       }
 
       if (stop === "toolCalls" && calls.length === 0) {

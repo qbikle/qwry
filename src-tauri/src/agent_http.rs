@@ -413,7 +413,18 @@ pub async fn agent_http_stream(
         while buf.len() < ERROR_BODY_CAP {
             let next = tokio::select! {
                 biased;
-                _ = token.cancelled() => break,
+                _ = token.cancelled() => {
+                    // an abort mid-drain is the user's cancel, not the
+                    // provider's error: reporting the partial body as
+                    // Auth/Rate/Provider would record a failure that never
+                    // happened
+                    send(&on_chunk, HttpChunk::Error {
+                        kind: HttpErrorKind::Cancelled,
+                        message: "cancelled".into(),
+                        retry_after_ms: None,
+                    })?;
+                    return Ok(done(status, buf.len() as u64));
+                }
                 n = stream.next() => n,
             };
             match next {

@@ -42,6 +42,33 @@ function normNumber(text: string): string {
   return f.toFixed(4).replace(/0+$/, "");
 }
 
+/** The same four-decimal rule for NUMERIC, done on the digit string: a
+ * float64 round trip holds ~16 significant digits, so two different
+ * 18-digit NUMERIC values collapsed to one string and compared EQUAL (a false
+ * PASS). Decimal text is rounded half-up at four places with BigInt, never
+ * parsed as a float. Anything that is not plain decimal text (NaN, Infinity,
+ * exponents) falls back to the float rule, which is what PostgreSQL emits
+ * for those anyway. */
+function normDecimal(text: string): string {
+  const m = /^([+-]?)(\d+)(?:\.(\d*))?$/.exec(text.trim());
+  if (!m) return normNumber(text);
+  const neg = m[1] === "-";
+  let int = m[2].replace(/^0+(?=\d)/, "");
+  let frac = m[3] ?? "";
+  if (frac.length > 4) {
+    const keep = frac.slice(0, 4);
+    const roundUp = frac.charCodeAt(4) >= 53; // '5'
+    let scaled = BigInt(int + keep) + (roundUp ? 1n : 0n);
+    let s = scaled.toString().padStart(5, "0");
+    int = s.slice(0, -4);
+    frac = s.slice(-4);
+  }
+  frac = frac.replace(/0+$/, "");
+  if (frac === "" && /^0*$/.test(int)) return "0";
+  const body = frac === "" ? int : `${int}.${frac}`;
+  return neg ? `-${body}` : body;
+}
+
 /** PostgreSQL writes a timestamp as `2005-05-24 22:53:30+00`; Python's
  * `isoformat()` writes `2005-05-24T22:53:30+00:00`. The gap is punctuation,
  * and closing it keeps a `timestamp` gold comparable to a `timestamptz`
@@ -61,6 +88,7 @@ export function normCell(value: string | null, typeOid: number): string {
   if (value === null) return NULL_CELL;
   if (typeOid === BOOL) return value;
   if (INTEGRAL.has(typeOid)) return value;
+  if (typeOid === NUMERIC) return normDecimal(value);
   if (FRACTIONAL.has(typeOid)) return normNumber(value);
   if (TEMPORAL.has(typeOid)) return normTimestamp(value);
   return value;

@@ -158,7 +158,9 @@ export function renderTools(tools: readonly ToolSchema[]) {
 
 function mapStopReason(reason: string | null | undefined): StopReason {
   if (reason === "tool_use") return "toolCalls";
-  if (reason === "max_tokens") return "maxTokens";
+  // the docs group context-window overflow with max_tokens as a truncation:
+  // both mean the answer is incomplete, never a normal stop
+  if (reason === "max_tokens" || reason === "model_context_window_exceeded") return "maxTokens";
   return "stop";
 }
 

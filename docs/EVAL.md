@@ -41,6 +41,25 @@ implementing `AgentTools` over `pg` (AGENT-SPEC §2.2). Flags mirror the lab:
 live dashboard and single-question trace viewer port over as
 `scripts/agent-eval-dashboard.ts` when a session wants them.
 
+**How to run.** The bench database defaults to the lab Postgres,
+`postgres://lab@127.0.0.1:5455/pagila`, never 5432 (on the maintainer's machine
+that port is a production bastion tunnel); `--dsn` points it elsewhere. Four
+flags decide a run: `--bench`, `--provider`, `--model`, `--jobs`. Output lands
+in `eval/results/<label>.json` beside `progress-<label>.jsonl`, both gitignored;
+`eval/baseline.json` is the committed part.
+
+```sh
+bun scripts/agent-eval.ts --bench eval/bench/pagila.json --gold-check
+bun scripts/agent-eval.ts --bench eval/bench/pagila.json --provider claude-code \
+  --model claude-haiku-4-5 --jobs 3 --label pagila-haiku-v1 --baseline eval/baseline.json
+```
+
+`--gold-check` needs no model: every gold query runs and any LIMIT that cuts
+through a tie is named. `--baseline` scores the finished run against the row for
+the same bench + model + provider + `PROMPT_VERSION`, exits non-zero on the
+section 4 rules, and treats a combination with no row as unmeasured, not green.
+`--ids` reruns one question, `--tier` one tier.
+
 ## 4. Gates
 
 - **PR gate** (CI, any change under `src/agent/**`, `src-tauri/src/agent.rs`,
@@ -52,6 +71,11 @@ live dashboard and single-question trace viewer port over as
   into the release notes and `eval/baseline.json`.
 - **Baseline updates** are deliberate commits with the measured table in the
   message. A baseline never moves in the same PR as the change it measures.
+- **Unmeasured is not green**: the gate fails when `eval/baseline.json` has no
+  row for the run's bench + provider + model + `PROMPT_VERSION`. The rows
+  recorded on 2026-09-05 are all `claude-code` (the maintainer's subscription);
+  configuring `EVAL_API_KEY` for a hosted provider in CI therefore starts with
+  one deliberate local run of that provider and a baseline commit.
 
 Reference numbers (2026-09-03, `claude -p` path, so absolute tokens are not
 comparable to API runs): Pagila one-shot Haiku 31–32/33, Sonnet 29–30/33;

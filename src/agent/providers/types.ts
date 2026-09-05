@@ -111,6 +111,10 @@ export type StopReason =
   | "stop"
   | "toolCalls"
   | "maxTokens"
+  /** an `ownsLoop` provider ran out of its own per-invocation turn budget
+   * mid-conversation (claude -p `error_max_turns`): the exchange is cut off,
+   * not merely truncated, and the loop reports a turn cap, never an answer */
+  | "turnCap"
   | "cancelled"
   | "error";
 

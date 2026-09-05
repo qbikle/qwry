@@ -295,6 +295,12 @@ pub(crate) async fn open_session(
         )
         .await?
     };
+    // an agent session is gated BEFORE it is registered: the raw-SQL commands
+    // below check the flag, so no window exists where the id could be used
+    // to run ungated SQL on it
+    if force_read_only {
+        session.set_agent_gated();
+    }
     // driver-tracked transaction state → frontend tx chip
     {
         let app = app.clone();
@@ -462,6 +468,19 @@ pub async fn disconnect(state: State<'_, AppState>, session_id: String) -> Resul
     Ok(())
 }
 
+/// The agent's sessions accept SQL only through the AST-gated agent commands:
+/// `default_transaction_read_only` does not stop pg_sleep, pg_terminate_backend
+/// or lo_import, so a raw-SQL entry point on such a session would be a side
+/// door around the gate (AGENT-SPEC section 8.1).
+fn refuse_agent_session(session: &driver::postgres::PgSession) -> Result<()> {
+    if session.is_agent_gated() {
+        return Err(driver::DriverError::Internal(
+            "this session belongs to Ask and only runs gated agent queries".into(),
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn execute(
     state: State<'_, AppState>,
@@ -471,6 +490,7 @@ pub async fn execute(
     let session = state
         .session(&session_id)
         .ok_or(driver::DriverError::NoSession)?;
+    refuse_agent_session(&session)?;
     session.execute_simple(&sql).await
 }
 
@@ -484,6 +504,7 @@ pub async fn execute_stream(
     let session = state
         .session(&session_id)
         .ok_or(driver::DriverError::NoSession)?;
+    refuse_agent_session(&session)?;
     let mut sink = move |ev: QueryEvent| on_event.send(ev).is_ok();
     session.execute_stream(&sql, &mut sink).await
 }

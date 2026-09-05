@@ -39,8 +39,13 @@ driver/postgres/introspect.rs  pg_catalog → SchemaSnapshot
 driver/postgres/edit.rs    table_oid/attnum → editability map, UPDATE gen
 tunnel.rs                  ssh -L subprocess lifecycle
 secrets.rs                 keyring per-profile
-appdb.rs                   rusqlite: history, tabs, profiles
-commands.rs                #[tauri::command] handlers (thin)
+appdb.rs                   rusqlite: history, tabs, profiles, agent threads/turns/answers (v6)
+commands.rs                #[tauri::command] handlers (thin); open_session(force_read_only)
+agent.rs                   Ask: gated agent session, pg_query AST gate + function deny-list,
+                           describe/peek/run_readonly/probe, Keychain keys (AGENT-SPEC)
+agent_http.rs              provider HTTP relay: Keychain key injected, SSE bytes over a Channel
+agent_claude.rs            the `claude -p` child: direct exec, stdout lines over a Channel
+agent_mcp.rs               streamable-HTTP MCP server (rmcp on hyper) for claude -p, per-thread token
 ```
 
 ### DbDriver trait

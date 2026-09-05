@@ -14,6 +14,9 @@
 //                         inject context qwry never sent and cannot show in the
 //                         trace (AGENT-SPEC section 8.4).
 //   --strict-mcp-config   keeps the user's other MCP servers out.
+//   --max-turns           works and is measured (subtype error_max_turns) but
+//                         is absent from `claude --help` as of CLI 2.1.261: a
+//                         CLI bump must re-verify it before trusting the cap.
 // `--exclude-dynamic-system-prompt-sections` is a documented no-op next to
 // `--system-prompt`, and `--bare` needs an API key this machine does not have.
 //
@@ -407,7 +410,7 @@ class ClaudeCodeProvider implements Provider {
           const usage = mapUsage(line.usage);
           if (usage) yield { usage };
           if (line.subtype === "error_max_turns") {
-            stopReason = "maxTokens";
+            stopReason = "turnCap";
           } else if (line.is_error === true) {
             yield { error: resultError(line.result) };
             failed = true;

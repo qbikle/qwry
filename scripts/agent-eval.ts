@@ -26,7 +26,7 @@ import { PROMPT_VERSION } from "../src/agent/prompt";
 import type { SchemaSnapshot } from "../src/stores/schema";
 import { introspect, runReadonly, RUN_TIMEOUT_MS, type RawResult } from "../eval/introspect.node";
 import { createNodeTools } from "../eval/tools.node";
-import { createNodePlatform } from "../eval/platform.node";
+import { createNodePlatform, emptyTally, type McpTally } from "../eval/platform.node";
 import { normalise, sameRows, tieCheck } from "../eval/compare";
 
 const ROOT = resolvePath(dirname(new URL(import.meta.url).pathname), "..");
@@ -77,6 +77,14 @@ interface Outcome {
   candidates: string[];
   recall: boolean | null;
   risky: boolean;
+  /** tools/call requests the harness's own MCP listener served for this
+   * question. `tool_calls` counts the trace, which includes the final
+   * `run_sql` the loop runs itself; only this number is evidence that the
+   * child reached qwry's tools rather than its host's built-ins. */
+  mcp_calls: number;
+  /** names the child asked for that are not one of the five of AGENT-SPEC
+   * section 5; anything here is a finding, not a statistic */
+  mcp_unknown: string[];
   verdict: AskAnswer["verdict"]["status"];
 }
 
@@ -250,6 +258,7 @@ async function evaluate(ctx: RunContext, q: Question): Promise<Outcome> {
   const started = Date.now();
   let answer: AskAnswer | null = null;
   let failure: string | null = null;
+  let served: McpTally = emptyTally();
   try {
     const tools = createNodeTools({ client, snapshot: ctx.snapshot });
     ctx.register(ref, tools);
@@ -278,6 +287,9 @@ async function evaluate(ctx: RunContext, q: Question): Promise<Outcome> {
     failure = (e as Error).message;
   } finally {
     clearTimeout(timer);
+    // here rather than after the try: this is the last point at which the
+    // question's own thread is still the one being asked about
+    served = ctx.platform.mcpCalls(ref);
     ctx.release(ref);
     await client.end().catch(() => undefined);
   }
@@ -349,6 +361,8 @@ async function evaluate(ctx: RunContext, q: Question): Promise<Outcome> {
     candidates: answer?.candidates ?? [],
     recall: answer?.recall ?? null,
     risky: answer?.risky ?? false,
+    mcp_calls: served.calls,
+    mcp_unknown: served.unknown,
     verdict: answer?.verdict.status ?? "failed",
   };
 }
@@ -423,6 +437,22 @@ function summarise(args: Args, results: Outcome[]): string {
     for (const [name, n] of Object.entries(r.tools)) allTools[name] = (allTools[name] ?? 0) + n;
   }
   lines.push(`  tools ${Object.entries(allTools).map(([k, v]) => `${k}=${v}`).join(" ") || "none"}`);
+  // only the claude-code provider reaches the tools over the MCP listener;
+  // every other provider calls AgentTools in-process, so these lines would
+  // report every question as blind
+  if (args.provider === "claude-code") {
+    const blind = results.filter((r) => r.mcp_calls === 0);
+    const strayed = results.filter((r) => r.mcp_unknown.length > 0);
+    lines.push(
+      `  mcp served ${results.reduce((a, r) => a + r.mcp_calls, 0)} calls, ` +
+        `${results.length - blind.length}/${results.length} questions reached the tool server`,
+    );
+    if (blind.length) lines.push(`  NO MCP CALL  ${blind.map((r) => r.id).join(" ")}`);
+    if (strayed.length) {
+      const names = [...new Set(strayed.flatMap((r) => r.mcp_unknown))].join(" ");
+      lines.push(`  TOOL OUTSIDE THE FIVE  ${names}  (${strayed.map((r) => r.id).join(" ")})`);
+    }
+  }
   if (wrong.length) lines.push(`  WRONG      ${wrong.map((r) => r.id).join(" ")}`);
   if (failed.length) lines.push(`  EXEC-FAIL  ${failed.map((r) => r.id).join(" ")}`);
   if (capped.length) lines.push(`  TURN CAP   ${capped.map((r) => r.id).join(" ")}`);
@@ -605,13 +635,15 @@ async function main() {
             candidates: [],
             recall: null,
             risky: false,
+            mcp_calls: 0,
+            mcp_unknown: [],
             verdict: "failed",
           }),
         );
         results.push(outcome);
         console.log(
           `  ${outcome.id.padEnd(7)} ${outcome.status.padEnd(9)} turns=${outcome.turns}` +
-            ` tools=${outcome.tool_calls} ${String(outcome.wall_s).padStart(5)}s` +
+            ` tools=${outcome.tool_calls} mcp=${outcome.mcp_calls} ${String(outcome.wall_s).padStart(5)}s` +
             ` out=${outcome.out_tokens} recall=${outcome.recall ?? "-"}` +
             (outcome.error ? `  ${outcome.error.slice(0, 90)}` : ""),
         );

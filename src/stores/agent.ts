@@ -96,6 +96,10 @@ interface AgentState {
 
 /** Not state: an AbortController is not serialisable and nothing renders it. */
 const controllers = new Map<string, AbortController>();
+/** threads whose user pressed cancel while no controller existed yet (the
+ * first ask() is still inside agentConnect, a real wait over a bastion):
+ * runInto() honours it the moment the connection lands */
+const cancelRequested = new Set<string>();
 /** Threads whose provider has already been given a session id to resume. */
 const resumed = new Set<string>();
 
@@ -313,7 +317,9 @@ export const useAgent = create<AgentState>((set, get) => ({
     const profileId = get().activeProfileId;
     const threadId = profileId ? get().activeThread[profileId] : null;
     if (!threadId) return;
-    controllers.get(threadId)?.abort();
+    const controller = controllers.get(threadId);
+    if (controller) controller.abort();
+    else cancelRequested.add(threadId);
     // the loop stops asking, and the session stops working: a probe that is
     // already in flight belongs to the database, not to the AbortController
     const sessionId = get().sessions[threadId];
@@ -433,6 +439,7 @@ interface RunArgs {
 
 async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
   const { threadId, exchangeId, profileId } = args;
+  cancelRequested.delete(threadId);
   let sessionId = get().sessions[threadId];
   if (!sessionId) {
     try {
@@ -443,10 +450,19 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
     }
     set((s) => ({ sessions: { ...s.sessions, [threadId]: sessionId } }));
   }
+  if (cancelRequested.delete(threadId)) {
+    // cancelled while connecting: the session is kept for the next question,
+    // the question itself never reaches the model
+    failExchange(set, threadId, exchangeId, "cancelled", "cancelled");
+    return;
+  }
 
   const controller = new AbortController();
   controllers.get(threadId)?.abort();
   controllers.set(threadId, controller);
+  // a run superseded by a newer ask()/toggle on the same thread must not
+  // clear the flags the live run owns when its own (aborted) work settles
+  const authoritative = () => controllers.get(threadId) === controller;
 
   const onEvent = (ev: AskEvent) => {
     switch (ev.type) {
@@ -506,11 +522,18 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
     });
     resumed.add(threadId);
   } catch (e) {
-    failExchange(set, threadId, exchangeId, "provider", firstLine(e));
+    const mine = authoritative();
+    if (mine) controllers.delete(threadId);
+    patchExchange(set, threadId, exchangeId, (x) => ({
+      ...x,
+      streaming: false,
+      error: { kind: "provider", message: firstLine(e) },
+    }));
+    if (mine) set((s) => ({ busy: { ...s.busy, [threadId]: false } }));
     return;
-  } finally {
-    if (controllers.get(threadId) === controller) controllers.delete(threadId);
   }
+  const mine = authoritative();
+  if (mine) controllers.delete(threadId);
 
   const assumptions = args.flip
     ? applyFlip(answer.assumptions, args.flip)
@@ -521,7 +544,9 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
     text: answer.text || e.text,
     answer: { ...answer, assumptions },
   }));
-  set((s) => ({ busy: { ...s.busy, [threadId]: false }, phase: { ...s.phase, [threadId]: null } }));
+  if (mine) {
+    set((s) => ({ busy: { ...s.busy, [threadId]: false }, phase: { ...s.phase, [threadId]: null } }));
+  }
 
   await persist(set, get, args, { ...answer, assumptions });
 }

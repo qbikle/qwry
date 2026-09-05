@@ -55,6 +55,12 @@ pub struct PgSession {
     busy: AtomicUsize,
     /// fired on every tx-state CHANGE (frontend chip feed)
     on_tx: Mutex<Option<TxListener>>,
+    /// set on agent sessions (AGENT-SPEC section 8.1): raw-SQL commands
+    /// (`execute`, `execute_stream`) refuse them, so the AST gate in
+    /// `agent_run_readonly` is the ONLY way SQL reaches this connection.
+    /// `default_transaction_read_only` cannot stop pg_sleep / pg_terminate_backend
+    /// / lo_import; only the gate does, and a gate with a side door is no gate.
+    agent_gated: std::sync::atomic::AtomicBool,
 }
 
 type TxListener = Box<dyn Fn(TxState) + Send + Sync>;
@@ -196,6 +202,7 @@ where
         tx: AtomicU8::new(0),
         busy: AtomicUsize::new(0),
         on_tx: Mutex::new(None),
+        agent_gated: std::sync::atomic::AtomicBool::new(false),
     }
 }
 
@@ -386,6 +393,16 @@ fn error_fold(state: TxState, sql: &str) -> TxState {
 }
 
 impl PgSession {
+    /// Mark this session as the agent's: from here on only the gated agent
+    /// commands may run SQL on it (see `agent_gated`).
+    pub fn set_agent_gated(&self) {
+        self.agent_gated.store(true, Ordering::Relaxed);
+    }
+
+    pub fn is_agent_gated(&self) -> bool {
+        self.agent_gated.load(Ordering::Relaxed)
+    }
+
     pub fn is_tls(&self) -> bool {
         self.tls == TlsChoice::Tls
     }

@@ -2,6 +2,27 @@
 
 > Archived session log, moved verbatim out of `docs/ROADMAP.md`; newest first. Append new session notes at the top.
 
+### 2026-09-05 · Agent A1 · W0 research + W1 backend (branch `feat/agent-a1-ask`)
+
+**Done.** W0 (3 Sonnet researchers + 3 refuters, reports in `qwry-agent-lab/docs/research/w0-*.md`) closed the open questions: `pg_query` 6.2.0 AST gate, in-process streamable-HTTP MCP server (rmcp on bare hyper) for `claude -p`, provider HTTP through a key-injecting Rust relay, Gemini as an OpenAI-compatible preset, `thinking`/`toolResult`/`turnCap` provider events. W1 built the whole backend: `agent.rs` (gated read-only session, gate + function deny-list incl. SubLink sweep, describe/peek/run_readonly/probe, Keychain keys, appdb v6), `agent_http.rs`, `agent_claude.rs`, `agent_mcp.rs`; `src/agent/` (loop, prefilter, risk, prompt v1, extraction, tools/platform over Tauri, providers openai-compatible/anthropic/claude-code, presets, registry), `src/stores/agent.ts`; `eval/` (benches, node tools/platform, `scripts/agent-eval.ts`, CI `eval.yml`, `baseline.json`). Five Sonnet verifiers found 1 S1 + 7 S2, all fixed by the maintainer session (DECISIONS W1 block).
+
+**Numbers.** Pagila via `claude -p` (hybrid loop, one qwry turn per question): Haiku 33/33 (avg 3.5 tool calls, 12.4 s), Sonnet 32/33 (t4-02: extra revenue column, a judgment miss, not a harness bug), pagila-hard 5/5 both models, prefilter recall 31/33 (both misses are two-hop joins; the model recovered one via `list_tables`, not the other), turn-cap hits 0. Gates: clippy 0, cargo 85 unit + 6 live-lab tests, tsc clean, bun 203 tests, design-lint 0. Staging benches NOT run yet (W3).
+
+**Half-done / open.**
+- Every hosted preset is `verified: false` (no keys on the build machine); `listModels` flips them at connect time. Gemini's compat layer and parallel tool calls are unmeasured.
+- The CI model half has never executed: all baseline rows are `claude-code`; a hosted `EVAL_API_KEY` needs one deliberate local run + baseline commit first (EVAL.md §4).
+- Follow-up suggestions (AGENT-SPEC §4.6, UX §6) are not generated yet: they need a second, cheaper model config the picker does not expose.
+- `agent_run_readonly` materialises the full result before capping at 2000 rows; a cursor path would cap server-side but cannot wrap EXPLAIN.
+- Two-hop FK expansion in the prefilter is a measurable change, not made.
+- `SHOW <setting>` stays refused by the gate (spec-literal; AGENT-SPEC §11).
+
+**Gotchas.**
+- The Workflow harness kills a subagent with no tool call for 3 minutes; the eval agent ran a 5-minute baseline in the foreground and died six times (~2.7 h). Long commands go in the background and get polled. Five parallel Opus fixers also hung after two tool calls each; the fixes were applied directly.
+- `claude -p` needs `--tools ""`, `--allowedTools 'mcp__qwry__*'` AND `--setting-sources ""`; a dead MCP server is exit 0 with a toolless model (check `system/init.mcp_servers`). `--max-turns` is per invocation and absent from `--help` (CLI 2.1.261).
+- `default_transaction_read_only` does not stop `pg_sleep` / `pg_terminate_backend` / `lo_import`: only the gate does, so agent sessions are refused by `execute`/`execute_stream` (session flag).
+- pg_query's `.nodes()` walker skips `into_clause`/`locking_clause`; the gate checks every SelectStmt itself (SubLink included).
+- Ask panel sketch (the locked picture for W2) lives at `qwry-agent-lab/docs/ask-sketch.html`, served on 127.0.0.1:5462.
+
 ### 2026-08-23: feat/refresh-rebuild-fx: principal-review fixes before merge (session 15, continued)
 Agent review of the combined #38+#39 diff: 1 critical, 4 important, all confirmed and fixed. (C1) `spinTurns` was a global counter but each profile's glyph mounts at 0° — first ⇧⌘R after a profile switch spun N+1 revolutions (autoShine even worse: unprompted multi-spin). begin/autoShine now reset the counter when adopting a new profileId (the counter is only meaningful to a glyph resting at spinTurns×360). (I1) A background heal can JOIN a manual pass (healInflight): its autoShine gen++ orphaned the manual ceremony's timers (no clap, pendingOk parked forever). `manualActive` module flag — autoShine defers to a live same-profile ceremony, which reports the same verdict anyway. (I2) `visibility: hidden` pencil was out of the tab order, so its :focus-visible reveal was unsatisfiable — opacity reveal instead. (I3) Double-click on the JSON corner pencil: click 2 landed on ValuePop's fresh backdrop and flash-closed it — Overlay backdrops now ignore mousedown for their first 250ms (no modal should die by the tail of the double-click that opened it; global, all modals). (I4) Unhandled healProfile rejection wedged the discs apart forever and killed the retry chain — try/catch to a failed verdict. Also: aria-label Title Case (WRITING rule 1); CopySplit's border-right:none divider converted to the −1px overlap (same subpixel bug rv-navbtn had); ROADMAP/DECISIONS drift fixed (SPIN_MS 680; rebuilt = torn down for rebuild, replacements ride the spare). Deferred, deliberately: Inspector plain values have no visible edit affordance since the tooltip removal (needs its own design pass); silent ⇧⌘R on a disarmed profile; DbGlyph stagger literals living outside refreshFx.
 

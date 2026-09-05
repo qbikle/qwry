@@ -11,6 +11,7 @@ import type {
   ChatRequest,
   Msg,
   Provider,
+  StopReason,
 } from "../providers/types";
 import type { AgentTools, ToolOutcome } from "../tools";
 import type { AgentRun } from "../types";
@@ -87,7 +88,7 @@ const answerText = "There are 1000 films.\n\n```sql\nSELECT count(*) FROM film\n
 const call = (id: string, name: string, args: unknown): AgentEvent => ({
   toolCall: { id, name, args: JSON.stringify(args) },
 });
-const done = (stopReason: "stop" | "toolCalls"): AgentEvent => ({ done: { stopReason } });
+const done = (stopReason: StopReason): AgentEvent => ({ done: { stopReason } });
 
 async function ask(
   provider: Provider,
@@ -359,6 +360,45 @@ describe("providers that own their own loop", () => {
     expect(step && step.step === "tool" && step.result).toContain("1000");
     expect(events.some((e) => e.type === "toolEnd" && e.id === "a")).toBe(true);
     expect(answer.verdict.status).toBe("answered");
+  });
+
+  test("their own turn cap is a turn cap, never an answer", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    // claude -p exhausted --max-turns mid-loop: a tool ran, no final text came
+    const provider = scripted(
+      [
+        [
+          call("a", "run_sql", { sql: "SELECT count(*) FROM film" }),
+          { toolResult: { id: "a", name: "run_sql", result: "count\n1000\n(1 rows)" } },
+          done("turnCap"),
+        ],
+      ],
+      rec,
+      true,
+    );
+    const { answer } = await ask(provider, tools(rec));
+    expect(answer.verdict.status).toBe("turn_cap");
+    // nothing was re-executed on the way out either
+    expect(rec.calls).toEqual([]);
+  });
+
+  test("a tool outside the five keeps its own name in the trace", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const provider = scripted(
+      [
+        [
+          call("x", "SendMessage", { to: "someone" }),
+          { toolResult: { id: "x", name: "SendMessage", result: "sent", isError: true } },
+          { text: answerText },
+          done("stop"),
+        ],
+      ],
+      rec,
+      true,
+    );
+    const { answer } = await ask(provider, tools(rec));
+    const step = answer.trace.find((s) => s.step === "tool" && s.id === "x");
+    expect(step && step.step === "tool" && step.name).toBe("SendMessage");
   });
 });
 

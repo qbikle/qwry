@@ -39,6 +39,21 @@ describe("normCell", () => {
   test("a numeric and a double of the same value agree", () => {
     expect(normCell("4.99", NUMERIC)).toBe(normCell("4.99", FLOAT8));
     expect(normCell("100", NUMERIC)).toBe(normCell("100.0", FLOAT8));
+    expect(normCell("0.123456", NUMERIC)).toBe(normCell("0.123456", FLOAT8));
+    expect(normCell("-2.50", NUMERIC)).toBe(normCell("-2.5", FLOAT8));
+  });
+
+  test("numeric keeps every digit a float would lose", () => {
+    // the verifier's case: both collapsed to 12345678901234.5684 through Number()
+    expect(normCell("12345678901234.5678", NUMERIC)).toBe("12345678901234.5678");
+    expect(normCell("12345678901234.5679", NUMERIC)).toBe("12345678901234.5679");
+    expect(normCell("12345678901234.5678", NUMERIC)).not.toBe(
+      normCell("12345678901234.5679", NUMERIC),
+    );
+    expect(normCell("99999999999999999999.00001", NUMERIC)).toBe("99999999999999999999");
+    expect(normCell("0.99995", NUMERIC)).toBe("1");
+    expect(normCell("-0.00004", NUMERIC)).toBe("0");
+    expect(normCell("007.10", NUMERIC)).toBe("7.1");
   });
 
   test("integers and text pass through, booleans stay t/f", () => {

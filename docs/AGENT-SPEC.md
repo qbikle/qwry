@@ -147,7 +147,7 @@ renders them in its wire format. Names and behaviours are law:
 | `describe_tables` | `names: string[]` | DDL-shaped text: columns, types, PK, FK, `-- values:` for low-cardinality columns (from `pg_stats`, cap 20), column comments | unknown name → error text listing valid names |
 | `peek_values` | `table, column, limit≤50` | distinct non-null values, `… (more exist)` marker | 5s statement timeout |
 | `run_sql` | `sql` | header + rows (≤50 to the model; full result, ≤2000 rows, to the grid) + row count; errors as `ERROR: <first line>` | SELECT/WITH/EXPLAIN only (AST gate, §8); 10s timeout (setting) |
-| `probe` | `sqls: string[]` | one block per query, same format as `run_sql` | ≤6 queries, each ≤5 rows, run concurrently |
+| `probe` | `sqls: string[]` | one block per query, same format as `run_sql` | ≤6 queries, each ≤5 rows, gated independently, run one after another on the thread's single session (§2.3); one failure never sinks the batch |
 
 Never truncate `run_sql` rows below 50 to save tokens: the lean variant did
 and looped to the turn cap re-querying what it could not see. Save tokens by
@@ -187,7 +187,12 @@ type Event = { text: string } | { thinking: string }
            | { error: { kind: 'auth'|'rate'|'unreachable'|'provider'|'cancelled'; message; retryAfterMs? } }
 ```
 `thinking` (OpenAI-compatible `reasoning_content`, Anthropic `thinking_delta`)
-renders in the thinking strip and trace, never as answer text. A provider
+renders in the thinking strip and trace, never as answer text. `StopReason` is
+`stop | toolCalls | maxTokens | turnCap | cancelled | error`: every truncation
+(`max_tokens`, `model_context_window_exceeded`, `content_filter`, `length`)
+maps to `maxTokens`, and an `ownsLoop` provider that exhausts its own turn
+budget mid-loop (`claude -p` `error_max_turns`) reports `turnCap`, which the
+loop turns into the turn-cap verdict, never an answer. A provider
 with `ownsLoop: true` executes tools itself and yields `toolResult`; the
 loop records those and never re-executes. Adapters reach the network only
 through `Platform.httpStream` / `Platform.spawn` (§2.4).
@@ -223,6 +228,8 @@ parallel turn in ONE message). Bedrock/Vertex/Foundry are a research item.
    SelectStmt incl. SubLinks) or deny-listed function (pg_sleep,
    pg_terminate_backend, set_config, lo_*, pg_read_file, dblink…; read-only
    does not stop these). Both must pass. Policy table: DECISIONS 2026-09-05.
+   Agent sessions are flagged at connect and the raw-SQL commands (`execute`,
+   `execute_stream`) refuse them, so the gate has no side door.
 2. `statement_timeout` from the existing setting (default 10s); row caps §5.
 3. Secrets never enter prompts, logs, appdb, or the trace (redaction is not a
    fallback; the values are simply never read into TS).
