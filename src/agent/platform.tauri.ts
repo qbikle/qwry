@@ -174,8 +174,17 @@ function spawn(
  * timeout", which is not a shape a tool call has: it falls through to the
  * AGENT-SPEC 5 default rather than down to the one-second floor. */
 async function mcpServer(sessionRef: string): Promise<McpEndpoint> {
+  // the adapter refers to the THREAD (ChatRequest.thread.id); the Rust server
+  // binds a token to that thread's dedicated PG session. The node platform
+  // keys its tools by the same thread ref, so the seam resolves here, once.
+  // Dynamic import: the agent store imports this platform.
+  const { useAgent } = await import("../stores/agent");
+  const sessionId = useAgent.getState().sessions[sessionRef];
+  if (!sessionId) {
+    throw new Error(`agent tools did not start: no database session for this thread`);
+  }
   const secs = useSettings.getState().statementTimeoutSecs;
-  const endpoint = await agentMcpServe(sessionRef, secs > 0 ? secs * 1000 : undefined);
+  const endpoint = await agentMcpServe(sessionId, secs > 0 ? secs * 1000 : undefined);
   return {
     url: endpoint.url,
     token: endpoint.token,

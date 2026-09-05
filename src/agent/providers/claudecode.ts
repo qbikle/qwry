@@ -282,11 +282,18 @@ class ClaudeCodeProvider implements Provider {
         yield { done: { stopReason: "cancelled" } };
         return;
       }
+      // a Tauri rejection is a plain {message} object, not an Error: keep
+      // the server's own words, the user cannot fix "did not start" alone
+      const detail =
+        err instanceof Error
+          ? err.message
+          : typeof err === "object" && err !== null && "message" in err
+            ? String((err as { message: unknown }).message)
+            : "";
       yield {
         error: {
           kind: "provider",
-          message:
-            err instanceof Error ? err.message : "agent tools did not start",
+          message: detail ? `agent tools did not start: ${detail}` : "agent tools did not start",
         },
       };
       yield { done: { stopReason: "error" } };
