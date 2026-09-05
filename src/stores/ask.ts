@@ -1,10 +1,11 @@
-// Ask panel UI state (AGENT-UX section 1). Chrome only: whether the card is
-// open, how wide it is, which trace is showing, whether the picker is up, and
-// the composer drafts, one per connection. Thread identity, exchanges, streaming status and every
-// loop-facing fact stay in src/stores/agent.ts, which W1 built around LESSONS 3
-// and which is not persisted; mixing a persisted width into it would force a
-// partialize around the whole thread map. This store mirrors useInspector
-// instead: same persist shape (open + width), same clamp discipline.
+// Ask UI state (AGENT-UX section 1). Chrome only: which trace is showing,
+// whether the picker is up, and the composer drafts, one per connection.
+// Whether Ask is on screen and how wide it is belong to the one right pane
+// (src/stores/sidePane.ts: Ask is a MODE of it, not a card of its own); this
+// store mirrors `open` for its readers and clears its transient chrome when
+// the pane closes or switches away. Thread identity, exchanges, streaming
+// status and every loop-facing fact stay in src/stores/agent.ts, which W1
+// built around LESSONS 3 and which is not persisted. Nothing here persists.
 //
 // Focus is state-owned (LESSONS 7): `focusSeq` is bumped by whoever wants the
 // composer focused (the ⌘J handler, the palette, Ask Differently) and
@@ -12,11 +13,7 @@
 // the request lands.
 
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
-
-export const ASK_W_MIN = 320;
-export const ASK_W_MAX = 560;
-export const ASK_W_DEFAULT = 392;
+import { useSidePane } from "./sidePane";
 
 /** which answer's trace is open, and which step it should reveal first
  * (a sanity fragment or a tool chip points at one step; the footer link at
@@ -27,8 +24,9 @@ export interface TraceTarget {
 }
 
 interface AskState {
+  /** mirror: the side pane is open AND showing Ask. Read-only here; the
+   * pane store is the truth and App.tsx drives it */
   open: boolean;
-  width: number;
   traceOpenFor: TraceTarget | null;
   pickerOpen: boolean;
   /** unsent composer text per connection (LESSONS 4: a draft typed toward one
@@ -45,9 +43,6 @@ interface AskState {
    * overlay's focus-restore (escStack) lands first and loses */
   focusSeq: number;
 
-  setOpen: (open: boolean) => void;
-  toggle: () => void;
-  setWidth: (w: number) => void;
   openTrace: (exchangeId: string, stepId?: string | null) => void;
   closeTrace: () => void;
   setPickerOpen: (open: boolean) => void;
@@ -58,58 +53,42 @@ interface AskState {
   requestFocus: () => void;
 }
 
-const clampWidth = (w: number) =>
-  Number.isFinite(w) ? Math.max(ASK_W_MIN, Math.min(ASK_W_MAX, Math.round(w))) : ASK_W_DEFAULT;
+const showing = () => {
+  const p = useSidePane.getState();
+  return p.open && p.mode === "ask";
+};
 
-export const useAsk = create<AskState>()(
-  persist(
-    (set) => ({
-      // closed by default, unlike the inspector: a panel that appears
-      // uninvited after an update is the wrong first impression
-      open: false,
-      width: ASK_W_DEFAULT,
-      traceOpenFor: null,
-      pickerOpen: false,
-      drafts: {},
-      draftFor: null,
-      focusSeq: 0,
+export const useAsk = create<AskState>()((set) => ({
+  open: showing(),
+  traceOpenFor: null,
+  pickerOpen: false,
+  drafts: {},
+  draftFor: null,
+  focusSeq: 0,
 
-      setOpen: (open) => set(open ? { open } : { open, traceOpenFor: null, pickerOpen: false }),
-      toggle: () =>
-        set((s) => (s.open ? { open: false, traceOpenFor: null, pickerOpen: false } : { open: true })),
-      setWidth: (w) => set({ width: clampWidth(w) }),
-      openTrace: (exchangeId, stepId = null) =>
-        set({ traceOpenFor: { exchangeId, stepId }, pickerOpen: false }),
-      closeTrace: () => set({ traceOpenFor: null }),
-      setPickerOpen: (pickerOpen) => set({ pickerOpen }),
-      setDraftFor: (draftFor) => set({ draftFor }),
-      setDraft: (text) =>
-        set((s) => {
-          if (!s.draftFor) return {};
-          if (!text) {
-            if (!(s.draftFor in s.drafts)) return {};
-            const drafts = { ...s.drafts };
-            delete drafts[s.draftFor];
-            return { drafts };
-          }
-          return { drafts: { ...s.drafts, [s.draftFor]: text } };
-        }),
-      requestFocus: () => set((s) => ({ focusSeq: s.focusSeq + 1 })),
+  openTrace: (exchangeId, stepId = null) =>
+    set({ traceOpenFor: { exchangeId, stepId }, pickerOpen: false }),
+  closeTrace: () => set({ traceOpenFor: null }),
+  setPickerOpen: (pickerOpen) => set({ pickerOpen }),
+  setDraftFor: (draftFor) => set({ draftFor }),
+  setDraft: (text) =>
+    set((s) => {
+      if (!s.draftFor) return {};
+      if (!text) {
+        if (!(s.draftFor in s.drafts)) return {};
+        const drafts = { ...s.drafts };
+        delete drafts[s.draftFor];
+        return { drafts };
+      }
+      return { drafts: { ...s.drafts, [s.draftFor]: text } };
     }),
-    {
-      name: "qwry.ask",
-      partialize: (s) => ({ open: s.open, width: s.width }),
-      merge: (persisted, current) => {
-        const p = (typeof persisted === "object" && persisted !== null ? persisted : {}) as {
-          open?: unknown;
-          width?: unknown;
-        };
-        return {
-          ...current,
-          open: typeof p.open === "boolean" ? p.open : current.open,
-          width: typeof p.width === "number" ? clampWidth(p.width) : current.width,
-        };
-      },
-    },
-  ),
-);
+  requestFocus: () => set((s) => ({ focusSeq: s.focusSeq + 1 })),
+}));
+
+// leaving the screen (pane closed, or switched to the inspector) takes the
+// transient chrome with it, as the old setOpen(false) did
+useSidePane.subscribe(() => {
+  const open = showing();
+  if (useAsk.getState().open === open) return;
+  useAsk.setState(open ? { open } : { open, traceOpenFor: null, pickerOpen: false });
+});

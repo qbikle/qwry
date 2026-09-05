@@ -16,6 +16,7 @@ import { FindBar } from "./FindBar";
 import { lastErrorKind } from "./flashReason";
 import { Grid } from "./Grid";
 import { Kbd } from "../design/Kbd";
+import { msText } from "../lib/duration";
 import "./grid.css";
 
 export function ResultsPane({ browser = false }: { browser?: boolean }) {
@@ -149,9 +150,9 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
         {stmt.columns.length > 0 && <RowCount stmt={stmt} browser={browser} />}
         <SelectionStatsChip />
         <TxChip />
-        {stmt.ms != null && <span>{stmt.ms.toFixed(1)} ms</span>}
+        {stmt.ms != null && <span>{msText(stmt.ms)}</span>}
         {totalMs != null && statements.length > 1 && (
-          <span>total {totalMs.toFixed(1)} ms</span>
+          <span>total {msText(totalMs)}</span>
         )}
         <PendingEditsStatus />
       </div>
@@ -264,7 +265,7 @@ function ZeroRows({
     <div className="grid-zero">
       <div className="grid-zero-title">0 rows</div>
       <div className="grid-zero-sub">
-        {stmt.ms != null && `completed in ${stmt.ms.toFixed(1)} ms`}
+        {stmt.ms != null && `completed in ${msText(stmt.ms)}`}
         {browser && (
           <>
             {stmt.ms != null && " · "}

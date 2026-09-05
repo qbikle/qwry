@@ -677,6 +677,31 @@ export function Grid({
   );
   colAtRef.current = colAt;
 
+  // readOnly fill (AGENT-UX section 2 item 4): a standalone grid whose natural
+  // widths fit its slot stretches the LAST view column to the right edge; one
+  // that does not fit scrolls as everywhere else. `widths` stay the natural
+  // ones (persisted by hand-resize); the stretch is layout only. The results
+  // pane never observes: slotW stays 0 and layoutWidths IS colWidths.
+  const [slotW, setSlotW] = useState(0);
+  useLayoutEffect(() => {
+    if (!readOnly) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setSlotW(el.clientWidth));
+    ro.observe(el);
+    setSlotW(el.clientWidth);
+    return () => ro.disconnect();
+  }, [readOnly]);
+  const layoutWidths = useMemo(() => {
+    if (!readOnly || slotW === 0 || viewColLen === 0) return colWidths;
+    let sum = 0;
+    for (let i = 0; i < viewColLen; i++) sum += colWidths[colAt(i)];
+    const spare = slotW - ROWNUM_W - sum;
+    if (spare <= 0) return colWidths;
+    const last = colAt(viewColLen - 1);
+    return colWidths.map((w, i) => (i === last ? w + spare : w));
+  }, [readOnly, slotW, colWidths, viewColLen, colAt]);
+
   // quick-filter over LOADED rows (view-level, same contract as client sort;
   // browser excluded: filtering one server page would lie). Perf shape:
   // lowercase per-row haystacks are built ONCE per rows identity (not per
@@ -791,14 +816,14 @@ export function Grid({
     horizontal: true,
     count: viewColLen,
     getScrollElement: () => scrollRef.current,
-    estimateSize: (i) => colWidths[colAtRef.current(i)],
+    estimateSize: (i) => layoutWidths[colAtRef.current(i)],
     overscan: 4,
     // cells paint ROWNUM_W right of their virtual offsets (sticky gutter)
     scrollPaddingEnd: ROWNUM_W,
   });
   useEffect(() => {
     colVirt.measure();
-  }, [colWidths, colOrder, hiddenCols, colVirt]);
+  }, [layoutWidths, colOrder, hiddenCols, colVirt]);
 
   const sel = useSelection(viewLen, viewColLen);
 
@@ -854,9 +879,9 @@ export function Grid({
   const viewOffsets = useMemo(() => {
     const off = new Array<number>(viewColLen + 1);
     off[0] = 0;
-    for (let i = 0; i < viewColLen; i++) off[i + 1] = off[i] + colWidths[colAt(i)];
+    for (let i = 0; i < viewColLen; i++) off[i + 1] = off[i] + layoutWidths[colAt(i)];
     return off;
-  }, [viewColLen, colWidths, colAt]);
+  }, [viewColLen, layoutWidths, colAt]);
   const viewColFromX = useCallback(
     (x: number): number | null => {
       if (viewColLen === 0) return null;
@@ -2102,7 +2127,9 @@ export function Grid({
     e.preventDefault();
     e.stopPropagation();
     const col = colAt(viewCol); // widths are stored per UNDERLYING column
-    resizing.current = { col, startX: e.clientX, startW: colWidths[col] };
+    // the drag starts from the width on screen (a readOnly fill included), so
+    // the persisted width is the one the hand set, not the natural one
+    resizing.current = { col, startX: e.clientX, startW: layoutWidths[col] };
     resizeX.current = e.clientX;
     const onMove = (me: MouseEvent) => {
       resizeX.current = me.clientX;

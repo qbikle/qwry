@@ -1,9 +1,10 @@
 // UI-side facts about providers and models, shared by the picker, Settings ›
 // Models and the setup card (AGENT-UX section 8): what to call a provider, how
-// it authenticates, which models it can offer, and the one sentence each tier
-// earns (AGENT-SPEC section 3). Keys never pass through here: presence is a
-// boolean from the Keychain (agentKeyHas) and live model lists go through the
-// Rust relay, which injects the key itself (AGENT-SPEC 8.3).
+// it authenticates, and which models it can offer. Tiers are a word on a badge
+// and nothing here explains one (DESIGN rule 11; AGENT-SPEC section 3 is the
+// definition). Keys never pass through here: presence is a boolean from the
+// Keychain (agentKeyHas) and live model lists go through the Rust relay, which
+// injects the key itself (AGENT-SPEC 8.3).
 
 import { tauriPlatform } from "../agent/platform.tauri";
 import {
@@ -131,16 +132,6 @@ export function contextHint(tokens: number): string {
   return `${k}k ctx`;
 }
 
-/** One sentence per tier, from AGENT-SPEC section 3. Status-register
- * fragments: they follow `<tier> · ` in the bubble, so they lead lowercase
- * and carry no period. */
-export const TIER_SENTENCE: Record<Tier, string> = {
-  small: "writes the SQL in one shot with a repair loop and never calls tools",
-  mid: "runs probes but may not act on what they show",
-  large: "runs probes and acts on their evidence",
-};
-export const UNVERIFIED_NOTE = "unverified model, treated as mid";
-
 export interface ModelRow {
   id: string;
   label: string;
@@ -151,7 +142,9 @@ export interface ModelRow {
 
 export interface ProviderGroup {
   id: ProviderId;
-  /** "Claude Code · subscription", "llama.cpp · 127.0.0.1:8080", "Anthropic · no key" */
+  /** the provider's name, and only an exception's qualifier after it:
+   * "Claude Code", "llama.cpp · 127.0.0.1:8080", "Ollama · not running",
+   * "OpenAI · no key" (DESIGN rule 11: the norm is silent) */
   title: string;
   rows: ModelRow[];
   /** no key saved: the group offers the hand-off to Settings instead of rows */
@@ -263,11 +256,12 @@ export async function loadSourceState(): Promise<SourceState> {
 }
 
 /** The groups the picker shows: Claude Code always; every hosted provider
- * with a key; every local runtime that answered; the chosen provider even when
- * it did neither, so the pill's choice has a row to point at; and one teaching
- * group, Anthropic without a key. Everything else is a Settings matter. A
- * provider whose state has not answered yet appears only when chosen, titled
- * `checking`, so nothing paints and then vanishes. */
+ * with a key; every local runtime that answered; and the chosen provider even
+ * when it did neither (`· no key` / `· not running`), so the pill's choice has
+ * a row to point at. Everything else is a Settings matter behind `Manage
+ * Models…`; a rowless heading teaches nothing a menu should (DESIGN rule 11).
+ * A provider whose state has not answered yet appears only when chosen, under
+ * its bare name, so nothing paints and then vanishes. */
 export function groupsFrom(state: SourceState, choice: ModelChoice | null): ProviderGroup[] {
   const groups: ProviderGroup[] = [];
   for (const id of PROVIDER_ORDER) {
@@ -275,12 +269,7 @@ export function groupsFrom(state: SourceState, choice: ModelChoice | null): Prov
     const label = providerLabel(id);
     const auth = providerAuth(id);
     if (auth === "subscription") {
-      groups.push({
-        id,
-        title: `${label} · subscription`,
-        rows: withChoice(registryRows(id), id, choice),
-        needsKey: false,
-      });
+      groups.push({ id, title: label, rows: withChoice(registryRows(id), id, choice), needsKey: false });
       continue;
     }
     if (auth === "url") {
@@ -288,12 +277,7 @@ export function groupsFrom(state: SourceState, choice: ModelChoice | null): Prov
       const live = state.local[id];
       if (live === undefined) {
         if (chosen) {
-          groups.push({
-            id,
-            title: `${label} · checking`,
-            rows: withChoice(registryRows(id), id, choice),
-            needsKey: false,
-          });
+          groups.push({ id, title: label, rows: withChoice(registryRows(id), id, choice), needsKey: false });
         }
         continue;
       }
@@ -309,23 +293,13 @@ export function groupsFrom(state: SourceState, choice: ModelChoice | null): Prov
     const hasKey = state.keys[id];
     if (hasKey === undefined) {
       if (chosen) {
-        groups.push({
-          id,
-          title: `${label} · checking`,
-          rows: withChoice(registryRows(id), id, choice),
-          needsKey: false,
-        });
+        groups.push({ id, title: label, rows: withChoice(registryRows(id), id, choice), needsKey: false });
       }
       continue;
     }
     if (hasKey) {
-      groups.push({
-        id,
-        title: `${label} · key saved`,
-        rows: withChoice(registryRows(id), id, choice),
-        needsKey: false,
-      });
-    } else if (chosen || id === "anthropic") {
+      groups.push({ id, title: label, rows: withChoice(registryRows(id), id, choice), needsKey: false });
+    } else if (chosen) {
       // the chosen row stays visible above the hand-off so the pill's choice
       // is explained rather than orphaned
       groups.push({ id, title: `${label} · no key`, rows: withChoice([], id, choice), needsKey: true });
@@ -339,9 +313,10 @@ export function initialGroups(choice: ModelChoice | null): ProviderGroup[] {
   return groupsFrom({ keys: {}, local: {} }, choice);
 }
 
-/** `Haiku 4.5 · mid`: the select-option face for a model row */
+/** `Haiku 4.5 · mid`: the select-option face for a model row. An unverified
+ * model wears the tier the loop gates it at, with no `?` face (rule 11). */
 export function optionLabel(row: ModelRow): string {
-  return `${row.label} · ${row.known ? row.tier : `${row.tier}?`}`;
+  return `${row.label} · ${row.tier}`;
 }
 
 /** the select value for a provider + model pair; JSON so a model id may hold

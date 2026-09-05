@@ -46,6 +46,14 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
     ],
   },
   {
+    title: "Ask",
+    rows: [
+      ["↩", "Ask"],
+      ["⇧↩", "New line"],
+      ["⌘.", "Stop"],
+    ],
+  },
+  {
     title: "App",
     rows: [
       ["⌘K", "Command palette"],

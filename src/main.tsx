@@ -11,8 +11,15 @@ import "./design/tokens.css";
 
 installNoAutocorrect();
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);
+const root = document.getElementById("root") as HTMLElement;
+if (import.meta.env.DEV && new URLSearchParams(location.search).get("harness") === "ask") {
+  // the Ask fixture harness (src/harness, taste-gate evidence): DEV only, so
+  // the branch and its import are dead code in the production bundle
+  void import("./harness/AskHarness").then((m) => m.mountAskHarness(root));
+} else {
+  ReactDOM.createRoot(root).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>,
+  );
+}

@@ -64,6 +64,7 @@ export interface Exchange {
   /** appdb agent_turns row of the ASSISTANT turn; null until persisted */
   turnId: number | null;
   question: string;
+  /** the answer slot's text: the model's last text block, streamed */
   text: string;
   thinking: string;
   chips: ToolChip[];
@@ -659,6 +660,11 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
         break;
       case "text":
         patchExchange(set, threadId, exchangeId, (e) => ({ ...e, text: e.text + ev.delta }));
+        break;
+      case "narration":
+        // a tool call closed the block: it belongs to the trace, and the answer
+        // slot starts over for the block that follows (AGENT-UX 2.3)
+        patchExchange(set, threadId, exchangeId, (e) => ({ ...e, text: "" }));
         break;
       case "thinking":
         patchExchange(set, threadId, exchangeId, (e) => ({

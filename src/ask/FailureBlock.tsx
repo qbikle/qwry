@@ -32,8 +32,6 @@ export interface FailureBlockProps {
   };
   /** the last SQL the loop tried, editable in the block; null when none ran */
   sql: string | null;
-  /** turns spent, for `stopped after N turns` */
-  turns: number;
   /** a run is in flight on this thread: actions disabled */
   busy: boolean;
   /** Fix It: the SQL as edited in the field */
@@ -192,7 +190,6 @@ function useRetryWait(retryAfterMs: number | undefined): string | null {
 export function FailureBlock({
   error,
   sql,
-  turns,
   busy,
   onFixIt,
   onOpenInTab,
@@ -237,12 +234,10 @@ export function FailureBlock({
     );
   }
 
+  // `stopped after N turns` is the turn cap's own sentence (AGENT-UX 7); a
+  // statement that failed says so and never borrows it (LESSONS 9)
   const isCap = error.kind === "turncap";
-  const title = isCap
-    ? error.message
-    : turns > 0
-      ? `stopped after ${turns} ${turns === 1 ? "turn" : "turns"}`
-      : "query failed";
+  const title = isCap ? error.message : "query failed";
 
   return (
     <>

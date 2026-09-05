@@ -406,6 +406,79 @@ describe("providers that own their own loop", () => {
   });
 });
 
+describe("the answer is the last text block", () => {
+  test("narration before a tool call moves to the trace; the block after it is the answer", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    // claude -p streams the whole conversation as ONE qwry turn: text, a tool
+    // call, its result, more text. W2 concatenated all of it into the answer.
+    const provider = scripted(
+      [
+        [
+          { text: "I'll look at film first. " },
+          { text: "Running the count now." },
+          call("a", "run_sql", { sql: "SELECT count(*) FROM film" }),
+          { toolResult: { id: "a", name: "run_sql", result: "count\n1000\n(1 rows)" } },
+          { text: answerText },
+          done("stop"),
+        ],
+      ],
+      rec,
+      true,
+    );
+    const { answer, events } = await ask(provider, tools(rec));
+    expect(answer.verdict.status).toBe("answered");
+    expect(answer.text).toBe(answerText);
+    // the boundary is announced once, with the whole block the tool call closed
+    const narration = events.filter((e) => e.type === "narration");
+    expect(narration).toEqual([
+      { type: "narration", text: "I'll look at film first. Running the count now." },
+    ]);
+    // every delta still streamed, and the turn row keeps the raw text entire
+    const streamed = events.filter((e) => e.type === "text").map((e) => e.delta).join("");
+    expect(streamed).toBe(`I'll look at film first. Running the count now.${answerText}`);
+    const turn = answer.trace.find((s) => s.step === "turn");
+    expect(turn && turn.step === "turn" && turn.text).toBe(streamed);
+  });
+
+  test("the fence of an earlier block still counts when the last block has none", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const provider = scripted(
+      [
+        [
+          { text: "```sql\nSELECT count(*) FROM film\n```\nRunning it." },
+          call("a", "run_sql", { sql: "SELECT count(*) FROM film" }),
+          { toolResult: { id: "a", name: "run_sql", result: "count\n1000\n(1 rows)" } },
+          { text: "1000 films, one per row." },
+          done("stop"),
+        ],
+      ],
+      rec,
+      true,
+    );
+    const { answer } = await ask(provider, tools(rec));
+    expect(answer.verdict.status).toBe("answered");
+    expect(answer.sql).toBe("SELECT count(*) FROM film");
+    expect(answer.text).toBe("1000 films, one per row.");
+  });
+
+  test("on the hybrid path a tool turn's text never prefixes the answer", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const provider = scripted(
+      [
+        [{ text: "Now retrieving the schema." }, call("a", "describe_tables", { names: ["film"] }), done("toolCalls")],
+        [{ text: answerText }, done("stop")],
+      ],
+      rec,
+    );
+    const { answer, events } = await ask(provider, tools(rec));
+    expect(answer.text).toBe(answerText);
+    expect(events.filter((e) => e.type === "narration")).toHaveLength(1);
+    // the assistant message the provider replays still carries its own text
+    const assistant = rec.requests[1].messages.find((m) => m.role === "assistant");
+    expect(assistant && "content" in assistant && assistant.content).toBe("Now retrieving the schema.");
+  });
+});
+
 describe("the small tier", () => {
   test("schema up front, one shot, and at most two repairs", async () => {
     const rec: Recorded = { calls: [], requests: [] };

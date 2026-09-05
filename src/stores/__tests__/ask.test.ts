@@ -5,7 +5,8 @@
 
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 
-// persist reads `window.localStorage` when the store module evaluates; bun
+// ask.ts no longer persists anything itself, but it imports sidePane.ts,
+// whose persist reads `window.localStorage` when that module evaluates; bun
 // has neither, so an in-memory stand-in goes in first (the dynamic import
 // keeps the order) and leaves again after: bun test shares one global scope
 // across files, and the store keeps its own reference to the storage

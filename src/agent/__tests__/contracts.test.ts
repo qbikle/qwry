@@ -92,7 +92,9 @@ describe("the prompt is frozen", () => {
   test("no interpolation, so a provider can cache the prefix", () => {
     expect(SYSTEM_PROMPT).toBe(SYSTEM_PROMPT);
     expect(SYSTEM_PROMPT.includes("${")).toBe(false);
-    expect(PROMPT_VERSION).toBe("v1");
+    // v2: the final-answer shape and the Assumptions labels (W2b taste pass);
+    // the eval baselines are still v1 rows until the W3 re-run
+    expect(PROMPT_VERSION).toBe("v2");
   });
 
   test("it carries the four rules section 6 mandates", () => {

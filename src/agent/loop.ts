@@ -74,6 +74,13 @@ export type AskEvent =
       result: string;
     }
   | { type: "text"; delta: string }
+  | {
+      /** the text block a tool call just ended: pre-tool narration, trace
+       * material and never answer text (AGENT-UX 2.3). The answer slot starts
+       * over; the block stays in the turn's raw text for the trace. */
+      type: "narration";
+      text: string;
+    }
   | { type: "thinking"; delta: string }
   | { type: "usage"; usage: TokenUsage }
   | { type: "answer"; answer: AskAnswer }
@@ -96,7 +103,9 @@ export interface AskAnswer {
    * lands, and always empty from the loop itself */
   followUps: string[];
   trace: TraceStep[];
-  /** the model's final prose, streamed already but kept for persistence */
+  /** the model's LAST text block: what the answer slot shows, streamed
+   * already but kept for persistence. Earlier blocks of the same turn (the
+   * narration before a tool call) live only in the trace's turn rows. */
   text: string;
   turns: number;
   ms: number;
@@ -358,6 +367,10 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
   const runs: { last: { sql: string; run: AgentRun } | null } = { last: null };
   let turns = 0;
   let text = "";
+  // where the current text block starts inside `text`: a tool call closes the
+  // block before it, and only the block after the last call is the answer
+  let answerFrom = 0;
+  const lastBlock = () => text.slice(answerFrom);
 
   try {
     while (turns < maxTurns) {
@@ -373,6 +386,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
       let stop: StopReason | null = null;
       let failure: { kind: string; message: string; retryAfterMs?: number } | null = null;
       text = "";
+      answerFrom = 0;
 
       const stream = req.provider.chat({
         system: SYSTEM_PROMPT,
@@ -398,6 +412,11 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
           thinking += ev.thinking;
           emit({ type: "thinking", delta: ev.thinking });
         } else if ("toolCall" in ev) {
+          if (text.length > answerFrom) {
+            const block = lastBlock();
+            if (block.trim()) emit({ type: "narration", text: block });
+            answerFrom = text.length;
+          }
           calls.push(ev.toolCall);
           openedAt.set(ev.toolCall.id, now());
           const name = isName(ev.toolCall.name) ? ev.toolCall.name : "run_sql";
@@ -455,7 +474,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
         return finish({ status: "failed", sql: null, message: failure.message }, {
           sql: null,
           run: null,
-          text,
+          text: lastBlock(),
           turns,
           retryAfterMs: failure.retryAfterMs,
         });
@@ -555,7 +574,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
         return finish({ status: "turn_cap", sql: runs.last?.sql ?? null, turns }, {
           sql: runs.last?.sql ?? null,
           run: runs.last?.run ?? null,
-          text,
+          text: lastBlock(),
           turns,
           sanity: sanityLine(peeked, sanity),
         });
@@ -569,14 +588,22 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
 
       // 4.6 post: the model is done talking, so the answer is assembled here
       emit({ type: "status", phase: "post" });
-      const { sql } = extractSql(text);
+      const answer = lastBlock();
+      // the fence normally closes the last block; a model that stated the SQL
+      // before running it and said only "done" after keeps its statement
+      let found = extractSql(answer);
+      if (found.how === "raw" || found.how === "none") {
+        const whole = extractSql(text);
+        if (whole.how !== "raw" && whole.how !== "none") found = whole;
+      }
+      const { sql } = found;
       if (!sql) {
         return finish({ status: "answered", sql: null, rowCount: null }, {
           sql: null,
           run: null,
-          text,
+          text: answer,
           turns,
-          assumptions: buildAssumptions({ text, sql: null, question: req.question }),
+          assumptions: buildAssumptions({ text: answer, sql: null, question: req.question }),
           sanity: sanityLine(peeked, sanity),
         });
       }
@@ -604,7 +631,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
           }
           return finish(
             { status: "failed", sql, message: out.error ?? out.textForModel },
-            { sql, run: null, text, turns },
+            { sql, run: null, text: answer, turns },
           );
         }
         run = out.result;
@@ -613,9 +640,9 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
       return finish({ status: "answered", sql, rowCount: run.rowCount }, {
         sql,
         run,
-        text,
+        text: answer,
         turns,
-        assumptions: buildAssumptions({ text, sql, question: req.question }),
+        assumptions: buildAssumptions({ text: answer, sql, question: req.question }),
         sanity: sanityLine(peeked, sanity),
       });
     }
@@ -623,7 +650,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
     return finish({ status: "turn_cap", sql: runs.last?.sql ?? null, turns }, {
       sql: runs.last?.sql ?? null,
       run: runs.last?.run ?? null,
-      text,
+      text: lastBlock(),
       turns,
       sanity: sanityLine(peeked, sanity),
     });
@@ -632,7 +659,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
       return finish({ status: "cancelled", sql: runs.last?.sql ?? null }, {
         sql: runs.last?.sql ?? null,
         run: runs.last?.run ?? null,
-        text,
+        text: lastBlock(),
         turns,
         sanity: sanityLine(peeked, sanity),
       });
@@ -640,7 +667,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
     return finish({ status: "failed", sql: null, message: firstLine(e) }, {
       sql: null,
       run: null,
-      text,
+      text: lastBlock(),
       turns,
       sanity: sanityLine(peeked, sanity),
     });

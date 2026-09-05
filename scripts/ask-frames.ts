@@ -1,0 +1,356 @@
+// ask-frames: pixel evidence for the Ask pane (DESIGN.md rules 9 and 13, the
+// taste-gate skill). Renders the fixture harness route of the vite dev server
+// in headless Chrome and writes one PNG per state × width × theme.
+//
+//   bun scripts/ask-frames.ts [--out <dir>] [--states a,b] [--widths 320,560]
+//                             [--themes dark,light] [--scroll top] [--port 1420]
+//                             [--jobs 6]
+//
+//   --out      where the PNGs land; default
+//              ~/projects/qwry-agent-lab/docs/research/w2b-frames
+//   --states   subset of answer,empty,busy,picker,failure,disconnected,small
+//              (default: all seven)
+//   --widths   subset of 320,392,560 (default: all three)
+//   --themes   subset of dark,light (default: both)
+//   --scroll   bottom (default): the pane as it mounts, pinned to the newest content,
+//              the footer and composer in view; top: the scroller at the question
+//              echo and the thinking strip instead (the 640px card cannot hold the
+//              whole live answer, so the two ends are two runs). Frames of a top run
+//              carry a -top suffix so the two sets sit side by side
+//   --port     the vite dev server to use when one already answers (default 1420);
+//              otherwise vite is started on a free port for the run and stopped after
+//   --jobs     Chrome processes in flight at once (default 6)
+//
+// Output: <out>/<state>-<width>-<theme>[-top].png, 2× device scale, a viewport
+// of (width + 48) × 688 so the 640px card sits in one gutter of app background.
+// Prints the list, exits 1 if any frame is missing or empty.
+//
+// Each frame is one headless Chrome driven over CDP (--remote-debugging-port=0,
+// the port read from the profile's DevToolsActivePort): navigate, poll until
+// AskHarness has stamped data-harness-ready (its post-mount effect: picker
+// opened, scroller parked), wait SETTLE_MS of real time, Page.captureScreenshot
+// at deviceScaleFactor 2, kill. Chrome's own --screenshot path was the flaky
+// half of this script: under --virtual-time-budget the shot landed before the
+// motion entry springs had advanced (one busy frame in three lost its
+// thinking-strip chips) or before the portaled popover's layer had rastered
+// (an empty popover box, a missing row), and without a budget it shot before
+// the window was sized. A real settle after a DOM-level ready mark produced two
+// consecutive runs that were pixel-identical except the busy spinner's phase.
+//
+// Chrome runs with prefers-reduced-motion forced on: a frame is a still of the
+// SETTLED state, so every springs.ts preset is its instant variant and
+// tokens.css collapses the CSS transitions, which is the product's own settled
+// face, not a harness costume. Motion itself is the dev build's eyeball, never
+// a still's.
+//
+// The route: /?harness=ask&state=<state>&w=<width>&theme=<theme>[&scroll=top],
+// mounted by
+// src/main.tsx in DEV builds only (src/harness/AskHarness.tsx). The fixture
+// data is src/harness/fixtures.ts: connection `staging` on `auth_new`, a
+// five-table schema the starters draw from, and the locked sketch's exchange
+// (a sixty-five-character question, three tool chips, one-or-two-sentence
+// answer, a nine-row grid with the raw ms float, a collapsed SQL row, three
+// assumption chips, three follow-ups, `1 turn · 20.4 s · Sonnet 5`). busy =
+// streaming with a spinner chip; failure = a SQL error with the editable
+// field; picker = the answer with the model popover open; disconnected = the
+// starters with no session (textarea disabled, pill dimmed); small = the
+// starters under a small-tier choice (the one pill that wears a badge).
+//
+// The first frame runs alone so vite compiles the module graph once; the rest
+// run in parallel. Whole run: ~30 s warm, ~45 s cold.
+
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+
+const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const ROOT = resolve(import.meta.dir, "..");
+const DEFAULT_OUT = join(homedir(), "projects/qwry-agent-lab/docs/research/w2b-frames");
+
+const ALL_STATES = ["answer", "empty", "busy", "picker", "failure", "disconnected", "small"] as const;
+const ALL_WIDTHS = [320, 392, 560] as const;
+const ALL_THEMES = ["dark", "light"] as const;
+const SCROLLS = ["bottom", "top"] as const;
+type Scroll = (typeof SCROLLS)[number];
+type State = (typeof ALL_STATES)[number];
+type Width = (typeof ALL_WIDTHS)[number];
+type Theme = (typeof ALL_THEMES)[number];
+
+/** the harness card is 640 tall inside one --sp-6 gutter on every side */
+const CARD_H = 640;
+const MARGIN = 24;
+
+// ---- args -------------------------------------------------------------------
+
+function flag(name: string): string | undefined {
+  const i = process.argv.indexOf(`--${name}`);
+  return i === -1 ? undefined : process.argv[i + 1];
+}
+
+function subset<T extends string | number>(raw: string | undefined, all: readonly T[], what: string): T[] {
+  if (!raw) return [...all];
+  const picked = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  const out: T[] = [];
+  for (const p of picked) {
+    const hit = all.find((a) => String(a) === p);
+    if (hit === undefined) {
+      console.error(`ask-frames: unknown ${what} "${p}" (choose from ${all.join(", ")})`);
+      process.exit(2);
+    }
+    out.push(hit);
+  }
+  return out;
+}
+
+const OUT = resolve(flag("out") ?? DEFAULT_OUT);
+const STATES = subset<State>(flag("states"), ALL_STATES, "state");
+const WIDTHS = subset<Width>(flag("widths"), ALL_WIDTHS, "width");
+const THEMES = subset<Theme>(flag("themes"), ALL_THEMES, "theme");
+const SCROLL = subset<Scroll>(flag("scroll"), SCROLLS, "scroll")[0] ?? "bottom";
+const PORT = Number(flag("port") ?? 1420);
+const JOBS = Math.max(1, Number(flag("jobs") ?? 6));
+/** a frame that has not been captured by then is a failure */
+const FRAME_CAP_MS = 45_000;
+/** real time between the harness's ready mark and the shot: fonts, the
+ * portaled popover's layer and the grid's ResizeObserver pass land inside it */
+const SETTLE_MS = 700;
+/** AskHarness stamps this in its post-mount effect */
+const READY = 'document.documentElement.dataset.harnessReady === "1"';
+
+// ---- the dev server -----------------------------------------------------------
+
+async function answering(port: number): Promise<boolean> {
+  try {
+    const res = await fetch(`http://localhost:${port}/`, { signal: AbortSignal.timeout(1500) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+function freePort(): number {
+  const srv = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+  const port = srv.port;
+  srv.stop(true);
+  return port;
+}
+
+/** processes still bound to the port after the spawn was killed (bunx may
+ * have handed vite to node); killed so a run never leaks a server */
+function killPort(port: number) {
+  const r = Bun.spawnSync(["lsof", "-ti", `tcp:${port}`]);
+  const pids = r.stdout.toString().split("\n").map((s) => s.trim()).filter(Boolean);
+  for (const pid of pids) {
+    try {
+      process.kill(Number(pid), "SIGTERM");
+    } catch {
+      // already gone
+    }
+  }
+}
+
+async function ensureServer(): Promise<{ port: number; stop: () => void }> {
+  if (await answering(PORT)) return { port: PORT, stop: () => {} };
+  const port = freePort();
+  const log = Bun.file(join(OUT, "vite.log"));
+  const proc = Bun.spawn(["bunx", "vite", "--port", String(port), "--strictPort"], {
+    cwd: ROOT,
+    stdout: log,
+    stderr: log,
+  });
+  const stop = () => {
+    proc.kill();
+    killPort(port);
+  };
+  process.on("SIGINT", () => {
+    stop();
+    process.exit(130);
+  });
+  const deadline = Date.now() + 40_000;
+  while (Date.now() < deadline) {
+    if (await answering(port)) {
+      console.log(`ask-frames: vite started on ${port} (log: ${join(OUT, "vite.log")})`);
+      return { port, stop };
+    }
+    await Bun.sleep(250);
+  }
+  stop();
+  console.error(`ask-frames: vite did not answer on ${port} within 40 s; see ${join(OUT, "vite.log")}`);
+  process.exit(1);
+}
+
+// ---- frames -------------------------------------------------------------------
+
+interface Frame {
+  state: State;
+  w: Width;
+  theme: Theme;
+  file: string;
+}
+
+const frames: Frame[] = [];
+for (const state of STATES)
+  for (const w of WIDTHS)
+    for (const theme of THEMES)
+      frames.push({
+        state,
+        w,
+        theme,
+        file: join(OUT, `${state}-${w}-${theme}${SCROLL === "top" ? "-top" : ""}.png`),
+      });
+
+interface Cdp {
+  send: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
+  close: () => void;
+}
+
+/** the page target of a Chrome started with --remote-debugging-port=0 */
+async function connect(profile: string, deadline: number): Promise<Cdp> {
+  const portFile = join(profile, "DevToolsActivePort");
+  let port = 0;
+  while (Date.now() < deadline && port === 0) {
+    if (existsSync(portFile)) port = Number(readFileSync(portFile, "utf8").split("\n")[0]) || 0;
+    if (port === 0) await Bun.sleep(50);
+  }
+  if (port === 0) throw new Error("DevToolsActivePort never appeared");
+  let target: { webSocketDebuggerUrl: string } | undefined;
+  while (Date.now() < deadline && !target) {
+    try {
+      const list = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()) as {
+        type: string;
+        webSocketDebuggerUrl: string;
+      }[];
+      target = list.find((t) => t.type === "page");
+    } catch {
+      // not listening yet
+    }
+    if (!target) await Bun.sleep(50);
+  }
+  if (!target) throw new Error("no page target");
+  const ws = new WebSocket(target.webSocketDebuggerUrl);
+  await new Promise<void>((res, rej) => {
+    ws.onopen = () => res();
+    ws.onerror = () => rej(new Error("devtools socket refused"));
+  });
+  let id = 0;
+  const pending = new Map<number, { res: (v: unknown) => void; rej: (e: Error) => void }>();
+  ws.onmessage = (m) => {
+    const d = JSON.parse(String(m.data)) as { id?: number; result?: unknown; error?: { message: string } };
+    if (d.id === undefined) return;
+    const p = pending.get(d.id);
+    if (!p) return;
+    pending.delete(d.id);
+    if (d.error) p.rej(new Error(d.error.message));
+    else p.res(d.result);
+  };
+  return {
+    send: (method, params = {}) =>
+      new Promise((res, rej) => {
+        const i = ++id;
+        pending.set(i, { res, rej });
+        ws.send(JSON.stringify({ id: i, method, params }));
+      }),
+    close: () => ws.close(),
+  };
+}
+
+async function shoot(base: string, f: Frame): Promise<boolean> {
+  const url =
+    `${base}/?harness=ask&state=${f.state}&w=${f.w}&theme=${f.theme}` +
+    (SCROLL === "top" ? "&scroll=top" : "");
+  const width = f.w + 2 * MARGIN;
+  const height = CARD_H + 2 * MARGIN;
+  const profile = mkdtempSync(join(tmpdir(), "ask-frames-"));
+  const proc = Bun.spawn(
+    [
+      CHROME,
+      "--headless=new",
+      "--disable-gpu",
+      "--hide-scrollbars",
+      "--force-prefers-reduced-motion",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-extensions",
+      "--disable-sync",
+      `--window-size=${width},${height}`,
+      `--user-data-dir=${profile}`,
+      "--remote-debugging-port=0",
+      "about:blank",
+    ],
+    { stdout: "ignore", stderr: "ignore" },
+  );
+  const deadline = Date.now() + FRAME_CAP_MS;
+  let cdp: Cdp | null = null;
+  try {
+    rmSync(f.file, { force: true });
+    cdp = await connect(profile, deadline);
+    await cdp.send("Emulation.setDeviceMetricsOverride", {
+      width,
+      height,
+      deviceScaleFactor: 2,
+      mobile: false,
+    });
+    await cdp.send("Page.enable");
+    await cdp.send("Page.navigate", { url });
+    let ready = false;
+    while (Date.now() < deadline && !ready) {
+      const r = (await cdp.send("Runtime.evaluate", { expression: READY, returnByValue: true })) as {
+        result?: { value?: unknown };
+      };
+      ready = r.result?.value === true;
+      if (!ready) await Bun.sleep(100);
+    }
+    if (!ready) throw new Error("harness never became ready");
+    await Bun.sleep(SETTLE_MS);
+    const shot = (await cdp.send("Page.captureScreenshot", { format: "png" })) as { data: string };
+    const bytes = Buffer.from(shot.data, "base64");
+    if (bytes.length === 0) return false;
+    writeFileSync(f.file, bytes);
+    return true;
+  } catch (e) {
+    console.error(`ask-frames: ${f.state}-${f.w}-${f.theme}: ${e instanceof Error ? e.message : String(e)}`);
+    return false;
+  } finally {
+    cdp?.close();
+    proc.kill();
+    await proc.exited;
+    rmSync(profile, { recursive: true, force: true });
+  }
+}
+
+async function main() {
+  if (!existsSync(CHROME)) {
+    console.error(`ask-frames: Chrome not found at ${CHROME}`);
+    process.exit(1);
+  }
+  mkdirSync(OUT, { recursive: true });
+  const server = await ensureServer();
+  const base = `http://localhost:${server.port}`;
+  const started = Date.now();
+  const ok = new Map<string, boolean>();
+
+  try {
+    // one frame alone warms vite's module graph; then the pool
+    const [first, ...rest] = frames;
+    if (first) ok.set(first.file, await shoot(base, first));
+    let next = 0;
+    const worker = async () => {
+      while (next < rest.length) {
+        const f = rest[next++];
+        ok.set(f.file, await shoot(base, f));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(JOBS, rest.length) }, worker));
+  } finally {
+    server.stop();
+  }
+
+  const missing = frames.filter((f) => !ok.get(f.file));
+  for (const f of frames) console.log(`${ok.get(f.file) ? "ok     " : "MISSING"} ${f.file}`);
+  console.log(
+    `ask-frames: ${frames.length - missing.length}/${frames.length} frames in ${((Date.now() - started) / 1000).toFixed(1)} s → ${OUT}`,
+  );
+  if (missing.length > 0) process.exit(1);
+}
+
+await main();

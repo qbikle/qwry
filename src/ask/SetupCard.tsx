@@ -10,7 +10,6 @@
 // form (DESIGN rule 2, LESSONS 9).
 
 import { useId, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Sparkles } from "lucide-react";
 import type { PresetId, ProviderId } from "../agent/providers/types";
 import { agentKeySet } from "../ipc/commands";
 import { useSettings } from "../stores/settings";
@@ -32,7 +31,7 @@ export interface SetupCardProps {
   profileId: string;
   /** a provider and model were chosen: the panel switches to the starters */
   onConfigured: () => void;
-  /** `Manage in Settings › Models…` */
+  /** `Manage Models…` */
   onManage: () => void;
 }
 
@@ -131,12 +130,7 @@ export function SetupCard({ onConfigured, onManage }: SetupCardProps) {
 
   return (
     <div className="ask-empty">
-      <span className="ask-empty-glyph">
-        <Sparkles size={16} />
-      </span>
-      <p className="ask-empty-text">
-        Ask questions about this database in plain language. Ask reads, it never writes.
-      </p>
+      <p className="ask-empty-text">Ask questions about this database in plain language.</p>
       <form className="ask-setup" onSubmit={(e) => void submit(e)}>
         <label className="ask-setup-label" htmlFor={`${uid}-provider`}>
           Provider
@@ -213,7 +207,7 @@ export function SetupCard({ onConfigured, onManage }: SetupCardProps) {
         </span>
       </form>
       <button className="linkish" onClick={onManage}>
-        Manage in Settings › Models…
+        Manage Models…
       </button>
     </div>
   );

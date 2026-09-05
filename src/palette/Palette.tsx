@@ -8,6 +8,7 @@ import {
   Check,
   Clock,
   Database,
+  MessageSquare,
   Monitor,
   Moon,
   PanelRight,
@@ -15,7 +16,6 @@ import {
   Plus,
   RefreshCw,
   Settings,
-  Sparkles,
   SquareTerminal,
   Sun,
   SwatchBook,
@@ -155,8 +155,10 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
             </Command.Item>
             <Command.Item
               onSelect={() => {
-                void import("../stores/inspector").then(({ useInspector }) =>
-                  useInspector.getState().toggle(),
+                // the right pane's inspector radio: opens, switches from Ask,
+                // or closes when the inspector is showing
+                void import("../stores/sidePane").then(({ useSidePane }) =>
+                  useSidePane.getState().toggle("inspector"),
                 );
                 close();
               }}
@@ -166,13 +168,13 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
             <Command.Item
               value="ask agent question"
               onSelect={() => {
-                // opens the Ask card and focuses its composer (App owns the
-                // card; the palette has no access to its state)
+                // opens the pane in Ask (never closes it) and focuses the
+                // composer (App owns the focus capture; the palette does not)
                 window.dispatchEvent(new CustomEvent("qwry:open-ask"));
                 close();
               }}
             >
-              <Sparkles size={12} /> Ask <kbd>⌘J</kbd>
+              <MessageSquare size={12} /> Ask <kbd>⌘J</kbd>
             </Command.Item>
             <Command.Item
               onSelect={() => {

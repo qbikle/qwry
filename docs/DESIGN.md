@@ -98,7 +98,7 @@ annotation is a design decision, reviewable like any other.
 buttons) · `--icon-lg: 16` (headers, empty states). One size per surface;
 a list that mixes sizes is broken by definition. Documented exceptions:
 avatars/logos (14/22/40/44/64; 14 is the inline provenance mark that rides a
-text line, the Ask header and footer) and the grid's 11px type glyphs (data
+text line, the Ask answer footer) and the grid's 11px type glyphs (data
 register).
 Baseline nudges (`translate: 0 1px` and friends) live INSIDE a component's
 own definition, never at use-sites; each one carries `/* optical */`.
@@ -131,7 +131,10 @@ Any wave touching visible chrome ships screenshot evidence from the running
 app (or the WKWebView harness): geometry and beauty are verified in pixels,
 not inferred from CSS. This extends LESSONS #8 from bugs to aesthetics:
 consolidating or renaming chrome IS a visual change and ships under the same
-rule.
+rule. For a resizable pane the evidence is frames at its floor, default and
+max width of a LIVE state (a real answer with real long content, never a
+placeholder or a failure block standing in for one), in both themes; one
+width or one theme is not evidence (rule 13).
 
 ## Rule 10: The lint gate
 
@@ -141,3 +144,63 @@ modifier order, wrong-codepoint glyphs (↵ ⏎), and em dashes in UI strings
 (WRITING.md). `/* optical */` (CSS) and `// em-ok` / config allowlists are
 the only escape hatches. Warning mode during migration; `--enforce` after.
 Then it gates every wave like tsc does.
+
+## Rule 11: Every string earns its pixels
+
+The test is deletion: read the surface with the string gone, and if nothing
+is lost, the string was dead. Chrome never explains a standard interaction
+(↩ sends, ⇧↩ newlines, ⌘. cancels, Esc closes, click opens) and never states
+what is always true (read-only, "every answer shows its SQL", "answers come
+with the SQL"). The norm is silent; only the exception speaks (`small` on a
+model pill, `PROD` on the titlebar, `· not running` on a provider). Teaching
+lives where teaching is asked for: tooltips, menus, the Keyboard Shortcuts
+sheet, a first-run setup card. Precedent: the W2 Ask hint line, `↩ ask · ⇧↩
+newline · read-only · every answer shows its SQL`, one full row of the pane
+at every width, satisfying every rule the reviewers had; and the empty-state
+slogan ("Answers come with the SQL…"), the same defect in prose costume. A
+string that survives only because a rule permits it has not passed this one.
+
+## Rule 12: A strip states one thing
+
+A header answers "where am I": a title, at most one qualifier, and the zone's
+own actions as at most two icon buttons. Controls that configure an action
+sit beside that action (the model picker beside Send, never in the header); a
+status that belongs to the window stays in the window's chrome (PROD is the
+titlebar chip); provenance appears once per zone (the answer footer's avatar,
+not the header AND the footer). A strip holding two ideas is two strips, or
+one idea too many, and the strip's fixed height (rule 2) is not a licence to
+fill it. Precedent: the W2 Ask header, `icon · Ask · avatar · name · db ·
+READ-ONLY · model pill · tier · Threads · New`: ten things in 40px, and the
+badge clipped to `READ-ONL` at the floor because the strip had nothing left
+to give. The Inspector's header, a text title and two icon buttons, was the
+pattern in the same window all along.
+
+## Rule 13: Floor first
+
+Chrome is designed at the floor width and then given room, never the reverse.
+The sketch shows floor, default and max side by side with real long content
+(a nine-row grid, a sixty-character question, wrapping chips); the chrome is
+identical across the three; nothing clips, wraps or ellipsizes at the floor
+except content that owns its own overflow (grid cells, the collapsed SQL
+preview, the thinking strip's left fade); growth feeds content (grid, text,
+chips), never new chrome. A control the max width can show and the floor
+cannot is a control that does not exist. Frames at the three widths of a live
+state are the evidence (rule 9). Precedent: the W2 sketch, drawn once at 392:
+at 320 the header badge clipped and the grid header cut a column name, under
+380 the footer wrapped to two lines. Every one of those was visible the
+moment a second width was drawn.
+
+## Rule 14: Data once
+
+A fact renders in exactly one slot. Results in the grid, the query in the SQL
+row, interpretations in the assumption chips, timing in the status line,
+provenance in the footer avatar; prose never repeats any of them. Answer prose
+is one or two sentences of interpretation, what the numbers mean, not what
+they are; the model's text is chrome here, because the anatomy already
+carries the data. The rule binds chrome to chrome too: a name in the header
+and again in the footer, a row count above the grid and again below it, are
+two slots for one fact and one of them goes. Precedent: the W2 answer prose,
+which restated the grid as a markdown table, the SQL in a fence and the
+assumptions as a bullet list, rendered raw under a grid, a SQL row and chips
+that already showed all three. The anatomy was right; the prose was the
+duplicate, and the display strip that removes it is the fix.

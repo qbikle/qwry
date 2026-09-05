@@ -1,8 +1,9 @@
-/* Ask panel (AGENT-UX). Geometry and hierarchy follow the locked sketch
-   (qwry-agent-lab/docs/ask-sketch.html); every literal below is a token or
-   carries an optical note (DESIGN.md rule 4). Class prefixes: ask- (shell),
-   ans- (answer anatomy), tchip (thinking-strip chips), chip (assumption /
-   suggestion pills), trace- (drawer), picker- (model picker). */
+/* Ask pane (AGENT-UX). Geometry and hierarchy follow the locked sketch
+   (qwry-agent-lab/docs/ask-sketch-v2.html: floor 320, default 392, max 560,
+   one chrome); every literal below is a token or carries an optical note
+   (DESIGN.md rule 4). Class prefixes: ask- (shell), ans- (answer anatomy),
+   tchip (thinking-strip chips), chip (assumption / suggestion pills), trace-
+   (drawer), picker- (model picker). */
 
 /* ---- shell ------------------------------------------------------------- */
 .ask-panel {
@@ -14,44 +15,20 @@
   overflow: hidden;
 }
 
-/* header strip: fixed height (rule 2), tallest state is the picker pill */
+/* header strip: fixed height (rule 2); a title and two icon buttons, nothing
+   else (rule 12), so it is the same strip at every width (rule 13) */
 .ask-head {
   height: 40px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
+  gap: var(--sp-1);
   padding: 0 var(--sp-2) 0 var(--sp-3);
   border-bottom: 1px solid var(--border);
 }
 .ask-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px; /* optical */ /* icon-label gap, matches .btnish */
+  margin-right: auto;
   font-weight: 600;
-  flex-shrink: 0;
-}
-.ask-title svg {
-  color: var(--accent);
-}
-.ask-conn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px; /* optical */
-  min-width: 0;
-  color: var(--fg-muted);
-  font-size: var(--text-xs);
-}
-.ask-conn-name {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-/* the read-only ceremony: .badge-ok, the titlebar prod chip's LOCKED tint,
-   never danger (danger = writes on, which Ask can never be) */
-.ask-ro {
-  flex-shrink: 0;
-  letter-spacing: 0.03em;
   white-space: nowrap;
 }
 .ask-grow {
@@ -64,10 +41,10 @@
   color: var(--fg);
 }
 
-/* ---- model picker (header pill + popover) ------------------------------- */
-/* Chip / pill species (rule 1): pill radius, border, hover bg-hover */
+/* ---- model picker (composer pill + popover) ----------------------------- */
+/* Chip / pill species (rule 1): pill radius, border, hover bg-hover; the
+   disabled face comes from tokens.css (button:disabled) */
 .picker {
-  position: relative; /* the tier bubble hangs from the pill */
   display: inline-flex;
   align-items: center;
   gap: 6px; /* optical */
@@ -114,17 +91,31 @@
   color: var(--warn);
 }
 /* the popover is an AnchoredOverlay (portaled, escStack-registered, clamped):
-   the wrapper owns left/top, so this box only sizes and skins itself. It
-   hangs from the pill's right edge, hence the top-right origin. */
-.picker-pop {
+   the wrapper owns left/top at the pill's top-left corner, and this
+   zero-height anchor lets the box grow UPWARD from it (the clamp measures
+   the anchor's width for the right edge and nothing for the height, so the
+   primitive's downward flip never fires) */
+.picker-anchor {
+  position: relative;
   width: 280px;
+  height: 0;
+}
+.picker-pop {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 280px;
+  max-height: 60vh;
+  overflow-y: auto;
   padding: var(--sp-1);
   background: var(--bg-raised);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-pop);
-  transform-origin: top right;
+  transform-origin: bottom left;
 }
+/* group heading: the provider's name, and only an exception's qualifier
+   (a runtime's URL, · no key, · not running) after it */
 .picker-group {
   padding: 6px 8px 2px; /* optical */ /* group heading proportion */
   font-size: var(--text-2xs);
@@ -132,12 +123,13 @@
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* menu row species (rule 1): .hot = the keyboard/pointer highlight (the menu
-   is focusless, like ContextMenu), .active = the chosen model. Positioned so a
-   row's tier bubble hangs from the row, not from the badge. */
+   is focusless, like ContextMenu), .active = the chosen model */
 .picker-item {
-  position: relative;
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -175,11 +167,6 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-/* the hand-off row of a keyless provider: a hint-register row that acts,
-   tier 2 (not faint: it is enabled and load-bearing, rule 3) */
-.picker-item.picker-add {
-  color: var(--fg-muted);
-}
 .picker-item .ask-grow {
   margin-left: auto;
 }
@@ -193,34 +180,6 @@
   padding: 6px 8px; /* optical */
   border-top: 1px solid var(--border);
   font-size: var(--text-xs);
-}
-/* tier bubble: a real styled tooltip (native title is unreliable in WKWebView).
-   Hangs from the nearest positioned ancestor: the pill in the header, the row
-   in the popover; the pill's max-width keeps it inside a 320px card. */
-.picker-bubble {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  width: max-content;
-  max-width: 220px;
-  padding: 6px 10px; /* optical */
-  background: var(--bg-raised);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-pop);
-  color: var(--fg);
-  font-size: var(--text-xs);
-  font-weight: 400;
-  line-height: 1.4;
-  text-align: left;
-  text-transform: none;
-  white-space: normal;
-  cursor: default;
-  z-index: 6;
-}
-.picker-item .picker-bubble {
-  right: var(--sp-2);
-  max-width: 240px;
 }
 
 /* ---- thread scroller ---------------------------------------------------- */
@@ -466,34 +425,44 @@
   border-top: 1px solid var(--border);
 }
 
-/* assumption chips + follow-ups */
-.ans-label {
-  margin-bottom: var(--sp-1);
-  font-size: var(--text-xs);
-  color: var(--fg-muted);
-}
+/* assumption chips + follow-ups: one wrapping row; the assumption row leads
+   with an inline `Assumed` label at tier 2 (AGENT-UX section 3) */
 .ans-chips {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px; /* optical */
 }
-/* Chip / pill toggle species (rule 1): radius-pill, border, active = accent-soft */
+.ans-chips-lbl {
+  margin-right: 2px;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+/* Chip / pill toggle species (rule 1): radius-pill, border, active = accent-soft.
+   A long label wraps inside the pill and grows it downward from the 24px
+   minimum; it never clips or scrolls (rule 13: the row wraps, the chip too) */
 .chip {
   display: inline-flex;
   align-items: center;
   gap: 5px; /* optical */
-  height: 24px;
-  padding: 0 10px; /* optical */ /* pill proportion */
+  min-height: 24px;
+  padding: 3px 10px; /* optical */ /* pill proportion */
   border-radius: var(--radius-pill);
   border: 1px solid var(--border-strong);
   background: transparent;
   color: var(--fg-muted);
   font-size: var(--text-xs);
+  line-height: 1.35;
+  white-space: normal;
+  text-align: left;
   cursor: pointer;
   transition:
     background var(--dur-quick),
     border-color var(--dur-quick),
     color var(--dur-quick);
+}
+.chip svg {
+  flex-shrink: 0;
 }
 .chip:hover:not(:disabled) {
   background: var(--bg-hover);
@@ -507,20 +476,23 @@
   border-color: transparent;
   color: var(--fg);
 }
+/* motion writes an inline opacity on every layoutId element (the follow-up
+   and starter chips, for the shared-layout crossfade), which outranks
+   tokens.css's button:disabled; the one disabled face has to win here or a
+   disabled chip looks pressable (rule 2, LESSONS 9) */
+.chip:disabled {
+  opacity: var(--o-disabled) !important;
+}
 .chip.active svg {
   color: var(--accent);
 }
 /* suggestion chip: the dashed-ghost species in pill shape (a question not yet
    asked); hover turns the dash solid accent */
 .chip.q {
-  height: auto;
   padding: var(--sp-1) 10px; /* optical */
   border-style: dashed;
   border-color: var(--border);
   color: var(--fg);
-  line-height: 1.35;
-  white-space: normal;
-  text-align: left;
 }
 .chip.q:hover:not(:disabled) {
   border-style: solid;
@@ -529,10 +501,11 @@
 }
 .chip.q svg {
   color: var(--accent);
-  flex-shrink: 0;
 }
 
-/* footer */
+/* footer: avatar · turns · time · model · Trace, one line at the 320 floor
+   (rule 13). The avatar is the block's provenance mark (AGENT-UX section 9);
+   the status fragment gives way before the Trace link does */
 .ans-foot {
   display: flex;
   align-items: center;
@@ -541,8 +514,21 @@
   color: var(--fg-muted);
   font-size: var(--text-xs);
 }
+.ans-foot .qa-avatar {
+  flex-shrink: 0;
+}
+.ans-foot-meta {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .ans-foot .ask-grow {
   margin-left: auto;
+}
+.ans-foot .linkish {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 /* ---- FailureBlock (AGENT-UX section 7): error register, editable SQL, actions
@@ -611,15 +597,16 @@
 }
 /* ---- end FailureBlock ---- */
 
-/* ---- docked input ------------------------------------------------------- */
+/* ---- docked composer: two rows, no hint line (rule 11) ------------------ */
 .ask-input {
   flex-shrink: 0;
   padding: var(--sp-2) var(--sp-3) var(--sp-3);
   border-top: 1px solid var(--border);
 }
+/* the box stacks the textarea over its control row (model pill · send) */
 .ask-box {
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-3);
   border: 1px solid var(--border-strong);
@@ -631,8 +618,7 @@
   border-color: var(--accent);
 }
 .ask-ta {
-  flex: 1;
-  min-width: 0;
+  width: 100%;
   min-height: 20px;
   max-height: 96px;
   padding: 0;
@@ -646,6 +632,20 @@
   font-size: var(--text-md);
   user-select: text;
   -webkit-user-select: text;
+}
+.ask-ta::placeholder {
+  color: var(--fg-muted);
+}
+/* not connected: the one disabled look (rule 2); the placeholder says why */
+.ask-ta:disabled {
+  opacity: var(--o-disabled);
+  cursor: default;
+}
+.ask-ctl {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 28px;
 }
 /* the send / stop button: icon-button species box (28px tier) with the one
    accent fill; .stop drops to the raised surface */
@@ -677,26 +677,30 @@
 .ask-send.stop:hover:not(:disabled) {
   background: var(--bg-hover);
 }
-/* hint line: fixed height, text swaps inside (rule 2); tier 2, not faint */
-.ask-hint {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  height: 16px;
-  margin-top: 6px; /* optical */
-  padding: 0 var(--sp-1);
-  font-size: var(--text-2xs);
-  color: var(--fg-muted);
-  white-space: nowrap;
-  overflow: hidden;
-}
-.ask-hint .ask-grow {
-  margin-left: auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
 /* ---- empty states ------------------------------------------------------- */
+/* configured, no thread: the three starters docked above the composer and
+   nothing else (rule 11). margin-top:auto on the chip row, not
+   justify-content, so a short pane still scrolls to the first chip */
+.ask-starters {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  padding: var(--sp-3);
+}
+.ask-starters > .ans-chips {
+  margin-top: auto;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+}
+.ask-starters .chip.q {
+  width: 100%;
+  justify-content: flex-start;
+}
+/* no model configured: the setup card, centred (SetupCard.tsx) */
 .ask-empty {
   flex: 1;
   min-height: 0;
@@ -708,10 +712,6 @@
   gap: var(--sp-3);
   padding: var(--sp-6);
   text-align: center;
-}
-.ask-empty-glyph {
-  color: var(--accent);
-  display: inline-flex;
 }
 .ask-empty-text {
   margin: 0;
@@ -772,16 +772,6 @@
 }
 .ask-setup-note.error {
   color: var(--danger);
-}
-.ask-starters {
-  display: flex;
-  flex-direction: column;
-  gap: 6px; /* optical */
-  width: 100%;
-}
-.ask-starters .chip.q {
-  width: 100%;
-  justify-content: flex-start;
 }
 
 /* ---- ModelsSettings (Settings › Models) -----------------------------------
@@ -1032,7 +1022,7 @@
 }
 /* ---- end TraceDrawer ---- */
 
-/* ---- AnswerBlock anatomy (ThinkingStrip, SqlRow, footer provenance) ------
+/* ---- AnswerBlock anatomy (ThinkingStrip, SqlRow) ---------------------------
    Fenced: owned by the answer-anatomy builder. */
 /* an overflowing strip keeps the newest chip at the right edge (an instant
    scrollLeft assignment in ThinkingStrip, never animated); the clipped older
@@ -1046,21 +1036,6 @@
 .ans-sql-code {
   user-select: text;
   -webkit-user-select: text;
-}
-/* per-block provenance (AGENT-UX section 9): avatar + connection name lead
-   the footer's status line; the name ellipsises before the metadata does */
-.ans-prov {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-1);
-  min-width: 0;
-  flex-shrink: 0;
-}
-.ans-prov-name {
-  max-width: 120px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 /* ---- end AnswerBlock anatomy ---- */
 

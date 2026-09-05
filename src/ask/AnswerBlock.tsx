@@ -3,7 +3,10 @@
 // SQL row, assumption chips, sanity line, follow-ups, footer; the failure
 // block replaces the tail when the exchange ended badly. Parts that do not
 // apply are omitted, never reserved (DESIGN rule 2 scope note). Sections fade
-// in with --dur-slow opacity (ask.css .ans > *), never height.
+// in with --dur-slow opacity (ask.css .ans > *), never height. Every fact has
+// one slot (DESIGN rule 14): the prose is the model's last block with the
+// data it repeats stripped, timing prints through the status register's one
+// formatter, and the footer is avatar · turns · time · model · Trace.
 //
 // The grid slot mounts the app's ONE grid species in readOnly mode: the
 // turn's AgentRun becomes a StatementState from props alone, so the grid
@@ -13,11 +16,12 @@
 
 import { useMemo } from "react";
 import { motion } from "motion/react";
-import { modelInfo } from "../agent/providers/registry";
+import { answerText, footerStatus, renderInline } from "../agent/display";
 import type { ProviderId } from "../agent/providers/types";
 import type { AgentRun } from "../agent/types";
 import { spring } from "../design/springs";
 import { Grid, GRID_HEADER_H, gridRowHeight } from "../grid/Grid";
+import { msText } from "../lib/duration";
 import { Avatar } from "../sidebar/avatar";
 import { useAgent, type Exchange } from "../stores/agent";
 import { useAsk } from "../stores/ask";
@@ -29,6 +33,7 @@ import type { AskPhase } from "../agent/loop";
 import { AssumptionChips } from "./AssumptionChips";
 import { FailureBlock } from "./FailureBlock";
 import { FollowUps, questionLayoutId } from "./FollowUps";
+import { modelLabel } from "./modelSources";
 import { SanityLine } from "./SanityLine";
 import { sanityStep } from "./sanityStep";
 import { SqlRow } from "./SqlRow";
@@ -57,16 +62,6 @@ const GRID_ROWS_SHOWN = 6;
 /** the slot's own top and bottom hairline (.ans-grid border, border-box) */
 const GRID_HAIRLINES = 2;
 
-/** status-register model name: the registry label lowercased with the vendor
- * word dropped (`Claude Sonnet 5` → `sonnet 5`), else the raw id */
-export function statusModel(provider: string, model: string): string {
-  const label = modelInfo(model, provider as ProviderId)?.label;
-  if (!label) return model;
-  const words = label.toLowerCase().split(" ");
-  return (words.length > 1 ? words.slice(1) : words).join(" ").replace(/\s*\(.*\)$/, "");
-}
-
-const seconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
 
 /** the turn's run as the grid's statement shape. Column types are not on the
  * wire yet (type_oid 0, no colTypes): alignment is value-sniffed, no glyphs. */
@@ -126,7 +121,7 @@ export function AnswerBlock({
     const fragment = answer?.sanity[index];
     openTrace(exchange.id, answer && fragment ? sanityStep(fragment, answer.trace) : null);
   };
-  const connName = profile.name || profile.host;
+  const model = modelLabel({ providerId: exchange.provider as ProviderId, model: exchange.model });
 
   return (
     <article className="ans" data-exchange={exchange.id}>
@@ -149,11 +144,13 @@ export function AnswerBlock({
 
       {/* mounted from the start and empty until the first delta: a live region
           announces changes to content it already owns, so one that arrives
-          WITH its first text is silent for that text (section 12). React
-          renders no node for "", so .ans-text:empty collapses it out of the
+          WITH its first text is silent for that text (section 12). The display
+          strip (agent/display.ts) drops the fence, the Assumptions line and
+          any table, which have their own slots below (rule 14); an empty
+          result renders no node, so .ans-text:empty collapses it out of the
           flow with no gap (rule 2) while it stays in the accessibility tree */}
       <div className="ans-text" aria-live={isLatest ? "polite" : "off"} aria-atomic={false}>
-        {exchange.text}
+        {renderInline(answerText(exchange.text))}
       </div>
 
       {stmt && (
@@ -164,7 +161,7 @@ export function AnswerBlock({
       {run && (
         <div className="ans-status">
           <span>
-            {run.rowCount.toLocaleString()} {run.rowCount === 1 ? "row" : "rows"} · {run.ms} ms
+            {run.rowCount.toLocaleString()} {run.rowCount === 1 ? "row" : "rows"} · {msText(run.ms)}
             {run.capped ? ` · showing ${run.rows.length.toLocaleString()}` : ""}
           </span>
         </div>
@@ -195,7 +192,6 @@ export function AnswerBlock({
           // place (rearm keeps the answer); the block must not offer it as the
           // statement that failed
           sql={exchange.error.kind === "provider" ? null : sql}
-          turns={answer?.turns ?? 0}
           busy={busy}
           onFixIt={(edited) => void useAgent.getState().fixIt(exchange.id, edited)}
           onOpenInTab={openInTab}
@@ -217,19 +213,15 @@ export function AnswerBlock({
         />
       )}
 
+      {/* the avatar is the block's one provenance mark (section 9): it stays
+          with the rows when the header has scrolled away (LESSONS 4) */}
       {!exchange.streaming && answer && (
         <div className="ans-foot" data-thread={threadId}>
-          <span className="ans-prov">
-            <Avatar profile={profile} size={14} />
-            <span className="ans-prov-name">{connName}</span>
-          </span>
-          <span>
-            · {answer.turns} {answer.turns === 1 ? "turn" : "turns"} · {seconds(answer.ms)} ·{" "}
-            {statusModel(exchange.provider, exchange.model)}
-          </span>
+          <Avatar profile={profile} size={14} />
+          <span className="ans-foot-meta">{footerStatus(answer.turns, answer.ms, model)}</span>
           <span className="ask-grow" />
           <button type="button" className="linkish" onClick={() => openTrace(exchange.id)}>
-            How did it get this?
+            Trace
           </button>
         </div>
       )}

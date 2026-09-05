@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { useSidePane, type SidePaneState } from "./sidePane";
 
 export interface InspectTarget {
   stmtIndex: number;
@@ -8,7 +8,10 @@ export interface InspectTarget {
 }
 
 interface InspectorState {
+  /** mirror: the side pane is open AND showing the inspector. Read-only
+   * here; the pane (src/stores/sidePane.ts) is the truth */
   open: boolean;
+  /** mirror of the pane width (the narrow mode reads it) */
   width: number;
   target: InspectTarget | null;
   /** full value fetched on demand for truncated cells */
@@ -20,8 +23,8 @@ interface InspectorState {
   /** bumped when a cell asks the inspector to start editing (e.g. JSON dbl-click) */
   editSeq: number;
 
+  /** the pane's inspector radio: open here, switch here, or close when showing */
   toggle: () => void;
-  setWidth: (w: number) => void;
   setTarget: (t: InspectTarget | null) => void;
   setFullValue: (key: string, v: string | null) => void;
   setFullValueError: (msg: string) => void;
@@ -29,40 +32,39 @@ interface InspectorState {
   requestEdit: (t: InspectTarget) => void;
 }
 
-export const useInspector = create<InspectorState>()(
-  persist(
-    (set) => ({
-      open: true,
-      width: 300,
-      target: null,
+const mirror = (p: SidePaneState) => ({ open: p.open && p.mode === "inspector", width: p.width });
+
+export const useInspector = create<InspectorState>()((set) => ({
+  ...mirror(useSidePane.getState()),
+  target: null,
+  fullValue: null,
+  fullValueFor: null,
+  fullValueError: null,
+  editSeq: 0,
+
+  toggle: () => useSidePane.getState().toggle("inspector"),
+  setTarget: (t) =>
+    set({ target: t, fullValue: null, fullValueFor: null, fullValueError: null }),
+  setFullValue: (key, v) =>
+    set({ fullValue: v, fullValueFor: key, fullValueError: null }),
+  setFullValueError: (msg) => set({ fullValueError: msg }),
+  requestEdit: (t) => {
+    useSidePane.getState().show("inspector");
+    set((s) => ({
+      target: t,
       fullValue: null,
       fullValueFor: null,
       fullValueError: null,
-      editSeq: 0,
+      editSeq: s.editSeq + 1,
+    }));
+  },
+}));
 
-      toggle: () => set((s) => ({ open: !s.open })),
-      setWidth: (w) => set({ width: Math.max(220, Math.min(640, w)) }),
-      setTarget: (t) =>
-        set({ target: t, fullValue: null, fullValueFor: null, fullValueError: null }),
-      setFullValue: (key, v) =>
-        set({ fullValue: v, fullValueFor: key, fullValueError: null }),
-      setFullValueError: (msg) => set({ fullValueError: msg }),
-      requestEdit: (t) =>
-        set((s) => ({
-          open: true,
-          target: t,
-          fullValue: null,
-          fullValueFor: null,
-          fullValueError: null,
-          editSeq: s.editSeq + 1,
-        })),
-    }),
-    {
-      name: "qwry.inspector",
-      partialize: (s) => ({ open: s.open, width: s.width }),
-    },
-  ),
-);
+useSidePane.subscribe((p) => {
+  const m = mirror(p);
+  const cur = useInspector.getState();
+  if (cur.open !== m.open || cur.width !== m.width) useInspector.setState(m);
+});
 
 
 // the target indexes INTO the active result set. When that set is replaced

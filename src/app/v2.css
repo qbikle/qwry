@@ -155,7 +155,9 @@
   outline: none;
 }
 
-.inspector-card {
+/* the one right pane (AGENT-UX section 1): Inspector and Ask are its modes,
+   width via --pane-w; data-mode names the mode on stage */
+.side-card {
   flex-shrink: 0;
   min-width: 0;
   background: var(--bg-panel);
@@ -166,55 +168,36 @@
     width var(--dur-slow) var(--ease-std),
     margin-left var(--dur-slow) var(--ease-std);
 }
-.inspector-card.resizing {
+.side-card.resizing {
   transition: none;
 }
-.inspector-card.collapsed {
+.side-card.collapsed {
   margin-left: calc(-1 * var(--gutter));
   border-color: transparent;
   box-shadow: none;
 }
-.inspector-card.collapsed .inspector-resize {
+.side-card.collapsed .side-resize {
   display: none;
 }
-.inspector-fixed {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-}
-
-/* the Ask card (AGENT-UX section 1): third sibling, between the main card and
-   the inspector; the same width-animated contract, width via --ask-w */
-.ask-card {
-  flex-shrink: 0;
-  min-width: 0;
-  background: var(--bg-panel);
-  position: relative;
-  transition:
-    width var(--dur-slow) var(--ease-std),
-    margin-left var(--dur-slow) var(--ease-std);
-}
-.ask-card.resizing {
-  transition: none;
-}
-.ask-card.collapsed {
-  margin-left: calc(-1 * var(--gutter));
-  border-color: transparent;
-  box-shadow: none;
-}
-.ask-card.collapsed .ask-resize {
-  display: none;
-}
+/* the two mode holders sit on the same spot, anchored right so content
+   slides in as the card widens; both stay mounted (the inspector keeps its
+   cell, the composer its draft) and the one not on stage is hidden, so its
+   controls leave the tab order and take no clicks. The swap is instant */
+.inspector-fixed,
 .ask-fixed {
   position: absolute;
   top: 0;
   right: 0;
   bottom: 0;
 }
-/* once collapsed, the hidden composer and chips must leave the tab order;
-   the delay lets the width transition finish first */
-.ask-card.collapsed .ask-fixed {
+.side-card[data-mode="ask"] .inspector-fixed,
+.side-card[data-mode="inspector"] .ask-fixed {
+  visibility: hidden;
+}
+/* once collapsed, the hidden controls must leave the tab order too; the
+   delay lets the width transition finish first */
+.side-card.collapsed .inspector-fixed,
+.side-card.collapsed .ask-fixed {
   visibility: hidden;
   transition: visibility 0s linear var(--dur-slow);
 }
@@ -372,8 +355,7 @@
   color: var(--fg);
 }
 
-.inspector-resize,
-.ask-resize {
+.side-resize {
   position: absolute;
   /* fully inside the card: .card overflow:hidden clips anything hanging
      outside, leaving a clipped strip that isn't hit-testable */
@@ -384,8 +366,7 @@
   cursor: col-resize;
   z-index: 7;
 }
-.inspector-resize:hover,
-.ask-resize:hover {
+.side-resize:hover {
   background: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 

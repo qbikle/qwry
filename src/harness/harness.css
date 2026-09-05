@@ -1,0 +1,14 @@
+/* Ask fixture harness page: the app background, one gutter of margin, and the
+   real .card chrome (v2.css) around the pane. Nothing here styles the pane. */
+.harness {
+  height: 100%;
+  padding: var(--sp-6);
+  background: var(--bg-app);
+  overflow: auto;
+}
+.harness-card {
+  flex-shrink: 0;
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+}

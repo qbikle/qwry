@@ -36,7 +36,7 @@ import {
 export interface ModelsSettingsProps {
   /** the active connection, for the per-connection default row; null on home */
   profileId: string | null;
-  /** the modal was opened for this section (`Manage in Settings › Models…`):
+  /** the modal was opened for this section (`Manage Models…`):
    * scroll the heading into view once, instantly (never animate scroll) */
   reveal?: boolean;
 }

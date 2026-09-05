@@ -3,25 +3,44 @@
 Companion to AGENT-SPEC.md. DESIGN.md, WRITING.md, and LESSONS.md bind every
 surface here; this file only adds the agent-specific rules and names the
 species each element belongs to. When this file and a law file disagree, the
-law file wins and this file gets fixed.
+law file wins and this file gets fixed. The locked picture for the Ask pane
+is `~/projects/qwry-agent-lab/docs/ask-sketch-v2.html` (floor, default and
+max side by side); where it and this file disagree, this file wins and the
+sketch gets redrawn.
 
 ## 1. Where it lives
 
-The **Ask panel** is a card in the shell, sibling of the inspector: it enters
-by animating its width so the main card reflows in lockstep (the inspector
-precedent), never by overlaying. Opened by a titlebar control, the palette
-(`Ask`), and a chord (proposal: ⌘J; the keyboard map is the authority). It
-belongs to the active connection: switching connections switches threads.
-The components live in `src/ask/` (AskPanel and its parts, `ask.css`; UI
-state in `src/stores/ask.ts`), and the width budget is law: opening Ask when
-the main card would drop under 480px collapses the inspector, and opening the
-inspector under the same budget closes Ask.
+The shell has ONE right pane with two modes, **Inspector** and **Ask**. Ask is
+a mode of that pane, not a sibling card: the pane enters by animating its
+width so the main card reflows in lockstep (the inspector precedent), never
+by overlaying, and the two modes share the one width. Each mode has its own
+floor (Inspector 220, Ask 320); switching modes clamps the width to the new
+floor. One store owns the pane (`src/stores/sidePane.ts`: mode, open, width,
+persisted the way the inspector's were); Ask-only UI state (per-connection
+composer drafts, focus requests) stays in `src/stores/ask.ts`. The pane opens
+from the titlebar pair (a radio: the lit icon is the mode; Ask's glyph is the
+chat bubble, lucide `MessageSquare`), the palette (`Ask`), the View menu, and
+the chords: ⌘J opens the pane in Ask, ⌘I in Inspector; the chord of the mode
+already showing closes the pane, the other chord switches the mode. Ask
+belongs to the active connection: switching connections switches threads, and
+the composer placeholder names the database (`Ask about auth_new…`). The
+components live in `src/ask/` (AskPanel and its parts, `ask.css`).
+
+In Ask mode the pane header is `Ask` (a text title, no icon) and two icon
+buttons, `Threads` and `New Thread`; nothing else (DESIGN rule 12). The
+composer at the bottom is two rows: the textarea, then a control row with the
+model pill at the left (§8) and the accent send button at the right, which
+becomes `Stop` while a turn runs and is the surface's cancel affordance
+beside ⌘.. No hint line sits under it: ↩ sends and ⇧↩ newlines are standard,
+so they live in the send button's tooltip and the Keyboard Shortcuts sheet
+(DESIGN rule 11).
 
 Empty state (no model configured): a setup card with the provider picker,
 key field (saved to Keychain), and one sentence of what Ask does. Empty state
-(model configured, no thread): the input plus three starter suggestions drawn
-from the schema ("How many rows in each table?" is never one of them; use the
-connection's real nouns).
+(model configured, no thread): the three starter suggestions, docked above
+the composer, and nothing else; no sentence about what Ask is or does (DESIGN
+rule 11). Starters are drawn from the schema ("How many rows in each table?"
+is never one of them; use the connection's real nouns).
 
 ## 2. Anatomy of an answer
 
@@ -31,16 +50,31 @@ apply are omitted, never left as dead space (DESIGN rule 2 scope note):
 1. **Question echo**: the user's text, tier-1 contrast.
 2. **Thinking strip**: a FIXED-height row (rule 2, stable chrome). Tool calls
    appear as chips as they run: `describe order_v2` · `peek payment_status` ·
-   `run`. This is the trace made visible; it is the only "loading" UI.
-3. **Result**: the existing results grid (one grid species app-wide). Row
-   count and timing in the status register.
-4. **SQL**: collapsed by default; expand shows the query in the editor
-   register with `Copy SQL` and `Open in Tab`.
-5. **Assumption chips** (§3).
-6. **Sanity line** (§4).
-7. **Follow-ups**: three chips (§6).
-8. **Footer**: `4 turns · 12.3s · haiku` in the status register; `How did it
-   get this?` link opens the trace (§5).
+   `run`. This is the trace made visible; it is the only "loading" UI. When
+   the chips outgrow the row the newest stays visible and the left edge fades
+   the older ones out; the strip never wraps.
+3. **Answer text**: one or two sentences of interpretation, the model's LAST
+   text block only. Before it renders, the SQL fence, the `Assumptions:` line
+   and any markdown table are stripped (each has its own slot below, DESIGN
+   rule 14); pre-tool narration from earlier turns ("Now retrieving…") is
+   never concatenated into it. Bold and inline code render; headings, lists,
+   tables and links do not. The raw text stays in the trace, untouched.
+4. **Result**: the existing results grid (one grid species app-wide) in its
+   read-only mode. When the columns' natural widths fit the slot, the last
+   column stretches to the right edge; otherwise the grid scrolls as it does
+   everywhere. Row count and timing follow in the status register through the
+   results pane's own formatter: `9 rows · 1861.9 ms`.
+5. **SQL**: collapsed by default (one row: `SQL`, then the first line of the
+   query, ellipsized); expand shows the query in the editor register with
+   `Copy SQL` and `Open in Tab`.
+6. **Assumption chips** (§3).
+7. **Sanity line** (§4).
+8. **Follow-ups**: three chips (§6).
+9. **Footer**: avatar · turns · time · model · `Trace`. The 14px connection
+   avatar leads, `1 turn · 20.4 s · Sonnet 5` follows in the status register,
+   and the `Trace` link (§5) trails at the right edge. Nothing else: the
+   connection's name is not repeated (the avatar is the provenance mark, §9),
+   and the line fits at the 320 floor without wrapping (DESIGN rule 13).
 
 Streaming text renders as it arrives with no per-character animation
 (ARCHITECTURE ideology 6: never animate typing). Layout does not jump when
@@ -52,10 +86,14 @@ a section arrives: sections reserve nothing until they exist, and appear with
 Species: Chip / pill toggle (DESIGN rule 1). One chip per interpretation the
 agent made that the question did not state: `Excluding Deleted Users`,
 `Paid = payment_status 'paid'`, `2025 by created_at`. Title Case (control
-register). Active = the assumption is in effect. Toggling re-runs the query
-with the assumption flipped; the thinking strip shows only the `run` chip.
-Chips are the product form of a measured fact: agents add filters unasked,
-and a hidden filter is a wrong answer that looks right.
+register), at most six words: the prompt asks the model for that (`Added =
+sent_at`, not a quoted sentence). The row leads with `Assumed`; chips wrap
+onto further lines and a long label grows its pill downward (`min-height`
+24px, `line-height` 1.35), never clipping inside the pill or scrolling.
+Active = the assumption is in effect. Toggling re-runs the query with the
+assumption flipped; the thinking strip shows only the `run` chip. Chips are
+the product form of a measured fact: agents add filters unasked, and a hidden
+filter is a wrong answer that looks right.
 
 ## 4. Sanity line
 
@@ -68,7 +106,7 @@ ran, the line is absent.
 
 ## 5. Trace
 
-"How did it get this?" opens a drawer listing every step the loop took, in
+`Trace` in the footer opens a drawer listing every step the loop took, in
 the order the spec defines them: context (candidate tables, expandable to the
 exact text sent), each model turn (raw text), each tool call with its result,
 the verdict. Timing per step in the status register. This is a teaching
@@ -99,19 +137,41 @@ Errors explain and propose; they do not apologise (WRITING errors register).
 
 ## 8. Provider and model picker
 
-In the Ask header: model name + tier badge (`small` · `mid` · `large`,
-WRITING data-state register). Tier explains itself on hover and by keyboard
-(the pill on focus, a popover row when the arrow keys make it hot): what this
-tier can and cannot do, in one sentence each (from AGENT-SPEC §3). Per-connection
-default is remembered. Keys are managed in Settings › Models; the picker
-never shows a key.
+The picker lives in the composer's control row, at the left; the send button
+holds the right (DESIGN rule 12: a control that configures an action sits
+beside it). The pill is the Chip / pill species and shows the model's short
+name and a chevron (`Sonnet 5 ▾`). `small` is the one tier that badges the
+pill, because it changes what Ask can do (one-shot SQL, no tools, AGENT-SPEC
+§3); stating the exception and not the norm is rule 11. The popover opens
+upward from the pill (the app's AnchoredOverlay): provider groups titled by
+name (`Claude Code`; a local runtime appends its URL, `llama.cpp ·
+127.0.0.1:8080`; a provider that cannot currently answer appends that one
+fragment, `· no key` or `· not running`, and nothing else is appended), rows
+of `name · optional context hint · tier badge` (`LFM2.5 2.6B · 8k ctx ·
+small`; badges in the WRITING data-state register, `small` warn tint, `mid`
+accent, `large` ok), a check on the chosen row, and a footer link `Manage
+Models…` (opens Settings › Models; the ellipsis is earned). Nothing anywhere
+explains the tiers: no sentence, no hover bubble, no keyboard-revealed slot,
+no `?` face on an unverified model (a mark that needs a sentence to be read
+fails rule 11; an unverified model wears the tier the loop gates it at). The
+words small · mid · large order themselves, and AGENT-SPEC §3 is the
+definition for anyone who asks. The one-sentence-per-tier rule that stood
+here is repealed under DESIGN rule 11. Per-connection default is remembered.
+Keys are managed in Settings › Models; the picker never shows a key.
 
 ## 9. Provenance and prod
 
-The answer block carries the connection avatar and name; a prod connection
-shows the existing read-only chip. The agent is read-only everywhere in v1,
-and the UI says so where the user would expect a write to be possible
-("Ask can read; edits happen in the grid").
+The pane is bound to the active connection and says so once per zone (DESIGN
+rule 12): the sidebar's selection, the composer placeholder (`Ask about
+auth_new…`), and the 14px connection avatar leading every answer's footer,
+which is THE provenance mark for the block and stays with the rows when the
+header has scrolled away (LESSONS 4). The header carries no avatar, name or
+database. A prod connection is announced where prod is always announced, the
+titlebar chip (`PROD`); the pane wears no READ-ONLY badge, because the agent
+is read-only everywhere in v1 and rule 11 keeps the norm silent. The
+read-only sentence appears exactly once: when the user asks for a write, the
+answer is the refusal, `Ask can read; edits happen in the grid`, and it names
+where the edit does happen (the grid, a query tab). Nowhere else.
 
 ## 10. Motion
 
@@ -121,10 +181,14 @@ layout preset. One language (DESIGN rule 6).
 
 ## 11. Register
 
-Controls Title Case: `Ask`, `Fix It`, `Open in Tab`, `Copy SQL`, `Ask
-Differently`, `How Did It Get This?` is a link → sentence case `How did it
-get this?`. Status lowercase: `4 turns · 12.3s`, `cancelled`, `stopped after
-12 turns`. No em dashes in any string.
+Controls Title Case: `Ask`, `Threads`, `New Thread`, `Fix It`, `Open in
+Tab`, `Copy SQL`, `Ask Differently`, `Manage Models…`, `Trace` (a link of
+one word: it names the surface it opens). Status lowercase, a space before
+every unit (WRITING status register, `12 rows · 3.1 ms`): `1 turn · 20.4 s ·
+Sonnet 5`, `9 rows · 1861.9 ms`, `cancelled`, `stopped after 12 turns`; a
+model's name keeps its own case inside a status fragment. Chords appear only
+in tooltips and the Keyboard Shortcuts sheet, through `<Kbd>` (`Ask ↩`,
+`Stop ⌘.`); never as a line of chrome. No em dashes in any string.
 
 ## 12. Accessibility
 
