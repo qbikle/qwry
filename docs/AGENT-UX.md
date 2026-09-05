@@ -88,14 +88,17 @@ apply are omitted, never left as dead space (DESIGN rule 2 scope note):
    ones wait past it), a vertical wheel over the strip scrolls it, and every
    chip stays reachable. The newest chip, or the waiting word, is followed
    only while the exchange streams, and only until the user scrolls the strip
-   themselves; the strip never wraps. A chip still running when the turn is
+   away from its right edge; back at the edge it follows again; the strip
+   never wraps. A chip still running when the turn is
    stopped (⌘. / Stop) shows a hollow ring, never a spinner: a spinner under
    `cancelled` claims work that is not happening (LESSONS 9).
 3. **Answer text**: one or two sentences of interpretation, the model's LAST
-   text block only. Before it renders, the SQL fence, the `Assumptions:` line
-   and any markdown table are stripped (each has its own slot below, DESIGN
-   rule 14); pre-tool narration from earlier turns ("Now retrieving…") is
-   never concatenated into it. Bold and inline code render; headings, lists,
+   text block that still says something once the SQL fence, the `Assumptions:`
+   line and any markdown table are stripped (each has its own slot below,
+   DESIGN rule 14); a closing block that is only the statement keeps the prose
+   before it, and while a tool call runs the prose already on screen stays
+   until the next block's first words replace it. Pre-tool narration from
+   earlier turns ("Now retrieving…") is never concatenated into it. Bold and inline code render; headings, lists,
    tables and links do not. The raw text stays in the trace, untouched.
 4. **Result**: a run of exactly one row is values, not a grid (a table of one
    cell is chrome around nothing): one column renders the value in the data

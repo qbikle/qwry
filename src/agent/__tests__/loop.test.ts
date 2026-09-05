@@ -461,6 +461,29 @@ describe("the answer is the last text block", () => {
     expect(answer.text).toBe("1000 films, one per row.");
   });
 
+  test("a closing block that is only the SQL keeps the prose before it", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const prose = "Revenue for August 2026 was ₹2,277,416 across 482 paid orders.";
+    const provider = scripted(
+      [
+        [
+          { text: prose },
+          call("a", "run_sql", { sql: "SELECT sum(total) FROM orders" }),
+          { toolResult: { id: "a", name: "run_sql", result: "sum\n2277416\n(1 rows)" } },
+          { text: "```sql\nSELECT sum(total) FROM orders\n```\nAssumptions: Revenue = Paid Orders" },
+          done("stop"),
+        ],
+      ],
+      rec,
+      true,
+    );
+    const { answer } = await ask(provider, tools(rec));
+    expect(answer.verdict.status).toBe("answered");
+    expect(answer.sql).toBe("SELECT sum(total) FROM orders");
+    expect(answer.text.startsWith(prose)).toBe(true);
+    expect(answer.assumptions.map((c) => c.label)).toContain("Revenue = Paid Orders");
+  });
+
   test("on the hybrid path a tool turn's text never prefixes the answer", async () => {
     const rec: Recorded = { calls: [], requests: [] };
     const provider = scripted(

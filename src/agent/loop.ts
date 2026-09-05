@@ -46,6 +46,7 @@ import {
   smallAskMessage,
 } from "./prompt";
 import { buildAssumptions, extractSql } from "./extract";
+import { answerText } from "./display";
 
 /** Thread-level cap (AGENT-SPEC section 4.5). `claude -p` takes a per
  * invocation `--max-turns`, so the thread total is subtracted there. */
@@ -374,6 +375,14 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
   // block before it, and only the block after the last call is the answer
   let answerFrom = 0;
   const lastBlock = () => text.slice(answerFrom);
+  // the last block that still says something once fences, the Assumptions
+  // line and tables are stripped: a final block that is only the SQL (the
+  // model wrote its prose, ran once more, then closed with the statement)
+  // keeps that prose in the answer instead of an empty slot
+  let lastProse = "";
+  const noteProse = (block: string) => {
+    if (answerText(block).trim()) lastProse = block;
+  };
 
   try {
     while (turns < maxTurns) {
@@ -388,6 +397,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
       let thinking = "";
       let stop: StopReason | null = null;
       let failure: { kind: string; message: string; retryAfterMs?: number } | null = null;
+      noteProse(lastBlock());
       text = "";
       answerFrom = 0;
 
@@ -417,6 +427,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
         } else if ("toolCall" in ev) {
           if (text.length > answerFrom) {
             const block = lastBlock();
+            noteProse(block);
             if (block.trim()) emit({ type: "narration", text: block });
             answerFrom = text.length;
           }
@@ -591,7 +602,10 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
 
       // 4.6 post: the model is done talking, so the answer is assembled here
       emit({ type: "status", phase: "post" });
-      const answer = lastBlock();
+      const last = lastBlock();
+      // a SQL-only closing block rides behind the last prose: the display
+      // strip shows the prose, the fence and the Assumptions line still parse
+      const answer = answerText(last).trim() || !lastProse ? last : `${lastProse}\n\n${last}`;
       // the fence normally closes the last block; a model that stated the SQL
       // before running it and said only "done" after keeps its statement
       let found = extractSql(answer);

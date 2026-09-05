@@ -66,6 +66,9 @@ export interface Exchange {
   question: string;
   /** the answer slot's text: the model's last text block, streamed */
   text: string;
+  /** a tool call closed the block on screen: the next delta replaces it
+   * instead of appending (the old prose stays visible until then) */
+  textStale?: boolean;
   thinking: string;
   chips: ToolChip[];
   answer: AskAnswer | null;
@@ -869,13 +872,19 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
         // a retry keeps the prior prose on screen until its verdict lands
         // (the landed answer.text replaces it then); a fresh question streams
         patchExchange(set, threadId, exchangeId, (e) =>
-          e.prior ? e : { ...e, text: e.text + ev.delta },
+          e.prior
+            ? e
+            : e.textStale
+              ? { ...e, text: ev.delta, textStale: false }
+              : { ...e, text: e.text + ev.delta },
         );
         break;
       case "narration":
-        // a tool call closed the block: it belongs to the trace, and the answer
-        // slot starts over for the block that follows (AGENT-UX 2.3)
-        patchExchange(set, threadId, exchangeId, (e) => (e.prior ? e : { ...e, text: "" }));
+        // a tool call closed the block: it belongs to the trace, and the block
+        // that follows replaces it on screen when its first delta lands; until
+        // then the prose stays (a blank slot under running chips read as lost
+        // text, and a SQL-only closing block never replaces it at all)
+        patchExchange(set, threadId, exchangeId, (e) => (e.prior ? e : { ...e, textStale: true }));
         break;
       case "thinking":
         patchExchange(set, threadId, exchangeId, (e) => ({

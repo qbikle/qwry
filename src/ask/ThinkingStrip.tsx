@@ -31,7 +31,8 @@
 // that way, so the thread scrolls as usual at either end. While the exchange
 // streams the newest chip (or the waiting word) is kept in view by an
 // instant scrollLeft assignment (never animated), until the user scrolls the
-// strip themselves during that stream: from then on the position is theirs.
+// strip away from its right edge during that stream: from then on the position
+// is theirs, until they bring it back to the right edge, which follows again.
 // A landed exchange rests at its newest chip too: the first layout of a
 // strip that is not streaming (a reloaded thread, a cancelled retry's
 // restored chips) parks at the end once, so the same answer wears one strip
@@ -145,6 +146,8 @@ export function ThinkingStrip({ chips, streaming, waiting, onChipClick }: Thinki
     const max = el.scrollWidth - el.clientWidth;
     const l = el.scrollLeft > EDGE;
     const r = el.scrollLeft < max - EDGE;
+    // back at the right edge: the newest chip is followed again
+    if (!r) userScrolled.current = false;
     setFade((f) => (f.l === l && f.r === r ? f : { l, r }));
   }, []);
 
@@ -184,7 +187,7 @@ export function ThinkingStrip({ chips, streaming, waiting, onChipClick }: Thinki
       if (next === el.scrollLeft) return;
       e.preventDefault();
       el.scrollLeft = next;
-      userScrolled.current = true;
+      userScrolled.current = next < max - EDGE;
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     el.addEventListener("scroll", measure, { passive: true });
