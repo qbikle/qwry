@@ -60,6 +60,19 @@ the same bench + model + provider + `PROMPT_VERSION`, exits non-zero on the
 section 4 rules, and treats a combination with no row as unmeasured, not green.
 `--ids` reruns one question, `--tier` one tier.
 
+### 3.x Presentation score (planned, W5)
+
+Execution accuracy says whether the rows are right; it says nothing about
+whether the prose beside them can be read. W5 adds a second, independent score
+on the insight-style questions (the "give me insights on <table>" family):
+code heuristics over the rendered answer text (bullet count within 2–4 for a
+multi-part insight, no sentence over ~30 words, at least one figure per
+finding, no restatement of grid rows, no heading deeper than a lead-in), each
+a 0/1 check, averaged. A judge-model rubric is a fallback only where the
+heuristics and the maintainer's eye disagree on a 20-answer sample. The score
+is reported beside accuracy per model and must never move accuracy down; a
+prompt change that trades correctness for prettiness is refused.
+
 ## 4. Gates
 
 - **PR gate** (CI, any change under `src/agent/**`, `src-tauri/src/agent.rs`,
