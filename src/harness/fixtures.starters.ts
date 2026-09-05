@@ -8,10 +8,11 @@
 //                      fixture schema, cursor 0, the first triple (the three
 //                      the `empty` state has always shown)
 //
-// Both are the configured empty state under the fixture's Claude Code choice,
-// which is `ownsLoop`: `ensurePool` fires on mount and the call is refused
-// before it starts, so no frame depends on a shim answer and the seeded pool
-// is the one shown.
+// Both are the configured empty state under the fixture's Claude Code choice:
+// `ensurePool` fires on mount and the adapter's side call reaches
+// `agent_claude_spawn`, which the shim rejects (no fixture), so the pool falls
+// back at once, no frame depends on a shim answer and the seeded pool is the
+// one shown.
 //
 // Wiring (fixtures.ts / AskHarness.tsx / ask-frames.ts are the integrator's):
 // add STARTER_STATES to HARNESS_STATES; `exchangeFor` returns null for both

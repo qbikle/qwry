@@ -5,10 +5,12 @@ import {
   MCP_SERVER_NAME,
   THREAD_TURN_CAP,
   buildArgs,
+  buildSideArgs,
   createClaudeCodeProvider,
   mcpConfigJson,
 } from "../claudecode";
-import type { AgentEvent, ProviderConfig, ThreadRef } from "../types";
+import { SideCallError } from "../types";
+import type { AgentEvent, ProviderConfig, SideChatRequest, ThreadRef } from "../types";
 import { CLAUDE_DEAD_MCP, CLAUDE_STREAM_JSON } from "./fixtures";
 import {
   FakePlatform,
@@ -285,4 +287,132 @@ test("a cancelled turn ends cancelled, with no error", async () => {
   );
   expect(errorOf(events)).toBeUndefined();
   expect(doneOf(events)).toEqual({ stopReason: "cancelled" });
+});
+
+// ---- the side call ------------------------------------------------------------
+// Shapes from a live toolless run (2026-09-06): the init line carries
+// `tools: []` and, under --strict-mcp-config with no --mcp-config, an empty
+// mcp_servers array (dropped here to prove the gate needs none); the reply is
+// one assistant message and the result line repeats it as a string.
+
+const SIDE_TEXT =
+  "How many films per rating?\nWhich category has the most films?\nWhat is the average length?";
+const SIDE_INIT = JSON.stringify({ type: "system", subtype: "init", tools: [], model: "claude-haiku-4-5" });
+const SIDE_ASSISTANT = JSON.stringify({
+  type: "assistant",
+  message: {
+    id: "msg_side",
+    content: [
+      { type: "thinking", thinking: "" },
+      { type: "text", text: SIDE_TEXT },
+    ],
+  },
+});
+const SIDE_RESULT = JSON.stringify({
+  type: "result",
+  subtype: "success",
+  is_error: false,
+  num_turns: 1,
+  result: SIDE_TEXT,
+  usage: { input_tokens: 459, output_tokens: 756 },
+});
+
+const sideRequest = (over: Partial<SideChatRequest> = {}): SideChatRequest => ({
+  system: "Suggest three follow-up questions.",
+  user: "Question: how many films\nAnswer: 1000 films.",
+  model: "claude-haiku-4-5",
+  signal: new AbortController().signal,
+  ...over,
+});
+
+function sideChatOf(platform: FakePlatform) {
+  const provider = createClaudeCodeProvider(config, platform);
+  if (!provider.sideChat) throw new Error("the claude-code provider has no sideChat");
+  return provider.sideChat.bind(provider);
+}
+
+test("a side call spawns toolless: no session, no MCP config, the strict flag, one turn", async () => {
+  const platform = new FakePlatform({ lines: [SIDE_INIT, SIDE_ASSISTANT, SIDE_RESULT] });
+  const out = await sideChatOf(platform)(sideRequest());
+
+  expect(out.text).toBe(SIDE_TEXT);
+  expect(out.usage).toEqual({ input: 459, output: 756 });
+  expect(platform.mcpRefs).toEqual([]);
+
+  const spawn = platform.spawns[0];
+  expect(spawn.cmd).toBe("claude");
+  expect(spawn.stdin).toBe("Question: how many films\nAnswer: 1000 films.");
+  expect(spawn.args[spawn.args.indexOf("--tools") + 1]).toBe("");
+  expect(spawn.args[spawn.args.indexOf("--setting-sources") + 1]).toBe("");
+  expect(spawn.args[spawn.args.indexOf("--max-turns") + 1]).toBe("1");
+  expect(spawn.args[spawn.args.indexOf("--system-prompt") + 1]).toBe("Suggest three follow-up questions.");
+  expect(spawn.args[spawn.args.indexOf("--model") + 1]).toBe("claude-haiku-4-5");
+  expect(spawn.args).toContain("--strict-mcp-config");
+  for (const flag of [
+    "--mcp-config",
+    "--allowedTools",
+    "--session-id",
+    "--resume",
+    "--include-partial-messages",
+    "--bare",
+  ]) {
+    expect(spawn.args).not.toContain(flag);
+  }
+  expect(spawn.args).toEqual(
+    buildSideArgs({ model: "claude-haiku-4-5", system: "Suggest three follow-up questions." }),
+  );
+});
+
+test("a side call's init line needs no MCP server, only an empty tool list", async () => {
+  const platform = new FakePlatform({
+    lines: [JSON.stringify({ type: "system", subtype: "init", tools: [], mcp_servers: [] }), SIDE_ASSISTANT, SIDE_RESULT],
+  });
+  const out = await sideChatOf(platform)(sideRequest());
+  expect(out.text).toBe(SIDE_TEXT);
+  expect(platform.spawns[0].signal?.aborted).toBe(false);
+});
+
+test("a side call whose init lists a tool is killed before the model answers", async () => {
+  const platform = new FakePlatform({
+    lines: [JSON.stringify({ type: "system", subtype: "init", tools: ["Bash"] }), SIDE_ASSISTANT, SIDE_RESULT],
+  });
+  const err = await sideChatOf(platform)(sideRequest()).catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(SideCallError);
+  expect((err as SideCallError).message).toBe("a side call was given tools");
+  expect(platform.spawns[0].signal?.aborted).toBe(true);
+});
+
+test("a side call falls back to the result line's text when no assistant line came", async () => {
+  const platform = new FakePlatform({ lines: [SIDE_INIT, SIDE_RESULT] });
+  const out = await sideChatOf(platform)(sideRequest());
+  expect(out.text).toBe(SIDE_TEXT);
+});
+
+test("a side call that is not signed in rejects with an auth error", async () => {
+  const platform = new FakePlatform({
+    lines: [
+      SIDE_INIT,
+      JSON.stringify({ type: "result", subtype: "error", is_error: true, result: "Not logged in · Please run /login" }),
+    ],
+  });
+  const err = await sideChatOf(platform)(sideRequest()).catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(SideCallError);
+  expect((err as SideCallError).kind).toBe("auth");
+  expect((err as SideCallError).message).toContain("sign in");
+});
+
+test("a side call whose child dies without a result reads its stderr", async () => {
+  const platform = new FakePlatform({ lines: [], exit: { code: null, stderrTail: "spawn claude ENOENT" } });
+  const err = await sideChatOf(platform)(sideRequest()).catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(SideCallError);
+  expect((err as SideCallError).kind).toBe("unreachable");
+});
+
+test("an aborted side call rejects as cancelled and never spawns", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const platform = new FakePlatform({ lines: [SIDE_INIT, SIDE_ASSISTANT, SIDE_RESULT] });
+  const err = await sideChatOf(platform)(sideRequest({ signal: controller.signal })).catch((e: unknown) => e);
+  expect((err as Error).name).toBe("AbortError");
+  expect(platform.spawns).toHaveLength(0);
 });

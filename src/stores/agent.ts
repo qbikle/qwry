@@ -995,7 +995,6 @@ async function followUpsInto(
   },
 ) {
   const { threadId, exchangeId, landed } = args;
-  if (args.provider.ownsLoop) return;
   const exchange = (get().exchanges[threadId] ?? []).find((e) => e.id === exchangeId);
   if (!exchange) return;
   const asked = (get().exchanges[threadId] ?? []).map((e) => e.question);

@@ -175,6 +175,21 @@ export interface ChatRequest {
   thread?: ThreadRef;
 }
 
+/** A side call (AGENT-SPEC section 7): one text turn with no tools and no
+ * thread, for the follow-up and starter-pool prompts. `user` is the one user
+ * message; the reply is collected whole, nothing streams. */
+export interface SideChatRequest {
+  system: string;
+  user: string;
+  model: string;
+  signal: AbortSignal;
+}
+
+export interface SideChatResult {
+  text: string;
+  usage?: TokenUsage;
+}
+
 export interface Provider {
   readonly id: ProviderId;
   /** true: the provider executes tools itself against its own MCP connection.
@@ -182,6 +197,24 @@ export interface Provider {
    * the same id, and MUST NOT call AgentTools or re-execute anything. */
   readonly ownsLoop: boolean;
   chat(req: ChatRequest): AsyncIterable<AgentEvent>;
+  /** The thread-free door for a side call. A hosted adapter needs none: its
+   * `chat` with an empty tools list is the same thing. An `ownsLoop` adapter
+   * whose `chat` binds a thread and its MCP server implements this instead;
+   * without it, side calls are refused for that provider (side.ts). Resolves
+   * with the whole reply; rejects with a SideCallError on any failure. */
+  sideChat?(req: SideChatRequest): Promise<SideChatResult>;
+}
+
+/** A side call failed. `kind` is the vocabulary the UI speaks, `message` the
+ * provider's own words (or the CLI's), never invented. */
+export class SideCallError extends Error {
+  constructor(
+    readonly kind: ProviderErrorKind,
+    message: string,
+  ) {
+    super(message);
+    this.name = "SideCallError";
+  }
 }
 
 /** The provider answered with a non-2xx status. `body` is the response text,

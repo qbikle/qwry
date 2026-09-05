@@ -183,6 +183,7 @@ interface Provider {
   id: string
   chat(req: { system: string; messages: Msg[]; tools: ToolSchema[];
               model: string; signal: AbortSignal }): AsyncIterable<Event>
+  sideChat?(req: { system; user; model; signal }): Promise<{ text; usage? }>  // ownsLoop providers only
 }
 type Event = { text: string } | { thinking: string }
            | { toolCall: { id; name; args: string } }
@@ -216,6 +217,15 @@ v1 adapters, in build order:
    `--output-format stream-json --verbose`, `--system-prompt`,
    `--session-id`/`--resume`; prompt on stdin. A not-`connected` MCP status
    in `system/init` fails the turn before the model runs. No key needed.
+
+Side calls (the follow-up prompt of §4.6 and the starter pool of AGENT-UX §1)
+are one tool-less text turn with no thread: a hosted adapter takes them
+through `chat` with an empty tools list, an `ownsLoop` adapter implements the
+optional `sideChat` (claude -p: a fresh spawn with `--tools ""`,
+`--strict-mcp-config` and no `--mcp-config`, `--max-turns 1`, no session
+flags, the prompt on stdin, an init gate that requires no MCP server and
+refuses any listed tool), and `providers/side.ts` `sideText` picks the door,
+refusing an `ownsLoop` adapter that has neither.
 
 Provider-neutral rules: tool arguments are untrusted text → `JSON.parse` in a
 try, schema-validate, error text back to the model on failure; unknown tool

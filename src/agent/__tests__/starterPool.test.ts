@@ -17,7 +17,7 @@ import {
   starterMessage,
   starterSummary,
 } from "../starterPool";
-import type { AgentEvent, ChatRequest, Provider } from "../providers/types";
+import type { AgentEvent, ChatRequest, Provider, SideChatRequest } from "../providers/types";
 import type { SchemaSnapshot, TableInfo } from "../../stores/schema";
 
 const col = (name: string, type = "text") => ({
@@ -242,10 +242,31 @@ describe("generateStarters", () => {
     expect(seen[0].model).toBe("test-model");
   });
 
-  test("an ownsLoop provider is never called: the empty state has no thread to resume", async () => {
+  test("an ownsLoop provider without a side call is never called: the empty state has no thread", async () => {
     const seen: ChatRequest[] = [];
     expect(await generateStarters({ ...base, provider: scripted([], seen, true) })).toEqual([]);
     expect(seen).toHaveLength(0);
+  });
+
+  test("an ownsLoop provider with a side call gets the summary there, the reply parsed with the bans", async () => {
+    const seen: SideChatRequest[] = [];
+    const provider: Provider = {
+      id: "claude-code",
+      ownsLoop: true,
+      chat() {
+        throw new Error("chat must never carry a side call");
+      },
+      async sideChat(req) {
+        seen.push(req);
+        return { text: TWELVE.slice(0, 6).join("\n") + "\nHow many rows does order_v2_p2025 hold?\n" + TWELVE.slice(6).join("\n") };
+      },
+    };
+    expect(await generateStarters({ ...base, provider })).toEqual(TWELVE);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].system).toBe(STARTER_SYSTEM_PROMPT);
+    expect(seen[0].model).toBe("test-model");
+    expect(seen[0].user).toContain("order_v2(id, user_id, payment_status)");
+    expect(seen[0].user).not.toContain("wardrobe_products(");
   });
 
   test("a provider error, a thrown stream and an aborted signal each cost only the pool", async () => {

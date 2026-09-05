@@ -24,18 +24,31 @@
 // `claude -p`. It exits 0, reports `mcp_servers[].status: "failed"` with an
 // empty tool list, and the model answers from nothing. So `system/init` is a
 // precondition, checked before a single token of model text is emitted.
+//
+// The side call (`sideChat`, AGENT-SPEC section 7) is the same binary with no
+// thread and no MCP server: the follow-up and starter-pool prompts want one
+// text turn and no tools, and `chat` cannot give them that, since it binds a
+// thread's database session and would `--resume` the thread. Its argv keeps
+// `--strict-mcp-config` and drops `--mcp-config`, which is zero servers
+// (measured 2026-09-06: without the strict flag the user's own claude.ai MCP
+// servers load into the call, and a connected one hands its tools to a model
+// qwry promised none), and its init gate refuses any listed tool.
 
 import { isAbort } from "./http";
-import type {
-  AgentEvent,
-  ChatRequest,
-  McpEndpoint,
-  Msg,
-  Platform,
-  Provider,
-  ProviderConfig,
-  ProviderErrorKind,
-  StopReason,
+import { abortError } from "./side";
+import {
+  SideCallError,
+  type AgentEvent,
+  type ChatRequest,
+  type McpEndpoint,
+  type Msg,
+  type Platform,
+  type Provider,
+  type ProviderConfig,
+  type ProviderErrorKind,
+  type SideChatRequest,
+  type SideChatResult,
+  type StopReason,
 } from "./types";
 import type { TokenUsage } from "../types";
 
@@ -143,6 +156,55 @@ export function buildArgs(options: SpawnOptions): string[] {
     options.firstCall ? "--session-id" : "--resume",
     options.threadId,
   ];
+}
+
+export interface SideSpawnOptions {
+  model: string;
+  system: string;
+}
+
+/** The argv of a side call: no session minted or resumed, no MCP server to
+ * reach. `--tools ""` plus `--strict-mcp-config` with NO `--mcp-config` leaves
+ * the model no tool at all; `--max-turns 1` because a toolless model has
+ * nothing to do with a second turn; no `--include-partial-messages` because
+ * nothing streams, the reply is read whole from the assistant message. */
+export function buildSideArgs(options: SideSpawnOptions): string[] {
+  return [
+    "-p",
+    "--model",
+    options.model,
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--strict-mcp-config",
+    "--tools",
+    "",
+    "--setting-sources",
+    "",
+    "--max-turns",
+    "1",
+    "--system-prompt",
+    options.system,
+  ];
+}
+
+/** The init gate of a side call: no MCP server is expected, so none is
+ * required, but a tool list the CLI writes must be EMPTY. A tool reaching a
+ * call that promised none is the failure `--tools ""` exists to prevent; an
+ * init line without the array is trusted, as mcpConnected trusts it. */
+export function toollessInit(line: ClaudeLine): boolean {
+  if (!Array.isArray(line.tools)) return true;
+  return line.tools.length === 0;
+}
+
+/** The words of a rejection, whatever threw it: a Tauri rejection is a plain
+ * `{message}` object, not an Error. */
+function messageOf(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "object" && err !== null && "message" in err) {
+    return String((err as { message: unknown }).message);
+  }
+  return typeof err === "string" ? err : "";
 }
 
 /** Whether qwry's own MCP server came up in this invocation AND its tools
@@ -291,14 +353,8 @@ class ClaudeCodeProvider implements Provider {
         yield { done: { stopReason: "cancelled" } };
         return;
       }
-      // a Tauri rejection is a plain {message} object, not an Error: keep
-      // the server's own words, the user cannot fix "did not start" alone
-      const detail =
-        err instanceof Error
-          ? err.message
-          : typeof err === "object" && err !== null && "message" in err
-            ? String((err as { message: unknown }).message)
-            : "";
+      // keep the server's own words, the user cannot fix "did not start" alone
+      const detail = messageOf(err);
       yield {
         error: {
           kind: "provider",
@@ -470,6 +526,80 @@ class ClaudeCodeProvider implements Provider {
       // a consumer that walked away from the stream leaves a live child behind
       if (!settled) control.abort();
       await endpoint.close().catch(() => undefined);
+    }
+  }
+
+  async sideChat(req: SideChatRequest): Promise<SideChatResult> {
+    if (req.signal.aborted) throw abortError();
+    // our own handle on the child, for an init that lists a tool
+    const control = new AbortController();
+    const onAbort = () => control.abort();
+    req.signal.addEventListener("abort", onAbort, { once: true });
+    let settled = false;
+    try {
+      const child = this.platform.spawn(
+        CLAUDE_BIN,
+        buildSideArgs({ model: req.model || this.config.model, system: req.system }),
+        req.user,
+        control.signal,
+      );
+      // held at once: a spawn that rejects before its first line must not
+      // surface as an unhandled rejection while the lines are still read
+      const exit = child.exit.catch((err: unknown) => ({
+        code: null as number | null,
+        stderrTail: messageOf(err),
+      }));
+
+      let text = "";
+      let usage: TokenUsage | null = null;
+      let sawResult = false;
+      let failure: { kind: ProviderErrorKind; message: string } | null = null;
+
+      for await (const raw of child.lines) {
+        let line: ClaudeLine;
+        try {
+          line = JSON.parse(raw) as ClaudeLine;
+        } catch {
+          continue;
+        }
+        if (line.type === "system") {
+          if (line.subtype === "init" && !toollessInit(line)) {
+            control.abort();
+            failure = { kind: "provider", message: "a side call was given tools" };
+            break;
+          }
+          continue;
+        }
+        if (line.type === "assistant") {
+          for (const block of line.message?.content ?? []) {
+            if (block.type === "text" && block.text) text += block.text;
+          }
+          continue;
+        }
+        if (line.type === "result") {
+          sawResult = true;
+          usage = mapUsage(line.usage);
+          if (line.is_error === true) failure = resultError(line.result);
+          else if (text === "" && typeof line.result === "string") text = line.result;
+        }
+      }
+
+      const ended = await exit;
+      settled = true;
+      if (req.signal.aborted) throw abortError();
+      if (failure) throw new SideCallError(failure.kind, failure.message);
+      if (!sawResult) {
+        const mapped = exitError(ended);
+        throw new SideCallError(mapped.kind, mapped.message);
+      }
+      return usage ? { text, usage } : { text };
+    } catch (err) {
+      if (isAbort(err, req.signal)) throw abortError();
+      if (err instanceof SideCallError) throw err;
+      throw new SideCallError("provider", messageOf(err) || "Claude Code stopped before it answered");
+    } finally {
+      req.signal.removeEventListener("abort", onAbort);
+      if (!settled) control.abort();
     }
   }
 }

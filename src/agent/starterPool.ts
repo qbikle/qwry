@@ -6,16 +6,18 @@
 // src/ask/starters.ts stands in its place. Trace-free on purpose: there is no
 // exchange for a trace step to belong to.
 //
-// `ownsLoop` providers are refused up front, as followups.ts refuses them: the
-// claude -p adapter needs a thread with a live database session behind it,
-// and the empty state has neither. Those connections keep the heuristic pool.
+// The call goes through `sideText`, as the follow-up call does: a hosted
+// provider's tool-less `chat`, or an `ownsLoop` provider's thread-free
+// `sideChat`, since the empty state has no thread and no database session for
+// the claude -p adapter's `chat` to bind.
 //
 // Runtime-free by law (AGENT-SPEC section 2 rule 2): the only store import is
 // a type, erased at compile time, and the provider arrives ready-made.
 
 import type { SchemaSnapshot, TableInfo } from "../stores/schema";
 import { buildMeta, type SchemaMeta, type TableMeta } from "./context";
-import type { AgentEvent, Provider } from "./providers/types";
+import { sideText } from "./providers/side";
+import type { Provider } from "./providers/types";
 
 export const STARTER_POOL_SIZE = 12;
 /** a pool the store keeps has at least this many questions: fewer cannot
@@ -227,25 +229,21 @@ export interface StarterRequest {
 /** One tool-less call for the pool; [] on refusal, error, abort or an empty
  * schema. Never throws: the heuristic pool is the answer to every failure. */
 export async function generateStarters(req: StarterRequest): Promise<string[]> {
-  if (req.provider.ownsLoop || req.signal.aborted) return [];
+  if (req.signal.aborted) return [];
   const summary = starterSummary(req.snapshot);
   if (summary.tables.length === 0) return [];
-  let text = "";
+  let text: string;
   try {
-    const stream = req.provider.chat({
+    const out = await sideText(req.provider, {
       system: STARTER_SYSTEM_PROMPT,
-      messages: [{ role: "user", content: starterMessage(summary) }],
-      tools: [],
+      user: starterMessage(summary),
       model: req.model,
       signal: req.signal,
     });
-    for await (const ev of stream as AsyncIterable<AgentEvent>) {
-      if (req.signal.aborted) return [];
-      if ("text" in ev) text += ev.text;
-      else if ("error" in ev) return [];
-    }
+    text = out.text;
   } catch {
     return [];
   }
+  if (req.signal.aborted) return [];
   return parseStarters(text, summary.banned);
 }

@@ -7,6 +7,7 @@
 //   claudecode.ts  `claude -p` over qwry's own MCP server, ownsLoop
 //   presets.ts     preset rows: base URLs, auth form, measured quirks
 //   registry.ts    model rows: tier, context window, sampling params
+//   side.ts        one tool-less text call through the door the provider has
 //   sse.ts         the shared server-sent-events parser
 //   http.ts        URL joining and the transport-failure vocabulary
 //
@@ -60,6 +61,7 @@ export {
 } from "./registry";
 export type { ModelInfo, ParamSupport, Tier } from "./registry";
 export { joinUrl, mapProviderError } from "./http";
+export { sideText } from "./side";
 export { parseSse } from "./sse";
 export type { SseFrame } from "./sse";
 export * from "./types";

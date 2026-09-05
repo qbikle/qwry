@@ -1,12 +1,14 @@
 // The follow-up suggestions call (AGENT-SPEC section 4.6): the parser that
 // turns a model's reply into at most three unasked questions, and the call
 // itself against a scripted provider, including the refusals that keep it a
-// courtesy (ownsLoop, errors, abort) and the trace step that keeps it visible.
+// courtesy (an ownsLoop provider with no side call, errors, abort), the side
+// call an ownsLoop provider offers instead, and the trace step that keeps it
+// visible.
 
 import { describe, expect, test } from "bun:test";
 import { parseFollowUps, suggestFollowUps } from "../followups";
 import { baseModelId, modelInfo, tierOf } from "../providers/registry";
-import type { AgentEvent, ChatRequest, Provider } from "../providers/types";
+import type { AgentEvent, ChatRequest, Provider, SideChatRequest } from "../providers/types";
 
 function scripted(events: AgentEvent[], seen: ChatRequest[] = [], ownsLoop = false): Provider {
   return {
@@ -17,6 +19,22 @@ function scripted(events: AgentEvent[], seen: ChatRequest[] = [], ownsLoop = fal
       return (async function* () {
         for (const ev of events) yield ev;
       })();
+    },
+  };
+}
+
+/** an ownsLoop provider whose only door is the side call: chat must never
+ * carry a follow-up prompt (it would --resume the thread) */
+function sided(text: string, seen: SideChatRequest[] = []): Provider {
+  return {
+    id: "claude-code",
+    ownsLoop: true,
+    chat() {
+      throw new Error("chat must never carry a side call");
+    },
+    async sideChat(req) {
+      seen.push(req);
+      return { text, usage: { input: 459, output: 756 } };
     },
   };
 }
@@ -81,11 +99,48 @@ describe("suggestFollowUps", () => {
     expect(out.step?.prompt).not.toContain("Already asked");
   });
 
-  test("an ownsLoop provider is never called: a side call would resume the thread", async () => {
+  test("an ownsLoop provider without a side call is never called: chat would resume the thread", async () => {
     const seen: ChatRequest[] = [];
     const out = await suggestFollowUps({ ...base, provider: scripted([], seen, true) });
     expect(out).toEqual({ questions: [], step: null });
     expect(seen).toHaveLength(0);
+  });
+
+  test("an ownsLoop provider with a side call gets the prompt there, and its reply is parsed", async () => {
+    const seen: SideChatRequest[] = [];
+    const out = await suggestFollowUps({
+      ...base,
+      provider: sided("How many films per rating?\nWhich category has the most films?\nWhat is the average length?", seen),
+    });
+    expect(out.questions).toEqual([
+      "How many films per rating?",
+      "Which category has the most films?",
+      "What is the average length?",
+    ]);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].model).toBe("test-model");
+    expect(seen[0].system).toContain("follow-up");
+    expect(seen[0].user).toContain("SELECT count(*) FROM film");
+    expect(out.step).toMatchObject({
+      step: "followups",
+      prompt: seen[0].user,
+      questions: out.questions,
+      usage: { input: 459, output: 756 },
+    });
+  });
+
+  test("a side call that rejects costs the chips, never throws", async () => {
+    const provider: Provider = {
+      id: "claude-code",
+      ownsLoop: true,
+      chat() {
+        throw new Error("chat must never carry a side call");
+      },
+      async sideChat() {
+        throw new Error("Not logged in");
+      },
+    };
+    expect(await suggestFollowUps({ ...base, provider })).toEqual({ questions: [], step: null });
   });
 
   test("a provider error costs the chips, never throws", async () => {
