@@ -6,6 +6,9 @@
 // status pill while the exchange streams (there is no trace to open yet) and
 // becomes a button that opens the trace at its first call once it is done.
 //
+// A chip still running when the turn stops (⌘. / Stop) shows a hollow ring,
+// never a spinner: a spinner on a cancelled exchange claims work that is not
+// happening (LESSONS 9).
 // Overflow never wraps and never grows the strip: the row scrolls sideways
 // with its scrollbar hidden (round 2, finding 5: the faded older chips were
 // unreachable). Both edges fade under a mask driven by the scroll position
@@ -173,7 +176,15 @@ export function ThinkingStrip({ chips, streaming, onChipClick }: ThinkingStripPr
           tabIndex={clickable ? 0 : -1}
           onClick={clickable ? () => onChipClick?.(g.id) : undefined}
         >
-          {g.running ? <span className="tchip-spin" /> : <span className="tchip-ok" />}
+          {g.running ? (
+            streaming ? (
+              <span className="tchip-spin" />
+            ) : (
+              <span className="tchip-stop" aria-label="stopped" />
+            )
+          ) : (
+            <span className="tchip-ok" />
+          )}
           <span>{g.verb}</span>
           {g.ident !== null && <code className="tchip-id">{g.ident}</code>}
           {g.count > 1 && <span>×{g.count}</span>}

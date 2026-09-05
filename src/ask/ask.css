@@ -327,6 +327,13 @@
   border-radius: 50%;
   background: var(--ok);
 }
+/* a call the user stopped mid-flight: the spinner's ring, still */
+.tchip-stop {
+  width: 9px; /* optical */
+  height: 9px; /* optical */
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+}
 .tchip.error .tchip-ok {
   background: var(--danger);
 }

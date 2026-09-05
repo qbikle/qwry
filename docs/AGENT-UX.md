@@ -66,7 +66,10 @@ apply are omitted, never left as dead space (DESIGN rule 2 scope note):
    chips sit under it, the right while newer ones wait past it), a vertical
    wheel over the strip scrolls it, and every chip stays reachable. The
    newest chip is followed only while the exchange streams, and only until
-   the user scrolls the strip themselves; the strip never wraps.
+   the user scrolls the strip themselves; the strip never wraps. A chip still
+   running when the turn is stopped (⌘. / Stop) shows a hollow ring, never a
+   spinner: a spinner under `cancelled` claims work that is not happening
+   (LESSONS 9).
 3. **Answer text**: one or two sentences of interpretation, the model's LAST
    text block only. Before it renders, the SQL fence, the `Assumptions:` line
    and any markdown table are stripped (each has its own slot below, DESIGN
