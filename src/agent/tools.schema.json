@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "note": "AGENT-SPEC section 5. The single source of truth for the agent's tool surface: src/agent/tools.ts imports this file and src-tauri/src/agent_mcp.rs include_str!s it, so every provider and the MCP server present byte-identical schemas. Anthropic caches the tools+system prefix, so any edit here is a cache-invalidating change: bump version and re-baseline (EVAL.md section 4).",
+  "tools": [
+    {
+      "name": "list_tables",
+      "description": "List every table in the database: name, approximate row count, and the table comment when it has one. Call this first when you do not know which tables exist.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "describe_tables",
+      "description": "Definitions of several tables at once: columns with types, primary and foreign keys, column comments, and real sample values for low-cardinality columns. Ask for every table you might need in ONE call; do not call this once per table. An unknown name comes back as an error listing the valid names.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "names": {
+            "type": "array",
+            "description": "Table names, exactly as list_tables spelled them.",
+            "items": { "type": "string" },
+            "minItems": 1,
+            "maxItems": 40
+          }
+        },
+        "required": ["names"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "peek_values",
+      "description": "Distinct real values stored in one column. Use this before filtering on any text, enum, or status column, so the filter matches the exact stored spelling and case. The reply marks whether more values exist than were shown.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "table": {
+            "type": "string",
+            "description": "Table name, exactly as list_tables spelled it."
+          },
+          "column": {
+            "type": "string",
+            "description": "Column name on that table."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "How many distinct values to return, 1 to 50.",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 20
+          }
+        },
+        "required": ["table", "column"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "run_sql",
+      "description": "Execute ONE read-only PostgreSQL statement (SELECT, WITH ... SELECT, or EXPLAIN) and return its rows. Anything that writes, locks rows, or bundles more than one statement is refused. Errors come back as text starting with ERROR:, so read it, fix the query, and run it again.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sql": {
+            "type": "string",
+            "description": "One PostgreSQL statement, no trailing semicolon needed."
+          }
+        },
+        "required": ["sql"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "probe",
+      "description": "Run up to 6 small read-only checks in one call, 5 rows each, to verify an assumption before you trust a final query: min and max of a timestamp you filter on, a count of rows outside the expected order, a distinct list. Same rules as run_sql; each query is reported separately, and one failure does not stop the rest.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sqls": {
+            "type": "array",
+            "description": "Between 1 and 6 read-only statements.",
+            "items": { "type": "string" },
+            "minItems": 1,
+            "maxItems": 6
+          }
+        },
+        "required": ["sqls"],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

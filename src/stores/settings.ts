@@ -34,6 +34,20 @@ interface SettingsState {
   statementTimeoutSecs: number;
   setStatementTimeoutSecs: (n: number) => void;
 
+  /** Ask: the provider the agent talks to, and the model within it
+   * (AGENT-SPEC section 9). Plain strings, because they are persisted wire
+   * values validated against the model registry at use time; the API key
+   * itself lives in the Keychain and never lands here. */
+  agentProvider: string | null;
+  agentModel: string | null;
+  /** per-connection overrides, sparse: an absent entry follows the app-wide
+   * choice, so setting one never disturbs the others */
+  agentByConn: Record<string, { provider: string; model: string }>;
+  setAgentModel: (provider: string | null, model: string | null) => void;
+  setAgentConnModel: (profileId: string, provider: string, model: string) => void;
+  /** a deleted profile's model choice dies with it */
+  dropAgentConn: (profileId: string) => void;
+
   /** default ⇧⌘F style: id into FORMAT_PRESETS */
   formatPreset: string;
   setFormatPreset: (id: string) => void;
@@ -158,6 +172,9 @@ function sanitizeSettings(persisted: unknown, current: SettingsState): SettingsS
     ),
     wrapLines: typeof p.wrapLines === "boolean" ? p.wrapLines : current.wrapLines,
     statementTimeoutSecs: finite(p.statementTimeoutSecs, 0, 7200, current.statementTimeoutSecs),
+    agentProvider: typeof p.agentProvider === "string" ? p.agentProvider : null,
+    agentModel: typeof p.agentModel === "string" ? p.agentModel : null,
+    agentByConn: sanitizeAgentConns(p.agentByConn),
     formatPreset: typeof p.formatPreset === "string" ? p.formatPreset : current.formatPreset,
     formatKeywordCase: pick(
       p.formatKeywordCase,
@@ -179,6 +196,21 @@ function sanitizeSettings(persisted: unknown, current: SettingsState): SettingsS
     connThemes: sanitizeConnThemes(p.connThemes, knownPalettes),
     customThemes,
   };
+}
+
+/** persisted agent model choices, one per connection. A half-written entry
+ * is dropped rather than repaired: a connection with no override follows the
+ * app-wide choice, which is always a valid state. */
+function sanitizeAgentConns(v: unknown): Record<string, { provider: string; model: string }> {
+  if (typeof v !== "object" || v === null) return {};
+  const out: Record<string, { provider: string; model: string }> = {};
+  for (const [k, raw] of Object.entries(v as Record<string, unknown>)) {
+    const e = raw as { provider?: unknown; model?: unknown } | null;
+    if (e && typeof e.provider === "string" && typeof e.model === "string") {
+      out[k] = { provider: e.provider, model: e.model };
+    }
+  }
+  return out;
 }
 
 /** map entries whose palette no longer exists fall back to the default
@@ -221,6 +253,19 @@ export const useSettings = create<SettingsState>()(
       setStatementTimeoutSecs: (n) =>
         // 0 = no timeout; else clamp 1s..2h
         set({ statementTimeoutSecs: n <= 0 ? 0 : Math.max(1, Math.min(7200, Math.round(n))) }),
+
+      agentProvider: null,
+      agentModel: null,
+      agentByConn: {},
+      setAgentModel: (provider, model) => set({ agentProvider: provider, agentModel: model }),
+      setAgentConnModel: (profileId, provider, model) =>
+        set((s) => ({ agentByConn: { ...s.agentByConn, [profileId]: { provider, model } } })),
+      dropAgentConn: (profileId) =>
+        set((s) => {
+          const next = { ...s.agentByConn };
+          delete next[profileId];
+          return { agentByConn: next };
+        }),
 
       formatPreset: "standard",
       setFormatPreset: (formatPreset) => set({ formatPreset }),
@@ -304,6 +349,9 @@ export const useSettings = create<SettingsState>()(
         gridDensity: s.gridDensity,
         wrapLines: s.wrapLines,
         statementTimeoutSecs: s.statementTimeoutSecs,
+        agentProvider: s.agentProvider,
+        agentModel: s.agentModel,
+        agentByConn: s.agentByConn,
         formatPreset: s.formatPreset,
         formatKeywordCase: s.formatKeywordCase,
         uiZoom: s.uiZoom,

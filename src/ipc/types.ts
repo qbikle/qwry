@@ -371,3 +371,167 @@ export type QueryEvent =
       hint: string | null;
     }
   | { type: "finished"; total_ms: number };
+
+// ---- agent (mirrors src-tauri/src/agent*.rs) ------------------------------
+// Snake_case, like the rest of this file: these are the wire records, not the
+// loop's domain types. src/agent/types.ts carries the camelCase twins the loop
+// and store work in; src/agent/tools.tauri.ts owns the one conversion between
+// them. AGENT-SPEC sections 5, 7, 9.
+
+/** one executed read-only statement (agent.rs AgentRun). Cell values are wire
+ * text; null = SQL NULL. `capped` = the surplus beyond max_rows was never
+ * sent, so `rows.length` is not the whole answer. */
+export interface AgentRun {
+  columns: string[];
+  rows: (string | null)[][];
+  row_count: number;
+  capped: boolean;
+  ms: number;
+}
+
+/** distinct non-null values of one column; `more` drives the model-facing
+ * "… (more exist)" marker */
+export interface PeekResult {
+  values: string[];
+  more: boolean;
+}
+
+/** one probe query's outcome; `run` and `error` are mutually exclusive */
+export interface ProbeResult {
+  sql: string;
+  run: AgentRun | null;
+  error: string | null;
+}
+
+/** AST-gate outcome (AGENT-SPEC 8.1). `reason` is the refusal text, already
+ * phrased for the model and for the Fix It affordance. */
+export interface GateVerdict {
+  allowed: boolean;
+  reason: string | null;
+}
+
+/** low-cardinality values for one column, from pg_stats (cap 20), plus the
+ * column's own COMMENT as of this call: a comment added since the last
+ * introspect is newer than the cached snapshot's */
+export interface ColumnValues {
+  column: string;
+  values: string[];
+  more: boolean;
+  comment: string | null;
+}
+
+/** per-table values block; the DDL text the model reads is composed in TS from
+ * the cached schema snapshot plus these */
+export interface TableValues {
+  schema: string;
+  name: string;
+  comment: string | null;
+  columns: ColumnValues[];
+}
+
+/** why a provider call failed (agent_http.rs HttpErrorKind) */
+export type AgentHttpErrorKind =
+  | "auth"
+  | "rate"
+  | "unreachable"
+  | "provider"
+  | "cancelled";
+
+/** one relayed piece of a provider response. `start` arrives before any body,
+ * so a non-2xx can be rejected before an SSE frame is parsed; `body` carries
+ * raw UTF-8 response bytes, unframed. */
+export type HttpChunk =
+  | { type: "start"; status: number; headers: [string, string][] }
+  | { type: "body"; text: string }
+  | {
+      type: "error";
+      kind: AgentHttpErrorKind;
+      message: string;
+      retry_after_ms: number | null;
+    };
+
+/** the relay finished; any status, including non-2xx (the status is data) */
+export interface HttpDone {
+  request_id: string;
+  status: number;
+  ms: number;
+  bytes: number;
+}
+
+/** how a `claude -p` invocation ended; `code` is null when it was signalled */
+export interface ClaudeExit {
+  run_id: string;
+  code: number | null;
+  stderr_tail: string;
+  ms: number;
+}
+
+/** where a thread's `claude -p` child points its --mcp-config. The token goes
+ * in headers.Authorization as `Bearer <token>` and dies with the thread. */
+export interface McpEndpoint {
+  url: string;
+  token: string;
+}
+
+/** one tool call a `claude -p` child made over the MCP server (agent_mcp.rs
+ * McpCall). That provider owns its own loop, so this is the only record of
+ * what the model actually reached for; `bytes` is the text it was handed. */
+export interface McpCall {
+  tool: string;
+  ms: number;
+  bytes: number;
+  is_error: boolean;
+}
+
+/** one Ask thread (appdb agent_threads). `id` is a uuid, reused verbatim as
+ * the `claude -p` session id. */
+export interface AgentThread {
+  id: string;
+  profile_id: string;
+  title: string;
+  created_at: string;
+}
+
+/** one recorded turn (appdb agent_turns). The *_json columns hold the loop's
+ * own structures verbatim so the trace can replay them. */
+export interface AgentTurn {
+  id: number;
+  thread_id: string;
+  idx: number;
+  role: string;
+  content: string;
+  tool_calls_json: string | null;
+  tool_results_json: string | null;
+  usage_json: string | null;
+  model: string;
+  provider: string;
+  prompt_version: string;
+  ms: number;
+  created_at: string;
+}
+
+/** AgentTurn minus the columns the store assigns (id, created_at) */
+export interface AgentTurnInput {
+  thread_id: string;
+  idx: number;
+  role: string;
+  content: string;
+  tool_calls_json?: string | null;
+  tool_results_json?: string | null;
+  usage_json?: string | null;
+  model: string;
+  provider: string;
+  prompt_version: string;
+  ms: number;
+}
+
+/** the answer a turn produced (appdb agent_answers); status is one of
+ * "answered" | "failed" | "turn_cap" | "cancelled" */
+export interface AgentAnswer {
+  turn_id: number;
+  sql: string | null;
+  row_count: number | null;
+  assumptions_json?: string | null;
+  sanity_json?: string | null;
+  status: string;
+}

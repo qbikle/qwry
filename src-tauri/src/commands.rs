@@ -209,6 +209,24 @@ pub async fn connect(
     profile_id: String,
     statement_timeout_ms: Option<u64>,
 ) -> Result<SessionId> {
+    open_session(&app, state.inner(), &profile_id, statement_timeout_ms, false).await
+}
+
+/// Open one session on a profile and register it. `connect` and the agent's
+/// `agent_connect` are the same act down to the tunnel, the control lane, the
+/// notice/death callbacks and the tx listener; they differ only in
+/// `force_read_only`, which starts an agent session
+/// `default_transaction_read_only=on` whatever the profile says (AGENT-SPEC
+/// §2.3). Keeping one body means an agent session can never drift into being
+/// a second, lesser kind of connection.
+pub(crate) async fn open_session(
+    app: &AppHandle,
+    state: &AppState,
+    profile_id: &str,
+    statement_timeout_ms: Option<u64>,
+    force_read_only: bool,
+) -> Result<SessionId> {
+    let profile_id = profile_id.to_string();
     let profile = state
         .appdb
         .list_profiles()?
@@ -259,6 +277,7 @@ pub async fn connect(
             Some(("127.0.0.1", tunnel.local_port)),
             tunnel.control_port.map(|p| ("127.0.0.1", p)),
             statement_timeout_ms,
+            force_read_only,
             on_notice,
             on_close,
         )
@@ -270,6 +289,7 @@ pub async fn connect(
             None,
             None,
             statement_timeout_ms,
+            force_read_only,
             on_notice,
             on_close,
         )
@@ -335,6 +355,7 @@ pub async fn test_connection(
             Some(("127.0.0.1", tunnel.local_port)),
             None,
             None,
+            false,
             Box::new(|_, _| {}),
             Box::new(|_| {}),
         )
@@ -346,6 +367,7 @@ pub async fn test_connection(
             None,
             None,
             None,
+            false,
             Box::new(|_, _| {}),
             Box::new(|_| {}),
         )

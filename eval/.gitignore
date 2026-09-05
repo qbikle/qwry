@@ -1,0 +1,7 @@
+# Bench output: a run's JSON and its progress stream are evidence for one
+# machine at one moment, not source. eval/baseline.json is the committed part.
+results/
+
+# Staging fixtures and DSNs are the maintainer's alone (EVAL.md section 2):
+# the staging benches never run in CI and their data never enters git.
+local/

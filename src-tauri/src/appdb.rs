@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::driver::{DriverError, Profile, Result};
 
 /// bump when appending a migration in `migrate`
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 /// per-row stored SQL cap (bytes, cut at a char boundary): a pasted multi-MB
 /// INSERT must not bloat the appdb forever
 const HISTORY_SQL_CAP: usize = 20_000;
@@ -35,6 +35,11 @@ const UNDO_KEEP_PER_PROFILE: i64 = 20;
 const SNAPSHOT_KEEP_PER_TAB: i64 = 50;
 /// per-snapshot stored SQL cap (bytes, cut at a char boundary)
 const SNAPSHOT_SQL_CAP: usize = 200_000;
+/// per-turn stored message cap (bytes, cut at a char boundary). Applies to the
+/// turn's TEXT only: the `*_json` columns are parsed back by the trace panel,
+/// so truncating them would produce unparseable JSON, and they are bounded by
+/// the tool row caps (AGENT-SPEC §5) instead.
+const AGENT_CONTENT_CAP: usize = 200_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TabRow {
@@ -220,6 +225,7 @@ fn migrate(conn: &mut Connection) -> Result<()> {
             3 => pg_catalog_cache_v3(&tx)?,
             4 => undo_log_v4(&tx)?,
             5 => buffer_snapshots_v5(&tx)?,
+            6 => agent_threads_v6(&tx)?,
             n => return Err(DriverError::Internal(format!("appdb: no migration to v{n}"))),
         }
         tx.pragma_update(None, "user_version", next).map_err(internal)?;
@@ -320,6 +326,48 @@ fn buffer_snapshots_v5(conn: &Connection) -> Result<()> {
              sql      TEXT NOT NULL
          );
          CREATE INDEX IF NOT EXISTS buffer_snapshots_tab ON buffer_snapshots (tab_id, id DESC);",
+    )
+    .map_err(internal)
+}
+
+/// Agent threads, turns and answers (AGENT-SPEC §9). Turns carry the model's
+/// text plus the tool call/result/usage blobs as JSON, so the trace panel can
+/// replay a thread with nothing summarised away (AGENT-UX §5). Answers are
+/// 1:1 with the turn that produced them, hence `turn_id` as the primary key.
+fn agent_threads_v6(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS agent_threads (
+             id         TEXT PRIMARY KEY,
+             profile_id TEXT NOT NULL,
+             title      TEXT NOT NULL,
+             created_at TEXT NOT NULL DEFAULT (datetime('now'))
+         );
+         CREATE INDEX IF NOT EXISTS agent_threads_profile
+             ON agent_threads (profile_id, created_at DESC);
+         CREATE TABLE IF NOT EXISTS agent_turns (
+             id                INTEGER PRIMARY KEY AUTOINCREMENT,
+             thread_id         TEXT NOT NULL,
+             idx               INTEGER NOT NULL,
+             role              TEXT NOT NULL,
+             content           TEXT NOT NULL,
+             tool_calls_json   TEXT,
+             tool_results_json TEXT,
+             usage_json        TEXT,
+             model             TEXT NOT NULL,
+             provider          TEXT NOT NULL,
+             prompt_version    TEXT NOT NULL,
+             ms                REAL NOT NULL,
+             created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+         );
+         CREATE INDEX IF NOT EXISTS agent_turns_thread ON agent_turns (thread_id, idx);
+         CREATE TABLE IF NOT EXISTS agent_answers (
+             turn_id          INTEGER PRIMARY KEY,
+             sql              TEXT,
+             row_count        INTEGER,
+             assumptions_json TEXT,
+             sanity_json      TEXT,
+             status           TEXT NOT NULL
+         );",
     )
     .map_err(internal)
 }
@@ -844,6 +892,261 @@ impl AppDb {
     }
 }
 
+/// One Ask thread (AGENT-SPEC §9). `id` is a uuid minted at creation because
+/// the `claude -p` provider reuses it verbatim as its `--session-id`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentThread {
+    pub id: String,
+    pub profile_id: String,
+    pub title: String,
+    pub created_at: String,
+}
+
+/// One recorded turn. The `*_json` columns hold the loop's own structures
+/// verbatim (tool calls, tool results, token usage) so the trace can replay
+/// them; nothing here is summarised.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTurn {
+    pub id: i64,
+    pub thread_id: String,
+    pub idx: i64,
+    pub role: String,
+    pub content: String,
+    pub tool_calls_json: Option<String>,
+    pub tool_results_json: Option<String>,
+    pub usage_json: Option<String>,
+    pub model: String,
+    pub provider: String,
+    pub prompt_version: String,
+    pub ms: f64,
+    pub created_at: String,
+}
+
+/// `AgentTurn` minus the columns the store assigns (`id`, `created_at`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTurnInput {
+    pub thread_id: String,
+    pub idx: i64,
+    pub role: String,
+    pub content: String,
+    #[serde(default)]
+    pub tool_calls_json: Option<String>,
+    #[serde(default)]
+    pub tool_results_json: Option<String>,
+    #[serde(default)]
+    pub usage_json: Option<String>,
+    pub model: String,
+    pub provider: String,
+    pub prompt_version: String,
+    pub ms: f64,
+}
+
+/// The answer a turn produced: its SQL, how many rows it returned, the
+/// assumption chips and sanity fragments shown with it, and the verdict
+/// status ("answered" | "failed" | "turn_cap" | "cancelled").
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentAnswer {
+    pub turn_id: i64,
+    pub sql: Option<String>,
+    pub row_count: Option<i64>,
+    #[serde(default)]
+    pub assumptions_json: Option<String>,
+    #[serde(default)]
+    pub sanity_json: Option<String>,
+    pub status: String,
+}
+
+/// Agent history (AGENT-SPEC §9). Local only: no telemetry leaves the machine
+/// (ARCHITECTURE ideology 7). Deleting a thread deletes its turns and answers
+/// in the same transaction, so a dropped thread leaves no orphan trace rows.
+impl AppDb {
+    pub fn agent_thread_create(
+        &self,
+        id: &str,
+        profile_id: &str,
+        title: &str,
+    ) -> Result<AgentThread> {
+        let conn = self.0.lock().unwrap();
+        conn.execute(
+            "INSERT INTO agent_threads (id, profile_id, title) VALUES (?1, ?2, ?3)",
+            rusqlite::params![id, profile_id, title],
+        )
+        .map_err(internal)?;
+        conn.query_row(
+            "SELECT id, profile_id, title, created_at FROM agent_threads WHERE id = ?1",
+            [id],
+            |r| {
+                Ok(AgentThread {
+                    id: r.get(0)?,
+                    profile_id: r.get(1)?,
+                    title: r.get(2)?,
+                    created_at: r.get(3)?,
+                })
+            },
+        )
+        .map_err(internal)
+    }
+
+    /// newest first; corrupt rows are skipped, never fatal to the list
+    pub fn agent_threads_list(&self, profile_id: &str) -> Result<Vec<AgentThread>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, profile_id, title, created_at FROM agent_threads
+                 WHERE profile_id = ?1 ORDER BY created_at DESC, rowid DESC",
+            )
+            .map_err(internal)?;
+        let rows = stmt
+            .query_map([profile_id], |r| {
+                Ok(AgentThread {
+                    id: r.get(0)?,
+                    profile_id: r.get(1)?,
+                    title: r.get(2)?,
+                    created_at: r.get(3)?,
+                })
+            })
+            .map_err(internal)?;
+        Ok(collect_ok(rows, "agent thread").0)
+    }
+
+    pub fn agent_thread_delete(&self, id: &str) -> Result<()> {
+        let mut conn = self.0.lock().unwrap();
+        let tx = conn.transaction().map_err(internal)?;
+        tx.execute(
+            "DELETE FROM agent_answers WHERE turn_id IN
+                 (SELECT id FROM agent_turns WHERE thread_id = ?1)",
+            [id],
+        )
+        .map_err(internal)?;
+        tx.execute("DELETE FROM agent_turns WHERE thread_id = ?1", [id])
+            .map_err(internal)?;
+        tx.execute("DELETE FROM agent_threads WHERE id = ?1", [id])
+            .map_err(internal)?;
+        tx.commit().map_err(internal)?;
+        Ok(())
+    }
+
+    /// returns the new row id, which `agent_answer_put` keys on
+    pub fn agent_turn_add(&self, turn: &AgentTurnInput) -> Result<i64> {
+        let content = cap_text(&turn.content, AGENT_CONTENT_CAP);
+        let conn = self.0.lock().unwrap();
+        conn.execute(
+            "INSERT INTO agent_turns
+                 (thread_id, idx, role, content, tool_calls_json, tool_results_json,
+                  usage_json, model, provider, prompt_version, ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            rusqlite::params![
+                turn.thread_id,
+                turn.idx,
+                turn.role,
+                content.as_ref(),
+                turn.tool_calls_json,
+                turn.tool_results_json,
+                turn.usage_json,
+                turn.model,
+                turn.provider,
+                turn.prompt_version,
+                turn.ms,
+            ],
+        )
+        .map_err(internal)?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// a thread's turns in loop order
+    pub fn agent_turns_list(&self, thread_id: &str) -> Result<Vec<AgentTurn>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, thread_id, idx, role, content, tool_calls_json,
+                        tool_results_json, usage_json, model, provider,
+                        prompt_version, ms, created_at
+                 FROM agent_turns WHERE thread_id = ?1 ORDER BY idx, id",
+            )
+            .map_err(internal)?;
+        let rows = stmt
+            .query_map([thread_id], |r| {
+                Ok(AgentTurn {
+                    id: r.get(0)?,
+                    thread_id: r.get(1)?,
+                    idx: r.get(2)?,
+                    role: r.get(3)?,
+                    content: r.get(4)?,
+                    tool_calls_json: r.get(5)?,
+                    tool_results_json: r.get(6)?,
+                    usage_json: r.get(7)?,
+                    model: r.get(8)?,
+                    provider: r.get(9)?,
+                    prompt_version: r.get(10)?,
+                    ms: r.get(11)?,
+                    created_at: r.get(12)?,
+                })
+            })
+            .map_err(internal)?;
+        Ok(collect_ok(rows, "agent turn").0)
+    }
+
+    /// upsert: re-running a question's post step (a toggled assumption chip)
+    /// replaces the answer rather than stacking a second row on the turn
+    pub fn agent_answer_put(&self, answer: &AgentAnswer) -> Result<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO agent_answers
+                     (turn_id, sql, row_count, assumptions_json, sanity_json, status)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(turn_id) DO UPDATE SET
+                     sql = excluded.sql,
+                     row_count = excluded.row_count,
+                     assumptions_json = excluded.assumptions_json,
+                     sanity_json = excluded.sanity_json,
+                     status = excluded.status",
+                rusqlite::params![
+                    answer.turn_id,
+                    answer.sql,
+                    answer.row_count,
+                    answer.assumptions_json,
+                    answer.sanity_json,
+                    answer.status,
+                ],
+            )
+            .map_err(internal)?;
+        Ok(())
+    }
+
+    /// Every answer recorded under a thread, in the turn order the trace reads.
+    /// Without this the assumption chips, sanity line and row count a reopened
+    /// thread once showed would be unrecoverable: `agent_turns` carries the
+    /// conversation, not the verdict.
+    pub fn agent_answers_list(&self, thread_id: &str) -> Result<Vec<AgentAnswer>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT a.turn_id, a.sql, a.row_count, a.assumptions_json,
+                        a.sanity_json, a.status
+                 FROM agent_answers a
+                 JOIN agent_turns t ON t.id = a.turn_id
+                 WHERE t.thread_id = ?1
+                 ORDER BY t.idx, t.id",
+            )
+            .map_err(internal)?;
+        let rows = stmt
+            .query_map([thread_id], |r| {
+                Ok(AgentAnswer {
+                    turn_id: r.get(0)?,
+                    sql: r.get(1)?,
+                    row_count: r.get(2)?,
+                    assumptions_json: r.get(3)?,
+                    sanity_json: r.get(4)?,
+                    status: r.get(5)?,
+                })
+            })
+            .map_err(internal)?;
+        Ok(collect_ok(rows, "agent answer").0)
+    }
+}
+
 fn internal(e: rusqlite::Error) -> DriverError {
     DriverError::Internal(format!("appdb: {e}"))
 }
@@ -1301,6 +1604,72 @@ mod tests {
         db.buffer_snapshots_clear("t1").unwrap();
         assert!(db.buffer_snapshots_list("t1").unwrap().0.is_empty());
         assert_eq!(db.buffer_snapshots_list("t2").unwrap().0.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn agent_thread_turns_answers_roundtrip_and_cascade() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+
+        let thread = db.agent_thread_create("th-1", "p1", "Top films").unwrap();
+        assert_eq!(thread.profile_id, "p1");
+        db.agent_thread_create("th-2", "p2", "Other connection").unwrap();
+        let mine = db.agent_threads_list("p1").unwrap();
+        assert_eq!(mine.len(), 1, "threads are scoped to their connection");
+
+        let turn = AgentTurnInput {
+            thread_id: "th-1".into(),
+            idx: 0,
+            role: "assistant".into(),
+            content: "SELECT 1".into(),
+            tool_calls_json: Some("[]".into()),
+            tool_results_json: None,
+            usage_json: Some(r#"{"input":10,"output":2}"#.into()),
+            model: "claude-haiku-4-5".into(),
+            provider: "claude-code".into(),
+            prompt_version: "v1".into(),
+            ms: 12.5,
+        };
+        let turn_id = db.agent_turn_add(&turn).unwrap();
+        let turns = db.agent_turns_list("th-1").unwrap();
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].usage_json.as_deref(), Some(r#"{"input":10,"output":2}"#));
+
+        let answer = AgentAnswer {
+            turn_id,
+            sql: Some("SELECT 1".into()),
+            row_count: Some(1),
+            assumptions_json: Some("[]".into()),
+            sanity_json: None,
+            status: "answered".into(),
+        };
+        db.agent_answer_put(&answer).unwrap();
+        // second put replaces, never stacks (a toggled assumption chip re-runs)
+        db.agent_answer_put(&AgentAnswer { row_count: Some(2), ..answer }).unwrap();
+        let n: i64 = {
+            let conn = db.0.lock().unwrap();
+            conn.query_row("SELECT COUNT(*) FROM agent_answers", [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(n, 1);
+
+        // a reopened thread reads its verdict back, scoped to that thread
+        let read_back = db.agent_answers_list("th-1").unwrap();
+        assert_eq!(read_back.len(), 1);
+        assert_eq!(read_back[0].turn_id, turn_id);
+        assert_eq!(read_back[0].row_count, Some(2));
+        assert!(db.agent_answers_list("th-2").unwrap().is_empty());
+
+        db.agent_thread_delete("th-1").unwrap();
+        assert!(db.agent_threads_list("p1").unwrap().is_empty());
+        assert!(db.agent_turns_list("th-1").unwrap().is_empty());
+        let orphans: i64 = {
+            let conn = db.0.lock().unwrap();
+            conn.query_row("SELECT COUNT(*) FROM agent_answers", [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(orphans, 0, "deleting a thread leaves no orphan answer rows");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -1,0 +1,117 @@
+# The agent PR gate (EVAL.md section 4). The agent is the first part of qwry
+# whose correctness cannot be typechecked, so a change under src/agent/**,
+# src-tauri/src/agent*.rs or eval/** has to answer with a number.
+#
+# Two halves, on purpose:
+#   - everything that needs no model runs ALWAYS, on forks included: the gold
+#     queries all execute, the LIMIT boundaries are tie-free, the comparison
+#     and gate unit tests pass, TypeScript typechecks.
+#   - the bench itself runs only when EVAL_API_KEY is configured. A fork has no
+#     secret and must not fail for it, so the step is skipped with a notice
+#     rather than failing or, worse, passing silently.
+#
+# When the key IS configured, the run is compared to eval/baseline.json for the
+# same bench + model + provider + PROMPT_VERSION. A combination with no
+# baseline row fails and says so: an unmeasured run is not a green one.
+
+name: eval
+
+on:
+  pull_request:
+    paths:
+      - "src/agent/**"
+      - "src-tauri/src/agent*.rs"
+      - "eval/**"
+      - "scripts/agent-eval.ts"
+      - ".github/workflows/eval.yml"
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # postgres:18 plus pgvector, and the extension is not optional: the
+        # vendored dump declares `CREATE EXTENSION IF NOT EXISTS vector` for
+        # film_embedding, `IF NOT EXISTS` does not survive a missing control
+        # file, and load.sh runs under ON_ERROR_STOP. Dropping the table
+        # instead would be worse: it is in the prefilter's candidate set on
+        # Pagila, so a bench without it scores a different context assembly
+        # than eval/baseline.json was measured on.
+        image: pgvector/pgvector:0.8.6-pg18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      QWRY_EVAL_DSN: postgres://postgres:postgres@localhost:5432/pagila
+      # copied to the job env because the `secrets` context is not readable
+      # from a step-level `if`; `env` is
+      EVAL_API_KEY: ${{ secrets.EVAL_API_KEY }}
+      EVAL_PROVIDER: ${{ secrets.EVAL_PROVIDER || 'anthropic' }}
+      EVAL_MODEL: ${{ secrets.EVAL_MODEL || 'claude-haiku-4-5' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+
+      - name: install frontend deps
+        run: bun install
+
+      # ANALYZE is inside load.sh and is not optional: without statistics
+      # describe_tables emits no `-- values:` lines and the bench silently
+      # measures a different tool surface (EVAL.md section 5)
+      - name: load Pagila
+        run: eval/db/load.sh pagila
+
+      - name: typecheck
+        run: |
+          bunx tsc --noEmit
+          bunx tsc -p eval/tsconfig.json --noEmit
+
+      - name: unit tests
+        run: bun test
+
+      # no model needed: every gold runs, and a LIMIT question whose boundary
+      # cuts through a tie is a bench bug, not a model failure
+      - name: gold check
+        run: |
+          bun scripts/agent-eval.ts --bench eval/bench/pagila.json --dsn "$QWRY_EVAL_DSN" --gold-check
+          bun scripts/agent-eval.ts --bench eval/bench/pagila-hard.json --dsn "$QWRY_EVAL_DSN" --gold-check
+
+      - name: no model configured
+        if: ${{ env.EVAL_API_KEY == '' }}
+        run: |
+          echo "::notice title=Bench skipped::EVAL_API_KEY is not set, so the Pagila bench did not run."
+          echo "The gold queries, unit tests and typecheck above did run."
+          echo "Set the repository secrets EVAL_API_KEY, EVAL_PROVIDER and EVAL_MODEL to gate on accuracy."
+
+      - name: Pagila bench
+        if: ${{ env.EVAL_API_KEY != '' }}
+        run: |
+          # the harness reads the key from the env var its provider id names,
+          # so nothing has to pass a secret on a command line
+          var="QWRY_EVAL_API_KEY_$(echo "$EVAL_PROVIDER" | tr 'a-z-' 'A-Z_')"
+          export "$var=$EVAL_API_KEY"
+          bun scripts/agent-eval.ts \
+            --bench eval/bench/pagila.json \
+            --dsn "$QWRY_EVAL_DSN" \
+            --provider "$EVAL_PROVIDER" \
+            --model "$EVAL_MODEL" \
+            --jobs 3 \
+            --label "ci-$EVAL_MODEL" \
+            --baseline eval/baseline.json
+
+      - name: keep the run
+        if: ${{ always() && env.EVAL_API_KEY != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: eval/results/
+          if-no-files-found: ignore

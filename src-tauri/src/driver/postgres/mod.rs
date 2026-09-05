@@ -77,6 +77,7 @@ fn pg_config(
     password: &str,
     addr: Option<(&str, u16)>,
     statement_timeout_ms: u64,
+    force_read_only: bool,
 ) -> tokio_postgres::Config {
     let (host, port) = addr.unwrap_or((profile.host.as_str(), profile.port));
     let mut cfg = tokio_postgres::Config::new();
@@ -91,7 +92,10 @@ fn pg_config(
          -c statement_timeout={statement_timeout_ms} \
          -c idle_in_transaction_session_timeout=600000"
     );
-    if profile.is_prod {
+    // force_read_only: agent sessions (AGENT-SPEC §2.3, §8.1) start read-only
+    // at the SERVER whatever the profile says, and unlike the prod flag no
+    // per-tab unlock ever turns it off.
+    if profile.is_prod || force_read_only {
         opts.push_str(" -c default_transaction_read_only=on");
     }
     // sslmode=require must actually REQUIRE: tokio-postgres defaults to
@@ -200,18 +204,25 @@ where
 /// profile. TLS uses a no-verify verifier, so the tunnel hostname mismatch is fine.
 /// `control_addr` is the tunnel's control-lane endpoint (a second ssh process):
 /// when given, cancel/terminate signals dial it instead of the congestible data
-/// lane. `on_close` fires when the connection later dies (see `spawn_session`).
+/// lane. `force_read_only` starts the session `default_transaction_read_only=on`
+/// regardless of the profile's prod flag: the agent's half of AGENT-SPEC §8.1.
+/// `on_close` fires when the connection later dies (see `spawn_session`).
+// Every argument here is one independent axis of a connection (address,
+// control lane, timeout, read-only, two lifecycle callbacks); bundling them
+// into a struct would only move the same list one indirection away.
+#[allow(clippy::too_many_arguments)]
 pub async fn connect(
     profile: &Profile,
     password: &str,
     addr: Option<(&str, u16)>,
     control_addr: Option<(&str, u16)>,
     statement_timeout_ms: Option<u64>,
+    force_read_only: bool,
     on_notice: Box<dyn Fn(String, String) + Send>,
     on_close: Box<dyn FnOnce(Option<String>) + Send>,
 ) -> Result<PgSession> {
     let timeout_ms = statement_timeout_ms.unwrap_or(300_000);
-    let cfg = pg_config(profile, password, addr, timeout_ms);
+    let cfg = pg_config(profile, password, addr, timeout_ms, force_read_only);
 
     let try_tls = profile.sslmode != "disable";
     let try_plain = profile.sslmode != "require";
@@ -246,7 +257,13 @@ pub async fn connect(
         spawn_session(client, connection, TlsChoice::Plain, cfg.clone(), on_notice, on_close)
     };
     if let Some((host, port)) = control_addr {
-        session.control_cfg = Some(pg_config(profile, password, Some((host, port)), timeout_ms));
+        session.control_cfg = Some(pg_config(
+            profile,
+            password,
+            Some((host, port)),
+            timeout_ms,
+            force_read_only,
+        ));
         session.control_addr = Some((host.to_string(), port));
     }
 

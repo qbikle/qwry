@@ -1,0 +1,167 @@
+[
+ {
+  "id": "t1-01",
+  "question": "How many films are in the database?",
+  "gold_sql": "SELECT count(*) FROM film"
+ },
+ {
+  "id": "t1-02",
+  "question": "List the titles of all films rated G. Return only the title.",
+  "gold_sql": "SELECT title FROM film WHERE rating = 'G'"
+ },
+ {
+  "id": "t1-03",
+  "question": "What is the length in minutes of the longest film?",
+  "gold_sql": "SELECT max(length) FROM film"
+ },
+ {
+  "id": "t1-04",
+  "question": "Return the first and last names of all staff members.",
+  "gold_sql": "SELECT first_name, last_name FROM staff"
+ },
+ {
+  "id": "t1-05",
+  "question": "How many distinct film ratings exist?",
+  "gold_sql": "SELECT count(DISTINCT rating) FROM film"
+ },
+ {
+  "id": "t1-06",
+  "question": "List the titles of films with a rental rate of 4.99 that are longer than 180 minutes. Return only the title.",
+  "gold_sql": "SELECT title FROM film WHERE rental_rate = 4.99 AND length > 180"
+ },
+ {
+  "id": "t1-07",
+  "question": "What is the email address of the customer Mary Smith?",
+  "gold_sql": "SELECT email FROM customer WHERE first_name = 'MARY' AND last_name = 'SMITH'"
+ },
+ {
+  "id": "t2-01",
+  "question": "Which city is store 1 located in? Return only the city name.",
+  "gold_sql": "SELECT ci.city FROM store s JOIN address a ON s.address_id = a.address_id JOIN city ci ON a.city_id = ci.city_id WHERE s.store_id = 1"
+ },
+ {
+  "id": "t2-02",
+  "question": "List the titles of all films in the Action category. Return only the title.",
+  "gold_sql": "SELECT f.title FROM film f JOIN film_category fc ON f.film_id = fc.film_id JOIN category c ON fc.category_id = c.category_id WHERE c.name = 'Action'"
+ },
+ {
+  "id": "t2-03",
+  "question": "Return the first and last names of the actors who appear in the film ACADEMY DINOSAUR.",
+  "gold_sql": "SELECT a.first_name, a.last_name FROM actor a JOIN film_actor fa ON a.actor_id = fa.actor_id JOIN film f ON fa.film_id = f.film_id WHERE f.title = 'ACADEMY DINOSAUR'"
+ },
+ {
+  "id": "t2-04",
+  "question": "What language is the film ALIEN CENTER in? Return only the language name.",
+  "gold_sql": "SELECT l.name FROM film f JOIN language l ON f.language_id = l.language_id WHERE f.title = 'ALIEN CENTER'"
+ },
+ {
+  "id": "t2-05",
+  "question": "How many customers live in India?",
+  "gold_sql": "SELECT count(*) FROM customer cu JOIN address a ON cu.address_id = a.address_id JOIN city ci ON a.city_id = ci.city_id JOIN country co ON ci.country_id = co.country_id WHERE co.country = 'India'"
+ },
+ {
+  "id": "t2-06",
+  "question": "List the distinct titles of films available in the inventory of store 2. Return only the title.",
+  "gold_sql": "SELECT DISTINCT f.title FROM film f JOIN inventory i ON f.film_id = i.film_id WHERE i.store_id = 2"
+ },
+ {
+  "id": "t2-07",
+  "question": "List the titles of science fiction films. Return only the title.",
+  "gold_sql": "SELECT f.title FROM film f JOIN film_category fc ON f.film_id = fc.film_id JOIN category c ON fc.category_id = c.category_id WHERE c.name = 'Sci-Fi'"
+ },
+ {
+  "id": "t3-01",
+  "question": "What is the total revenue from all payments?",
+  "gold_sql": "SELECT sum(amount) FROM payment"
+ },
+ {
+  "id": "t3-02",
+  "question": "For each film rating, what is the average rental rate rounded to 2 decimal places? Return the rating and the average.",
+  "gold_sql": "SELECT rating, round(avg(rental_rate), 2) FROM film GROUP BY rating"
+ },
+ {
+  "id": "t3-03",
+  "question": "Who are the top 5 customers by total payment amount? Return the customer_id and their total, highest first.",
+  "gold_sql": "SELECT customer_id, sum(amount) AS total FROM payment GROUP BY customer_id ORDER BY total DESC LIMIT 5"
+ },
+ {
+  "id": "t3-04",
+  "question": "How many films are in each category? Return the category name and the count.",
+  "gold_sql": "SELECT c.name, count(*) FROM category c JOIN film_category fc ON c.category_id = fc.category_id GROUP BY c.name"
+ },
+ {
+  "id": "t3-05",
+  "question": "How many rentals did each staff member handle? Return the staff_id and the count.",
+  "gold_sql": "SELECT staff_id, count(*) FROM rental GROUP BY staff_id"
+ },
+ {
+  "id": "t3-06",
+  "question": "How many films feature more than 10 actors?",
+  "gold_sql": "SELECT count(*) FROM (SELECT film_id FROM film_actor GROUP BY film_id HAVING count(*) > 10) s"
+ },
+ {
+  "id": "t3-07",
+  "question": "What is the average film length per category, rounded to 1 decimal place? Return the category name and the average.",
+  "gold_sql": "SELECT c.name, round(avg(f.length), 1) FROM film f JOIN film_category fc ON f.film_id = fc.film_id JOIN category c ON fc.category_id = c.category_id GROUP BY c.name"
+ },
+ {
+  "id": "t3-08",
+  "question": "Which film rating has the most films? Return only the rating.",
+  "gold_sql": "SELECT rating FROM film GROUP BY rating ORDER BY count(*) DESC LIMIT 1"
+ },
+ {
+  "id": "t3-09",
+  "question": "How many customers are registered at each store? Return the store_id and the count.",
+  "gold_sql": "SELECT store_id, count(*) FROM customer GROUP BY store_id"
+ },
+ {
+  "id": "t4-01",
+  "question": "Return the distinct first and last names of customers who rented the film ACADEMY DINOSAUR.",
+  "gold_sql": "SELECT DISTINCT cu.first_name, cu.last_name FROM customer cu JOIN rental r ON cu.customer_id = r.customer_id JOIN inventory i ON r.inventory_id = i.inventory_id JOIN film f ON i.film_id = f.film_id WHERE f.title = 'ACADEMY DINOSAUR'"
+ },
+ {
+  "id": "t4-02",
+  "question": "Which category generated the most payment revenue? Return only the category name.",
+  "gold_sql": "SELECT c.name FROM payment p JOIN rental r ON p.rental_id = r.rental_id JOIN inventory i ON r.inventory_id = i.inventory_id JOIN film_category fc ON i.film_id = fc.film_id JOIN category c ON fc.category_id = c.category_id GROUP BY c.name ORDER BY sum(p.amount) DESC LIMIT 1"
+ },
+ {
+  "id": "t4-03",
+  "question": "List the titles of films that have never been rented. Return only the title.",
+  "gold_sql": "SELECT title FROM film f WHERE NOT EXISTS (SELECT 1 FROM inventory i JOIN rental r ON r.inventory_id = i.inventory_id WHERE i.film_id = f.film_id)"
+ },
+ {
+  "id": "t4-04",
+  "question": "Which actor appears in the most films? Return the actor's first and last name.",
+  "gold_sql": "SELECT a.first_name, a.last_name FROM actor a JOIN film_actor fa ON a.actor_id = fa.actor_id GROUP BY a.actor_id, a.first_name, a.last_name ORDER BY count(*) DESC LIMIT 1"
+ },
+ {
+  "id": "t4-05",
+  "question": "List the titles of Comedy films that are longer than the average length of all films. Return only the title.",
+  "gold_sql": "SELECT f.title FROM film f JOIN film_category fc ON f.film_id = fc.film_id JOIN category c ON fc.category_id = c.category_id WHERE c.name = 'Comedy' AND f.length > (SELECT avg(length) FROM film)"
+ },
+ {
+  "id": "t4-06",
+  "question": "Which country has the most customers? Return the country name and the customer count.",
+  "gold_sql": "SELECT co.country, count(*) FROM customer cu JOIN address a ON cu.address_id = a.address_id JOIN city ci ON a.city_id = ci.city_id JOIN country co ON ci.country_id = co.country_id GROUP BY co.country ORDER BY count(*) DESC LIMIT 1"
+ },
+ {
+  "id": "t5-01",
+  "question": "For each rating, return the rating and the title of its longest film (include ties).",
+  "gold_sql": "SELECT rating, title FROM film f WHERE length = (SELECT max(length) FROM film f2 WHERE f2.rating = f.rating)"
+ },
+ {
+  "id": "t5-02",
+  "question": "Return the monthly revenue across all payments: the month formatted as YYYY-MM and the total amount for that month.",
+  "gold_sql": "SELECT to_char(payment_date, 'YYYY-MM') AS month, sum(amount) FROM payment GROUP BY 1"
+ },
+ {
+  "id": "t5-03",
+  "question": "How many customers have rented from both store 1 and store 2, based on the store of the inventory they rented?",
+  "gold_sql": "SELECT count(*) FROM (SELECT r.customer_id FROM rental r JOIN inventory i ON r.inventory_id = i.inventory_id GROUP BY r.customer_id HAVING count(DISTINCT i.store_id) = 2) s"
+ },
+ {
+  "id": "t5-04",
+  "question": "Which 3 films have been rented the most times? Return the title and the rental count, highest first.",
+  "gold_sql": "SELECT f.title, count(*) AS rentals FROM film f JOIN inventory i ON f.film_id = i.film_id JOIN rental r ON r.inventory_id = i.inventory_id GROUP BY f.film_id, f.title ORDER BY rentals DESC, f.title LIMIT 3"
+ }
+]

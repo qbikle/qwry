@@ -1,0 +1,27 @@
+[
+  {
+    "id": "ph-01", "tier": 5, "tags": ["analytics"],
+    "question": "Monthly activation cohorts: for each month a customer was created (formatted YYYY-MM), return the month, the number of customers created in it, and the percentage of those customers whose FIRST rental fell on or after their create_date and strictly before create_date plus 30 days, rounded to 1 decimal place. Return exactly month, customer count, percentage.",
+    "gold_sql": "WITH first_rental AS (SELECT customer_id, min(rental_date) AS fr FROM rental GROUP BY customer_id) SELECT to_char(c.create_date, 'YYYY-MM') AS month, count(*) AS customers, round(100.0 * count(*) FILTER (WHERE f.fr >= c.create_date AND f.fr < c.create_date + interval '30 days') / count(*), 1) AS pct FROM customer c LEFT JOIN first_rental f ON f.customer_id = c.customer_id GROUP BY 1"
+  },
+  {
+    "id": "ph-02", "tier": 5, "tags": ["analytics"],
+    "question": "Store economics: attribute every payment to the store that owns the rented inventory. For each store return the store_id, the number of payments, the number of distinct paying customers, the average payment amount rounded to 2 decimal places, and the percentage of those customers who made 2 or more payments at that store, rounded to 1 decimal place.",
+    "gold_sql": "WITH per_customer AS (SELECT i.store_id, p.customer_id, count(*) AS n, sum(p.amount) AS amt FROM payment p JOIN rental r ON r.rental_id = p.rental_id JOIN inventory i ON i.inventory_id = r.inventory_id GROUP BY i.store_id, p.customer_id) SELECT store_id, sum(n) AS payments, count(*) AS customers, round(sum(amt) / sum(n), 2) AS avg_payment, round(100.0 * count(*) FILTER (WHERE n >= 2) / count(*), 1) AS repeat_pct FROM per_customer GROUP BY store_id"
+  },
+  {
+    "id": "ph-03", "tier": 5, "tags": ["analytics"],
+    "question": "Weekly rental growth for 2022: for each week that had at least one rental in 2022, return the week start (date_trunc week on rental_date, cast to a date), the number of rentals in that week, and the percentage change from the previous week PRESENT IN THE RESULT, rounded to 1 decimal place (null for the first week). Do not fill in weeks that had no rentals.",
+    "gold_sql": "WITH weekly AS (SELECT date_trunc('week', rental_date)::date AS wk, count(*) AS n FROM rental WHERE rental_date >= '2022-01-01' AND rental_date < '2023-01-01' GROUP BY 1) SELECT wk, n, round(100.0 * (n - lag(n) OVER (ORDER BY wk)) / lag(n) OVER (ORDER BY wk), 1) AS wow_pct FROM weekly"
+  },
+  {
+    "id": "ph-04", "tier": 5, "tags": ["analytics", "value"],
+    "question": "Comedy repeat funnel: among customers who have ever rented a film in the Comedy category, return how many such customers there are, how many of them rented anything again strictly after the time of their first Comedy rental, and that conversion as a percentage rounded to 1 decimal place. Return the three numbers in that order.",
+    "gold_sql": "WITH first_comedy AS (SELECT r.customer_id, min(r.rental_date) AS f FROM rental r JOIN inventory i ON i.inventory_id = r.inventory_id JOIN film_category fc ON fc.film_id = i.film_id JOIN category c ON c.category_id = fc.category_id WHERE c.name = 'Comedy' GROUP BY r.customer_id) SELECT count(*) AS comedy_customers, count(*) FILTER (WHERE EXISTS (SELECT 1 FROM rental r2 WHERE r2.customer_id = first_comedy.customer_id AND r2.rental_date > first_comedy.f)) AS returned, round(100.0 * count(*) FILTER (WHERE EXISTS (SELECT 1 FROM rental r2 WHERE r2.customer_id = first_comedy.customer_id AND r2.rental_date > first_comedy.f)) / count(*), 1) AS pct FROM first_comedy"
+  },
+  {
+    "id": "ph-05", "tier": 5, "tags": ["analytics"],
+    "question": "Split every customer into two segments by lifetime rental count, labelled exactly 'heavy' (30 rentals or more) and 'light' (fewer than 30). Return the segment label, the number of customers in it, and the average total amount that segment's customers have paid, rounded to 2 decimal places, counting a customer who never paid as 0.",
+    "gold_sql": "WITH rc AS (SELECT customer_id, count(*) AS n FROM rental GROUP BY customer_id), pay AS (SELECT customer_id, sum(amount) AS amt FROM payment GROUP BY customer_id) SELECT CASE WHEN coalesce(rc.n, 0) >= 30 THEN 'heavy' ELSE 'light' END AS segment, count(*) AS customers, round(avg(coalesce(pay.amt, 0)), 2) AS avg_paid FROM customer c LEFT JOIN rc ON rc.customer_id = c.customer_id LEFT JOIN pay ON pay.customer_id = c.customer_id GROUP BY 1"
+  }
+]

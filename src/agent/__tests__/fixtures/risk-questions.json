@@ -1,0 +1,114 @@
+[
+ {
+  "id": "s1-01",
+  "question": "How many users are not deleted?"
+ },
+ {
+  "id": "s1-02",
+  "question": "How many orders are paid?"
+ },
+ {
+  "id": "s1-03",
+  "question": "How many users are onboarded on the app?"
+ },
+ {
+  "id": "s1-04",
+  "question": "How many wardrobes are public?"
+ },
+ {
+  "id": "s1-05",
+  "question": "When did the most recent user sign up? Return the timestamp."
+ },
+ {
+  "id": "s2-01",
+  "question": "How many wardrobe products come from each source type? Return the source type and the count."
+ },
+ {
+  "id": "s2-02",
+  "question": "How many orders exist per currency? Return the currency and the count."
+ },
+ {
+  "id": "s2-03",
+  "question": "What is the total quantity of order items per item status? Return the status and the total quantity."
+ },
+ {
+  "id": "s2-04",
+  "question": "How many follow relationships were created in 2025?"
+ },
+ {
+  "id": "s2-05",
+  "question": "How many distinct users have a default address?"
+ },
+ {
+  "id": "s3-01",
+  "question": "What is the average total amount of paid orders per currency, rounded to 2 decimal places? Return the currency and the average."
+ },
+ {
+  "id": "s3-02",
+  "question": "Which 5 wardrobes contain the most wardrobe products? Return the wardrobe_id and the product count, highest first."
+ },
+ {
+  "id": "s3-03",
+  "question": "How many distinct users have an active subscription?"
+ },
+ {
+  "id": "s3-04",
+  "question": "How many users signed up in each month of 2025? Return the month as YYYY-MM and the count."
+ },
+ {
+  "id": "s3-05",
+  "question": "Which 3 users have added the most wardrobe products? Return the user id and the count, highest first."
+ },
+ {
+  "id": "s4-01",
+  "question": "How many users have both placed an order and generated a virtual try-on?"
+ },
+ {
+  "id": "s4-02",
+  "question": "Which user has spent the most across paid orders? Return the user id and their total spend."
+ },
+ {
+  "id": "s4-03",
+  "question": "How many users have added wardrobe products but never placed an order?"
+ },
+ {
+  "id": "s4-04",
+  "question": "Who administers the most wardrobes? Return the admin's user id and the number of wardrobes."
+ },
+ {
+  "id": "s4-05",
+  "question": "Among wardrobes that contain at least one product, what is the average number of products per wardrobe, rounded to 1 decimal place?"
+ },
+ {
+  "id": "s5-01",
+  "question": "How many mutual follow pairs exist (two users who both follow each other)?"
+ },
+ {
+  "id": "s5-02",
+  "question": "For each currency, return the currency and the order id of its highest-value order by total amount (include ties)."
+ },
+ {
+  "id": "s5-03",
+  "question": "How many users have performed more than 100 searches?"
+ },
+ {
+  "id": "h-01",
+  "question": "Monthly activation cohorts for 2025: for each signup month (formatted YYYY-MM) of users created in 2025, return the month, the number of signups, and the percentage of those users whose FIRST wardrobe product was added within 30 days of their signup, rounded to 1 decimal place."
+ },
+ {
+  "id": "h-02",
+  "question": "Paid-order economics per currency: for each currency, return the currency, the number of paid orders, the number of distinct buyers, the average order value rounded to 2 decimal places, and the percentage of buyers who placed 2 or more paid orders rounded to 1 decimal place."
+ },
+ {
+  "id": "h-03",
+  "question": "Weekly signup growth for 2025: return the week start (date_trunc week, cast to a date), the number of signups that week, and the week-over-week percentage change in signups rounded to 1 decimal place (NULL for the first week)."
+ },
+ {
+  "id": "h-04",
+  "question": "Virtual try-on to purchase funnel: among users who have used virtual try-on (only try-ons linked to a non-null user id), how many are there, how many went on to place an order (any status) at or after the time of their first try-on, and what is that conversion percentage rounded to 1 decimal place? Return the three numbers."
+ },
+ {
+  "id": "h-05",
+  "question": "Does audience size correlate with contribution? Split all non-deleted users into two segments by follower count, labeled exactly '100+' (at least 100 followers) and '<100' (fewer). Return the segment label, the number of users in it, and the average number of wardrobe products added per user rounded to 1 decimal place (users with no products count as 0)."
+ }
+]

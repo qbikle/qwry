@@ -1,0 +1,39 @@
+Pagila sample database
+======================
+
+`pagila-schema.sql` and `pagila-data.sql` in this directory are the Pagila
+sample database, vendored verbatim so the CI bench (EVAL.md section 5) loads
+the same bytes the measured baselines were taken against.
+
+Upstream: https://github.com/devrimgunduz/pagila
+Pagila is a port of the Sakila example database for MySQL, originally
+developed by Mike Hillyer of the MySQL AB documentation team.
+
+Upstream states: "The pagila database is made available under PostgreSQL
+license." That license, in full:
+
+    PostgreSQL License
+
+    Permission to use, copy, modify, and distribute this software and its
+    documentation for any purpose, without fee, and without a written
+    agreement is hereby granted, provided that the above copyright notice
+    and this paragraph and the following two paragraphs appear in all
+    copies.
+
+    IN NO EVENT SHALL THE AUTHOR BE LIABLE TO ANY PARTY FOR DIRECT,
+    INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES, INCLUDING LOST
+    PROFITS, ARISING OUT OF THE USE OF THIS SOFTWARE AND ITS DOCUMENTATION,
+    EVEN IF THE AUTHOR HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+    THE AUTHOR SPECIFICALLY DISCLAIMS ANY WARRANTIES, INCLUDING, BUT NOT
+    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+    PARTICULAR PURPOSE. THE SOFTWARE PROVIDED HEREUNDER IS ON AN "AS IS"
+    BASIS, AND THE AUTHOR HAS NO OBLIGATIONS TO PROVIDE MAINTENANCE,
+    SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
+
+This is a permissive, BSD-style license, so the dumps are vendored rather
+than fetched at CI time: a bench that downloads its own data can change
+underneath a baseline without a commit saying so. (EVAL.md section 5 calls
+the vendored dumps MIT; the upstream statement is the PostgreSQL license,
+which is permissive in the same way. Correct the sentence in EVAL.md when
+that file is next edited.)
