@@ -32,7 +32,7 @@
     },
     {
       "name": "peek_values",
-      "description": "Distinct real values stored in one column. Use this before filtering on any text, enum, or status column, so the filter matches the exact stored spelling and case. The reply marks whether more values exist than were shown.",
+      "description": "Distinct real values stored in one column. Use this before filtering on any text, enum, or status column, so the filter matches the exact stored spelling and case. The reply marks whether more values exist than were shown; on a very large table the values are a sample and the reply says so.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -64,7 +64,7 @@
         "properties": {
           "sql": {
             "type": "string",
-            "description": "One PostgreSQL statement, no trailing semicolon needed."
+            "description": "One PostgreSQL statement and nothing else: never prose, never a markdown fence, no trailing semicolon needed."
           }
         },
         "required": ["sql"],

@@ -134,7 +134,7 @@ const agentTools: AgentTools = {
     return ok("CREATE TABLE film (\n  film_id integer PRIMARY KEY\n);", []);
   },
   async peekValues(table, column) {
-    return ok("'G', 'PG'", { table, column, values: ["G", "PG"], more: false });
+    return ok("'G', 'PG'", { table, column, values: ["G", "PG"], more: false, sampled: false });
   },
   async runSql() {
     return ok("count\n1\n(1 rows)", { columns: ["count"], rows: [["1"]], rowCount: 1, capped: false, ms: 3 });

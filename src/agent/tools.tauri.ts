@@ -217,8 +217,9 @@ export function createTauriTools(init: TauriToolsInit): AgentTools {
           column: col.name,
           values: peek.values,
           more: peek.more,
+          sampled: peek.sampled,
         };
-        return { textForModel: formatPeek(peek.values, peek.more), result };
+        return { textForModel: formatPeek(peek.values, peek.more, peek.sampled), result };
       } catch (e) {
         return { textForModel: `ERROR: ${firstLine(e)}`, result: null, error: firstLine(e) };
       }

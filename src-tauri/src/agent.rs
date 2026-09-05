@@ -50,9 +50,17 @@ pub const DESCRIBE_MAX: usize = 40;
 /// is dropped rather than spending the turn's context on one long string
 /// (`harness.py` `sample_values`)
 const VALUE_LEN_CAP: usize = 40;
-/// `peek_values` runs under its own short timeout (§5): a wide unindexed
-/// column must not spend the turn budget
+/// `peek_values` runs under its own short timeouts (§5): the exact DISTINCT
+/// gets this long before the peek falls back to a bounded sample, so a wide
+/// unindexed column on a big table costs 2s, not a dead tool
+const PEEK_EXACT_TIMEOUT_MS: u64 = 2_000;
+/// the sampled fallback's own cap (the whole peek stays under ~7s)
 const PEEK_TIMEOUT_MS: u64 = 5_000;
+/// rows the sampled fallback reads at most, from random pages
+/// (`TABLESAMPLE SYSTEM`), before it looks for distinct values
+const PEEK_SCAN_ROWS: u64 = 20_000;
+/// share of pages the sampled fallback visits (percent)
+const PEEK_SAMPLE_PCT: &str = "0.5";
 /// probe queries get `run_sql`'s default timeout; §5 gives probe no setting
 const PROBE_TIMEOUT_MS: u64 = 10_000;
 /// floor/ceiling for the caller's `run_sql` timeout setting
@@ -78,6 +86,9 @@ pub struct AgentRun {
 pub struct PeekResult {
     pub values: Vec<String>,
     pub more: bool,
+    /// the exact DISTINCT timed out and the values come from a bounded sample
+    /// of random pages: other values may exist, and the model is told so
+    pub sampled: bool,
 }
 
 /// One probe query's outcome. `run` and `error` are mutually exclusive: a
@@ -613,14 +624,23 @@ pub async fn peek_values(
             columns.join(", ")
         )));
     }
-    let sql = format!(
-        "BEGIN READ ONLY; SET LOCAL statement_timeout = {PEEK_TIMEOUT_MS}; \
-         SELECT DISTINCT {col} FROM {path} WHERE {col} IS NOT NULL LIMIT {}; COMMIT",
-        limit as u64 + 1,
-        col = qi(column),
-    );
-    let out = match session.execute_simple(&sql).await {
+    let col = qi(column);
+    let mut sampled = false;
+    let out = match session.execute_simple(&peek_exact_sql(&path, &col, limit)).await {
         Ok(out) => out,
+        Err(e) if is_statement_timeout(&e) => {
+            // a big table: `videos_store` timed every peek out at 5s and the
+            // model lost its turn to four dead chips. Bounded sample instead.
+            let _ = session.execute_simple("ROLLBACK").await;
+            sampled = true;
+            match session.execute_simple(&peek_sample_sql(&path, &col, limit)).await {
+                Ok(out) => out,
+                Err(e) => {
+                    let _ = session.execute_simple("ROLLBACK").await;
+                    return Err(e);
+                }
+            }
+        }
         Err(e) => {
             let _ = session.execute_simple("ROLLBACK").await;
             return Err(e);
@@ -638,7 +658,32 @@ pub async fn peek_values(
         .unwrap_or_default();
     let more = values.len() > limit as usize;
     values.truncate(limit as usize);
-    Ok(PeekResult { values, more })
+    Ok(PeekResult { values, more, sampled })
+}
+
+/// the exact peek: every distinct non-null value, `limit + 1` so `more` is
+/// known, under the short exact timeout
+fn peek_exact_sql(path: &str, col: &str, limit: u32) -> String {
+    format!(
+        "BEGIN READ ONLY; SET LOCAL statement_timeout = {PEEK_EXACT_TIMEOUT_MS}; \
+         SELECT DISTINCT {col} FROM {path} WHERE {col} IS NOT NULL LIMIT {}; COMMIT",
+        limit as u64 + 1,
+    )
+}
+
+/// the sampled peek: at most `PEEK_SCAN_ROWS` rows from `PEEK_SAMPLE_PCT`
+/// percent of the table's pages, then the distinct values among them
+fn peek_sample_sql(path: &str, col: &str, limit: u32) -> String {
+    format!(
+        "BEGIN READ ONLY; SET LOCAL statement_timeout = {PEEK_TIMEOUT_MS}; \
+         SELECT DISTINCT {col} FROM (SELECT {col} FROM {path} TABLESAMPLE SYSTEM ({PEEK_SAMPLE_PCT}) \
+         WHERE {col} IS NOT NULL LIMIT {PEEK_SCAN_ROWS}) s LIMIT {}; COMMIT",
+        limit as u64 + 1,
+    )
+}
+
+fn is_statement_timeout(e: &DriverError) -> bool {
+    e.to_string().contains("statement timeout")
 }
 
 /// Run one read-only statement: the gate first (§8.1), then a read-only
@@ -907,6 +952,26 @@ pub async fn agent_answers_list(
     thread_id: String,
 ) -> Result<Vec<AgentAnswer>> {
     state.appdb.agent_answers_list(&thread_id)
+}
+
+#[cfg(test)]
+mod peek_tests {
+    use super::{peek_exact_sql, peek_sample_sql};
+
+    #[test]
+    fn the_exact_peek_reads_one_more_than_asked_under_the_short_timeout() {
+        let sql = peek_exact_sql("\"public\".\"orders\"", "\"status\"", 20);
+        assert!(sql.contains("statement_timeout = 2000"));
+        assert!(sql.contains("SELECT DISTINCT \"status\" FROM \"public\".\"orders\" WHERE \"status\" IS NOT NULL LIMIT 21"));
+    }
+
+    #[test]
+    fn the_sampled_peek_is_bounded_by_rows_and_pages() {
+        let sql = peek_sample_sql("\"public\".\"videos_store\"", "\"source\"", 20);
+        assert!(sql.contains("statement_timeout = 5000"));
+        assert!(sql.contains("TABLESAMPLE SYSTEM (0.5)"));
+        assert!(sql.contains("LIMIT 20000) s LIMIT 21"));
+    }
 }
 
 #[cfg(test)]

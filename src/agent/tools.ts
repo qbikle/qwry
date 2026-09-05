@@ -113,6 +113,8 @@ export interface PeekOutcome {
   values: string[];
   /** more distinct values exist than were returned */
   more: boolean;
+  /** a big table: the values come from a bounded sample, not the whole table */
+  sampled: boolean;
 }
 
 export interface ProbeOutcome {

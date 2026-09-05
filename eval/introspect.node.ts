@@ -24,6 +24,10 @@ export const VALUES_CAP = 20;
 export const VALUE_LEN_CAP = 40;
 export const DESCRIBE_MAX = 40;
 export const PEEK_TIMEOUT_MS = 5_000;
+/** the exact DISTINCT's own cap before the bounded sample takes over (agent.rs) */
+export const PEEK_EXACT_TIMEOUT_MS = 2_000;
+export const PEEK_SCAN_ROWS = 20_000;
+export const PEEK_SAMPLE_PCT = "0.5";
 export const PROBE_TIMEOUT_MS = 10_000;
 export const RUN_TIMEOUT_MS = 10_000;
 export const MIN_TIMEOUT_MS = 1_000;
@@ -480,6 +484,8 @@ SELECT coalesce(json_agg(t), '[]') AS j FROM (
 export interface PeekResult {
   values: string[];
   more: boolean;
+  /** the exact DISTINCT timed out; a bounded random-page sample answered */
+  sampled: boolean;
 }
 
 /** Distinct non-null values of one column, under a 5s statement timeout so a
@@ -506,20 +512,39 @@ export async function peekValues(
       `no column "${column}" on ${schema}.${table}. Columns: ${names.join(", ")}`,
     );
   }
-  try {
+  const col = qi(column);
+  const distinct = async (timeoutMs: number, from: string) => {
     await client.query("BEGIN");
     await client.query("SET LOCAL transaction_read_only = on");
-    await client.query(`SET LOCAL statement_timeout = ${PEEK_TIMEOUT_MS}`);
+    await client.query(`SET LOCAL statement_timeout = ${timeoutMs}`);
     const res = await client.query({
-      text: `SELECT DISTINCT ${qi(column)} FROM ${path} WHERE ${qi(column)} IS NOT NULL LIMIT ${limit + 1}`,
+      text: `SELECT DISTINCT ${col} FROM ${from} LIMIT ${limit + 1}`,
       rowMode: "array",
       types: TEXT_TYPES,
     });
     await client.query("COMMIT");
-    const all = (res.rows as (string | null)[][])
+    return (res.rows as (string | null)[][])
       .map((r) => r[0])
       .filter((v): v is string => v !== null);
-    return { values: all.slice(0, limit), more: all.length > limit };
+  };
+  const finish = (all: string[], sampled: boolean): PeekResult => ({
+    values: all.slice(0, limit),
+    more: all.length > limit,
+    sampled,
+  });
+  try {
+    return finish(await distinct(PEEK_EXACT_TIMEOUT_MS, `${path} WHERE ${col} IS NOT NULL`), false);
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    if (!/statement timeout/.test(firstLine(e))) throw new SqlError(firstLine(e));
+  }
+  // the exact scan was too slow for this table (agent.rs peek_values): a
+  // bounded sample of random pages answers instead, and the caller says so
+  try {
+    const from =
+      `(SELECT ${col} FROM ${path} TABLESAMPLE SYSTEM (${PEEK_SAMPLE_PCT}) ` +
+      `WHERE ${col} IS NOT NULL LIMIT ${PEEK_SCAN_ROWS}) s`;
+    return finish(await distinct(PEEK_TIMEOUT_MS, from), true);
   } catch (e) {
     await client.query("ROLLBACK").catch(() => undefined);
     throw new SqlError(firstLine(e));

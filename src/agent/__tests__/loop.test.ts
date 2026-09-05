@@ -69,7 +69,7 @@ function tools(rec: Recorded, over: Partial<AgentTools> = {}): AgentTools {
     },
     async peekValues(table, column, limit) {
       note("peekValues", { table, column, limit });
-      return ok("'G', 'PG'", { table, column, values: ["G", "PG"], more: false });
+      return ok("'G', 'PG'", { table, column, values: ["G", "PG"], more: false, sampled: false });
     },
     async runSql(sql) {
       note("runSql", sql);
@@ -128,7 +128,7 @@ describe("the hybrid path", () => {
       async peekValues(table, column) {
         rec.calls.push({ name: "peekValues", args: { table, column } });
         peekStarted();
-        return ok("'G', 'PG'", { table, column, values: ["G"], more: false });
+        return ok("'G', 'PG'", { table, column, values: ["G"], more: false, sampled: false });
       },
     });
     const provider = scripted(

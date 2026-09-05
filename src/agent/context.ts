@@ -452,9 +452,10 @@ export function formatRun(run: AgentRun): string {
 }
 
 /** Distinct values, with the marker that says the list is not exhaustive. */
-export function formatPeek(values: string[], more: boolean): string {
+export function formatPeek(values: string[], more: boolean, sampled = false): string {
   const list = values.map((v) => `'${v}'`).join(", ");
-  return list ? `${list}${more ? " … (more exist)" : ""}` : "(no non-null values)";
+  const note = sampled ? " (sampled from a large table: other values may exist)" : "";
+  return list ? `${list}${more ? " … (more exist)" : ""}${note}` : `(no non-null values)${note}`;
 }
 
 /** One block per probe, each in the run_sql format, each labelled with the

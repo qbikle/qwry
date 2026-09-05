@@ -392,6 +392,9 @@ export interface AgentRun {
 /** distinct non-null values of one column; `more` drives the model-facing
  * "… (more exist)" marker */
 export interface PeekResult {
+  /** the exact DISTINCT timed out; the values are a bounded sample of random
+   * pages and other values may exist (agent.rs peek_values) */
+  sampled: boolean;
   values: string[];
   more: boolean;
 }

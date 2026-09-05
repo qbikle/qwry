@@ -149,7 +149,7 @@ renders them in its wire format. Names and behaviours are law:
 |---|---|---|---|
 | `list_tables` | — | `name  (~rows)  -- comment` per table | all tables of the connection |
 | `describe_tables` | `names: string[]` | DDL-shaped text: columns, types, PK, FK, `-- values:` for low-cardinality columns (from `pg_stats`, cap 20), column comments | unknown name → error text listing valid names |
-| `peek_values` | `table, column, limit≤50` | distinct non-null values, `… (more exist)` marker | 5s statement timeout |
+| `peek_values` | `table, column, limit≤50` | distinct non-null values, `… (more exist)` marker; `(sampled …)` when the exact scan timed out | exact DISTINCT under 2s, then a ≤20k-row `TABLESAMPLE SYSTEM (0.5)` sample under 5s |
 | `run_sql` | `sql` | header + rows (≤50 to the model; full result, ≤2000 rows, to the grid) + row count; errors as `ERROR: <first line>` | SELECT/WITH/EXPLAIN only (AST gate, §8); 10s timeout (setting) |
 | `probe` | `sqls: string[]` | one block per query, same format as `run_sql` | ≤6 queries, each ≤5 rows, gated independently, run one after another on the thread's single session (§2.3); one failure never sinks the batch |
 

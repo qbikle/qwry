@@ -221,11 +221,17 @@ export function createNodeTools(init: NodeToolsInit): AgentTools {
       const capped = Math.max(1, Math.min(Math.trunc(limit), PEEK_MAX));
       try {
         const peek = await peekValues(init.client, t.schema, t.name, col.name, capped);
-        const textForModel = formatPeek(peek.values, peek.more);
+        const textForModel = formatPeek(peek.values, peek.more, peek.sampled);
         record("peek_values", started, textForModel, false);
         return {
           textForModel,
-          result: { table: t.display, column: col.name, values: peek.values, more: peek.more },
+          result: {
+            table: t.display,
+            column: col.name,
+            values: peek.values,
+            more: peek.more,
+            sampled: peek.sampled,
+          },
         };
       } catch (e) {
         const text = `ERROR: ${firstLine(e)}`;
