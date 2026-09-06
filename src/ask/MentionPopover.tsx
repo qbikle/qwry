@@ -1,8 +1,9 @@
 // The `@` completion popover (W6): the model picker's box (AGENT-UX section
 // 8) opened UPWARD from the composer box at the composer's own width, holding
-// what the fragment after the `@` matches: Tables, Columns (from two typed
-// characters), Saved Queries, Threads, each group drawn only when it has
-// rows, cmdk (`Command`) inside for the list, the hot row and the pointer.
+// what the fragment after the `@` matches, in one run of rows: tables, then
+// columns (from two typed characters), then saved queries, then this
+// connection's other threads, cmdk (`Command`) inside for the list, the hot
+// row and the pointer.
 // The filtering is not cmdk's: mentionRows.ts matches by substring on the
 // name the user would type (cmdk's fuzzy scorer would put `wardrobe_products`
 // under `ord`), and the popover UNMOUNTS when nothing matches, because a `No
@@ -34,6 +35,16 @@
 // table part owning the overflow and the column, dot first, always whole
 // (DECISIONS W6). The hint slot is data only: a table's row estimate, a
 // column's type, nothing for a saved query or a thread.
+//
+// W7 takes the four group headings out and gives every row its kind as an
+// icon instead (`Table2` · `Columns3` · `Bookmark` · `MessageSquare`, the
+// trio's --icon-sm in tier 2, ahead of the name): a heading naming the kind
+// over rows that each carry the kind is one fact in two slots (DESIGN rule
+// 14), and the kind belongs on the row, where the pick is made (rule 15). The
+// order mentionRows returns, Tables then Columns then Saved Queries then
+// Threads, stands unlabelled, so the list is one run of rows. The box is flat
+// on --bg-panel: the picker's raised tone said "a menu over the composer" and
+// the composer's own panel says it with one surface.
 
 import {
   useEffect,
@@ -49,7 +60,9 @@ import {
 import { createPortal } from "react-dom";
 import { Command } from "cmdk";
 import { motion } from "motion/react";
+import { Bookmark, Columns3, MessageSquare, Table2, type LucideIcon } from "lucide-react";
 import { menuIn } from "../design/springs";
+import type { MentionKind } from "../agent/types";
 import type { MentionQuery } from "../stores/ask";
 import { mentionRows, type MentionRow, type MentionRowsCtx } from "./mentionRows";
 
@@ -92,11 +105,23 @@ interface Hot {
   value: string;
 }
 
+/** the mark each kind wears, the sidebar's and the titlebar's own glyphs: a
+ * saved query is the Bookmark it is saved under, a thread the chat bubble Ask
+ * opens with */
+const KIND_ICON: Record<MentionKind, LucideIcon> = {
+  table: Table2,
+  column: Columns3,
+  saved: Bookmark,
+  thread: MessageSquare,
+};
+
 /** one row; cmdk's own pointer-move selects it (onValueChange, below) and its
  * click is the pick */
 function Row({ row, hot, onPick }: { row: MentionRow; hot: boolean; onPick: () => void }) {
+  const Kind = KIND_ICON[row.kind];
   return (
     <Command.Item className={`picker-item${hot ? " hot" : ""}`} value={row.value} onSelect={onPick}>
+      <Kind size={12} />
       {row.kind === "column" ? (
         <span className="mention-path">
           <span className="mention-pre">{row.label}</span>
@@ -207,18 +232,6 @@ export function MentionPopover({
 
   if (!visible) return null;
 
-  const group = (title: string, rows: MentionRow[]) =>
-    rows.length > 0 && (
-      <>
-        <div className="picker-group">{title}</div>
-        <Command.Group>
-          {rows.map((row) => (
-            <Row key={row.value} row={row} hot={row.value === hotValue} onPick={() => onPick(row.token)} />
-          ))}
-        </Command.Group>
-      </>
-    );
-
   return createPortal(
     <div className="picker-anchor mention-anchor" style={{ left: box.x, top: box.y, width: box.width }}>
       <motion.div
@@ -235,10 +248,9 @@ export function MentionPopover({
           label="Tags"
         >
           <Command.List label="Tags">
-            {group("Tables", groups.tables)}
-            {group("Columns", groups.columns)}
-            {group("Saved Queries", groups.saved)}
-            {group("Threads", groups.threads)}
+            {entries.map((row) => (
+              <Row key={row.value} row={row} hot={row.value === hotValue} onPick={() => onPick(row.token)} />
+            ))}
           </Command.List>
         </Command>
       </motion.div>

@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import {
   ALLOWED_TOOLS,
   MCP_SERVER_NAME,
-  THREAD_TURN_CAP,
+  CHILD_TURN_CAP,
   buildArgs,
   buildSideArgs,
   createClaudeCodeProvider,
@@ -32,7 +32,7 @@ const config: ProviderConfig = {
 const thread = (over: Partial<ThreadRef> = {}): ThreadRef => ({
   id: "a0ad2909-06b1-44e7-b450-1053561d74dc",
   firstCall: true,
-  turnsRemaining: THREAD_TURN_CAP,
+  turnsRemaining: 12,
   ...over,
 });
 
@@ -65,7 +65,8 @@ test("a captured run becomes the event sequence the loop expects", async () => {
     "usage",
     "done",
   ]);
-  expect(doneOf(events)).toEqual({ stopReason: "stop" });
+  // the captured run's own `num_turns`: the number the user watched (W7)
+  expect(doneOf(events)).toEqual({ stopReason: "stop", turns: 3 });
 });
 
 test("MCP tool names reach the loop without the server prefix", async () => {
@@ -185,7 +186,10 @@ test("a thread at its turn cap refuses to resume and never spawns", async () => 
   expect(platform.spawns).toHaveLength(0);
 });
 
-test("a resume passes what is left of the thread's turn budget", async () => {
+// W7: the child got qwry's own thread cap, so a wide question spent it on
+// describe and peek and died at "1 turn" (qwry's invocation count). The child
+// now gets its own budget, the same one on every invocation
+test("every invocation gives the child its own turn budget, not the thread's", async () => {
   const platform = new FakePlatform({ lines: [...CLAUDE_STREAM_JSON] });
   await collect(
     createClaudeCodeProvider(config, platform).chat(
@@ -193,9 +197,96 @@ test("a resume passes what is left of the thread's turn budget", async () => {
     ),
   );
   const args = platform.spawns[0].args;
-  expect(args[args.indexOf("--max-turns") + 1]).toBe("5");
+  expect(args[args.indexOf("--max-turns") + 1]).toBe(String(CHILD_TURN_CAP));
+  expect(CHILD_TURN_CAP).toBe(24);
   expect(args).toContain("--resume");
   expect(args).not.toContain("--session-id");
+});
+
+// the sentence the failure block shows must name the turns the USER watched
+test("the child's own num_turns rides the done event", async () => {
+  const platform = new FakePlatform({
+    lines: [
+      JSON.stringify({ type: "system", subtype: "init", mcp_servers: [{ name: "qwry", status: "connected" }], tools: ["mcp__qwry__run_sql"] }),
+      JSON.stringify({ type: "result", subtype: "error_max_turns", num_turns: 24 }),
+    ],
+  });
+  const events = await collect(
+    createClaudeCodeProvider(config, platform).chat(request({ thread: thread() })),
+  );
+  expect(doneOf(events)).toEqual({ stopReason: "turnCap", turns: 24 });
+});
+
+test("a result with no num_turns carries none, and the loop falls back to its own", async () => {
+  const platform = new FakePlatform({
+    lines: [
+      JSON.stringify({ type: "system", subtype: "init", mcp_servers: [{ name: "qwry", status: "connected" }], tools: ["mcp__qwry__run_sql"] }),
+      JSON.stringify({ type: "result", subtype: "success" }),
+    ],
+  });
+  const events = await collect(
+    createClaudeCodeProvider(config, platform).chat(request({ thread: thread() })),
+  );
+  expect(doneOf(events)).toEqual({ stopReason: "stop" });
+});
+
+// the prose spiral (W7): the model answered a write request in words, sent
+// the words to run_sql, and re-explained itself once per refusal to the cap
+test("two run_sql refusals of the prose class end the run and kill the child", async () => {
+  const refusal =
+    "ERROR: this is prose, not SQL. To answer without running a query, reply in text and call no tool";
+  const call = (id: string) =>
+    JSON.stringify({
+      type: "assistant",
+      message: { id: `m-${id}`, content: [{ type: "tool_use", id, name: "mcp__qwry__run_sql", input: { sql: "I cannot delete rows." } }] },
+    });
+  const result = (id: string) =>
+    JSON.stringify({
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: id, content: refusal, is_error: true }] },
+    });
+  const platform = new FakePlatform({
+    lines: [
+      JSON.stringify({ type: "system", subtype: "init", mcp_servers: [{ name: "qwry", status: "connected" }], tools: ["mcp__qwry__run_sql"] }),
+      JSON.stringify({ type: "assistant", message: { id: "m0", content: [{ type: "text", text: "I cannot delete rows." }] } }),
+      call("t1"),
+      result("t1"),
+      call("t2"),
+      result("t2"),
+      // the child would keep going; it never gets to
+      call("t3"),
+      result("t3"),
+      JSON.stringify({ type: "result", subtype: "success", num_turns: 12 }),
+    ],
+  });
+  const events = await collect(
+    createClaudeCodeProvider(config, platform).chat(request({ thread: thread() })),
+  );
+  expect(doneOf(events)).toEqual({ stopReason: "proseLoop" });
+  // the third call never reached the loop: the adapter cut the child off
+  expect(toolCalls(events).map((c) => c.id)).toEqual(["t1", "t2"]);
+  expect(textOf(events)).toBe("I cannot delete rows.");
+});
+
+test("one prose refusal is a mistake the model can still correct", async () => {
+  const refusal =
+    "ERROR: this is prose, not SQL. To answer without running a query, reply in text and call no tool";
+  const platform = new FakePlatform({
+    lines: [
+      JSON.stringify({ type: "system", subtype: "init", mcp_servers: [{ name: "qwry", status: "connected" }], tools: ["mcp__qwry__run_sql"] }),
+      JSON.stringify({ type: "assistant", message: { id: "m1", content: [{ type: "tool_use", id: "t1", name: "mcp__qwry__run_sql", input: {} }] } }),
+      JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: refusal, is_error: true }] } }),
+      JSON.stringify({ type: "assistant", message: { id: "m2", content: [{ type: "tool_use", id: "t2", name: "mcp__qwry__run_sql", input: {} }] } }),
+      JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t2", content: "count\n9\n(1 rows)" }] } }),
+      JSON.stringify({ type: "assistant", message: { id: "m3", content: [{ type: "text", text: "Nine." }] } }),
+      JSON.stringify({ type: "result", subtype: "success", num_turns: 3 }),
+    ],
+  });
+  const events = await collect(
+    createClaudeCodeProvider(config, platform).chat(request({ thread: thread() })),
+  );
+  expect(doneOf(events)).toEqual({ stopReason: "stop", turns: 3 });
+  expect(toolCalls(events)).toHaveLength(2);
 });
 
 test("every load-bearing flag is present, and the two banned ones are not", () => {

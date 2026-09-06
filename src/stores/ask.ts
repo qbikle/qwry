@@ -2,7 +2,8 @@
 // whether the Threads sheet or the picker is up, the composer drafts, one per
 // connection, which exchange the composer is editing (W4 jump back: the
 // mode, not the truncation, which is the agent store's), and the `@` the
-// caret is inside (W6: the mention popover's query, not its rows).
+// caret is inside (W6: the mention popover's query, not its rows), and which
+// face each answer's result block is showing (W7).
 // Whether Ask is on screen and how wide it is belong to the one right pane
 // (src/stores/sidePane.ts: Ask is a MODE of it, not a card of its own); this
 // store mirrors `open` for its readers and clears its transient chrome when
@@ -16,6 +17,7 @@
 // the request lands.
 
 import { create } from "zustand";
+import type { ResultFace } from "../ask/ResultBlock";
 import { useSidePane } from "./sidePane";
 
 /** which answer's trace is open, and which step it should reveal first
@@ -75,6 +77,10 @@ interface AskState {
   focusSeq: number;
   /** null = the composer is writing a new question at the end of the thread */
   edit: AskEdit | null;
+  /** which face of an answer's result block is up (W7): absent = the block's
+   * own default, the table when a run left rows. A way of looking, not a
+   * fact, so it lives with the chrome and is never persisted */
+  face: Record<string, ResultFace>;
 
   openTrace: (exchangeId: string, stepId?: string | null) => void;
   closeTrace: () => void;
@@ -94,6 +100,7 @@ interface AskState {
    * screen, since text with no connection to belong to is text with no home */
   setDraft: (text: string) => void;
   requestFocus: () => void;
+  setFace: (exchangeId: string, face: ResultFace) => void;
 }
 
 const showing = () => {
@@ -111,6 +118,8 @@ export const useAsk = create<AskState>()((set) => ({
   draftFor: null,
   focusSeq: 0,
   edit: null,
+  face: {},
+
 
   openTrace: (exchangeId, stepId = null) =>
     set({ traceOpenFor: { exchangeId, stepId }, threadsOpen: false, pickerOpen: false, mentionQuery: null }),
@@ -148,10 +157,16 @@ export const useAsk = create<AskState>()((set) => ({
       return { drafts: { ...s.drafts, [s.draftFor]: text } };
     }),
   requestFocus: () => set((s) => ({ focusSeq: s.focusSeq + 1 })),
+  // no-op when the face is already the one asked for: a flip that lands on
+  // the face already showing must not re-render every block of the thread
+  setFace: (exchangeId, face) =>
+    set((s) => (s.face[exchangeId] === face ? {} : { face: { ...s.face, [exchangeId]: face } })),
 }));
 
 // leaving the screen (pane closed, or switched to the inspector) takes the
-// transient chrome with it, as the old setOpen(false) did
+// transient chrome with it, as the old setOpen(false) did. The flipped faces
+// stay: a face is a mode the user chose on an exchange, not chrome over it,
+// and coming back to a block that reverted would read as a lost setting
 useSidePane.subscribe(() => {
   const open = showing();
   if (useAsk.getState().open === open) return;

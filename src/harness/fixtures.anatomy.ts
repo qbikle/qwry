@@ -99,7 +99,6 @@ function exchange(s: Seed): Exchange {
     run: s.run,
     assumptions: s.assumptions,
     sanity: [],
-    followUps: s.followUps,
     trace,
     text: s.text,
     turns: 1,

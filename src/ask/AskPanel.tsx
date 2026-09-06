@@ -71,6 +71,16 @@
 // class) behind each mention that resolves against the connection's snapshot,
 // visible saved queries and threads, and nothing behind one that does not.
 // Both ghosts render the same segments, so the pills travel with the words.
+// The wrap and the backdrop carry the same 2px side padding (ask.css, W7), so
+// the pill's outdent has room at position 0 of the draft and the two glyph
+// runs still start on the same pixel.
+//
+// Follow-ups (W7 item 3): the suggestions belong to the THREAD, not to each
+// answer, and stand once, in the block at its end (useAgent.followUps, handed
+// to that one AnswerBlock). This component owns when they go: the store empties
+// them when a run starts, but a send is a frame earlier than that on the lift
+// path, and a row of stale suggestions must not be what the new bubble lands
+// beside.
 
 import {
   useCallback,
@@ -110,6 +120,7 @@ import "./ask.css";
 
 const NO_EXCHANGES: Exchange[] = [];
 const NO_THREADS: Thread[] = [];
+const NO_QUESTIONS: string[] = [];
 const NO_MENTIONS: Mention[] = [];
 const COMPOSER_MAX_H = 96;
 
@@ -513,6 +524,26 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
     return () => cancelAnimationFrame(id);
   }, [lift, profileId]);
 
+  // the follow-up row (file header): the thread's questions, in the block at
+  // its end. It renders one commit behind both the store's list and the send,
+  // and that lag is the point: a chip picked out of the row has to unmount in
+  // the very commit the echo it becomes mounts (one node per shared layout id,
+  // DESIGN rule 6), and by that render `asked` has already taken the picked
+  // question out of the row, so what fades is the two nobody chose. The list
+  // carries the thread it came from, so a thread switch never shows the other
+  // thread's questions for a frame (LESSONS 4)
+  const threadFollowUps = useAgent((s) => (threadId ? s.followUps[threadId] : undefined)) ?? NO_QUESTIONS;
+  const asking = busy || lift !== null || editing;
+  const nextFollowUps = asking ? NO_QUESTIONS : threadFollowUps;
+  const [fupRow, setFupRow] = useState<{ threadId: string | null; questions: string[] }>({
+    threadId,
+    questions: NO_QUESTIONS,
+  });
+  useEffect(() => {
+    setFupRow({ threadId, questions: nextFollowUps });
+  }, [threadId, nextFollowUps]);
+  const followUps = fupRow.threadId === threadId ? fupRow.questions : NO_QUESTIONS;
+
   // the retry pill targets the newest exchange with a pending assumption
   // set; it hides while the thread is busy (the Stop face is the one control
   // then) and comes back when a cancelled retry restores the prior answer
@@ -683,6 +714,7 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
               busy={busy}
               phase={phase}
               asked={asked}
+              followUps={i === exchanges.length - 1 ? followUps : NO_QUESTIONS}
               liftId={lift !== null && landed && i === exchanges.length - 1 ? lift.id : undefined}
             />
           ))}
@@ -729,7 +761,9 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
               {/* the draft's pills (file header): the textarea's glyphs again,
                   transparent, a .mention span around each resolved tag; the
                   trailing newline gives a draft that ends in one the empty
-                  last line the textarea shows, so the two scroll as one */}
+                  last line the textarea shows, so the two scroll as one. The
+                  wrap pads the outdent's 2px and this pays them back, so a
+                  first-token pill keeps its left edge */}
               {connected && (
                 <div ref={backRef} className={`ask-ta-back${ghosted ? " ghosted" : ""}`} aria-hidden="true">
                   <MentionText text={draft} mentions={mentions} />

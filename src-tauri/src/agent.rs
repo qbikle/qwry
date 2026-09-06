@@ -172,6 +172,45 @@ const DENIED_FUNCS: &[&str] = &[
 const INTO_REASON: &str = "SELECT INTO / CTAS materializes a new table (write)";
 const LOCK_REASON: &str = "FOR UPDATE/FOR SHARE takes a row lock";
 
+/// The refusal a model gets when it hands `run_sql` its own sentence instead
+/// of a statement. W7: a write request answered in prose, then sent to
+/// `run_sql` as prose, spent twelve turns being refused and re-explained,
+/// because `parse error: syntax error at or near "I"` reads as a query to fix
+/// rather than as a tool that was never wanted. So the refusal names the way
+/// out, and `loop.ts` breaks the loop after the second one in a row.
+pub const PROSE_REASON: &str =
+    "this is prose, not SQL. To answer without running a query, reply in text and call no tool";
+
+/// Every word a statement can open with, `(` for a parenthesised SELECT and
+/// `--` / `/*` for a leading comment. A parse failure that opens with none of
+/// them is not a broken query; it is prose (PROSE_REASON). Deliberately
+/// generous: a write verb belongs to the gate's own refusal, which names the
+/// statement kind, not to this one.
+const SQL_LEADS: &[&str] = &[
+    "select", "with", "explain", "values", "table", "insert", "update", "delete", "merge",
+    "create", "drop", "alter", "truncate", "grant", "revoke", "begin", "start", "commit",
+    "rollback", "savepoint", "release", "set", "reset", "show", "copy", "call", "do", "analyze",
+    "vacuum", "refresh", "comment", "prepare", "execute", "deallocate", "declare", "fetch",
+    "move", "close", "listen", "unlisten", "notify", "lock", "reindex", "cluster", "checkpoint",
+    "discard", "import", "security", "end", "abort",
+];
+
+/// Whether the text at least OPENS like a statement. Punctuation-led text
+/// (`(SELECT …`, a leading comment) counts; anything else is judged on its
+/// first word, lowercased, stripped of the punctuation a sentence carries.
+fn opens_like_sql(sql: &str) -> bool {
+    let text = sql.trim_start();
+    if text.starts_with('(') || text.starts_with("--") || text.starts_with("/*") {
+        return true;
+    }
+    let word: String = text
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .flat_map(|c| c.to_lowercase())
+        .collect();
+    SQL_LEADS.contains(&word.as_str())
+}
+
 fn is_denied(name: &str) -> bool {
     DENIED_FUNCS.contains(&name.to_ascii_lowercase().as_str())
 }
@@ -354,7 +393,13 @@ pub fn classify(sql: &str) -> GateVerdict {
 }
 
 fn gate(sql: &str) -> std::result::Result<(), String> {
-    let parsed = pg_query::parse(sql).map_err(|e| format!("parse error: {e}"))?;
+    let parsed = pg_query::parse(sql).map_err(|e| {
+        if opens_like_sql(sql) {
+            format!("parse error: {e}")
+        } else {
+            PROSE_REASON.to_string()
+        }
+    })?;
     let stmts = &parsed.protobuf.stmts;
     if stmts.is_empty() {
         return Err("empty statement".into());
@@ -1074,7 +1119,28 @@ mod gate_tests {
         assert!(reason("SHOW work_mem;").contains("VariableShowStmt not allowed"));
         assert!(reason("SET work_mem='1MB';").contains("VariableSetStmt not allowed"));
         assert!(reason(r"SELECT * FROM t \gset").starts_with("parse error:"));
-        assert!(reason("a syntactically broken query.").starts_with("parse error:"));
+        assert!(reason("SELECT a syntactically broken query.").starts_with("parse error:"));
+    }
+
+    /// W7: prose handed to `run_sql` is told what to do instead, so the model
+    /// stops re-sending it. Text that OPENS like a statement stays a parse
+    /// error: the model can fix that one.
+    #[test]
+    fn prose_is_refused_as_prose_and_broken_sql_as_sql() {
+        use super::PROSE_REASON;
+        assert_eq!(
+            reason("I cannot run write queries. Deleting rows is outside what this tool does."),
+            PROSE_REASON
+        );
+        assert_eq!(reason("Here is what I found: nine orders."), PROSE_REASON);
+        assert_eq!(reason(""), "empty statement");
+        // opens like a statement: a query the model can repair, named as one
+        assert!(reason("SELECT FROM").starts_with("parse error:"));
+        assert!(reason("  with x as (select").starts_with("parse error:"));
+        assert!(reason("(SELECT 1").starts_with("parse error:"));
+        assert!(reason("-- a leading comment\nSELECT FROM").starts_with("parse error:"));
+        // a write verb keeps the gate's own refusal, which names the kind
+        assert!(reason("DELETE FROM t;").contains("DeleteStmt not allowed"));
     }
 
     /// the refuter's case: `into_clause` / `locking_clause` on a SelectStmt

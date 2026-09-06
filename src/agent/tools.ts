@@ -48,6 +48,21 @@ export const TOOL_NAMES: readonly ToolName[] = [
   "probe",
 ];
 
+/** The gate's refusal for a `run_sql` argument that is not a statement at all
+ * (agent.rs `PROSE_REASON`, served verbatim by both tool layers). Mirrored
+ * here as a substring, not re-worded: the loop and the claude adapter count
+ * two of these in a row and end the exchange with the model's own prose
+ * rather than watching it re-explain itself to the turn cap (W7). */
+export const PROSE_REFUSAL = "this is prose, not SQL";
+
+/** Whether a tool result is that refusal. The text arrives wrapped as
+ * `ERROR: <first line>` on every path, so the match is on the substring. */
+export const isProseRefusal = (text: string): boolean => text.includes(PROSE_REFUSAL);
+
+/** Two in a row ends the exchange. One is a mistake the model can correct on
+ * the next turn; two is the spiral (W7: twelve turns of the same refusal). */
+export const PROSE_STRIKES = 2;
+
 /** Rows shown to the MODEL in a run_sql or probe result (section 5). Never
  * lower it to save tokens: the lean variant did and looped to the turn cap
  * re-querying what it could not see. Prune history instead. */

@@ -70,7 +70,6 @@ const cancelledRun: typeof realRunAsk = async (req) => {
     run: null,
     assumptions: [],
     sanity: [],
-    followUps: [],
     trace: [],
     text: "",
     turns: 1,
@@ -115,7 +114,6 @@ function answered(): Exchange {
         { id: "model:2", label: "Months With No Rows Omitted", source: "model", active: false },
       ],
       sanity: [],
-      followUps: ["Which channels drove the spike?"],
       trace: [],
       text: "Counted by sent_at. 4.65M this year.",
       turns: 1,
@@ -268,7 +266,6 @@ describe("pending assumptions", () => {
         // the re-run's own line puts the chip back on; the user's flip wins
         assumptions: [{ id: "model:1", label: "This Year = 2026", source: "model", active: true }],
         sanity: [],
-        followUps: [],
         trace: [],
         text: "new prose",
         turns: 1,

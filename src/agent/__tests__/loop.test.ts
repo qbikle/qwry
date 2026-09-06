@@ -5,7 +5,7 @@
 // an ownsLoop provider whose tools the loop must NOT re-execute.
 
 import { describe, expect, test } from "bun:test";
-import { runAsk, type AskEvent } from "../loop";
+import { runAsk, turnCapMessage, type AskEvent } from "../loop";
 import { mentionsIn } from "../mentions";
 import type {
   AgentEvent,
@@ -90,6 +90,12 @@ const call = (id: string, name: string, args: unknown): AgentEvent => ({
   toolCall: { id, name, args: JSON.stringify(args) },
 });
 const done = (stopReason: StopReason): AgentEvent => ({ done: { stopReason } });
+
+/** the gate's refusal for a run_sql argument that is not a statement, in the
+ * `ERROR: <first line>` shape every tool layer wraps it in (agent.rs
+ * PROSE_REASON) */
+const PROSE_ERROR =
+  "ERROR: this is prose, not SQL. To answer without running a query, reply in text and call no tool";
 
 async function ask(
   provider: Provider,
@@ -272,7 +278,77 @@ describe("failure shapes", () => {
     const { answer, events } = await ask(provider, tools(rec), { maxTurns: 2 });
     expect(answer.verdict.status).toBe("turn_cap");
     expect(answer.turns).toBe(2);
-    expect(events.some((e) => e.type === "error" && e.kind === "turncap")).toBe(true);
+    const capped = events.find((e) => e.type === "error");
+    expect(capped).toMatchObject({ kind: "turncap", message: "stopped after 2 turns" });
+  });
+
+  // W7: the maintainer watched twelve turns and read "STOPPED AFTER 1 TURNS".
+  // The sentence names the child's own count, and one is singular
+  test("the turn cap sentence names the CHILD's turns, and one is one turn", async () => {
+    expect(turnCapMessage(12)).toBe("stopped after 12 turns");
+    expect(turnCapMessage(1)).toBe("stopped after 1 turn");
+
+    const rec: Recorded = { calls: [], requests: [] };
+    const provider = scripted(
+      [
+        [
+          call("a", "run_sql", { sql: "SELECT 1" }),
+          { toolResult: { id: "a", name: "run_sql", result: "count\n1\n(1 rows)" } },
+          { done: { stopReason: "turnCap" as const, turns: 24 } },
+        ],
+      ],
+      rec,
+      true,
+    );
+    const { answer, events } = await ask(provider, tools(rec));
+    expect(answer.verdict).toMatchObject({ status: "turn_cap", turns: 24 });
+    // qwry spent ONE turn on this exchange, so its own counter must reach
+    // neither the heading nor the footer: the answer's `turns` is what the
+    // footer prints, and one fact in two slots must be one number (LESSONS
+    // 13, DESIGN rule 14)
+    expect(answer.turns).toBe(24);
+    expect(answer.verdict.status === "turn_cap" && answer.verdict.turns).toBe(answer.turns);
+    expect(events.find((e) => e.type === "error")).toMatchObject({
+      kind: "turncap",
+      message: "stopped after 24 turns",
+    });
+  });
+
+  // the same counter reaches the footer of a run that SUCCEEDED: a child that
+  // spent nine turns describing, peeking and running is not `1 turn` because
+  // qwry called it once (LESSONS 13)
+  test("a finished ownsLoop answer's footer count is the child's, not the wrapper's", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const provider = scripted(
+      [
+        [
+          call("a", "run_sql", { sql: "SELECT count(*) FROM film" }),
+          { toolResult: { id: "a", name: "run_sql", result: "count\n1000\n(1 rows)" } },
+          { text: answerText },
+          { done: { stopReason: "stop" as const, turns: 9 } },
+        ],
+      ],
+      rec,
+      true,
+    );
+    const { answer } = await ask(provider, tools(rec));
+    expect(answer.verdict.status).toBe("answered");
+    expect(answer.turns).toBe(9);
+  });
+
+  // a provider this loop drives reports no count of its own, and then the
+  // loop's counter IS the turns the user watched
+  test("a loop-driven provider keeps the loop's own turn count", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const provider = scripted(
+      [
+        [call("a", "describe_tables", { names: ["film"] }), done("toolCalls")],
+        [{ text: answerText }, done("stop")],
+      ],
+      rec,
+    );
+    const { answer } = await ask(provider, tools(rec));
+    expect(answer.turns).toBe(2);
   });
 
   test("a failing statement is fed back once and the repair answers", async () => {
@@ -384,6 +460,34 @@ describe("providers that own their own loop", () => {
     const { answer } = await ask(provider, tools(rec));
     expect(answer.verdict.status).toBe("turn_cap");
     // nothing was re-executed on the way out either
+    expect(rec.calls).toEqual([]);
+  });
+
+  // W7: the model answered a write request in prose, handed the prose to
+  // run_sql, and re-explained itself once per refusal until the turn cap. The
+  // adapter counts the strikes on this path and reports proseLoop
+  test("a provider that broke its own prose spiral answers with the prose", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const provider = scripted(
+      [
+        [
+          { text: "I cannot delete rows: this connection is read-only." },
+          call("a", "run_sql", { sql: "I cannot delete rows: this connection is read-only." }),
+          { toolResult: { id: "a", name: "run_sql", result: PROSE_ERROR, isError: true } },
+          call("b", "run_sql", { sql: "I cannot delete rows: this connection is read-only." }),
+          { toolResult: { id: "b", name: "run_sql", result: PROSE_ERROR, isError: true } },
+          done("proseLoop"),
+        ],
+      ],
+      rec,
+      true,
+    );
+    const { answer } = await ask(provider, tools(rec));
+    expect(answer.verdict).toEqual({ status: "answered", sql: null, rowCount: null });
+    expect(answer.text).toBe("I cannot delete rows: this connection is read-only.");
+    expect(answer.sql).toBeNull();
+    expect(answer.run).toBeNull();
+    // nothing was run on the way out
     expect(rec.calls).toEqual([]);
   });
 
@@ -554,7 +658,96 @@ describe("the small tier", () => {
     const errors = events.filter((e) => e.type === "error");
     expect(errors).toHaveLength(1);
     expect(errors[errors.length - 1]).toMatchObject({ kind: "sql", message: "syntax error" });
-    expect(answer.followUps).toEqual([]);
+  });
+});
+
+// The other half of W7's circuit breaker: on the path where the loop runs
+// the tools itself, it counts the refusals. Two in a row and the exchange
+// ends with what the model said, because it had already said it
+describe("the prose spiral", () => {
+  const proseTools = (rec: Recorded, refusals: number) => {
+    let seen = 0;
+    return tools(rec, {
+      async runSql(sql) {
+        rec.calls.push({ name: "runSql", args: sql });
+        if (seen++ < refusals) {
+          return { textForModel: PROSE_ERROR, result: null, error: PROSE_ERROR.slice(7) };
+        }
+        return ok("count\n1\n(1 rows)", run());
+      },
+    });
+  };
+
+  test("two run_sql refusals of the prose class end the exchange as answered", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const provider = scripted(
+      [
+        [
+          { text: "Deleting rows is outside what qwry does." },
+          call("a", "run_sql", { sql: "Deleting rows is outside what qwry does." }),
+          done("toolCalls"),
+        ],
+        [call("b", "run_sql", { sql: "Deleting rows is outside what qwry does." }), done("toolCalls")],
+        // the model would keep going; it never gets the turn
+        [{ text: answerText }, done("stop")],
+      ],
+      rec,
+    );
+    const { answer, events } = await ask(provider, proseTools(rec, 9));
+    expect(answer.verdict).toEqual({ status: "answered", sql: null, rowCount: null });
+    expect(answer.text).toBe("Deleting rows is outside what qwry does.");
+    expect(answer.turns).toBe(2);
+    // the third turn never happened, and nothing errored at the user
+    expect(rec.requests).toHaveLength(2);
+    expect(events.some((e) => e.type === "error")).toBe(false);
+  });
+
+  test("a statement between two refusals resets the count", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const provider = scripted(
+      [
+        [{ text: "no" }, call("a", "run_sql", { sql: "prose" }), done("toolCalls")],
+        [call("b", "run_sql", { sql: "SELECT count(*) FROM film" }), done("toolCalls")],
+        [{ text: "no again" }, call("c", "run_sql", { sql: "prose" }), done("toolCalls")],
+        [{ text: answerText }, done("stop")],
+      ],
+      rec,
+    );
+    let call_n = 0;
+    const t = tools(rec, {
+      async runSql(sql) {
+        rec.calls.push({ name: "runSql", args: sql });
+        call_n++;
+        if (call_n === 2 || call_n === 4) return ok("count\n1\n(1 rows)", run());
+        return { textForModel: PROSE_ERROR, result: null, error: PROSE_ERROR.slice(7) };
+      },
+    });
+    const { answer } = await ask(provider, t);
+    expect(answer.verdict.status).toBe("answered");
+    expect(answer.sql).toBe("SELECT count(*) FROM film");
+  });
+
+  test("an ordinary SQL error is never a strike: the repair loop still runs", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const t = tools(rec, {
+      async runSql(sql) {
+        rec.calls.push({ name: "runSql", args: sql });
+        return { textForModel: "ERROR: syntax error", result: null, error: "syntax error" };
+      },
+    });
+    const provider = scripted(
+      [
+        [call("a", "run_sql", { sql: "SELECT bad" }), done("toolCalls")],
+        [call("b", "run_sql", { sql: "SELECT worse" }), done("toolCalls")],
+        [{ text: answerText }, done("stop")],
+      ],
+      rec,
+    );
+    const { answer } = await ask(provider, t, { maxTurns: 3 });
+    // both refusals were ordinary SQL errors, so the loop ran every turn it
+    // had and ended on the statement, not on a breaker
+    expect(rec.requests).toHaveLength(3);
+    expect(answer.verdict).toMatchObject({ status: "failed", sql: "SELECT count(*) FROM film" });
   });
 });
 

@@ -11,8 +11,10 @@
 import {
   PEEK_MAX,
   PROBE_MAX,
+  PROSE_STRIKES,
   TOOL_NAMES,
   TOOL_SCHEMAS,
+  isProseRefusal,
   type AgentTools,
 } from "./tools";
 import type { Tier } from "./providers/registry";
@@ -55,6 +57,15 @@ export const MAX_TURNS = 12;
 
 /** Repairs the small tier gets after its one shot (section 4.7). */
 export const SMALL_REPAIRS = 2;
+
+/** The turn cap's own sentence (AGENT-UX 7, LESSONS 13). `turns` is the
+ * number the USER watched: an `ownsLoop` provider reports its child's own
+ * `num_turns` and this loop's counter is used only where there is no child.
+ * The bug the lesson is written from is that counter reaching the sentence:
+ * `stopped after 1 turns` for a run that spent twelve. Singular at one,
+ * because a plural on a 1 reads as a placeholder nobody filled in. */
+export const turnCapMessage = (turns: number): string =>
+  `stopped after ${turns} ${turns === 1 ? "turn" : "turns"}`;
 
 export type AskPhase = "context" | "thinking" | "tools" | "running" | "post" | "done";
 
@@ -102,9 +113,6 @@ export interface AskAnswer {
   run: AgentRun | null;
   assumptions: Assumption[];
   sanity: SanityFragment[];
-  /** three next questions (spec 4.6); empty until the store's follow-ups call
-   * lands, and always empty from the loop itself */
-  followUps: string[];
   trace: TraceStep[];
   /** the model's LAST text block: what the answer slot shows, streamed
    * already but kept for persistence. Earlier blocks of the same turn (the
@@ -335,6 +343,13 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
     recall: recallOf(picked, req.goldSql, meta),
     risky,
   };
+  // the count the USER watched work (LESSONS 13). An `ownsLoop` provider ran
+  // the turns itself and reports its own `num_turns` off its result line; a
+  // provider this loop drives reports none, and then the loop's counter IS
+  // what the user watched. Set once per invocation, read by every finish, so
+  // the turn-cap sentence, the trace's verdict and the footer are one number
+  // in three slots and never three readings of two counters (DESIGN rule 14).
+  const child: { turns: number | null } = { turns: null };
   const finish = (
     verdict: Verdict,
     extra: { sql: string | null; run: AgentRun | null; text: string; turns: number } & {
@@ -351,10 +366,9 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
       sql: extra.sql,
       run: extra.run,
       text: extra.text,
-      turns: extra.turns,
+      turns: child.turns ?? extra.turns,
       assumptions: extra.assumptions ?? [],
       sanity: extra.sanity ?? [],
-      followUps: [],
       ms: Math.round(now() - started),
     };
     if (verdict.status !== "answered") {
@@ -377,7 +391,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
           verdict.status === "failed"
             ? verdict.message
             : verdict.status === "turn_cap"
-              ? `stopped after ${verdict.turns} turns`
+              ? turnCapMessage(verdict.turns)
               : "cancelled",
         ...(extra.retryAfterMs !== undefined ? { retryAfterMs: extra.retryAfterMs } : {}),
       });
@@ -398,6 +412,11 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
   // and control-flow narrowing does not follow a variable across that boundary
   const runs: { last: { sql: string; run: AgentRun } | null } = { last: null };
   let turns = 0;
+  // consecutive run_sql calls the gate refused as prose (W7): the model
+  // answered in words, handed the words to run_sql, and would re-explain
+  // itself once per refusal until the turn cap. Reset by any run_sql the
+  // gate read as a statement, broken or not
+  let proseStrikes = 0;
   let text = "";
   // where the current text block starts inside `text`: a tool call closes the
   // block before it, and only the block after the last call is the answer
@@ -410,6 +429,22 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
   let lastProse = "";
   const noteProse = (block: string) => {
     if (answerText(block).trim()) lastProse = block;
+  };
+  /** what the model actually said, for an ending that is not the post step:
+   * the open block when it says something, else the last block that did */
+  const proseSaid = () => (answerText(lastBlock()).trim() ? lastBlock() : lastProse);
+  /** the prose spiral's exit (W7): the model had already given its answer in
+   * words, so the exchange is ANSWERED with those words and no statement */
+  const proseAnswer = () => {
+    const said = proseSaid();
+    return finish({ status: "answered", sql: null, rowCount: null }, {
+      sql: null,
+      run: null,
+      text: said,
+      turns,
+      assumptions: buildAssumptions({ text: said, sql: null, question: req.question }),
+      sanity: sanityLine(peeked, sanity),
+    });
   };
 
   try {
@@ -497,6 +532,10 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
           emit({ type: "usage", usage: ev.usage });
         } else if ("done" in ev) {
           stop = ev.done.stopReason;
+          // the child's own count when it reports one: every status naming a
+          // turn count names the turns the user watched, never this loop's
+          // counter (W7, LESSONS 13)
+          if (ev.done.turns !== undefined) child.turns = ev.done.turns;
         } else {
           failure = ev.error;
           break;
@@ -608,13 +647,22 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
           req.signal,
         );
         messages.push({ role: "tool", results });
+        for (const r of results) {
+          if (r.name !== "run_sql") continue;
+          proseStrikes = r.isError && isProseRefusal(r.result) ? proseStrikes + 1 : 0;
+        }
+        if (proseStrikes >= PROSE_STRIKES) return proseAnswer();
         continue;
       }
+
+      // the adapter cut a prose spiral off mid-conversation (W7): its own
+      // strike count is the authority, this loop never saw the refusals
+      if (stop === "proseLoop") return proseAnswer();
 
       // an `ownsLoop` provider that exhausted its own turn budget did not
       // finish the conversation; the model's last text is not an answer
       if (stop === "turnCap") {
-        return finish({ status: "turn_cap", sql: runs.last?.sql ?? null, turns }, {
+        return finish({ status: "turn_cap", sql: runs.last?.sql ?? null, turns: child.turns ?? turns }, {
           sql: runs.last?.sql ?? null,
           run: runs.last?.run ?? null,
           text: lastBlock(),
@@ -693,7 +741,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
       });
     }
 
-    return finish({ status: "turn_cap", sql: runs.last?.sql ?? null, turns }, {
+    return finish({ status: "turn_cap", sql: runs.last?.sql ?? null, turns: child.turns ?? turns }, {
       sql: runs.last?.sql ?? null,
       run: runs.last?.run ?? null,
       text: lastBlock(),

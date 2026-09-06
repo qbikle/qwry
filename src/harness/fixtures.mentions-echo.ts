@@ -15,8 +15,8 @@
 //                  pills whole, at 392 the second pill breaks across the wrap
 //                  (rounded on both fragments), at 560 the question is one
 //                  line. One sentence carrying two derived figures over a
-//                  two-row grid, `2 rows · 402.3 ms`, the SQL row, `August =
-//                  created_at` · `Revenue = Paid Orders`, three follow-ups,
+//                  two-row grid inside the result block, `2 rows · 402.3 ms`,
+//                  `August = created_at` · `Revenue = Paid Orders`, three follow-ups,
 //                  `1 turn · 31.6 s · Haiku 4.5`. The scroller parks at the
 //                  tagged exchange (the W4 `actions` device): the bubble is
 //                  the subject and the answer is taller than the floor's
@@ -261,7 +261,6 @@ const answer: AskAnswer = {
   run,
   assumptions,
   sanity: [],
-  followUps: FOLLOW_UPS,
   trace,
   text: FINAL_TEXT,
   turns: 1,

@@ -50,6 +50,7 @@ import {
   type SideChatResult,
   type StopReason,
 } from "./types";
+import { PROSE_STRIKES, isProseRefusal } from "../tools";
 import type { TokenUsage } from "../types";
 
 /** The MCP server name inside the generated config. The allowlist pattern is
@@ -59,10 +60,15 @@ export const TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`;
 export const ALLOWED_TOOLS = `${TOOL_PREFIX}*`;
 export const CLAUDE_BIN = "claude";
 
-/** AGENT-SPEC section 4.5. `--max-turns` is enforced per invocation, not across
- * resumes (measured), so the thread-level cap is ours to carry: every call
- * passes what is left of it. */
-export const THREAD_TURN_CAP = 12;
+/** What the CHILD gets per invocation. `--max-turns` is enforced per
+ * invocation, not across resumes (measured), and W7 found qwry's own thread
+ * cap of 12 handed straight to `claude -p`: a wide question spends it on
+ * describe and peek and dies with "STOPPED AFTER 1 TURNS", a sentence naming
+ * qwry's invocation count rather than the twelve turns the user watched. The
+ * child now gets its own budget, twice the thread's, and the wall clock is
+ * the real guard; the failure copy reads the child's own `num_turns`
+ * (LESSONS 13). */
+export const CHILD_TURN_CAP = 24;
 
 interface ContentBlock {
   type?: string;
@@ -96,6 +102,9 @@ interface ClaudeLine {
     delta?: { type?: string; text?: string; thinking?: string };
   };
   usage?: ClaudeUsage;
+  /** the child's own turn count on a `result` line: the number the user
+   * watched, and the only honest one for the turn-cap sentence (W7) */
+  num_turns?: number;
   is_error?: boolean;
   result?: unknown;
 }
@@ -338,7 +347,7 @@ class ClaudeCodeProvider implements Provider {
       yield {
         error: {
           kind: "provider",
-          message: `this thread has used its ${THREAD_TURN_CAP} turns. Start a new question`,
+          message: "this thread has used its turns. Start a new question",
         },
       };
       yield { done: { stopReason: "error" } };
@@ -377,7 +386,7 @@ class ClaudeCodeProvider implements Provider {
       const args = buildArgs({
         model: req.model || this.config.model,
         mcpConfig: mcpConfigJson(endpoint),
-        maxTurns: Math.min(THREAD_TURN_CAP, thread.turnsRemaining),
+        maxTurns: CHILD_TURN_CAP,
         system: req.system,
         // the session key, not the thread id: a cut thread resumes a session
         // that never saw the turns it deleted
@@ -396,6 +405,9 @@ class ClaudeCodeProvider implements Provider {
       let streamingId = "";
       let sawResult = false;
       let failed = false;
+      let broke = false;
+      let proseStrikes = 0;
+      let childTurns: number | null = null;
       let stopReason: StopReason = "stop";
 
       for await (const raw of child.lines) {
@@ -467,15 +479,29 @@ class ClaudeCodeProvider implements Provider {
           for (const block of line.message?.content ?? []) {
             if (block.type !== "tool_result") continue;
             const callId = block.tool_use_id ?? "";
+            const name = toolNames.get(callId) ?? "";
+            const result = resultText(block.content);
             yield {
               toolResult: {
                 id: callId,
-                name: toolNames.get(callId) ?? "",
-                result: resultText(block.content),
+                name,
+                result,
                 ...(block.is_error ? { isError: true } : {}),
               },
             };
+            // the prose spiral (W7): the model answered in words, sent the
+            // words to run_sql, and re-explained itself once per refusal to
+            // the turn cap. Two in a row and the child is cut off; its prose
+            // was the answer, and the loop finishes with it
+            if (name !== "run_sql") continue;
+            proseStrikes = block.is_error === true && isProseRefusal(result) ? proseStrikes + 1 : 0;
+            if (proseStrikes >= PROSE_STRIKES) {
+              control.abort();
+              broke = true;
+              break;
+            }
           }
+          if (broke) break;
           continue;
         }
 
@@ -483,6 +509,7 @@ class ClaudeCodeProvider implements Provider {
           sawResult = true;
           const usage = mapUsage(line.usage);
           if (usage) yield { usage };
+          if (typeof line.num_turns === "number") childTurns = line.num_turns;
           if (line.subtype === "error_max_turns") {
             stopReason = "turnCap";
           } else if (line.is_error === true) {
@@ -503,6 +530,11 @@ class ClaudeCodeProvider implements Provider {
         yield { done: { stopReason: "cancelled" } };
         return;
       }
+      // this adapter killed the child, so its exit says nothing worth saying
+      if (broke) {
+        yield { done: { stopReason: "proseLoop" } };
+        return;
+      }
       if (!failed && !sawResult) {
         // no result event: either the child never started (not installed, not
         // signed in) or it died mid-turn. Either way its stderr is the truth
@@ -510,7 +542,14 @@ class ClaudeCodeProvider implements Provider {
         yield { done: { stopReason: "error" } };
         return;
       }
-      yield { done: { stopReason: failed ? "error" : stopReason } };
+      yield {
+        done: {
+          stopReason: failed ? "error" : stopReason,
+          // the child's own count, never qwry's: the turn-cap sentence names
+          // the turns the user watched (LESSONS 13)
+          ...(childTurns !== null ? { turns: childTurns } : {}),
+        },
+      };
     } catch (err) {
       if (isAbort(err, req.signal)) {
         yield { done: { stopReason: "cancelled" } };

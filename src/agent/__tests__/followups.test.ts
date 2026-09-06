@@ -39,10 +39,13 @@ function sided(text: string, seen: SideChatRequest[] = []): Provider {
   };
 }
 
+/** the thread as the store hands it over (W7): replayOf's blocks, one per
+ * exchange, no heading */
+const THREAD =
+  "Q: How many films are there?\nSQL: SELECT count(*) FROM film\nA: 1000 films.";
+
 const base = {
-  question: "How many films are there?",
-  answer: "1000 films.",
-  sql: "SELECT count(*) FROM film",
+  thread: THREAD,
   asked: ["How many films are there?"],
   model: "test-model",
   signal: new AbortController().signal,
@@ -94,8 +97,10 @@ describe("suggestFollowUps", () => {
       questions: out.questions,
       usage: { input: 10, output: 20 },
     });
+    // the WHOLE thread is the prompt, and it says every question once: the
+    // chips stand at the thread's end, not under each answer (W7)
     expect(out.step?.prompt).toContain("SELECT count(*) FROM film");
-    // the original question never rides along as "already asked"
+    expect(out.step?.prompt).toContain("How many films are there?");
     expect(out.step?.prompt).not.toContain("Already asked");
   });
 
@@ -155,6 +160,28 @@ describe("suggestFollowUps", () => {
     const out = await suggestFollowUps({ ...base, provider: scripted([], seen), signal: ctl.signal });
     expect(out.step).toBeNull();
     expect(seen).toHaveLength(0);
+  });
+
+  test("the prompt carries the thread, and an empty one says so", async () => {
+    const seen: ChatRequest[] = [];
+    const provider = scripted(
+      [{ text: "Which store rents the most?" }, { done: { stopReason: "stop" } }],
+      seen,
+    );
+    const long =
+      "Q: one?\nSQL: SELECT 1\nA: first.\n\nQ: two?\nSQL: SELECT 2\nA: second.";
+    await suggestFollowUps({ ...base, thread: long, asked: ["one?", "two?"], provider });
+    const sent = (seen[0].messages[0] as { content: string }).content;
+    expect(sent).toContain("Q: one?");
+    expect(sent).toContain("Q: two?");
+
+    const empty: ChatRequest[] = [];
+    await suggestFollowUps({
+      ...base,
+      thread: "",
+      provider: scripted([{ text: "x?" }, { done: { stopReason: "stop" } }], empty),
+    });
+    expect((empty[0].messages[0] as { content: string }).content).toContain("(nothing yet)");
   });
 });
 

@@ -33,6 +33,12 @@ The fixture harness is a vite route that renders `AskPanel` with a canned thread
   foreground for more than ~90 s (the workflow harness kills a silent agent at 3 min):
   `nohup bun scripts/ask-frames.ts … > <log> 2>&1 &`, then `sleep 45; tail -5 <log>` per
   call. Probes use `localhost`, never `127.0.0.1`: this vite config binds `::1` only.
+- Every chip fixture ships a first-position case AND a wrap case. A chip that opens a line
+  loses its outdent to whatever clips its container, and a chip the line breaks loses its
+  ends; neither defect can appear in a frame whose only chip sits mid-line with room on
+  both sides. The `@` pill's pair is `mention-first` (a tag at position 0 of the draft) and
+  `mention-draft` (a tag breaking across a line at 320); a new chip species draws its own
+  two before its wave is framed.
 - Frames land in `~/projects/qwry-agent-lab/docs/research/<wave>-frames/` for the
   maintainer's re-check (W2 used `w2-pixels/`). Open the locked sketch beside them:
   `http://127.0.0.1:5462/ask-sketch-v2.html` (`t` toggles its theme).

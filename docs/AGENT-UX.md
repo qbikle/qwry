@@ -76,39 +76,54 @@ every change and caret move (a caret placed back inside a finished token
 reopens it; a selection is no caret); a quoted fragment (`@"Monthly rev`)
 keeps its spaces until its closing quote, an identifier fragment ends at a
 space or any character outside `[A-Za-z0-9_.]`. Rows are the picker's menu
-rows at a fixed 28px, grouped in this order and each group drawn only when
-it has rows: `Tables` (name, with its `schema.` only outside `public`; the
-hint slot carries the row estimate, else the column count), `Columns`
+rows at a fixed 28px, in this order, no group headings (W7: an icon per row
+under a heading naming the same kind is one fact in two slots, DESIGN rule
+14): each row opens with a kind icon at `--icon-sm`, tier 2 (lucide
+`Table2` tables, `Columns3` columns, `Bookmark` saved queries,
+`MessageSquare` threads), then the mono name, then the hint at the row's
+right in tier 2: `Tables` (name, with its `schema.` only outside `public`;
+the hint carries the row estimate, else the column count), `Columns`
 (`table.column`, from two typed characters, capped at 40, matched on the
 column's name; the hint is the type in psql's short spelling), `Saved
 Queries` (name, no hint), `Threads` (title, this connection's other threads,
-no hint). A dotted fragment (`order_v2.`) names the table and filters its
-columns; a quoted fragment offers saved queries and threads only. Legacy and
-foreign tables are never offered (AGENT-SPEC §6 rule 3: a row that cannot be
-the answer is a dead row). The match is substring on the name the user would
-type, a prefix outranking a substring, ties in the connection's own order;
-never cmdk's fuzzy scorer. Keys: ↑↓ move the hot row, ↩ or ⇥ pick (the
-canonical token plus one space replaces the whole token under the caret, the
-caret parks after the space), Esc closes the completion only (the pane's Esc
-ladder gets the next Esc); every other key is the textarea's, Home and End
-included, and ⌘ chords bubble to the window. A click on a row picks it; a
-mousedown anywhere else closes the box and lands where it was aimed (Send
-sends, the pill opens the picker). Blur closes it. Identifiers in the rows
-are mono (WRITING: data wears data's clothes); the group headings are Title
-Case in the picker's uppercase face.
+no hint), the rows of each kind drawn contiguously in that order and a kind
+with no rows contributing nothing. A dotted fragment (`order_v2.`) names the
+table and filters its columns; a quoted fragment offers saved queries and
+threads only. Legacy and foreign tables are never offered (AGENT-SPEC §6
+rule 3: a row that cannot be the answer is a dead row). The match is
+substring on the name the user would type, a prefix outranking a substring,
+ties in the connection's own order; never cmdk's fuzzy scorer. Keys: ↑↓ move
+the hot row, ↩ or ⇥ pick (the canonical token plus one space replaces the
+whole token under the caret, the caret parks after the space), Esc closes
+the completion only (the pane's Esc ladder gets the next Esc); every other
+key is the textarea's, Home and End included, and ⌘ chords bubble to the
+window. A click on a row picks it; a mousedown anywhere else closes the box
+and lands where it was aimed (Send sends, the pill opens the picker). Blur
+closes it. Identifiers in the rows are mono (WRITING: data wears data's
+clothes); the panel itself is flat (`--bg-panel`, `border-strong`,
+`shadow-pop`, no gradient).
 
 In the draft, every RESOLVED mention (a table, a column, a saved query, a
 thread the ladder of `resolveMentions` finds) wears a pill: the textarea
 stays the source of truth (plain text; copy and paste work) and a backdrop
-behind it paints `.mention` (accent-soft fill, a 1px ring at 22% accent, 4px
-corners, outdented 2px so no letter moves when a pill appears or leaves;
-`box-decoration-break: clone` so a pill the line breaks keeps rounded ends on
-both fragments) under exactly the mention's glyphs, in the surrounding text's
-own font. An `@word` that resolves to nothing gets no pill and sends no
-context; it is plain text and the question still runs (LESSONS 5). The pill,
-the `@` and the quotes are the data costume; WRITING's mono form applies to
-the rows and to the trace's `tagged` line, never to the chip. The lift on
-send carries the pills into the bubble (§2 item 1).
+behind it paints `.mention` (accent-soft fill, a 1px ring firmed to 40%
+accent, the bubble's own hover-ring value (W7), so the edge reads as a
+chip's and not a find-match highlight; 4px corners, outdented 2px so no
+letter moves when a pill appears or leaves; `box-decoration-break: clone` so
+a pill the line breaks keeps rounded ends on both fragments) under exactly
+the mention's glyphs, in the surrounding text's own font. The pill carries
+NO kind icon: an icon can stand only where a glyph stands, and the `@` cell
+is 8px against a 12px icon (DESIGN rule 5, one size per surface); the kind
+is stated once already, on the popover row where the pick was made. The
+textarea's own wrap pads 2px on each side and takes it back in margin (the
+textarea's inset moves to match), so a pill at position 0 of the draft keeps
+its left edge instead of losing it to the outdent (the `mention-first`
+fixture, W7, pins this at 320). An `@word` that resolves to nothing gets no
+pill and sends no context; it is plain text and the question still runs
+(LESSONS 5). The pill, the `@` and the quotes are the data costume;
+WRITING's mono form applies to the rows and to the trace's `tagged` line,
+never to the chip. The lift on send carries the pills into the bubble (§2
+item 1).
 
 ## 2. Anatomy of an answer
 
@@ -133,7 +148,9 @@ apply are omitted, never left as dead space (DESIGN rule 2 scope note):
    saved queries and threads on render, so a table dropped since renders as
    plain text and nothing refuses (LESSONS 5). Every bubble carries
    three actions, `Copy` · `Restart` · `Jump Back` (Icon button species, the
-   18px tier; lucide `Copy` · `Repeat` · `CornerUpLeft` at `--icon-sm`),
+   18px tier; lucide `Copy` · `RotateCcw` · `CornerUpLeft` at `--icon-sm`;
+   the counterclockwise arc, reversing W4's `Repeat`, now that Restart cuts
+   and re-mints, AGENT-SPEC §9, so the arrow reads rewind),
    sitting LEFT of the bubble, bottom-aligned with its last line, Jump Back
    nearest the bubble (it duplicates the bubble's own click, so a stray
    pointer meets the harmless Copy first); they rest invisible and reveal on
@@ -141,15 +158,21 @@ apply are omitted, never left as dead space (DESIGN rule 2 scope note):
    slide out of the bubble on `--dur-quick`, never visibility: the trio stays
    in the tab order, which is its keyboard route), and the row's empty left
    half reveals nothing. `Copy` puts the question on the clipboard through
-   the app's one copy path, cue included (LESSONS 9). `Restart` on the newest
-   exchange is the retry (§7: the new run streams over the prior answer, Stop
-   restores it exactly), no confirm; on an older exchange whose successors
-   hold a landed answer or error it asks through the app's danger confirm,
-   `Restart from Here?` · `The 2 questions after this one and their answers
-   will be deleted.` · `Delete 2 Questions` (singular `The question after
-   this one and its answer will be deleted.` · `Delete 1 Question`), then
-   every later exchange is deleted, on screen and in appdb, and the question
-   is asked again in its place. `Jump Back`, and a plain click anywhere on
+   the app's one copy path, cue included (LESSONS 9). `Restart` cuts and
+   re-mints on ANY exchange now (W7, AGENT-SPEC §9): the restarted exchange
+   forgets its own answer and the session resumes fresh from a replay of
+   what came before it, so the model re-inspects the live database instead
+   of answering from its own remembered tool results. On the newest exchange
+   this needs no confirm (nothing after it is lost): the prior answer exits
+   on `spring.layout` (§10) while the thinking strip runs `qwrying…` and
+   then the new chips, and Stop restores the prior answer exactly. On an
+   older exchange whose successors hold a landed answer or error it still
+   asks through the app's danger confirm, `Restart from Here?` · `The 2
+   questions after this one and their answers will be deleted.` · `Delete 2
+   Questions` (singular `The question after this one and its answer will be
+   deleted.` · `Delete 1 Question`), then every later exchange is deleted,
+   on screen and in appdb, and the question is asked again in its place.
+   `Jump Back`, and a plain click anywhere on
    the bubble (a click that selected no text; a drag-select stays a select),
    enter edit mode (§2a). The bubble is a div of selectable text, never a
    button: `cursor: default`, no focus of its own, its ring stepping to 40%
@@ -209,29 +232,81 @@ apply are omitted, never left as dead space (DESIGN rule 2 scope note):
    not figures. Streaming: every prefix of the text parses, and a block never
    changes kind or vanishes once the block after it has begun. The raw text
    stays in the trace, untouched.
-4. **Result**: a run of exactly one row is values, not a grid (a table of one
+
+   The answer's own two actions ride the prose (W7, DESIGN rule 15): the
+   same floating cluster species as the block's and the bubble's, at the
+   TEXT's top-right and 2px up so it centres on the first line, its
+   `--acts-surface` the panel, revealed by the prose's `:hover`,
+   `:focus-within` and the harness's `[data-hot]`. **Copy** writes the answer
+   as markdown, the prose the slot says with the statement under it in a
+   `sql` fence, cue `Copied answer`. **Save Query** puts that statement in the
+   sidebar under the question as its name, capped where a thread's title is
+   capped, cue `Saved`; it is disabled, never hidden, on an answer that ran
+   nothing (DESIGN rule 2's matrix), and pressed twice it writes the one row,
+   not a twin. Nothing else joins them: the SQL's three actions live on the
+   result block, where the SQL is. The cluster is absent while the run is on
+   (there is nothing to copy or save yet) and on a failure, whose actions are
+   the failure block's. 0 always-visible chrome either way.
+4. **Result block** (W7, DESIGN rule 15): one block, two faces, replacing
+   the grid and the collapsed `SQL ▸` row every prior wave stacked beneath it
+   (`SqlRow.tsx` deleted). The **table face** is default whenever a run
+   exists: a run of exactly one row is values, not a grid (a table of one
    cell is chrome around nothing): one column renders the value in the data
-   register (mono, tabular numerals, the answer's one number) with the column
-   name as its caption beneath, and a value too long to read at a glance drops
-   to the text register; two to four columns render as name over value, one
-   pair per column, stacked in one column until the slot is 480px wide and
-   flowing as a row of pairs from there (growth feeds content, DESIGN rule
-   13); five or more columns, and every result of more rows, is the existing
-   results grid (one grid species app-wide) in its read-only mode, sized to its
-   header plus up to six rows and scrolling inside for the rest, every promised
-   row clear of its own horizontal scrollbar. When the columns' natural widths
-   fit the slot, the last column stretches to the right edge; otherwise the
-   grid scrolls as it does everywhere. NULL and the empty string wear the
-   grid's own chips in every shape. Row count and timing follow in the status
-   register through the results pane's own formatter: `9 rows · 1861.9 ms`,
-   `1 row · 47.8 ms`.
-5. **SQL**: collapsed by default (one row: `SQL`, then the first line of the
-   query, ellipsized); expand shows the query in the editor register with
-   `Copy SQL` and `Open in Tab`.
-6. **Assumption chips** (§3).
-7. **Sanity line** (§4).
-8. **Follow-ups**: three chips (§6).
-9. **Footer**: dot · turns · time · model · `Trace`. The connection's 8px dot
+   register (mono, tabular numerals, the answer's one number) with the
+   column name as its caption beneath, inside the block's 8/12 padding, and
+   a value too long to read at a glance drops to the text register; two to
+   four columns render as name over value, one pair per column, stacked in
+   one column until the slot is 480px wide and flowing as a row of pairs
+   from there (growth feeds content, DESIGN rule 13); five or more columns,
+   and every result of more rows, is the existing results grid (one grid
+   species app-wide) in its read-only mode, sized to its header plus up to
+   six rows and scrolling inside for the rest, every promised row clear of
+   its own horizontal scrollbar. When the columns' natural widths fit the
+   slot, the last column stretches to the right edge; otherwise the grid
+   scrolls as it does everywhere. NULL and the empty string wear the grid's
+   own chips in every shape. The **SQL face** shows when the run failed or
+   the answer is SQL-only: the formatted statement in the editor register
+   (mono, panel-inset, wrapped, the app's own highlight), boxed the same way
+   a one-row value is boxed. Row count and timing follow BOTH faces in the
+   status register through the results pane's own formatter: `9 rows ·
+   1861.9 ms`, `1 row · 47.8 ms`.
+
+   A floating cluster of three actions sits at the block's own top-right,
+   over the header row: absolute, no layout, 30px tall (the grid's own
+   `HEADER_H`, not the sketch's 24px mock header), `--acts-surface` fading
+   in from the left under the icons so the
+   letters beneath dissolve rather than cut (bg-raised on the table face,
+   bg-panel on the SQL face and over prose); three `.iconbtn-sm` at
+   `--icon-sm`, 4px apart, 4px from the block's edge. **Copy** copies the
+   face you see (table: TSV of the rows shown, cue `Copied 9 rows`; SQL: the
+   formatted statement ending in its `;`, cue `Copied SQL`) through
+   `copyCue`. **Flip** swaps the face (lucide `Code` on the table face,
+   `Table` on the SQL face: the glyph names the face you will get), a
+   content crossfade (`swapIn`) while the block's height springs between
+   faces on `spring.layout` (§10, DESIGN rule 2's scope note: a mode
+   transition); the face is remembered per exchange for the session.
+   **Insert** puts the SQL at the caret of the active query tab through the
+   editor's own dispatch path (a tab is created only when none is active),
+   cue `Inserted` / `Inserted into a new tab`; this replaces `Open in Tab`
+   everywhere in the Ask pane (§7). Tooltips name the face you get: `Copy`,
+   `Show SQL` / `Show Table`, `Insert SQL`. Rest is opacity 0 (never
+   visibility: the buttons keep the tab order) with a 4px slide down out of
+   the block's top edge on `--dur-quick` / `--ease-std` (§10); `:hover` of
+   the block, `:focus-within`, and the harness's `[data-hot]` reveal it.
+   Chrome count for one answer: was grid header + SQL row, 2 always-visible
+   strips; is 1 block, 0 strips (DESIGN rule 15).
+5. **Assumption chips** (§3).
+6. **Sanity line** (§4).
+7. **Follow-ups**: one row, under the thread's LAST answer only (W7; never
+   per exchange, §6), an older exchange carrying no row at all, absent
+   rather than folded. Three chips, generated from the WHOLE thread by the
+   same side call as before (every question asked so far, its final SQL,
+   and the first sentence of its answer, oldest dropped first past a
+   ~2000-character cap; §6), wearing a solid `--border-strong` hairline,
+   never dashed. The row leaves (a fade, `AnimatePresence`, §10) the instant
+   a new question is sent, ahead of that question's own lift, so the new
+   bubble never lands beside a suggestion that no longer applies.
+8. **Footer**: dot · turns · time · model · `Trace`. The connection's 8px dot
    (the titlebar's conn-dot) leads, `1 turn · 20.4 s · Sonnet 5` follows in the
    status register, and the `Trace` link (§5) trails at the right edge. Nothing
    else: the connection's name is not repeated (the dot is the provenance mark, §9),
@@ -325,31 +400,66 @@ received is shown, nothing is summarised away.
 
 ## 6. Follow-ups and the suggestion → chat transition
 
-Three follow-up chips under each answer, phrased as questions the user could
-have typed. Clicking one carries the chip into the next question echo (a
-shared layout spring, `spring.layout`, position only: the words travel from
-the chip's corner to the bubble's and never scale, the bubble's fill fading
-in behind them) and starts the loop; the input stays free. The same motion
-carries the starter suggestions of the empty state, and a typed question
-travels the same way from the composer (§2 item 1). Chips never repeat a
-question already asked in the thread, and the starters never one asked in
-any thread of the connection (§1).
+One row of three follow-up chips, standing under the thread's LAST answer
+only (W7, §2 item 7), phrased as questions the user could have typed. The
+chips come from the same side call as before, now fed the WHOLE thread
+rather than one exchange: every question asked so far, its final SQL, and
+the first sentence of its answer, oldest dropped first once the cap of
+~2000 characters is reached (the cut's own replay cap, AGENT-SPEC §9). The
+store keeps them on the thread, not the exchange (`useAgent`: `followUps:
+Record<threadId, string[]>`); a new answer overwrites the thread's one row,
+and no older exchange carries a `followUps` field of its own. Species: Chip
+/ pill toggle, wearing a SOLID `--border-strong` hairline, never dashed (the
+dashed ghost is the add/create species, a costume follow-ups never earned);
+hover steps the border to accent and tints the arrow to match. The row
+leaves the instant a new question is sent (a fade, `AnimatePresence`, §10),
+ahead of the send's own lift, so the new question's bubble never lands
+beside a suggestion that no longer applies.
+
+Clicking a chip carries it into the next question echo (a shared layout
+spring, `spring.layout`, position only: the words travel from the chip's
+corner to the bubble's and never scale, the bubble's fill fading in behind
+them) and starts the loop; the input stays free. The same motion carries the
+starter suggestions of the empty state, and a typed question travels the
+same way from the composer (§2 item 1). Chips never repeat a question
+already asked in the thread, and the starters never one asked in any thread
+of the connection (§1).
 
 ## 7. Failure
 
 - SQL fails after the repair loop: show the error (error register), the last
   SQL in an editable field, and `Fix It` (runs the repair loop once more with
-  any edits) beside `Open in Tab`. Never a dead end (LESSONS 9).
-- Turn cap reached: state it plainly (`stopped after 12 turns`), offer `Fix
-  It` and `Ask Differently`.
+  any edits) in the button row. Never a dead end (LESSONS 9).
+- `Insert` rides the FIELD, not the button row: the statement it puts at the
+  caret of the active query tab (§2 item 4; replaces `Open in Tab` here as
+  everywhere else in the Ask pane) is the one inside that field, edits and
+  all, so the action lives on the object it acts on in the result block's own
+  floating cluster, revealed by the field's hover and focus within it
+  (DESIGN rule 15's first question, §2 item 4's recipe). The button row is
+  then `Fix It · Continue · Ask Differently` and stands on one line at the
+  320 floor, where four buttons wrapped to two and read as one shape at 320
+  and another at 392 (DESIGN rule 13).
+- Turn cap reached: state the number the child itself reported off its own
+  result line, never qwry's per-invocation tally (LESSONS 13); the copy is
+  `stopped after 12 turns`, singular when the number is 1. The footer under
+  the heading, the trace's verdict and the heading read ONE number, the
+  child's: a heading saying `stopped after 12 turns` over a footer saying
+  `1 turn` is one fact in two slots with two readings (DESIGN rule 14), and
+  it holds for a run that succeeded too, where the footer's count is the
+  turns the child spent and never the once qwry called it. Offer `Continue`
+  beside `Fix It` and `Ask Differently`: `Continue` resumes the SAME
+  provider session with a fresh turn budget and no re-inspection (the
+  store's `runInto` with the ask text `Continue: finish the answer from
+  where you stopped, with the final SQL`), never restarting the question the
+  way Restart does (AGENT-SPEC §4.5, §9).
 - Provider error (auth, rate limit, network): one sentence, what to do next
   (`check the key in Settings › Models`), and a retry. Rate limits show the
   wait when the provider gives one.
 - Cancelled (⌘.): `cancelled` in the status register; partial text stays.
-- A cancelled retry (the pill, `Fix It`, `Retry`, `Restart` on the newest
-  exchange) is no verdict on the
-  question: the previous answer comes back untouched, text, grid, status,
-  SQL, chips and footer exactly as they were, and nothing is lost.
+- A cancelled retry (the pill, `Fix It`, `Continue`, `Retry`, `Restart` on
+  the newest exchange) is no verdict on the
+  question: the previous answer comes back untouched, text, result block,
+  status, chips and footer exactly as they were, and nothing is lost.
 
 Errors explain and propose; they do not apologise (WRITING errors register).
 
@@ -412,8 +522,13 @@ own transition), and a switch that also opens or closes the pane is instant
 instant variant; the lift and the travel are the bubble appearing, the sweep
 the static word. One language (DESIGN rule 6).
 
-The action cluster's reveal is CSS, not a spring: opacity and a 4px slide out
-of the bubble on `--dur-quick` / `--ease-std`, the strip chips' register.
+The bubble's action cluster and the result block's cluster (§2 item 4)
+reveal the same way, CSS not a spring: opacity 0 to 1 with a 4px slide (out
+of the bubble's own edge for one, down out of the block's top edge for the
+other) on `--dur-quick` / `--ease-std`, the strip chips' register; the
+bubble's own hover and `:focus-within` reveal its cluster, `:hover` of the
+block, its `:focus-within` and the harness's `[data-hot]` reveal the
+block's.
 Edit mode's travel is the composer → echo lift run backwards on the same
 `spring.layout`, position only, the bubble's fill fading out behind the words
 on `--dur-slow` as they leave and back in as they return on Esc. The fold is
@@ -423,6 +538,24 @@ where it stood on `--dur-slow` with the stack settling over it, and the
 closing gap rides the spring, never a margin easing of its own. Reduced
 motion: the cluster's face is its settled one, the words appear in the
 composer with no ghost, and the stack stands at once.
+
+Flip (§2 item 4) is the block's own mode transition (DESIGN rule 2's scope
+note): the leaving face and the arriving face crossfade on `swapIn` while
+the block's height springs between them on `spring.layout`, the status line
+riding the same spring; reduced motion swaps to the other face at once, no
+crossfade and no spring of its own.
+
+Restart's re-mint (W7, AGENT-SPEC §9) exits the prior answer on
+`spring.layout`, opacity 1 to 0 with an 8px drop, while the thinking strip
+shows `qwrying…` and then the new run's chips in its place; cancelling
+mid-flight restores the prior answer exactly, the chip-toggle retry's own
+guarantee (§3) now Restart's too. Reduced motion drops the exit straight to
+the new run, no fall.
+
+The follow-up row (§2 item 7, §6) leaves as a fade (`AnimatePresence`) the
+instant a new question is sent, ahead of that question's own lift, and
+enters with no spring of its own: a new row simply stands once the side
+call that produced it lands.
 
 The answer slot's blocks add no motion of their own (W5): a lead-in, a
 list, a quote, a code block or the model's table arrives inside the slot's
@@ -442,10 +575,12 @@ picker and the lift.
 
 ## 11. Register
 
-Controls Title Case: `Ask`, `Threads`, `New Thread`, `Fix It`, `Open in
-Tab`, `Copy SQL`, `Ask Differently`, `Manage Models…`, `Trace` (a link of
-one word: it names the surface it opens). Status lowercase, a space before
-every unit (WRITING status register, `12 rows · 3.1 ms`): `1 turn · 20.4 s ·
+Controls Title Case: `Ask`, `Threads`, `New Thread`, `Fix It`, `Continue`,
+`Ask Differently`, `Manage Models…`, `Trace` (a link of one word: it names
+the surface it opens). `Open in Tab` and `Copy SQL` are retired (W7): the
+result block's actions are icon-only, named by tooltip, not by a visible
+label (below). Status lowercase, a space before every unit (WRITING status
+register, `12 rows · 3.1 ms`): `1 turn · 20.4 s ·
 Sonnet 5`, `9 rows · 1861.9 ms`, `cancelled`, `stopped after 12 turns`; a
 model's name keeps its own case inside a status fragment. Chords appear only
 in tooltips and the Keyboard Shortcuts sheet, through `<Kbd>` (`Ask ↩`,
@@ -454,7 +589,13 @@ bubble's actions are `Copy`, `Restart`, `Jump Back`; the confirm on an older
 Restart is a dialog title in the house question form (`Restart from Here?`),
 a one-sentence detail naming the count, and a button naming the loss
 (`Delete 2 Questions`; `Delete`, never `Discard`: the rows are persisted like
-a thread's).
+a thread's). The result block's actions (§2 item 4) are `Copy`, `Flip`,
+`Insert`, named to the user only by tooltip (`Copy`, `Show SQL` / `Show
+Table`, `Insert SQL`) and by cue on completion (`Copied 9 rows`, `Copied
+SQL`, `Inserted`, `Inserted into a new tab`). The answer's own actions (§2
+item 3) are `Copy` and `Save Query`, Title Case in their tooltips and in the
+Keyboard Shortcuts sheet, never as a visible label, with the cues `Copied
+answer` and `Saved`.
 
 ## 12. Accessibility
 

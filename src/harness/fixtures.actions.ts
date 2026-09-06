@@ -166,7 +166,6 @@ const NEW_ANSWER: AskAnswer = {
   run: NEW_RUN,
   assumptions: NEW_ASSUMPTIONS,
   sanity: [],
-  followUps: NEW_FOLLOW_UPS,
   trace: NEW_TRACE,
   text: NEW_TEXT,
   turns: 1,

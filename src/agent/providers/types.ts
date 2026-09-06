@@ -115,6 +115,11 @@ export type StopReason =
    * mid-conversation (claude -p `error_max_turns`): the exchange is cut off,
    * not merely truncated, and the loop reports a turn cap, never an answer */
   | "turnCap"
+  /** an `ownsLoop` provider's run_sql was refused as prose twice in a row and
+   * the adapter cut the child off (W7). The exchange is ANSWERED with the
+   * model's last prose: it had already said what it wanted to say, and the
+   * tool call was the mistake */
+  | "proseLoop"
   | "cancelled"
   | "error";
 
@@ -136,7 +141,15 @@ export type AgentEvent =
   | { toolCall: ToolCall }
   | { toolResult: ToolResult }
   | { usage: TokenUsage }
-  | { done: { stopReason: StopReason } }
+  | {
+      done: {
+        stopReason: StopReason;
+        /** the CHILD's own turn count, when it reports one (`claude -p`
+         * writes `num_turns` on its result line). A status reports the
+         * number the user saw work, never an internal counter (LESSONS 13) */
+        turns?: number;
+      };
+    }
   | {
       error: {
         kind: ProviderErrorKind;
@@ -157,8 +170,10 @@ export interface ProviderConfig {
 
 /** Thread continuity for providers that own their own session (`claude -p`
  * takes `--session-id` on the first call and `--resume` afterwards). Stateless
- * adapters ignore it. `turnsRemaining` is the thread-level cap minus the turns
- * already spent: `--max-turns` is per invocation, not cumulative (W0 section 9). */
+ * adapters ignore it. `turnsRemaining` is QWRY's thread cap minus the turns
+ * already spent, which for an `ownsLoop` provider counts invocations, not the
+ * child's own turns: the child gets its own per-invocation `--max-turns`
+ * (claudecode.ts CHILD_TURN_CAP) and the wall clock is the real guard. */
 export interface ThreadRef {
   id: string;
   /** the provider session to open or resume, which is the thread id until a

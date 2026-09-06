@@ -22,6 +22,16 @@
 //                    revenue" for August`, focused, the caret at its end, no
 //                    popover: two pills in the draft, the second wrapping
 //                    with its words at 320
+//   mention-first    the composer holds `@pipeline_products which have no
+//                    price`, focused, the caret at its end, no popover: ONE
+//                    pill and it opens the draft, so its 2px outdent stands
+//                    exactly where the backdrop's overflow used to cut it, and
+//                    the frame reads the pill's left edge against the box's
+//                    (W7). The state seeds `pipeline_products`, the sketch's
+//                    own tag for this row, on top of MENTION_SNAPSHOT rather
+//                    than into it: the name carries no `ord`, but a table the
+//                    other states never asked for has no business in the one
+//                    schema they share
 //
 // Seed contract (fixtures.ts / AskHarness.tsx / tauriShim.ts / ask-frames.ts
 // are the integrator's): add MENTION_STATES to HarnessState, HARNESS_STATES
@@ -53,7 +63,7 @@ import type { SchemaSnapshot, TableInfo } from "../stores/schema";
 import { FIXTURE } from "./fixtures";
 import { echoExchangesFor } from "./fixtures.echo";
 
-export const MENTION_STATES = ["mention-popover", "mention-draft"] as const;
+export const MENTION_STATES = ["mention-popover", "mention-draft", "mention-first"] as const;
 export type MentionState = (typeof MENTION_STATES)[number];
 
 export interface MentionsSeed {
@@ -272,16 +282,44 @@ export function mentionThreadRows(): AgentThread[] {
 
 const POPOVER_DRAFT = "which @ord";
 const CHIPS_DRAFT = 'compare @order_v2 with @"Monthly revenue" for August';
+const FIRST_DRAFT = "@pipeline_products which have no price";
+
+/** the first-token state's one extra table, tagged at position 0 of the
+ * draft; added here and not to MENTION_SNAPSHOT so the popover's `ord` rows
+ * stay the seven the sketch draws */
+const PIPELINE_PRODUCTS = table(
+  7,
+  "pipeline_products",
+  [
+    col("id", "bigint", 1),
+    col("sku", "text", 2),
+    col("price", "numeric", 3),
+    col("stage", "text", 4),
+    col("updated_at", TS, 5),
+  ],
+  91_402,
+);
+
+const FIRST_SNAPSHOT: SchemaSnapshot = {
+  ...MENTION_SNAPSHOT,
+  tables: [...MENTION_SNAPSHOT.tables, PIPELINE_PRODUCTS],
+};
+
+const DRAFTS: Record<MentionState, string> = {
+  "mention-popover": POPOVER_DRAFT,
+  "mention-draft": CHIPS_DRAFT,
+  "mention-first": FIRST_DRAFT,
+};
 
 export function mentionsSeed(state: MentionState): MentionsSeed {
   const first = echoExchangesFor("echo")[0];
   if (!first) throw new Error("fixtures.mentions: the echo thread is empty");
   return {
     exchanges: [first],
-    snapshot: MENTION_SNAPSHOT,
+    snapshot: state === "mention-first" ? FIRST_SNAPSHOT : MENTION_SNAPSHOT,
     saved: mentionSaved(),
     threads: mentionThreads(),
-    draft: state === "mention-popover" ? POPOVER_DRAFT : CHIPS_DRAFT,
+    draft: DRAFTS[state],
     query: state === "mention-popover" ? { at: POPOVER_DRAFT.indexOf("@"), filter: "ord" } : null,
   };
 }

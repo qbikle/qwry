@@ -4,6 +4,10 @@
 // the chips fade in when they exist (AGENT-UX section 2); the eval harness
 // never calls it, so the measured loop is untouched.
 //
+// W7: the chips stand ONCE, under the thread's last answer, so the call is
+// per thread and reads the whole conversation. Per-exchange rows are gone;
+// what a thread is currently suggesting lives in useAgent.followUps.
+//
 // Provider-neutral like the loop (section 7) and just as visible: the call is
 // returned as a trace step so nothing sent to a provider is hidden (section
 // 8.4). The call goes through `sideText`: a hosted provider's tool-less
@@ -19,11 +23,13 @@ export const FOLLOWUPS_SHOWN = 3;
 const QUESTION_CAP = 160;
 
 export interface FollowUpRequest {
-  question: string;
-  /** the model's final prose */
-  answer: string;
-  sql: string | null;
-  /** every question already asked in the thread, the current one included */
+  /** the WHOLE thread as one transcript (W7): the store builds it with
+   * `replayOf`, one Q / SQL / first-sentence block per exchange, oldest
+   * dropped under the cap. One row of chips stands at the thread's end, so
+   * one call reads everything asked and answered */
+  thread: string;
+  /** every question already asked in the thread, the current one included.
+   * It is in `thread` too; this is the parser's filter, not the prompt's */
   asked: string[];
   provider: Provider;
   model: string;
@@ -62,12 +68,7 @@ export async function suggestFollowUps(req: FollowUpRequest): Promise<FollowUpRe
   if (req.signal.aborted) return { questions: [], step: null };
   const now = req.now ?? (() => Date.now());
   const started = now();
-  const prompt = followUpMessage({
-    question: req.question,
-    answer: req.answer,
-    sql: req.sql,
-    asked: req.asked,
-  });
+  const prompt = followUpMessage({ thread: req.thread });
   let out: SideChatResult;
   try {
     out = await sideText(req.provider, {

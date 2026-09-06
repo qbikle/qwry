@@ -1,6 +1,6 @@
 // One answer block (AGENT-UX section 2). The skeleton IS the anatomy, top to
-// bottom: question echo, thinking strip, answer text, result grid, status,
-// SQL row, assumption chips, sanity line, follow-ups, footer; the failure
+// bottom: question echo, thinking strip, answer text, result block, status,
+// assumption chips, sanity line, follow-ups, footer; the failure
 // block replaces the tail when the exchange ended badly. Parts that do not
 // apply are omitted, never reserved (DESIGN rule 2 scope note). Sections fade
 // in with --dur-slow opacity (ask.css .ans-body > *), never height. Every fact
@@ -16,33 +16,36 @@
 // its saved queries and its threads, so a mention that no longer resolves
 // stands as plain text (LESSONS 5).
 //
-// The result slot: a run of one row and up to four columns renders as values
-// (ScalarResult: a table of one cell is chrome around nothing); anything
-// else mounts the app's ONE grid species in readOnly mode, the turn's
-// AgentRun as a StatementState from props alone, so the grid never touches
-// the results-tab singletons (LESSONS 4). The grid sizes itself to the header
-// plus up to six rows (maxRows) and scrolls inside for the rest, so the
-// answer scroller stays honest and the rows it promises clear its own
-// horizontal scrollbar.
+// Everything under the strip is one node (.ans-tail), keyed by the run it
+// belongs to: a Restart forgets this exchange's answer and asks again, and the
+// answer that stood here leaves as one, parked where it stood and dropping
+// 8px as it fades, while a fresh tail takes the flow (W7 item 4). The prose
+// carries the exchange's own two actions at its top-right, Copy · Save Query
+// (AnswerActions), and the follow-up row under it is the THREAD's, handed down
+// by AskPanel so it stands once, under the last answer (item 3).
+//
+// The result slot is ONE block with two faces (W7, ResultBlock): the table
+// (the grid, or the values of a one-row run) and the SQL, with Copy · Flip ·
+// Insert floating at its top-right. The collapsed `SQL ▸ first line` row it
+// replaces is gone, and with it two always-visible strips (DESIGN rule 15);
+// the status line under it stays here, because the rows and the ms are the
+// run's whichever face is up.
 
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { AnimatePresence, motion, usePresence } from "motion/react";
-import { footerStatus } from "../agent/display";
+import { answerText, footerStatus } from "../agent/display";
 import { mentionsIn } from "../agent/mentions";
 import type { ProviderId } from "../agent/providers/types";
-import type { AgentRun } from "../agent/types";
 import { prefersReducedMotion, spring } from "../design/springs";
-import { Grid } from "../grid/Grid";
 import { msText } from "../lib/duration";
 import { avatarColor } from "../sidebar/avatar";
 import { useAgent, type Exchange } from "../stores/agent";
 import { useAsk } from "../stores/ask";
-import type { StatementState } from "../stores/results";
 import { useSaved, visibleSaved } from "../stores/saved";
 import { useSchema } from "../stores/schema";
-import { useTabs } from "../stores/tabs";
 import type { Profile } from "../ipc/types";
 import type { AskPhase } from "../agent/loop";
+import { AnswerActions } from "./AnswerActions";
 import { AnswerText } from "./AnswerText";
 import { AssumptionChips } from "./AssumptionChips";
 import { EchoActions, editLiftId } from "./EchoActions";
@@ -50,11 +53,15 @@ import { FailureBlock } from "./FailureBlock";
 import { FollowUps, questionLayoutId } from "./FollowUps";
 import { MentionText } from "./Mention";
 import { modelLabel } from "./modelSources";
+import { insertSql, ResultBlock } from "./ResultBlock";
 import { SanityLine } from "./SanityLine";
 import { sanityStep } from "./sanityStep";
-import { isScalarRun, ScalarResult } from "./ScalarResult";
-import { SqlRow } from "./SqlRow";
 import { ThinkingStrip } from "./ThinkingStrip";
+
+// the grid's statement shape lives with the block that mounts the grid; the
+// answer text's own markdown table (W5) reaches it through here, the import
+// it has always had
+export { statementFromRun } from "./ResultBlock";
 
 export interface AnswerBlockProps {
   exchange: Exchange;
@@ -69,6 +76,10 @@ export interface AnswerBlockProps {
   phase: AskPhase | null;
   /** every question already asked in the thread (follow-ups never repeat one) */
   asked: ReadonlySet<string>;
+  /** the thread's follow-up questions when this is the block they stand under
+   * (W7 item 3: one row, at the thread's end), empty everywhere else. The row
+   * leaves on the empty list, so the panel emptying it is what sends it away */
+  followUps: string[];
   /** the layout id the composer's ghost carried when this question was sent
    * (AskPanel hands it to the one exchange that landed out of the ghost, in
    * the render that mounts it; never to an older echo of the same text): the
@@ -80,9 +91,6 @@ export interface AnswerBlockProps {
 
 const TAB_TITLE_CAP = 40;
 const tabTitle = (q: string) => (q.length > TAB_TITLE_CAP ? `${q.slice(0, TAB_TITLE_CAP)}…` : q);
-
-/** rows the grid shows before it scrolls inside its slot */
-const GRID_ROWS_SHOWN = 6;
 
 /** a fold shrinks the thread, but the parked anatomy keeps the old scroll
  * extent for its fade, so the clamp the browser would apply to scrollTop when
@@ -127,24 +135,6 @@ function Body({ ref, children }: { ref?: Ref<HTMLDivElement>; children: ReactNod
   );
 }
 
-/** the turn's run as the grid's statement shape. Column types are not on the
- * wire yet (type_oid 0, no colTypes): alignment is value-sniffed, no glyphs. */
-export function statementFromRun(run: AgentRun, sql: string | null): StatementState {
-  return {
-    index: 0,
-    sql: sql ?? "",
-    rows: run.rows,
-    columns: run.columns.map((name, i) => ({ name, type_oid: 0, table_oid: 0, attnum: i + 1 })),
-    truncated: new Set(),
-    affected: null,
-    ms: run.ms,
-    rowCount: run.rowCount,
-    capped: run.capped,
-    done: true,
-    error: null,
-  };
-}
-
 // memo: a streamed delta replaces one Exchange and the thread's array, so the
 // panel renders every block; the settled ones get the same props (patchExchange
 // keeps their identity, `asked` is stable per question list) and skip, or a
@@ -157,6 +147,7 @@ export const AnswerBlock = memo(function AnswerBlock({
   busy,
   phase,
   asked,
+  followUps,
   liftId,
 }: AnswerBlockProps) {
   const openTrace = useAsk((s) => s.openTrace);
@@ -230,19 +221,35 @@ export const AnswerBlock = memo(function AnswerBlock({
   const sql = answer?.sql ?? null;
   const failed = !exchange.streaming && exchange.error !== null;
 
-  // identity-stable per run, or the grid re-estimates widths every render;
-  // an empty result keeps the status line and drops the grid (no header-only
-  // chrome over nothing); a one-row result is values, not a grid
-  const scalar = run !== null && isScalarRun(run);
   const hasRun = run !== null || exchange.chips.some((c) => c.name === "run_sql" && !c.isError);
-  const stmt = useMemo(
-    () => (run && run.rows.length > 0 && !isScalarRun(run) ? statementFromRun(run, sql) : null),
-    [run, sql],
+  // a cancelled run keeps its last SQL reachable: the failure block shows only
+  // `cancelled` for it (section 7), so the block is the one way to it. A
+  // failure that ran nothing has no block, because its SQL is already in the
+  // failure block's own editable field (DESIGN rule 14)
+  const blockSql = sql !== null && (!failed || exchange.error?.kind === "cancelled") ? sql : null;
+  // the prose the clipboard takes, and the test the cluster mounts on: the
+  // slot's own projection (agent/display), so Copy writes what the answer says
+  // and the cluster never floats over a slot with nothing under it. Not
+  // computed while the text streams, where the cluster is absent anyway and
+  // the slot is already parsing every delta
+  const prose = useMemo(
+    () => (exchange.streaming ? "" : answerText(exchange.text)),
+    [exchange.streaming, exchange.text],
   );
-
-  const openInTab = (text: string) => {
-    useTabs.getState().newTab(text, tabTitle(exchange.question));
-  };
+  // the answer's cluster is absent while the run is on (there is nothing to
+  // copy or save yet) and on a failure, whose actions are the failure block's
+  const answerActs = !failed && answer !== null && prose !== "";
+  // W7 item 4: a Restart forgets this exchange's answer (the store's `forgot`)
+  // and asks the question again. The tail's key is the run it belongs to, so
+  // it moves exactly once, at the Restart: the verdict that ends the run
+  // re-keys nothing and the answer slot keeps the live region it streamed into
+  const forgot = exchange.forgot === true;
+  const [runSeq, setRunSeq] = useState(0);
+  const [wasForgot, setWasForgot] = useState(forgot);
+  if (forgot !== wasForgot) {
+    setWasForgot(forgot);
+    if (forgot) setRunSeq((n) => n + 1);
+  }
   // section 4: a fragment opens the trace AT the call that produced it, the
   // peek behind `checked <col> values` included, not merely somewhere in it
   const showProbe = (index: number) => {
@@ -343,97 +350,118 @@ export const AnswerBlock = memo(function AnswerBlock({
               onChipClick={(chipId) => openTrace(exchange.id, chipId)}
             />
 
-            {/* mounted from the start and empty until the first delta: a live
-                region announces changes to content it already owns, so one that
-                arrives WITH its first text is silent for that text (section 12).
-                The parser (agent/display.ts) drops the fence, the Assumptions
-                line and, with a run on screen, any table of the results, which
-                have their own slots below (rule 14); an empty parse renders no
-                node, so .ans-text:empty collapses the slot out of the flow with
-                no gap (rule 2) while it stays in the accessibility tree. A run
-                is on screen from the moment its chip lands, not from the
-                verdict: the final text streams after the run and would show a
-                table of it for the length of the stream otherwise */}
-            <AnswerText raw={exchange.text} hasRun={hasRun} live={isLatest} />
+            {/* everything under the strip as one node: a Restart forgets the
+                answer and asks again, so what stood here parks where it stood
+                and drops 8px as it fades (spring.layout) while a fresh tail
+                takes the flow, its answer slot empty and ready to be streamed
+                into. Reduced motion is the swap at once */}
+            <AnimatePresence mode="popLayout" initial={false}>
+              <motion.div
+                key={`tail-${runSeq}`}
+                className="ans-tail"
+                exit={{ opacity: 0, y: 8 }}
+                transition={spring.layout}
+              >
+                {/* the prose and the exchange's own two actions. The slot is
+                    the cluster's positioning box, so Copy · Save Query sit at
+                    the answer's top-right and the hover that reveals them is
+                    the prose's, not the whole anatomy's (ask.css .ans-prose).
+                    The text is mounted from the start and empty until the first
+                    delta: a live region announces changes to content it already
+                    owns, so one that arrives WITH its first text is silent for
+                    that text (section 12). The parser (agent/display.ts) drops
+                    the fence, the Assumptions line and, with a run on screen,
+                    any table of the results, which have their own slots below
+                    (rule 14); an empty parse renders no node, so
+                    .ans-text:empty collapses the slot out of the flow with no
+                    gap (rule 2) while it stays in the accessibility tree. A run
+                    is on screen from the moment its chip lands, not from the
+                    verdict: the final text streams after the run and would show
+                    a table of it for the length of the stream otherwise */}
+                <div className="ans-prose">
+                  <AnswerText raw={exchange.text} hasRun={hasRun} live={isLatest} />
+                  {answerActs && <AnswerActions question={exchange.question} prose={prose} sql={sql} />}
+                </div>
 
-            {scalar && run && <ScalarResult run={run} />}
-            {stmt && (
-              <div className="ans-grid">
-                <Grid key={exchange.id} statement={stmt} readOnly maxRows={GRID_ROWS_SHOWN} />
-              </div>
-            )}
-            {run && (
-              <div className="ans-status">
-                <span>
-                  {run.rowCount.toLocaleString()} {run.rowCount === 1 ? "row" : "rows"} · {msText(run.ms)}
-                  {run.capped ? ` · showing ${run.rows.length.toLocaleString()}` : ""}
-                </span>
-              </div>
-            )}
+                {(run !== null || blockSql !== null) && (
+                  <ResultBlock
+                    exchangeId={exchange.id}
+                    run={run}
+                    sql={blockSql}
+                    tabTitle={tabTitle(exchange.question)}
+                  />
+                )}
+                {run && (
+                  <div className="ans-status">
+                    <span>
+                      {run.rowCount.toLocaleString()} {run.rowCount === 1 ? "row" : "rows"} · {msText(run.ms)}
+                      {run.capped ? ` · showing ${run.rows.length.toLocaleString()}` : ""}
+                    </span>
+                  </div>
+                )}
 
-            {/* a cancelled run keeps its last SQL reachable: the failure block
-                shows only `cancelled` for it (section 7), so the row is the one
-                way to it */}
-            {sql && (!failed || exchange.error?.kind === "cancelled") && (
-              <SqlRow sql={sql} tabTitle={tabTitle(exchange.question)} />
-            )}
+                {!failed && answer && answer.assumptions.length > 0 && (
+                  <AssumptionChips
+                    assumptions={answer.assumptions}
+                    pending={pending}
+                    disabled={busy}
+                    onToggle={(chipId) => useAgent.getState().togglePending(exchange.id, chipId)}
+                  />
+                )}
 
-            {!failed && answer && answer.assumptions.length > 0 && (
-              <AssumptionChips
-                assumptions={answer.assumptions}
-                pending={pending}
-                disabled={busy}
-                onToggle={(chipId) => useAgent.getState().togglePending(exchange.id, chipId)}
-              />
-            )}
+                {!failed && answer && answer.sanity.length > 0 && (
+                  <SanityLine fragments={answer.sanity} onShowProbe={showProbe} />
+                )}
 
-            {!failed && answer && answer.sanity.length > 0 && (
-              <SanityLine fragments={answer.sanity} onShowProbe={showProbe} />
-            )}
+                {failed && exchange.error && (
+                  <FailureBlock
+                    error={exchange.error}
+                    // a provider failure on a re-run leaves the PREVIOUS answer's
+                    // SQL in place (rearm keeps the answer); the block must not
+                    // offer it as the statement that failed
+                    sql={exchange.error.kind === "provider" ? null : sql}
+                    busy={busy}
+                    onFixIt={(edited) => void useAgent.getState().fixIt(exchange.id, edited)}
+                    onInsert={(text) => insertSql(text, tabTitle(exchange.question))}
+                    onAskDifferently={() => {
+                      const a = useAsk.getState();
+                      a.setDraft(exchange.question);
+                      a.requestFocus();
+                    }}
+                    onRetry={() => void useAgent.getState().retry(exchange.id)}
+                    onContinue={() => void useAgent.getState().continueFrom(exchange.id)}
+                  />
+                )}
 
-            {failed && exchange.error && (
-              <FailureBlock
-                error={exchange.error}
-                // a provider failure on a re-run leaves the PREVIOUS answer's
-                // SQL in place (rearm keeps the answer); the block must not
-                // offer it as the statement that failed
-                sql={exchange.error.kind === "provider" ? null : sql}
-                busy={busy}
-                onFixIt={(edited) => void useAgent.getState().fixIt(exchange.id, edited)}
-                onOpenInTab={openInTab}
-                onAskDifferently={() => {
-                  const a = useAsk.getState();
-                  a.setDraft(exchange.question);
-                  a.requestFocus();
-                }}
-                onRetry={() => void useAgent.getState().retry(exchange.id)}
-              />
-            )}
+                {/* the thread's row, under its last answer only (W7 item 3):
+                    the panel hands the questions down and empties them the
+                    instant one is sent, and the row fades itself away */}
+                {!failed && answer && (
+                  <FollowUps
+                    questions={followUps}
+                    asked={asked}
+                    disabled={busy}
+                    onPick={(q) => void useAgent.getState().ask(q)}
+                  />
+                )}
 
-            {!failed && answer && (
-              <FollowUps
-                questions={answer.followUps}
-                asked={asked}
-                disabled={busy}
-                onPick={(q) => void useAgent.getState().ask(q)}
-              />
-            )}
-
-            {/* the connection's dot is the block's one provenance mark (section
-                9), the titlebar's conn-dot at the same 8px: it stays with the
-                rows when the header has scrolled away (LESSONS 4). A retry
-                streams over the prior answer, whose footer stays until the
-                verdict replaces it */}
-            {(!exchange.streaming || exchange.prior !== undefined) && answer && (
-              <div className="ans-foot" data-thread={threadId}>
-                <span className="ans-dot" style={{ background: avatarColor(profile) }} aria-hidden="true" />
-                <span className="ans-foot-meta">{footerStatus(answer.turns, answer.ms, model)}</span>
-                <span className="ask-grow" />
-                <button type="button" className="linkish" onClick={() => openTrace(exchange.id)}>
-                  Trace
-                </button>
-              </div>
-            )}
+                {/* the connection's dot is the block's one provenance mark (section
+                    9), the titlebar's conn-dot at the same 8px: it stays with the
+                    rows when the header has scrolled away (LESSONS 4). A retry
+                    streams over the prior answer, whose footer stays until the
+                    verdict replaces it */}
+                {(!exchange.streaming || exchange.prior !== undefined) && answer && (
+                  <div className="ans-foot" data-thread={threadId}>
+                    <span className="ans-dot" style={{ background: avatarColor(profile) }} aria-hidden="true" />
+                    <span className="ans-foot-meta">{footerStatus(answer.turns, answer.ms, model)}</span>
+                    <span className="ask-grow" />
+                    <button type="button" className="linkish" onClick={() => openTrace(exchange.id)}>
+                      Trace
+                    </button>
+                  </div>
+                )}
+              </motion.div>
+            </AnimatePresence>
           </Body>
         )}
       </AnimatePresence>

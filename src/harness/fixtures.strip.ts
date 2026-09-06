@@ -192,7 +192,6 @@ const kvAnswer: AskAnswer = {
   run: KV_RUN,
   assumptions: kvAssumptions,
   sanity: [],
-  followUps: KV_FOLLOW_UPS,
   trace: kvTrace,
   text: KV_TEXT,
   turns: 1,

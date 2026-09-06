@@ -1,11 +1,21 @@
 // Failure (AGENT-UX section 7). Never a dead end (LESSONS 9): the error in
 // the error register, the last SQL in an editable field, and the affordances
-// per kind: `sql` gets Fix It + Open in Tab + Ask Differently; `turncap` the
-// same when a query was tried, Ask Differently alone when none was; `provider`
-// gets the provider's own sentence (it already says what to do next) and
-// Retry, with the stated wait when there is one; `cancelled` shows `cancelled`
-// in the status register and leaves the partial text in place. Errors explain
-// and propose; they do not apologise.
+// per kind: `sql` gets Fix It + Ask Differently; `turncap` the same plus
+// Continue, which resumes the SAME provider session with a fresh budget
+// instead of re-inspecting the schema from scratch (W7 item 5), and Continue
+// + Ask Differently when no query was tried; `provider` gets the provider's
+// own sentence (it already says what to do next) and Retry, with the stated
+// wait when there is one; `cancelled` shows `cancelled` in the status
+// register and leaves the partial text in place. Errors explain and propose;
+// they do not apologise.
+//
+// Insert replaces Open in Tab here as it does on the result block (W7): the
+// statement lands at the caret of the active query tab, and opens one only
+// when no editor is mounted. It rides the FIELD, not the button row, in the
+// result block's own floating cluster (DESIGN rule 15's first question: the
+// SQL it inserts is the field's, so it lives on the field). Four buttons in
+// the row wrapped to two lines at the 320 floor and stood on one at 392 and
+// 560: chrome that changes shape with the width (DESIGN rule 13). Three fit.
 //
 // The SQL field is the app's one editor species (CodeMirror, the JsonField
 // precedent): PostgreSQL highlighting through qwryHighlight, history, line
@@ -15,6 +25,7 @@
 // its face, like Ask and Stop (AGENT-UX section 11, DESIGN rule 11).
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Import } from "lucide-react";
 import { EditorState, Prec, Transaction } from "@codemirror/state";
 import { EditorView, drawSelection, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
@@ -40,10 +51,13 @@ export interface FailureBlockProps {
   busy: boolean;
   /** Fix It: the SQL as edited in the field */
   onFixIt: (sql: string) => void;
-  onOpenInTab: (sql: string) => void;
+  /** Insert: the field's statement at the caret of the active query tab */
+  onInsert: (sql: string) => void;
   /** Ask Differently: the question lands back in the composer, focused */
   onAskDifferently: () => void;
   onRetry: () => void;
+  /** Continue (turn cap only): the same session resumed with a fresh budget */
+  onContinue: () => void;
 }
 
 const fixTheme = EditorView.theme({
@@ -196,9 +210,10 @@ export function FailureBlock({
   sql,
   busy,
   onFixIt,
-  onOpenInTab,
+  onInsert,
   onAskDifferently,
   onRetry,
+  onContinue,
 }: FailureBlockProps) {
   const [edited, setEdited] = useState<string>(sql ?? "");
   // a new last attempt (Fix It failed again) becomes the field's text
@@ -261,7 +276,25 @@ export function FailureBlock({
           ))}
       </div>
 
-      {sql !== null && <SqlField value={sql} onFixIt={fixIt} onChange={setEdited} />}
+      {sql !== null && (
+        <div className="ans-fix">
+          <SqlField value={sql} onFixIt={fixIt} onChange={setEdited} />
+          {/* the statement Insert puts at the caret is the one under this
+              button, edits and all, so the button stands on it */}
+          <div className="acts-float">
+            <button
+              type="button"
+              className="iconbtn iconbtn-sm"
+              title="Insert SQL"
+              aria-label="Insert SQL"
+              disabled={busy}
+              onClick={() => onInsert(edited.trim() || sql)}
+            >
+              <Import size={12} />
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="ans-acts">
         {sql !== null && (
@@ -269,9 +302,12 @@ export function FailureBlock({
             Fix It
           </button>
         )}
-        {sql !== null && (
-          <button className="btnish" disabled={busy} onClick={() => onOpenInTab(edited.trim() || sql)}>
-            Open in Tab
+        {/* the cap is a budget, not a wrong answer: Continue hands the same
+            session a fresh one and asks it to finish, so the model never
+            re-inspects a schema it has already described (W7 item 5) */}
+        {isCap && (
+          <button className="btnish" disabled={busy} onClick={onContinue}>
+            Continue
           </button>
         )}
         <button className="btnish" disabled={busy} onClick={onAskDifferently}>

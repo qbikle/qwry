@@ -13,8 +13,10 @@
 //              starters,starters-fallback,qwrying,qwrying-trail,kv-wide,
 //              actions,actions-latest,actions-busy,edit,edit-latest,edit-stack,
 //              insight,insight-prose,insight-steps,insight-code,insight-stream,
-//              mention-popover,mention-draft,mention-echo,mention-trace
-//              (default: all thirty-seven)
+//              mention-popover,mention-draft,mention-first,mention-echo,
+//              mention-trace,result-table,result-sql,result-scalar,failure-cap,
+//              answer-actions,followups-end
+//              (default: all forty-four)
 //   --widths   subset of 320,392,560 (default: all three)
 //   --themes   subset of dark,light (default: both)
 //   --scroll   bottom (default): the pane as it mounts, pinned to the newest content,
@@ -22,8 +24,8 @@
 //              echo and the thinking strip instead (the 640px card cannot hold the
 //              whole live answer, so the two ends are two runs). Frames of a top run
 //              carry a -top suffix so the two sets sit side by side. The `strip`,
-//              `kv-wide` and `insight*` states park at the top by default (the
-//              harness's own default for them: their subject sits above the fold);
+//              `kv-wide`, `insight*` and `result*` states park at the top by default
+//              (the harness's own default for them: their subject sits above the fold);
 //              an EXPLICIT `--scroll bottom` reaches the harness as `scroll=bottom`
 //              and pins them like every other state, so their footers can be framed
 //   --port     the vite dev server to use when one already answers (default 1420);
@@ -62,8 +64,9 @@
 // data is src/harness/fixtures.ts: connection `staging` on `auth_new`, a
 // five-table schema the starters draw from, and the locked sketch's exchange
 // (a sixty-five-character question, three tool chips, one-or-two-sentence
-// answer, a nine-row grid with the raw ms float, a collapsed SQL row, three
-// assumption chips, three follow-ups, `1 turn · 20.4 s · Sonnet 5`). busy =
+// answer, the result block on its table face with the raw ms float under it,
+// three assumption chips, three follow-ups, `1 turn · 20.4 s · Sonnet 5`;
+// the collapsed SQL row is the block's second face since W7). busy =
 // streaming with a spinner chip; failure = a SQL error with the editable
 // field; picker = the answer with the model popover open; disconnected = the
 // starters with no session (textarea disabled, pill dimmed); small = the
@@ -154,6 +157,21 @@
 // context step, `tagged order_v2 · "Monthly revenue"` over the block whose
 // last lines are the TAGGED BY THE USER block the loop sent.
 //
+// W7 (the sketch's "consolidate" rows; fixtures.result.ts, fixtures.answer.ts,
+// and `mention-first` in fixtures.mentions.ts): result-table = the orders
+// exchange with the block hot, the nine-row grid under Copy · Flip · Insert
+// and `9 rows · 412.6 ms` under the block, no SQL row anywhere; result-sql =
+// the same block flipped to its SQL face, the statement in the editor register
+// wrapped at the floor and the flip's glyph now the table; result-scalar = a
+// one-row run as its value inside the block's own padding; failure-cap = the
+// turn cap's `stopped after 12 turns` over the widest action row the pane has,
+// Fix It · Insert SQL · Continue · Ask Differently, which is a rule-13 question
+// at 320; answer-actions = the answer's own cluster (Copy · Save Query)
+// revealed at the prose's top-right; followups-end = the three-exchange thread
+// with ONE follow-up row, under the last answer, the older two carrying none;
+// mention-first = `@pipeline_products` as the draft's first token, the frame
+// that catches the pill's left edge against the box's.
+//
 // The first frame runs alone so vite compiles the module graph once; the rest
 // run in parallel. Whole run: ~60 s warm for the full matrix.
 
@@ -201,8 +219,15 @@ const ALL_STATES = [
   "insight-stream",
   "mention-popover",
   "mention-draft",
+  "mention-first",
   "mention-echo",
   "mention-trace",
+  "result-table",
+  "result-sql",
+  "result-scalar",
+  "failure-cap",
+  "answer-actions",
+  "followups-end",
 ] as const;
 const ALL_WIDTHS = [320, 392, 560] as const;
 const ALL_THEMES = ["dark", "light"] as const;

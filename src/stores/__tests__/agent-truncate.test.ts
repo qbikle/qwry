@@ -1,11 +1,16 @@
 // Jumping back (W4): a cut takes the exchanges after it out of the state and
 // out of appdb, mints the thread a provider session that never heard them,
-// and hands the next run a compact replay of what it kept. Restart is the
-// retry shape on the latest exchange and a cut-then-re-run on an older one;
-// a send from edit mode cuts inclusive and lands the new question on the spot
-// the old one stood, turn rows included. And every pair of rows takes an `idx`
-// allocated between its NEIGHBOURS, which is what keeps a reloaded thread's
-// answers on the questions they answered.
+// and hands the next run a compact replay of what it kept. Restart cuts what
+// came after and re-mints on every exchange (W7: a resumed session answers
+// from memory instead of inspecting), a send from edit mode cuts inclusive
+// and lands the new question on the spot the old one stood, turn rows
+// included. And every pair of rows takes an `idx` allocated between its
+// NEIGHBOURS, which is what keeps a reloaded thread's answers on the
+// questions they answered.
+//
+// W7 also lives here: Continue resumes the SAME session after a turn cap and
+// creates no rows, and the follow-up chips belong to the THREAD, one row read
+// from the whole conversation and gone the instant a question is sent.
 //
 // The loop is stood in through the store's `runner` seam and the backend
 // through Tauri's own mock transport (@tauri-apps/api/mocks), so every
@@ -47,6 +52,7 @@ for (const k of shimmed) {
 const { clearMocks, mockIPC } = await import("@tauri-apps/api/mocks");
 const agent = await import("../agent");
 const { useAgent, replayOf, runner } = agent;
+const realFollowUps = runner.suggestFollowUps;
 type Exchange = import("../agent").Exchange;
 const { useSchema } = await import("../schema");
 const { useSettings } = await import("../settings");
@@ -55,6 +61,7 @@ type AskRequest = Parameters<typeof runner.runAsk>[0];
 const realRunAsk = runner.runAsk;
 afterAll(() => {
   runner.runAsk = realRunAsk;
+  runner.suggestFollowUps = realFollowUps;
   clearMocks();
   for (const k of shimmed) Reflect.deleteProperty(globalThis, k);
 });
@@ -183,7 +190,6 @@ const answeredRun: typeof realRunAsk = async (req) => {
     run: { columns: ["n"], rows: [["3"]], rowCount: 1, capped: false, ms: 2 },
     assumptions: [],
     sanity: [],
-    followUps: [],
     trace: [],
     text: "answered.",
     turns: 1,
@@ -193,6 +199,18 @@ const answeredRun: typeof realRunAsk = async (req) => {
     candidates: [],
     recall: null,
     risky: false,
+  };
+};
+
+/** every follow-up call the store made, and the three questions it answers
+ * with (the side call itself is a model call; the seam stands in for it) */
+let followUpCalls: { thread: string; asked: string[] }[] = [];
+const CHIPS = ["Which store rents the most?", "Which rating sells best?", "What is the average length?"];
+const scriptedFollowUps: typeof realFollowUps = async (req) => {
+  followUpCalls.push({ thread: req.thread, asked: req.asked });
+  return {
+    questions: CHIPS,
+    step: { step: "followups", ms: 12, prompt: req.thread, text: CHIPS.join("\n"), questions: CHIPS },
   };
 };
 
@@ -224,7 +242,6 @@ function exchange(n: number): Exchange {
       run: null,
       assumptions: [],
       sanity: [],
-      followUps: [],
       trace: [],
       text: `answer ${n}. A second sentence nobody replays.`,
       turns: 1,
@@ -262,7 +279,9 @@ function seed(exchanges: Exchange[] = [exchange(0), exchange(1), exchange(2)]) {
   seen = [];
   nextTurnId = 100;
   stored = { turns: [], answers: [] };
+  followUpCalls = [];
   runner.runAsk = answeredRun;
+  runner.suggestFollowUps = scriptedFollowUps;
   useSettings.setState({
     agentProvider: "claude-code",
     agentModel: "claude-sonnet-5",
@@ -293,6 +312,7 @@ function seed(exchanges: Exchange[] = [exchange(0), exchange(1), exchange(2)]) {
     busy: { [TID]: false },
     phase: { [TID]: null },
     pending: {},
+    followUps: {},
   });
 }
 
@@ -479,14 +499,60 @@ describe("askFrom", () => {
 describe("restartFrom", () => {
   beforeEach(fresh);
 
-  test("the latest exchange takes the retry shape: nothing is cut, the prior is stashed", async () => {
+  // W7: a Restart used to be a Retry on the newest exchange, which resumed
+  // the session; the model answered from memory in five seconds with no tool
+  // call. Every Restart now re-mints, and the newest one has nothing to cut
+  test("the latest exchange cuts nothing and still re-mints the session", async () => {
     await useAgent.getState().restartFrom("ex-2");
     expect(ids()).toEqual(["ex-0", "ex-1", "ex-2"]);
     expect(cmds()).not.toContain("agent_thread_truncate");
-    // mid-flight the exchange wore its landed shape as `prior`
+    expect(cmds()).toContain("agent_thread_session_set");
+    const key = thread().sessionKey;
+    expect(key).not.toBe(TID);
+    expect(seen[0].req.thread?.session).toBe(key);
+    expect(seen[0].req.thread?.firstCall).toBe(true);
+    // the session has never heard the thread, so the run carries what stands
+    // BEFORE this exchange, and never its own question
+    expect(seen[0].req.thread?.replay).toContain("Q: question 1");
+    expect(seen[0].req.thread?.replay).not.toContain("Q: question 2");
+    // mid-flight the exchange wore its landed shape as `prior`, and nothing
+    // of it was on screen: the strip has to be what the user watches
     expect(seen[0].priorAt[2]?.prior?.answer?.sql).toBe("SELECT 2");
-    expect(seen[0].req.thread?.replay).toBeUndefined();
+    expect(seen[0].priorAt[2]?.answer).toBeNull();
+    expect(seen[0].priorAt[2]?.text).toBe("");
     expect(useAgent.getState().exchanges[TID][2].prior).toBeUndefined();
+    expect(useAgent.getState().exchanges[TID][2].forgot).toBeUndefined();
+  });
+
+  test("a Stop puts the forgotten answer back exactly", async () => {
+    runner.runAsk = async (req) => {
+      seen.push({ req, priorAt: [] });
+      req.onEvent?.({ type: "text", delta: "half an answer" });
+      useAgent.getState().cancel();
+      return {
+        verdict: { status: "cancelled", sql: null },
+        sql: null,
+        run: null,
+        assumptions: [],
+        sanity: [],
+        trace: [],
+        text: "",
+        turns: 1,
+        ms: 3,
+        usage: { input: 0, output: 0 },
+        promptVersion: "v2",
+        candidates: [],
+        recall: null,
+        risky: false,
+      };
+    };
+    await useAgent.getState().restartFrom("ex-1");
+    const back = useAgent.getState().exchanges[TID][1];
+    expect(back.answer?.sql).toBe("SELECT 1");
+    expect(back.text).toBe("answer 1. A second sentence nobody replays.");
+    expect(back.forgot).toBeUndefined();
+    expect(back.prior).toBeUndefined();
+    expect(back.streaming).toBe(false);
   });
 
   test("an older exchange cuts everything after it and re-runs its own question", async () => {
@@ -520,6 +586,163 @@ describe("restartFrom", () => {
     expect(seen[1].req.thread?.firstCall).toBe(false);
     await useAgent.getState().restartFrom("ex-1");
     expect(seen[2].req.thread?.firstCall).toBe(true);
+  });
+});
+
+// W7 item 5: the maintainer's run stopped at the cap, and the only way on was
+// to ask again from scratch. Continue resumes the SAME session, which still
+// holds the inspection, and writes no second question into the thread
+describe("continueFrom", () => {
+  beforeEach(fresh);
+
+  /** the newest exchange as a capped run leaves it: a verdict, no rows lost */
+  function capped(n = 2): Exchange {
+    const e = exchange(n);
+    return {
+      ...e,
+      answer: { ...e.answer!, verdict: { status: "turn_cap", sql: null, turns: 24 }, sql: null },
+      error: { kind: "turncap", message: "stopped after 24 turns" },
+    };
+  }
+
+  test("the same session, a fresh budget, and no re-inspection asked for", async () => {
+    seed([exchange(0), exchange(1), capped()]);
+    await useAgent.getState().continueFrom("ex-2");
+
+    expect(seen[0].req.question).toContain("Continue");
+    expect(seen[0].req.question).toContain("finish the answer from where you stopped");
+    // the session is NOT re-minted: that is the whole point, it remembers the
+    // describe and peek the capped run already paid for
+    expect(cmds()).not.toContain("agent_thread_session_set");
+    expect(cmds()).not.toContain("agent_thread_truncate");
+    expect(seen[0].req.thread?.replay).toBeUndefined();
+    expect(useAgent.getState().exchanges[TID][2].answer?.verdict.status).toBe("answered");
+  });
+
+  test("it writes no second question: the rows the capped run left are rewritten", async () => {
+    seed([exchange(0), exchange(1), capped()]);
+    await useAgent.getState().continueFrom("ex-2");
+
+    expect(cmds()).not.toContain("agent_turn_add");
+    expect(argsOf("agent_turn_update")[0].turn).toMatchObject({ id: 12, content: "answered." });
+    // the question row still says what the user typed, never "Continue:"
+    expect(useAgent.getState().exchanges[TID][2].question).toBe("question 2");
+  });
+
+  test("a capped exchange that never reached appdb leaves history as it found it", async () => {
+    seed([exchange(0), { ...capped(1), turnId: null, userTurnId: null, idx: null }]);
+    await useAgent.getState().continueFrom("ex-1");
+
+    expect(seen).toHaveLength(1);
+    expect(cmds()).not.toContain("agent_turn_add");
+    expect(cmds()).not.toContain("agent_answer_put");
+    expect(useAgent.getState().exchanges[TID][1].answer?.verdict.status).toBe("answered");
+  });
+
+  test("an answered exchange and a plain failure have nowhere to continue from", async () => {
+    seed([exchange(0), exchange(1)]);
+    await useAgent.getState().continueFrom("ex-1");
+    useAgent.setState((s) => ({
+      exchanges: {
+        ...s.exchanges,
+        [TID]: (s.exchanges[TID] ?? []).map((e) =>
+          e.id === "ex-1" ? { ...e, error: { kind: "provider" as const, message: "no" } } : e,
+        ),
+      },
+    }));
+    await useAgent.getState().continueFrom("ex-1");
+    expect(seen).toEqual([]);
+  });
+});
+
+// W7 item 3: n rows of chips became one, under the last answer, read from the
+// whole thread. What a thread is suggesting is the thread's, not an answer's
+describe("the thread's follow-ups", () => {
+  beforeEach(fresh);
+
+  test("one call per landed answer, carrying the whole thread", async () => {
+    seed([]);
+    await useAgent.getState().ask("question 0");
+    await useAgent.getState().ask("question 1");
+
+    expect(followUpCalls).toHaveLength(2);
+    const last = followUpCalls[1];
+    expect(last.thread).toContain("Q: question 0");
+    expect(last.thread).toContain("Q: question 1");
+    expect(last.thread).toContain("SQL: SELECT 3");
+    // no heading: the store's transcript, not a cut's replay
+    expect(last.thread).not.toContain("Earlier in this thread");
+    expect(last.asked).toEqual(["question 0", "question 1"]);
+    expect(useAgent.getState().followUps[TID]).toEqual(CHIPS);
+  });
+
+  test("the row leaves the instant a question is sent", async () => {
+    seed([]);
+    await useAgent.getState().ask("question 0");
+    expect(useAgent.getState().followUps[TID]).toEqual(CHIPS);
+
+    let duringRun: string[] | undefined = CHIPS;
+    runner.runAsk = async (req) => {
+      duringRun = useAgent.getState().followUps[TID];
+      return answeredRun(req);
+    };
+    await useAgent.getState().ask("question 1");
+    expect(duringRun).toBeUndefined();
+  });
+
+  test("a Stop costs nothing, the row included", async () => {
+    seed([]);
+    await useAgent.getState().ask("question 0");
+    const exchangeId = useAgent.getState().exchanges[TID][0].id;
+
+    runner.runAsk = async () => {
+      useAgent.getState().cancel();
+      return {
+        verdict: { status: "cancelled", sql: null },
+        sql: null,
+        run: null,
+        assumptions: [],
+        sanity: [],
+        trace: [],
+        text: "",
+        turns: 1,
+        ms: 1,
+        usage: { input: 0, output: 0 },
+        promptVersion: "v2",
+        candidates: [],
+        recall: null,
+        risky: false,
+      };
+    };
+    await useAgent.getState().retry(exchangeId);
+    expect(useAgent.getState().followUps[TID]).toEqual(CHIPS);
+  });
+
+  test("a deleted thread takes its row with it", async () => {
+    seed([]);
+    await useAgent.getState().ask("question 0");
+    await useAgent.getState().deleteThread(PID, TID);
+    expect(useAgent.getState().followUps[TID]).toBeUndefined();
+  });
+
+  test("a reloaded thread recomputes them from what appdb kept", async () => {
+    seed();
+    const RTID = "t-followups";
+    stored = {
+      turns: [row(RTID, 1, 0, "Q1"), row(RTID, 2, 1, "A1.")],
+      answers: [answerRow(2, "SELECT 1")],
+    };
+    useAgent.setState((s) => ({
+      threads: {
+        [PID]: [...(s.threads[PID] ?? []), { id: RTID, profileId: PID, title: "Reloaded", createdAt: "2026-09-06" }],
+      },
+    }));
+    await useAgent.getState().openThread(PID, RTID);
+    // the follow-up call is fired and not awaited: let its microtask land
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(useAgent.getState().followUps[RTID]).toEqual(CHIPS);
+    expect(followUpCalls[followUpCalls.length - 1].thread).toContain("Q: Q1");
   });
 });
 

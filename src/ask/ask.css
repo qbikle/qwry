@@ -223,11 +223,22 @@
    let it leave as one; its sections appear with opacity, never height
    (section 2) */
 .ans-body {
+  position: relative; /* the tail parks against it on a Restart (below) */
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
 }
-.ans-body > * {
+/* everything under the thinking strip is one node (AnswerBlock .ans-tail), so
+   a Restart can let the answer it forgets leave as one, parked where it stood,
+   while the fresh tail takes the flow. It repeats the column and its gap and
+   nothing else: the sections still fade in one at a time, as they land */
+.ans-tail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.ans-body > *:not(.ans-tail),
+.ans-tail > * {
   animation: ans-in var(--dur-slow) var(--ease-std);
 }
 @keyframes ans-in {
@@ -374,17 +385,21 @@
    behind a resolved mention's glyphs in the draft, the question echo wears it
    in the bubble, and the lift ghost carries it between them. A marked run of
    text, never a control (rule 8's inverse): accent-soft fill, the bubble's
-   22% ring, 4px corners, no hover, no font of its own (the textarea paints
+   hover ring, 4px corners, no hover, no font of its own (the textarea paints
    the glyphs, and a backdrop set in mono would drift off them; the @ and the
    quotes are the data costume). The box outdents 2px each side over its own
    margin, so the glyph run stays where the textarea put it and a pill
    appearing or leaving never moves a letter; a pill the line breaks keeps
    rounded ends on both fragments. In the bubble the same fill stacks on the
    bubble's tint and reads one step deeper, the way .chip.active reads over
-   any surface: one declaration, two readings */
+   any surface: one declaration, two readings.
+   W7 steps the ring from 22% to the bubble's 40% hover ring: at 22% over the
+   soft fill the edge read as a find-match's wash rather than a chip's edge,
+   and the pill is a chip in the draft and in the bubble both. The fill, the
+   corners and the outdent are untouched, so no glyph moves */
 .mention {
   background: var(--accent-soft);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
   border-radius: var(--radius-xs);
   margin: 0 -2px;
   padding: 0 2px;
@@ -730,9 +745,10 @@
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
-/* the grid slot: the real Grid mounts here in readOnly mode and sizes itself
-   (header + up to six rows + its own horizontal scrollbar, Grid maxRows), so
-   the answer scroller stays honest and no slot height can hide a row */
+/* the grid slot of the answer TEXT (AnswerText, W5): the model's own markdown
+   table, drawn by the readOnly Grid when no run is on screen to restate. A
+   run's rows live in the result block below (W7, .rb), which draws its own
+   box; this one is the table's */
 .ans-grid {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -856,65 +872,122 @@
   color: var(--warn);
 }
 
-/* collapsed SQL row */
-.ans-sql {
+/* ---- result block (W7 item 1, ResultBlock) -------------------------------
+   Fenced: owned by the result-block builder.
+   One bordered box with two faces, replacing the grid slot AND the collapsed
+   `SQL ▸ first line` row (DESIGN rule 15: the row was a strip naming a fact
+   the grid already stood for). The grid gives up its own corners to the box;
+   the SQL face is the editor register on the panel, wrapped, so the floor
+   never scrolls it sideways. The height is the face's own and springs
+   between them (ResultBlock), which is why the box clips. */
+.rb {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   overflow: hidden;
+  background: var(--bg-panel);
 }
-.ans-sql-head {
+/* the two faces share one box: popLayout parks the leaving face absolutely
+   against this wrapper while the arriving one takes the flow, so the wrapper
+   measures the face that is arriving and the block springs to it. `isolation`
+   closes the grid's own z ladder (its sticky header sits at 7) inside this
+   box, so the cluster, a later sibling, paints over the header instead of
+   under it (the .ans-echo precedent) */
+.rb-faces {
+  position: relative;
+  isolation: isolate;
+}
+/* a face on its way out is not pressable: a grid fading away answers no click
+   (DESIGN rule 8, LESSONS 9) */
+.rb-face[data-motion-pop-id] {
+  pointer-events: none;
+}
+/* the SQL face: a read-only CodeMirror view in the app's own grammar and
+   highlight; its text stays selectable inside a user-select:none body */
+.rb-sql {
+  user-select: text;
+  -webkit-user-select: text;
+}
+/* a one-row run keeps its face (22px mono, the caption under) and takes the
+   block's 8 / 12 padding: the SQL face needs the box, and a border that came
+   and went with the flip would be a jump. A box around a value is not a table
+   around a value. The vertical 8 is the value's own (.ans-scalar); the pairs
+   of a two-to-four column run take the same */
+.rb-scalar {
+  padding: 0 var(--sp-3);
+}
+.rb-scalar .ans-kv {
+  padding: var(--sp-2) 0;
+}
+
+/* the floating action cluster (VS Code's editor toolbar), shared by the block
+   and the answer's prose: absolute at its container's top-right with no
+   layout of its own, the container's own surface fading in from the left
+   under the buttons over 16px so the letters beneath dissolve instead of cut.
+   A boxed cluster inside the block was rejected as a frame inside a frame.
+   Rest is opacity 0 and a 4px slide out of the top edge on the bubble
+   cluster's register, never visibility: the buttons keep their place in the
+   tab order, which is the cluster's keyboard route (DESIGN rule 8, section
+   12). `--acts-surface` is the container's to declare */
+.acts-float {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 30px; /* optical */ /* the grid header's own band (Grid HEADER_H) */
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
-  width: 100%;
-  height: 28px;
-  padding: 0 var(--sp-2);
-  border: none;
-  background: none;
-  color: var(--fg-muted);
-  font-size: var(--text-xs);
-  cursor: pointer;
-  text-align: left;
+  gap: var(--sp-1);
+  padding: 0 var(--sp-1) 0 var(--sp-4);
+  background: linear-gradient(to right, transparent, var(--acts-surface) var(--sp-4));
+  opacity: 0;
+  transform: translateY(-4px);
+  transition:
+    opacity var(--dur-quick) var(--ease-std),
+    transform var(--dur-quick) var(--ease-std);
 }
-.ans-sql-head:hover {
-  background: var(--bg-hover);
+/* the surface is whatever the buttons actually stand on: the grid's header is
+   raised, a value, the SQL and the prose sit on the panel */
+.rb {
+  --acts-surface: var(--bg-panel);
 }
-.ans-sql-head:active {
-  background: var(--bg-active);
+.rb.table:has(.vgrid) {
+  --acts-surface: var(--bg-raised);
 }
-.ans-sql-chev {
-  flex-shrink: 0;
-  transition: transform var(--dur-quick) var(--ease-std);
+.rb:hover > .acts-float,
+.rb[data-hot] > .acts-float,
+.acts-float:focus-within {
+  opacity: 1;
+  transform: none;
 }
-.ans-sql.open .ans-sql-chev {
-  transform: rotate(90deg);
+
+/* the prose and its cluster (AnswerActions, W7 item 2): the slot is the
+   cluster's positioning box, so Copy · Save Query stand at the answer text's
+   top-right and the hover that reveals them is the prose's own, never the
+   footer's or the chips'. The letters they cover dissolve into the panel, the
+   surface the prose sits on */
+.ans-prose {
+  position: relative;
+  --acts-surface: var(--bg-panel);
 }
-.ans-sql-head code {
-  flex: 1;
-  min-width: 0;
-  font-family: var(--font-mono);
-  color: var(--fg);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+/* empty (the live region before its first delta) the slot is no box at all, so
+   the column reserves nothing for it and .ans-text:empty takes the region out
+   of the flow exactly as it did when it was the section itself (rule 2);
+   `animation: none` re-arms the section fade for the commit the first text
+   lands in */
+.ans-prose:has(> .ans-text:empty) {
+  display: contents;
+  animation: none;
 }
-.ans-sql-body {
-  border-top: 1px solid var(--border);
+/* 24px over the answer's first 20px line, 2px above it: the band the block
+   wears is the grid header's, and prose has no header to match */
+.ans-prose > .acts-float {
+  top: -2px; /* optical */
+  height: 24px;
 }
-.ans-sql-body pre {
-  margin: 0;
-  padding: var(--sp-2) var(--sp-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  line-height: var(--lh-data);
-  overflow: auto;
-  user-select: text;
-}
-.ans-sql-actions {
-  display: flex;
-  gap: var(--sp-2);
-  padding: var(--sp-2);
-  border-top: 1px solid var(--border);
+.ans-prose:hover > .acts-float,
+.ans-prose[data-hot] > .acts-float {
+  opacity: 1;
+  transform: none;
 }
 
 /* assumption chips + follow-ups: one wrapping row; the assumption row leads
@@ -978,16 +1051,16 @@
 .chip.active svg {
   color: var(--accent);
 }
-/* suggestion chip: the dashed-ghost species in pill shape (a question not yet
-   asked); hover turns the dash solid accent */
+/* suggestion chip: a question not yet asked. It wears the base chip's own
+   solid hairline now (W7) and adds only its text tier and pill proportion: the
+   dashed ghost is the add/create species and a question the model wrote is not
+   an invitation to create one. Hover takes the hairline to accent, which is
+   the whole state change now that nothing here is dashed */
 .chip.q {
   padding: var(--sp-1) 10px; /* optical */
-  border-style: dashed;
-  border-color: var(--border);
   color: var(--fg);
 }
 .chip.q:hover:not(:disabled) {
-  border-style: solid;
   border-color: var(--accent);
   background: transparent;
 }
@@ -1066,20 +1139,41 @@
 }
 /* the editable SQL: a CodeMirror field (JsonField precedent); the editor's
    own theme carries the mono, size and inner padding, the box carries the
-   border and the focus treatment */
-.ans-fixsql {
+   border and the focus treatment. The box is also the positioning box for
+   Insert (W7 fix, DESIGN rule 15's first question): the statement Insert
+   puts at the caret is the one inside this border, so the action stands on
+   the field in the result block's own floating cluster instead of taking a
+   fourth slot in the button row, where four buttons wrapped to two lines at
+   the 320 floor and stood on one at 392 (rule 13) */
+.ans-fix {
+  position: relative;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   background: var(--bg-app);
   overflow: hidden;
   transition: border-color var(--dur-quick);
+  --acts-surface: var(--bg-app);
 }
-.ans-fixsql:focus-within {
+.ans-fix:focus-within {
   border-color: var(--accent);
 }
 .ans-fixsql .cm-editor {
   user-select: text;
   -webkit-user-select: text;
+}
+/* the field has no header band for the cluster to sit in, so the band IS the
+   statement's first line: 8px down for the editor's own padding, 20px tall
+   over an 18.6px line, so the fade dissolves the end of line one and never
+   reaches line two */
+.ans-fix > .acts-float {
+  top: var(--sp-2);
+  height: 20px;
+}
+.ans-fix:hover > .acts-float,
+.ans-fix:focus-within > .acts-float,
+.ans-fix[data-hot] > .acts-float {
+  opacity: 1;
+  transform: none;
 }
 .ans-acts {
   display: flex;
@@ -1172,10 +1266,22 @@
 .ask-ta-wrap {
   position: relative;
   display: flex;
+  /* the outdent's room (W7): a pill at position 0 of the draft outdents 2px
+     to the left of the text origin and the backdrop's own overflow cut it
+     there, so the wrap pads 2px on both sides and takes them straight back in
+     margin. Its content box, and with it the textarea, does not move; only
+     the backdrop's clip edge does */
+  padding: 0 2px;
+  margin: 0 -2px;
 }
+/* the backdrop fills the wrap's PADDING box (inset:0) and pays the 2px back
+   as its own padding, so its glyph run starts where the textarea's does and
+   the clip edge stands 2px outside it: the same padding on both, or the pills
+   drift off the letters they paint behind */
 .ask-ta-back {
   position: absolute;
   inset: 0;
+  padding: 0 2px;
   overflow: hidden;
   font-family: var(--font-ui);
   font-size: var(--text-md);
@@ -1226,10 +1332,11 @@
 }
 
 /* ---- @ completion popover (MentionPopover, W6) -------------------------- */
-/* the picker's box (.picker-pop, .picker-anchor: raised, border-strong,
-   radius-md, shadow-pop, 4px padding, grown upward from a zero-height anchor)
-   at the composer box's width, its edges on the box's outer edges 4px above
-   it; past 320px of rows it scrolls. No title, no footer, no empty row. The
+/* the picker's box (.picker-pop, .picker-anchor: border-strong, radius-md,
+   shadow-pop, 4px padding, grown upward from a zero-height anchor) at the
+   composer box's width, its edges on the box's outer edges 4px above it; past
+   320px of rows it scrolls. No title, no footer, no empty row, and since W7
+   no group headings either: the row's kind icon says what they said. The
    anchor is portaled and fixed at the box's top-left on the anchored popups'
    rung (overlay.css's 40), under the overlay stack (50+) it never joins */
 .mention-anchor {
@@ -1239,6 +1346,14 @@
 .mention-pop {
   width: 100%;
   max-height: 320px;
+  /* flat on the composer's own panel, not the picker's raised tone (W7): the
+     box stands on the composer and one surface says so */
+  background: var(--bg-panel);
+}
+/* the row's kind (MentionPopover KIND_ICON) at the trio's small size in tier
+   2: metadata beside the name, never the accent the picker's check wears */
+.mention-pop .picker-item svg {
+  color: var(--fg-muted);
 }
 /* the picker's menu rows at one fixed height, so a mono identifier row and a
    text row are one row (the sketch gate: 26 against 27 was a jitter) */
@@ -1657,14 +1772,8 @@
 }
 /* ---- end TraceDrawer ---- */
 
-/* ---- AnswerBlock anatomy (ThinkingStrip, SqlRow) ---------------------------
+/* ---- AnswerBlock anatomy (ThinkingStrip) -----------------------------------
    Fenced: owned by the answer-anatomy builder. */
-/* the SQL row's editor register: a read-only CodeMirror view; its text stays
-   selectable inside a user-select:none body */
-.ans-sql-code {
-  user-select: text;
-  -webkit-user-select: text;
-}
 /* per-block provenance (AGENT-UX section 9): the connection's 8px dot leads
    the footer's status line (the titlebar conn-dot at the same size) */
 .ans-dot {
@@ -1678,6 +1787,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .ans-body > *,
+  .ans-tail > *,
   .ans-body[data-leaving],
   .ans-echo::before {
     animation: none;

@@ -75,3 +75,20 @@ from the maintainer, say so and cite it; the pushback is wanted.
     harnesses, property tests) beat reviewers that read. House style: every
     behavioral wave gets an adversarial review; big waves get two with
     different lenses.
+13. **A status reports the number the user saw work, never an internal
+    counter.** A turn-cap failure read `stopped after 1 turns`: qwry's own
+    per-invocation counter, ticked once for a single `claude -p` call that
+    itself spent its whole budget describing and peeking before its own cap
+    ended it. The user watched tools run for a while and was told it stopped
+    after one. Read the count from whatever system did the counting (the
+    child's own `num_turns` off its result line), word the copy in that
+    system's units and grammar (singular at 1: `stopped after 12 turns`),
+    and size the wrapper's own budget so a wide question does not spend it
+    before the model gets to answer. A wrapper's invocation tally is an
+    implementation detail, not a status. Then fix EVERY slot that prints the
+    number, not the one in the bug report: the same wave's first fix reworded
+    the failure heading and left the footer two lines under it reading `1
+    turn`, so one fact stood in two slots with two different numbers (DESIGN
+    rule 14), and a successful run's footer went on miscounting because no
+    one had complained about that one yet. Read the count once, at the seam
+    where it arrives, and hand that value to every slot.

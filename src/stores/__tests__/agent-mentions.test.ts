@@ -143,7 +143,6 @@ const answering: typeof realRunAsk = async (req) => {
     run: { columns: ["n"], rows: [["1"]], rowCount: 1, capped: false, ms: 3 },
     assumptions: [],
     sanity: [],
-    followUps: [],
     trace: [],
     text: "One.",
     turns: 1,

@@ -151,3 +151,31 @@ describe("useAsk mention query", () => {
     expect(useAsk.getState().mentionQuery).toBeNull();
   });
 });
+
+// W7: the grid and the collapsed SQL row became one block with two faces, and
+// which face an exchange is showing is a mode the user chose, not chrome
+describe("useAsk result faces", () => {
+  beforeEach(() => useAsk.setState({ face: {} }));
+
+  test("no entry until the user flips, and then one per exchange", () => {
+    expect(useAsk.getState().face["ex-1"]).toBeUndefined();
+    useAsk.getState().setFace("ex-1", "sql");
+    useAsk.getState().setFace("ex-2", "table");
+    expect(useAsk.getState().face).toEqual({ "ex-1": "sql", "ex-2": "table" });
+    useAsk.getState().setFace("ex-1", "table");
+    expect(useAsk.getState().face["ex-1"]).toBe("table");
+  });
+
+  test("flipping to the face already showing changes nothing", () => {
+    useAsk.getState().setFace("ex-1", "sql");
+    const before = useAsk.getState().face;
+    useAsk.getState().setFace("ex-1", "sql");
+    expect(useAsk.getState().face).toBe(before);
+  });
+
+  test("leaving Ask keeps the faces: a mode is not chrome over the answer", () => {
+    useAsk.getState().setFace("ex-1", "sql");
+    useAsk.setState({ open: false, traceOpenFor: null, threadsOpen: false });
+    expect(useAsk.getState().face["ex-1"]).toBe("sql");
+  });
+});

@@ -192,8 +192,9 @@ moment a second width was drawn.
 
 ## Rule 14: Data once
 
-A fact renders in exactly one slot. Results in the grid, the query in the SQL
-row, interpretations in the assumption chips, timing in the status line,
+A fact renders in exactly one slot. Results on the result block's table face,
+the query on its SQL face, interpretations in the assumption chips, timing in
+the status line,
 provenance in the footer's connection dot; prose never repeats any of them. Answer prose
 is interpretation in the shape the question asks for, a direct question one
 sentence, an insight question an optional one-line lead-in and two to four
@@ -206,3 +207,42 @@ which restated the grid as a markdown table, the SQL in a fence and the
 assumptions as a bullet list, rendered raw under a grid, a SQL row and chips
 that already showed all three. The anatomy was right; the prose was the
 duplicate, and the display strip that removes it is the fix.
+
+## Rule 15: Consolidate before you add
+
+Before any new control, strip or row: three questions, asked in this order.
+Can it live on the object it acts on, rather than on a strip that names the
+object from outside? Can it become a second face of a block that already
+exists, rather than a second block standing beside it? Is the always-visible
+chrome count, counted the way rule 13 counts it, lower after the change than
+before? A "no" to all three is the only licence to add; a "yes" to any one
+means the answer is a face on something that already stands, not a new
+fixture. State the test as a number, chrome strips for one live answer,
+before and after: a design that cannot say the number has not made its case.
+
+Exemplar: VS Code's floating editor toolbar. Its actions sit at the code
+block's own top-right corner, hidden until the pointer or the keyboard
+reaches the block, and act on that block alone; the file carries no
+permanent bar above every block to hold them, and no block explains what its
+own buttons do. The actions live on the object they act on, not beside it.
+
+Rules are floors, taste is the ceiling: a rule states the least a design
+must clear, not the one shape that clears it. When a design beats a rule as
+written, the fix is not a quiet exception: cite the rule, say in the same
+breath why the new shape serves the rule's own goal better than the rule's
+own words do, and amend the rule in the same PR. A rule its own author would
+rewrite on sight is not yet the rule.
+
+Precedent: W7 folded the results grid's header and the collapsed SQL row
+into one block wearing two faces, reached by three actions in a hover
+cluster at the block's own top-right corner (the VS Code exemplar, not a
+toolbar bolted above it): one live answer's always-visible chrome went from
+2 strips to 0.
+
+Precedent: the same wave added `Continue` to the failure block's button row
+without asking the three questions, and four buttons wrapped to two lines at
+320 while standing on one at 392, chrome that changes shape with the width
+(rule 13). Question one answered it: `Insert` acts on the statement in the
+field above the row, so it moved onto the field as that field's own hover
+cluster and the row went back to one line at the floor. A row that wraps at
+320 is the symptom; the missing first question is the cause.

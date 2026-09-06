@@ -7,6 +7,10 @@
 // its `canonicalToken`, and the fragment rule here is that grammar read up to
 // the caret (an identifier path, or a quoted name still open).
 //
+// The groups are the order the popover draws them in and nothing more: W7
+// took the headings out and gave every row its kind (`MentionRow.kind`) as an
+// icon instead, so a fragment's rows read as one run, tables first.
+//
 // Rows are matched by the name the user would type, never fuzzily: a row
 // under `ord` contains `ord`, and a column row matches on the COLUMN's name
 // alone (the table part is shown, not searched; a filter that means a table's
@@ -132,6 +136,8 @@ export interface MentionRow {
   hint: string | null;
 }
 
+/** the four kinds in the order the popover lays them out; the popover draws
+ * them as one flat run, each row wearing its kind */
 export interface MentionGroups {
   tables: MentionRow[];
   columns: MentionRow[];

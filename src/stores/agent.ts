@@ -100,10 +100,15 @@ export interface Exchange {
   streaming: boolean;
   provider: string;
   model: string;
-  /** present while a retry (applyPending, fixIt, retry) streams over this
-   * exchange: the landed shape it is replacing. A cancelled retry puts it back
-   * exactly (a Stop never costs an answer, AGENT-UX 7); any verdict drops it */
+  /** present while a retry (applyPending, fixIt, retry, restartFrom) streams
+   * over this exchange: the landed shape it is replacing. A cancelled retry
+   * puts it back exactly (a Stop never costs an answer, AGENT-UX 7); any
+   * verdict drops it */
   prior?: PriorAnswer;
+  /** a Restart forgot this exchange's own answer (W7): `prior` still holds it
+   * for the Stop, but nothing of it is on screen, so the new run's text
+   * streams instead of being held back behind an answer that is still there */
+  forgot?: boolean;
 }
 
 /** What a retry replaces: kept whole so restorePrior() is exact. */
@@ -139,6 +144,11 @@ interface AgentState {
    * floating pill applies the whole set as ONE re-ask (applyPending). Keys
    * return to the answer's state are deleted, so an empty set is no entry */
   pending: Record<string, Record<string, boolean>>;
+  /** per THREAD, the three next questions (W7): one row, under the last
+   * answer, read from everything the thread asked and answered rather than
+   * from one exchange. Cleared the moment a run starts, so the chips never
+   * stand beside a question they did not come from */
+  followUps: Record<string, string[]>;
 
   setActiveProfile: (profileId: string | null) => void;
   loadThreads: (profileId: string) => Promise<void>;
@@ -162,6 +172,10 @@ interface AgentState {
   fixIt: (exchangeId: string, sql: string) => Promise<void>;
   /** the retry a provider error offers: the same question, asked again */
   retry: (exchangeId: string) => Promise<void>;
+  /** Continue (AGENT-UX 7): the turn cap cut the run short, so the SAME
+   * provider session is asked to finish, with a fresh budget and no
+   * re-inspection. Refused on anything but a capped exchange */
+  continueFrom: (exchangeId: string) => Promise<void>;
   /** cut the thread at an exchange: everything after it (and the exchange
    * itself when `inclusive`) leaves the state and appdb, and the thread
    * mints a fresh provider session, because a resumed one remembers the
@@ -170,10 +184,11 @@ interface AgentState {
   /** send from edit mode: the thread is cut from that exchange inclusive and
    * the new question lands where the old one stood */
   askFrom: (exchangeId: string, question: string) => Promise<void>;
-  /** Restart: the latest exchange takes the retry shape (nothing is lost, a
-   * cancel puts the prior answer back); an older one cuts every exchange
-   * after it and re-runs its own question. The confirm belongs to the UI,
-   * which knows what the user is looking at; the store never asks */
+  /** Restart (W7): cut every exchange AFTER this one, re-mint the provider
+   * session, forget this exchange's own answer and ask its question again, so
+   * the model inspects the database instead of answering from a session that
+   * remembers what it said. `prior` keeps the old answer for the Stop. The
+   * confirm belongs to the UI, which knows what the user is looking at */
   restartFrom: (exchangeId: string) => Promise<void>;
   /** thread closed or connection disconnected: the session goes with it */
   closeThread: (threadId: string) => Promise<void>;
@@ -183,10 +198,10 @@ interface AgentState {
   deleteAllThreads: (profileId: string) => Promise<void>;
 }
 
-/** The loop entry runInto() drives. A seam, not a switch: the store's own
- * tests stand a scripted loop in here (agent-pending.test.ts), because a bun
- * module mock is process-global and reached the loop's own tests. */
-export const runner = { runAsk };
+/** The two model calls this store makes. A seam, not a switch: the store's
+ * own tests stand scripted ones in here (agent-pending.test.ts), because a
+ * bun module mock is process-global and reached the loop's own tests. */
+export const runner = { runAsk, suggestFollowUps };
 
 /** Not state: an AbortController is not serialisable and nothing renders it. */
 const controllers = new Map<string, AbortController>();
@@ -201,6 +216,12 @@ const resumed = new Set<string>();
  * of them. Cleared when a run lands, so the replay is carried once and a
  * failed or cancelled first attempt keeps it for the next. */
 const cutPending = new Set<string>();
+
+/** What a Continue sends (AGENT-UX 7). The session already holds the
+ * inspection and the half-written answer, so the message is the instruction
+ * and nothing else: re-stating the question would invite the model to start
+ * over, which is what the cap already made it pay for. */
+const CONTINUE_ASK = "Continue: finish the answer from where you stopped, with the final SQL";
 
 const TITLE_CAP = 80;
 const title = (question: string) =>
@@ -304,6 +325,7 @@ export const useAgent = create<AgentState>((set, get) => ({
   phase: {},
   busy: {},
   pending: {},
+  followUps: {},
 
   setActiveProfile: (profileId) => set({ activeProfileId: profileId }),
 
@@ -376,7 +398,6 @@ export const useAgent = create<AgentState>((set, get) => ({
           ? parseJson<Assumption[]>(stored.assumptions_json, [])
           : buildAssumptions({ text: turn.content, sql, question: current.question }),
         sanity: parseJson<SanityFragment[]>(stored?.sanity_json, []),
-        followUps: [],
         trace: traceFromTurn(turn),
         text: turn.content,
         turns: 0,
@@ -426,6 +447,7 @@ export const useAgent = create<AgentState>((set, get) => ({
       return {
         exchanges,
         pending,
+        followUps: without(s.followUps, threadId),
         threads: {
           ...s.threads,
           [profileId]: (s.threads[profileId] ?? []).filter((t) => t.id !== threadId),
@@ -655,6 +677,30 @@ export const useAgent = create<AgentState>((set, get) => ({
     });
   },
 
+  continueFrom: async (exchangeId) => {
+    const found = locateExchange(get, exchangeId);
+    if (!found) return;
+    const { profileId, threadId, exchange, snapshot, choice, mentions } = found;
+    // only a run the cap cut short has somewhere to continue from; every
+    // other failure is a Retry, and an answered exchange is finished
+    if (exchange.error?.kind !== "turncap") return;
+    // no cut and no re-mint: the point is the session that already holds the
+    // inspection, so the model picks up where it stopped instead of paying
+    // for describe and peek a second time
+    rearm(set, threadId, exchangeId);
+    await runInto(set, get, {
+      profileId,
+      threadId,
+      exchangeId,
+      question: exchange.question,
+      askText: CONTINUE_ASK,
+      snapshot,
+      choice,
+      mentions,
+      persistUserTurn: false,
+    });
+  },
+
   truncateThread: async (threadId, fromExchangeId, inclusive) => {
     // everything the cut depends on, read before the first await (LESSONS 3)
     if (get().busy[threadId]) return;
@@ -666,29 +712,15 @@ export const useAgent = create<AgentState>((set, get) => ({
     // exactly what is on screen, so its session stands
     if (keep >= exchanges.length) return;
     const gone = exchanges.slice(keep);
-    const profileId = profileOf(get, threadId);
-    const sessionKey = crypto.randomUUID();
     set((s) => {
       let pending = s.pending;
       for (const e of gone) pending = without(pending, e.id);
-      return {
-        exchanges: { ...s.exchanges, [threadId]: exchanges.slice(0, keep) },
-        pending,
-        threads: profileId
-          ? {
-              ...s.threads,
-              [profileId]: (s.threads[profileId] ?? []).map((t) =>
-                t.id === threadId ? { ...t, sessionKey } : t,
-              ),
-            }
-          : s.threads,
-      };
+      return { exchanges: { ...s.exchanges, [threadId]: exchanges.slice(0, keep) }, pending };
     });
     // claude -p resumes a session that remembers the cut turns and cannot be
     // rewound: the thread starts a new one, and its first call replays what
     // the cut kept (runInto)
-    resumed.delete(threadId);
-    cutPending.add(threadId);
+    const sessionKey = mintSessionKey(set, get, threadId);
     // the cut NAMES its rows, because no boundary describes them: an exchange
     // whose run failed before persist() owns none, and a Retry on it writes
     // its pair after its own successors', so neither the row count nor the id
@@ -725,14 +757,26 @@ export const useAgent = create<AgentState>((set, get) => ({
     if (!found) return;
     const { profileId, threadId, exchange, snapshot, choice, mentions } = found;
     const exchanges = get().exchanges[threadId] ?? [];
-    // the latest exchange loses nothing: that is the retry shape, prior and
-    // all, and it needs no confirm
-    if (exchanges[exchanges.length - 1]?.id === exchangeId) {
-      await get().retry(exchangeId);
-      return;
+    const at = exchanges.findIndex((e) => e.id === exchangeId);
+    // W7: a Restart that resumed the session answered from memory in five
+    // seconds with no tool call, which is a repeat, not a restart. Every
+    // Restart re-mints, so the model inspects the database again; the cut
+    // takes what came AFTER (the answers below would answer a question that
+    // is being asked again), and the newest exchange, with nothing after it,
+    // re-mints on its own
+    if (at >= 0 && at + 1 < exchanges.length) {
+      await get().truncateThread(threadId, exchangeId, false);
+    } else {
+      const sessionKey = mintSessionKey(set, get, threadId);
+      try {
+        await agentThreadSessionSet(threadId, sessionKey);
+      } catch (e) {
+        console.error("agent thread session set failed", e);
+      }
     }
-    await get().truncateThread(threadId, exchangeId, false);
-    rearm(set, threadId, exchangeId);
+    // the answer is forgotten, not kept on screen: the chips have to be what
+    // the user watches. `prior` still holds it, so a Stop puts it back
+    rearm(set, threadId, exchangeId, true);
     await runInto(set, get, {
       profileId,
       threadId,
@@ -841,6 +885,33 @@ function profileOf(get: () => AgentState, threadId: string): string | null {
     if (threads.some((t) => t.id === threadId)) return profileId;
   }
   return null;
+}
+
+/** Put a brand-new provider session key on a thread and forget that the old
+ * one was ever resumed. `claude -p` resumes a session that remembers every
+ * turn and cannot be rewound, so a cut (W4) and a Restart (W7) both need one
+ * the provider has never heard; the next run replays what stands (cutPending,
+ * read in runInto). Sync, so the key is on screen before any await; the
+ * caller writes it to appdb.
+ *
+ * The one place this shape lives: two callers minting their own uuid is two
+ * accounts of which session a thread is on. */
+function mintSessionKey(set: Setter, get: () => AgentState, threadId: string): string {
+  const profileId = profileOf(get, threadId);
+  const sessionKey = crypto.randomUUID();
+  set((s) => ({
+    threads: profileId
+      ? {
+          ...s.threads,
+          [profileId]: (s.threads[profileId] ?? []).map((t) =>
+            t.id === threadId ? { ...t, sessionKey } : t,
+          ),
+        }
+      : s.threads,
+  }));
+  resumed.delete(threadId);
+  cutPending.add(threadId);
+  return sessionKey;
 }
 
 /** the provider session a thread resumes: its own key, or the thread id for
@@ -971,11 +1042,13 @@ function findExchange(get: () => AgentState, exchangeId: string) {
  * landed shape stashed as `prior`: the strip shows the new run's chips while
  * the old prose, grid and footer stay on screen (text deltas are held back
  * until the verdict, see runInto), and a cancel restores the stash exactly */
-function rearm(set: Setter, threadId: string, exchangeId: string) {
+function rearm(set: Setter, threadId: string, exchangeId: string, forget = false) {
   set((s) => ({
     exchanges: {
       ...s.exchanges,
-      [threadId]: (s.exchanges[threadId] ?? []).map((e) => (e.id === exchangeId ? stashPrior(e) : e)),
+      [threadId]: (s.exchanges[threadId] ?? []).map((e) =>
+        e.id === exchangeId ? stashPrior(e, forget) : e,
+      ),
     },
     busy: { ...s.busy, [threadId]: true },
   }));
@@ -983,8 +1056,8 @@ function rearm(set: Setter, threadId: string, exchangeId: string) {
 
 /** the retry's opening move: keep what is on screen, clear what the new run
  * writes (chips, error, thinking); the text stays visible as the prior prose */
-export function stashPrior(e: Exchange): Exchange {
-  return {
+export function stashPrior(e: Exchange, forget = false): Exchange {
+  const stashed: Exchange = {
     ...e,
     prior: { text: e.text, thinking: e.thinking, chips: e.chips, answer: e.answer, error: e.error },
     streaming: true,
@@ -992,12 +1065,18 @@ export function stashPrior(e: Exchange): Exchange {
     error: null,
     thinking: "",
   };
+  // a Restart forgets this exchange's own answer (W7): the run has to look
+  // like a run, so the slot empties and the new text streams into it. The
+  // stash still holds the old answer, and a Stop puts it back exactly
+  return forget
+    ? { ...stashed, forgot: true, text: "", textStale: false, answer: null }
+    : stashed;
 }
 
 /** a cancelled retry: the exchange exactly as it was before rearm() */
 export function restorePrior(e: Exchange): Exchange {
   if (!e.prior) return { ...e, streaming: false };
-  const { prior, ...rest } = e;
+  const { prior, forgot: _forgot, ...rest } = e;
   return {
     ...rest,
     text: prior.text,
@@ -1012,7 +1091,7 @@ export function restorePrior(e: Exchange): Exchange {
 /** a verdict landed: the prior has been replaced */
 function dropPrior(e: Exchange): Exchange {
   if (!e.prior) return e;
-  const { prior: _prior, ...rest } = e;
+  const { prior: _prior, forgot: _forgot, ...rest } = e;
   return rest;
 }
 
@@ -1113,11 +1192,21 @@ interface RunArgs {
   /** chip states the user chose, reapplied to the landed chips whatever the
    * re-run's own Assumptions line said */
   flips?: Flip[];
+  /** false for a Continue (W7): the run is not a new question, so it creates
+   * no rows. It rewrites the ones the capped run left, and a capped run that
+   * left none leaves history as it found it */
+  persistUserTurn?: boolean;
 }
 
 async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
   const { threadId, exchangeId, profileId } = args;
   cancelRequested.delete(threadId);
+  // the follow-up row leaves the instant a question is sent (W7): it belongs
+  // to the thread as it stood, and a chip beside a running question suggests
+  // what to ask next while the last thing asked has no answer. A cancelled
+  // retry is no verdict, so its row comes back with everything else
+  const keptFollowUps = get().followUps[threadId];
+  set((s) => ({ followUps: without(s.followUps, threadId) }));
   // the session the provider resumes and, after a cut, the transcript of what
   // the cut kept: both read before the first await (LESSONS 3). The exchange
   // being asked is not in its own replay
@@ -1185,9 +1274,10 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
         break;
       case "text":
         // a retry keeps the prior prose on screen until its verdict lands
-        // (the landed answer.text replaces it then); a fresh question streams
+        // (the landed answer.text replaces it then); a fresh question, and a
+        // Restart that forgot its answer, stream into an empty slot
         patchExchange(set, threadId, exchangeId, (e) =>
-          e.prior
+          e.prior && !e.forgot
             ? e
             : e.textStale
               ? { ...e, text: ev.delta, textStale: false }
@@ -1199,7 +1289,9 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
         // that follows replaces it on screen when its first delta lands; until
         // then the prose stays (a blank slot under running chips read as lost
         // text, and a SQL-only closing block never replaces it at all)
-        patchExchange(set, threadId, exchangeId, (e) => (e.prior ? e : { ...e, textStale: true }));
+        patchExchange(set, threadId, exchangeId, (e) =>
+          e.prior && !e.forgot ? e : { ...e, textStale: true },
+        );
         break;
       case "thinking":
         patchExchange(set, threadId, exchangeId, (e) => ({
@@ -1277,6 +1369,8 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
     !!(get().exchanges[threadId] ?? []).find((e) => e.id === exchangeId)?.prior;
   if (cancelledRetry) {
     patchExchange(set, threadId, exchangeId, restorePrior);
+    // a Stop costs nothing (AGENT-UX 7), the row of chips included
+    if (keptFollowUps) set((s) => ({ followUps: { ...s.followUps, [threadId]: keptFollowUps } }));
   } else {
     patchExchange(set, threadId, exchangeId, (e) => ({
       ...dropPrior(e),
@@ -1309,10 +1403,15 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
   await persist(set, get, args, landed);
 }
 
-/** The follow-up call (AGENT-SPEC 4.6) for one landed answer. The patch lands
- * only while that same answer object is still the exchange's: a re-run that
- * replaced it in the meantime keeps its own state. The call is recorded as a
- * trace step, because nothing sent to a provider is hidden (spec 8.4). */
+/** The follow-up call (AGENT-SPEC 4.6) for a THREAD (W7). The chips stand
+ * once, under the last answer, so what they suggest is read from the whole
+ * conversation: the same compact transcript a cut replays (`replayOf`, one
+ * Q / SQL / first sentence per exchange, oldest dropped under the cap).
+ *
+ * The result lands only while the answer that asked for it is still the
+ * exchange's: a re-run that replaced it in the meantime keeps its own state.
+ * The call is recorded as a trace step on that answer, because nothing sent
+ * to a provider is hidden (spec 8.4). */
 async function followUpsInto(
   set: Setter,
   get: () => AgentState,
@@ -1326,24 +1425,21 @@ async function followUpsInto(
   },
 ) {
   const { threadId, exchangeId, landed } = args;
-  const exchange = (get().exchanges[threadId] ?? []).find((e) => e.id === exchangeId);
-  if (!exchange) return;
-  const asked = (get().exchanges[threadId] ?? []).map((e) => e.question);
-  const out = await suggestFollowUps({
-    question: exchange.question,
-    answer: landed.text,
-    sql: landed.sql,
-    asked,
+  const onScreen = get().exchanges[threadId] ?? [];
+  if (!onScreen.some((e) => e.id === exchangeId)) return;
+  const out = await runner.suggestFollowUps({
+    thread: replayOf(onScreen, { head: "" }),
+    asked: onScreen.map((e) => e.question),
     provider: args.provider,
     model: args.model,
     signal: args.signal,
   });
   if (!out.step) return;
   const step = out.step;
+  if ((get().exchanges[threadId] ?? []).find((e) => e.id === exchangeId)?.answer !== landed) return;
+  set((s) => ({ followUps: { ...s.followUps, [threadId]: out.questions } }));
   patchExchange(set, threadId, exchangeId, (e) =>
-    e.answer === landed
-      ? { ...e, answer: { ...landed, followUps: out.questions, trace: [...landed.trace, step] } }
-      : e,
+    e.answer === landed ? { ...e, answer: { ...landed, trace: [...landed.trace, step] } } : e,
   );
 }
 
@@ -1431,6 +1527,10 @@ async function persist(set: Setter, get: () => AgentState, args: RunArgs, answer
   try {
     let turnId = existing.turnId;
     if (turnId === null) {
+      // a Continue is not a new question (W7): it has only the rows the
+      // capped run left to rewrite, and a run that left none leaves history
+      // as it found it rather than writing an answer with no question
+      if (args.persistUserTurn === false) return;
       // `idx` is the thread's order: the question's slot and its answer's one
       // above it, ALLOCATED BETWEEN NEIGHBOURS (allocateIdx) and never read
       // out of the exchange's position on screen. A position is not a slot: a

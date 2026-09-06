@@ -130,18 +130,12 @@ export const FOLLOWUP_SYSTEM_PROMPT =
   "database, none repeating the original question or each other. Output ONLY the three " +
   "lines. No numbering, no bullets, no commentary.";
 
-/** The one user message of the follow-up call. `asked` is every question of
- * the thread so far, so a suggestion never repeats one (AGENT-UX section 6). */
-export function followUpMessage(args: {
-  question: string;
-  answer: string;
-  sql: string | null;
-  asked: string[];
-}): string {
-  const asked = args.asked.filter((q) => q.trim() && q.trim() !== args.question.trim());
-  return (
-    `Question: ${args.question}\n\nAnswer:\n${args.answer.trim() || "(no prose)"}` +
-    (args.sql ? `\n\nSQL:\n${args.sql}` : "") +
-    (asked.length > 0 ? `\n\nAlready asked in this thread:\n${asked.join("\n")}` : "")
-  );
+/** The one user message of the follow-up call. W7: the chips stand ONCE, at
+ * the thread's end, so the call reads the WHOLE thread rather than the last
+ * exchange. `thread` is the transcript the store builds with `replayOf`, the
+ * same one a cut replays: one `Q:` / `SQL:` / `A: <first sentence>` block per
+ * exchange, oldest dropped under the cap. Every question asked is in it, so
+ * nothing is listed twice under an "already asked" heading. */
+export function followUpMessage(args: { thread: string }): string {
+  return `The thread so far:\n\n${args.thread.trim() || "(nothing yet)"}`;
 }

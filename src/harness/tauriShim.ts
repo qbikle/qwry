@@ -39,6 +39,15 @@
 //                                           asks the opener plugin for the
 //                                           browser, and a frame or a probe that
 //                                           clicks one never rejects
+//   plugin:clipboard-manager|write_text     recorded on `clipboardWrites` and
+//                                           nothing else: every Copy in the pane
+//                                           goes through copyCue, whose cue is
+//                                           `copy failed` when the write throws,
+//                                           so a refused clipboard would make
+//                                           every Copy read as broken; a probe
+//                                           reads back what the last one wrote
+//                                           (the OS clipboard is not a headless
+//                                           page's to touch)
 //   everything else                         rejects Error("harness: <cmd> has no fixture")
 
 import type { Channel, InvokeArgs } from "@tauri-apps/api/core";
@@ -49,6 +58,10 @@ import { MENTION_STATES, mentionThreadRows } from "./fixtures.mentions";
 import { SHELL_THREAD_ROWS } from "./fixtures.shell";
 
 const harnessState = () => new URLSearchParams(location.search).get("state");
+
+/** every clipboard write the pane has made, oldest first: the harness's
+ * clipboard, read by a probe through this module (the frames never look) */
+export const clipboardWrites: string[] = [];
 
 const record = (payload: InvokeArgs | undefined): Record<string, unknown> =>
   payload !== null && typeof payload === "object" && !Array.isArray(payload)
@@ -90,6 +103,11 @@ export function installTauriShim(): void {
           return false;
         case "agent_http_stream":
           return httpStream(payload);
+        case "plugin:clipboard-manager|write_text": {
+          const text = record(payload).text;
+          clipboardWrites.push(typeof text === "string" ? text : "");
+          return undefined;
+        }
         case "agent_http_abort":
         case "agent_thread_truncate":
         case "agent_thread_session_set":

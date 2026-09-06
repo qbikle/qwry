@@ -62,6 +62,22 @@
 // line over the block). Both read `FIXTURE` only inside functions (the
 // anatomy precedent) and `choiceFor` gives them the discussion thread's
 // Haiku 4.5.
+//
+// The W7 states are the consolidated result block and the answer's own row:
+// fixtures.result.ts (`result-table`, `result-sql`, `result-scalar`,
+// `failure-cap`: one block with two faces, hot, and the turn cap's widest
+// action row) and fixtures.answer.ts (`answer-actions`, `followups-end`: the
+// prose cluster revealed, and the one follow-up row under the thread's LAST
+// answer). Both seed whole threads AskHarness reads from their files, so
+// `exchangeFor` returns null for them; the result thread reads its own Haiku
+// 4.5 (`RESULT_CHOICE`) and the answer thread the discussion one
+// (`ANSWER_CHOICE`).
+//
+// Follow-ups now live on the THREAD (useAgent.followUps), not on an answer, so
+// no fixture's exchange carries one: `followUpsFor` reads the row back out of
+// the last exchange's own `followups` trace step, which is where the loop
+// recorded it, and every state that had a row before W7 keeps it under its
+// last answer alone.
 
 import type { AskAnswer } from "../agent/loop";
 import type { AgentRun, Assumption, Thread, TraceStep } from "../agent/types";
@@ -70,9 +86,11 @@ import type { SchemaSnapshot, TableInfo } from "../stores/schema";
 import type { Exchange, ToolChip } from "../stores/agent";
 import { ACTIONS_CHOICE } from "./fixtures.actions";
 import { anatomyExchangeFor } from "./fixtures.anatomy";
+import { ANSWER_CHOICE, type AnswerState } from "./fixtures.answer";
 import { interactSeed } from "./fixtures.interact";
 import type { MentionState } from "./fixtures.mentions";
 import type { MentionsEchoState } from "./fixtures.mentions-echo";
+import { RESULT_CHOICE, type ResultState } from "./fixtures.result";
 import { RICH_CHOICE, richSeed, type RichState } from "./fixtures.rich";
 import { stripSeed } from "./fixtures.strip";
 
@@ -105,8 +123,10 @@ export type HarnessState =
   | "edit"
   | "edit-latest"
   | "edit-stack"
+  | AnswerState
   | MentionState
   | MentionsEchoState
+  | ResultState
   | RichState;
 export const HARNESS_STATES: readonly HarnessState[] = [
   "answer",
@@ -144,8 +164,15 @@ export const HARNESS_STATES: readonly HarnessState[] = [
   "insight-stream",
   "mention-popover",
   "mention-draft",
+  "mention-first",
   "mention-echo",
   "mention-trace",
+  "result-table",
+  "result-sql",
+  "result-scalar",
+  "failure-cap",
+  "answer-actions",
+  "followups-end",
 ];
 export const HARNESS_WIDTHS = [320, 392, 560] as const;
 export type HarnessTheme = "dark" | "light";
@@ -427,7 +454,6 @@ const answer: AskAnswer = {
   run,
   assumptions,
   sanity: [],
-  followUps: FOLLOW_UPS,
   trace: answerTrace,
   text: FINAL_TEXT,
   turns: 1,
@@ -503,7 +529,6 @@ const failed: Exchange = {
     run: null,
     assumptions: [],
     sanity: [],
-    followUps: [],
     trace: [
       { step: "context", ms: 2, candidates: ["public.users"], text: `${FAIL_QUESTION}\n\nCANDIDATE TABLES …` },
       {
@@ -555,11 +580,10 @@ export const FIXTURE = {
 } as const;
 
 /** the exchange a state shows; null for the configured empty states (the
- * starters states among them) and for the echo, actions and edit states,
- * whose whole thread AskHarness reads from fixtures.echo.ts,
- * fixtures.actions.ts and fixtures.edit.ts. The Threads sheet sits over the
- * sketch's answer; the round-2 and round-3 builders' states come from their
- * own files */
+ * starters states among them) and for the echo, actions, edit, mention, result
+ * and answer states, whose whole thread AskHarness reads from their own files.
+ * The Threads sheet sits over the sketch's answer; the round-2 and round-3
+ * builders' states come from their own files */
 export function exchangeFor(state: HarnessState): Exchange | null {
   switch (state) {
     case "answer":
@@ -585,8 +609,15 @@ export function exchangeFor(state: HarnessState): Exchange | null {
     case "edit-stack":
     case "mention-popover":
     case "mention-draft":
+    case "mention-first":
     case "mention-echo":
     case "mention-trace":
+    case "result-table":
+    case "result-sql":
+    case "result-scalar":
+    case "failure-cap":
+    case "answer-actions":
+    case "followups-end":
       return null;
     case "pending":
     case "retry":
@@ -612,8 +643,8 @@ export function exchangeFor(state: HarnessState): Exchange | null {
 
 /** the configured provider and model a state runs under: the discussion
  * thread's states and the W5 order_v2 states read their own Haiku 4.5 (the
- * pill shows the thread's model, as the footers do); everything else the
- * sketch's Sonnet 5 */
+ * pill shows the thread's model, as the footers do), and so do the W7 states
+ * over both of those threads; everything else the sketch's Sonnet 5 */
 export function choiceFor(state: HarnessState): { provider: string; model: string } {
   switch (state) {
     case "small":
@@ -628,9 +659,18 @@ export function choiceFor(state: HarnessState): { provider: string; model: strin
     case "edit-stack":
     case "mention-popover":
     case "mention-draft":
+    case "mention-first":
     case "mention-echo":
     case "mention-trace":
       return ACTIONS_CHOICE;
+    case "answer-actions":
+    case "followups-end":
+      return ANSWER_CHOICE;
+    case "result-table":
+    case "result-sql":
+    case "result-scalar":
+    case "failure-cap":
+      return RESULT_CHOICE;
     case "insight":
     case "insight-prose":
     case "insight-steps":
@@ -640,4 +680,21 @@ export function choiceFor(state: HarnessState): { provider: string; model: strin
     default:
       return { provider: PROVIDER, model: MODEL };
   }
+}
+
+/** the thread's follow-up row (W7 item 3), read back out of the last
+ * exchange's own `followups` trace step: the row lives on the thread now
+ * (useAgent.followUps) and no answer carries one, and the trace step is where
+ * the loop records the questions it asked for, so the fixtures keep one truth
+ * for them. Empty when the last exchange never got a row (a failure, a
+ * cancelled run, a thread still streaming). The answer states hand AskHarness
+ * their own array instead: their rows are the sketch's, written beside the
+ * frames they are evidence for (fixtures.answer.ts) */
+export function followUpsFor(exchanges: readonly Exchange[]): string[] {
+  const trace = exchanges[exchanges.length - 1]?.answer?.trace ?? [];
+  for (let i = trace.length - 1; i >= 0; i--) {
+    const step = trace[i];
+    if (step?.step === "followups") return step.questions;
+  }
+  return [];
 }

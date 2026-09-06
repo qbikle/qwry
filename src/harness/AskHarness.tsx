@@ -12,16 +12,18 @@
 //                       |actions|actions-latest|actions-busy|edit|edit-latest
 //                       |edit-stack|insight|insight-prose|insight-steps
 //                       |insight-code|insight-stream|mention-popover
-//                       |mention-draft|mention-echo|mention-trace>
+//                       |mention-draft|mention-first|mention-echo|mention-trace
+//                       |result-table|result-sql|result-scalar|failure-cap
+//                       |answer-actions|followups-end>
 //             &w=<320|392|560>&theme=<dark|light>[&scroll=top|bottom]
 //
 // `scroll=top` parks the thread scroller at the question echo instead of the
 // pane's own mount position (pinned to the newest content): a 640px card
 // cannot hold the whole live answer, so the two ends are two frames. The
-// `strip`, `kv-wide` and `insight*` states park at the top unless the URL
-// says `scroll=bottom`: their subject (the thinking strip; the one-row pairs;
-// the answer text's blocks) sits above the fold when the scroller is pinned
-// to the newest content.
+// `strip`, `kv-wide`, `insight*` and `result*` states park at the top unless
+// the URL says `scroll=bottom`: their subject (the thinking strip; the one-row
+// pairs; the answer text's blocks; the result block and the failure block)
+// sits above the fold when the scroller is pinned to the newest content.
 //
 // Round 3 (W2d): the `echo` states seed a whole thread of exchanges
 // (fixtures.echo.ts); the `starters` states seed the starter pools store
@@ -54,6 +56,19 @@
 // tagged exchange (the `actions` rest) and `mention-trace` opens the drawer
 // at the context step, the anatomy precedent.
 //
+// W7: the `result` states (fixtures.result.ts) are one exchange each with the
+// consolidated result block as the subject, parked at the top; a hover cannot
+// be held in a still, so `resultAfterMount` stamps the block hot and, for
+// `result-sql`, flips its face through the store's own door (useAsk.setFace).
+// `failure-cap` is the turn cap over its four actions. The `answer` states
+// (fixtures.answer.ts) are the discussion thread again: `answer-actions`
+// reveals the prose cluster and parks itself at the top, `followups-end` keeps
+// the bottom pin so the one follow-up row stands under the LAST answer.
+// Follow-ups are the THREAD's now (useAgent.followUps): the answer states hand
+// theirs over, every other state's row is the one its last exchange recorded
+// (fixtures.ts `followUpsFor`), so a state that showed suggestions before W7
+// shows them under its last answer alone.
+//
 // scripts/ask-frames.ts drives headless Chrome over this route and writes
 // one PNG per state × width × theme. The dev build remains the final eyeball;
 // these frames are the evidence.
@@ -79,11 +94,13 @@ import {
   HARNESS_WIDTHS,
   choiceFor,
   exchangeFor,
+  followUpsFor,
   type HarnessState,
   type HarnessTheme,
 } from "./fixtures";
 import { ACTIONS_STATES, actionsAfterMount, actionsSeed, type ActionsState } from "./fixtures.actions";
 import { ANATOMY_STATES, anatomyTraceFor, type AnatomyState } from "./fixtures.anatomy";
+import { ANSWER_STATES, answerAfterMount, answerSeed, type AnswerState } from "./fixtures.answer";
 import { ECHO_STATES, echoExchangesFor, type EchoState } from "./fixtures.echo";
 import { EDIT_STATES, editAfterMount, editSeed, type EditState } from "./fixtures.edit";
 import { MENTION_STATES, mentionsAfterMount, mentionsSeed, type MentionState } from "./fixtures.mentions";
@@ -95,6 +112,7 @@ import {
   type MentionsEchoState,
 } from "./fixtures.mentions-echo";
 import { INTERACT_STATES, interactSeed, type InteractSeed, type InteractState } from "./fixtures.interact";
+import { RESULT_STATES, resultAfterMount, resultSeed, type ResultState } from "./fixtures.result";
 import { RICH_STATES, richSeed, type RichState } from "./fixtures.rich";
 import { SHELL_THREADS, shellAfterMount } from "./fixtures.shell";
 import { STARTER_STATES, startersSeed, type StarterState } from "./fixtures.starters";
@@ -126,7 +144,11 @@ function paramsFrom(search: string): Params {
     theme: theme === "light" ? "light" : "dark",
     scroll:
       scroll === "top" ||
-      (scroll !== "bottom" && (state === "strip" || state === "kv-wide" || state.startsWith("insight")))
+      (scroll !== "bottom" &&
+        (state === "strip" ||
+          state === "kv-wide" ||
+          state.startsWith("insight") ||
+          (RESULT_STATES as readonly string[]).includes(state)))
         ? "top"
         : "bottom",
   };
@@ -164,6 +186,17 @@ function seed({ state, w, theme }: Params) {
     ? mentionsEchoSeed(state as MentionsEchoState)
     : null;
   const w6 = mention ?? me;
+  // the W7 threads: the result states carry their own busy / phase (the
+  // actions shape), the answer states carry the thread's follow-up row
+  const result = (RESULT_STATES as readonly string[]).includes(state) ? resultSeed(state as ResultState) : null;
+  const ans = (ANSWER_STATES as readonly string[]).includes(state) ? answerSeed(state as AnswerState) : null;
+  // the thread a state shows, oldest first: one seed wins, and the same list
+  // is the active thread, the exchanges and what the follow-up row reads
+  const list =
+    w6?.exchanges ?? w4?.exchanges ?? result?.exchanges ?? ans?.exchanges ?? echo ?? (exchange ? [exchange] : null);
+  // the seed that carries this state's own busy and phase (a state matches at
+  // most one of them); `busy` is the one state that runs without a seed
+  const live = w4 ?? result ?? interact ?? strip ?? rich;
   const choice = choiceFor(state);
 
   useSettings.setState({
@@ -190,34 +223,15 @@ function seed({ state, w, theme }: Params) {
   useAgent.setState({
     activeProfileId: pid,
     threads: { [pid]: mention ? mention.threads : state === "threads" ? SHELL_THREADS : [FIXTURE.thread] },
-    activeThread: { [pid]: exchange || echo || w4 || w6 ? tid : null },
-    exchanges: w6
-      ? { [tid]: w6.exchanges }
-      : w4
-        ? { [tid]: w4.exchanges }
-        : echo
-          ? { [tid]: echo }
-          : exchange
-            ? { [tid]: [exchange] }
-            : {},
+    activeThread: { [pid]: list ? tid : null },
+    exchanges: list ? { [tid]: list } : {},
     sessions: {},
     pending: interact?.pending ?? {},
-    phase: {
-      [tid]: w4
-        ? w4.phase
-        : interact
-          ? interact.phase
-          : strip
-            ? strip.phase
-            : rich
-              ? rich.phase
-              : state === "busy"
-                ? "tools"
-                : null,
-    },
-    busy: {
-      [tid]: w4 ? w4.busy : interact ? interact.busy : strip ? strip.busy : rich ? rich.busy : state === "busy",
-    },
+    // the row is the THREAD's now (W7 item 3): the answer states hand theirs
+    // over, every other state's is the one its last exchange recorded
+    followUps: list ? { [tid]: ans ? ans.followUps : followUpsFor(list) } : {},
+    phase: { [tid]: live ? live.phase : state === "busy" ? "tools" : null },
+    busy: { [tid]: live ? live.busy : state === "busy" },
   });
   useStarterPools.setState(
     (STARTER_STATES as readonly string[]).includes(state)
@@ -264,8 +278,21 @@ function Harness({ state, w, scroll }: Params) {
     if (t) useAsk.getState().openTrace(t.exchangeId, t.stepId);
     const interact = interactFor(state);
     const id = requestAnimationFrame(() => {
+      // the follow-up row lands one commit after the pane's own mount pin
+      // (AskPanel holds the thread's questions a render so a picked chip can
+      // pair with the echo it becomes), and growth after that pin belongs to
+      // the user, never to the pane. A still of a SETTLED thread has to show
+      // its end, so the harness re-pins here; the states that park elsewhere
+      // (the `actions` rest, `mention-echo`, `scroll=top`) run after this and
+      // win
+      if (scroll === "bottom") {
+        const sc = document.querySelector<HTMLElement>(".ask-scroll");
+        if (sc) sc.scrollTop = sc.scrollHeight;
+      }
       shellAfterMount(state);
       actionsAfterMount(state);
+      answerAfterMount(state);
+      resultAfterMount(state);
       editAfterMount(state);
       mentionsAfterMount(state);
       mentionsEchoAfterMount(state);

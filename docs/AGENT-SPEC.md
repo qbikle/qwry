@@ -46,8 +46,9 @@ src/agent/
 src/stores/agent.ts   zustand: threads, turns, chips, sanity, trace, status
 src/stores/ask.ts     zustand: the Ask card's UI state (open, width, trace, picker, draft)
 src/ask/              React components (AGENT-UX): AskPanel, AnswerBlock, ThinkingStrip,
-                      SqlRow, AssumptionChips, SanityLine, FollowUps, FailureBlock,
-                      TraceDrawer, ModelPicker, ModelsSettings, SetupCard, starters.ts, ask.css
+                      ResultBlock, AnswerActions, AssumptionChips, SanityLine, FollowUps,
+                      FailureBlock, TraceDrawer, ModelPicker, ModelsSettings, SetupCard,
+                      starters.ts, ask.css
 src-tauri/src/agent.rs        commands: agent_connect, agent_describe,
                               agent_peek_values, agent_run_readonly (AST gate),
                               agent_probe, agent_gate, agent_key_* (§5, §8)
@@ -144,8 +145,28 @@ wrong to right; 7 of 28 bench questions trigger it.
 
 ### 4.5 Turn 2 (model)
 `run_sql`, optionally preceded by `probe` for risky shapes. On SQL error the
-error text goes back and the model retries (repair loop, max turns 12 total,
-a cap hit is a failure with a Fix It affordance, never a silent stop).
+error text goes back and the model retries (repair loop). The `claude -p`
+invocation's own turn cap is 24 (was 12, W7): a wide question spent the old
+12 describing and peeking before it ever reached `run_sql`, and the failure
+copy `stopped after 1 turns` was qwry's own per-invocation counter, not the
+child's (LESSONS 13); the wall clock, not the turn count, is the real guard
+against a runaway loop now. A cap hit reads the child's own `num_turns` off
+its result line for the failure copy (`stopped after 12 turns`, singular
+when the number is 1) and is a failure with a `Continue` affordance beside
+`Fix It` (AGENT-UX §7): `Continue` resumes the SAME session with a fresh
+budget and no re-inspection, never a silent stop.
+
+**Circuit breaker (W7).** A model that answers a write request in prose,
+then calls `run_sql` with that prose anyway, is refused by the AST gate
+(§8); the refusal names the way out (`this is prose, not SQL. To answer
+without running a query, reply in text and call no tool`), returned verbatim
+through the MCP/tool layer. Two CONSECUTIVE `run_sql` refusals of the same
+class (the gate's own error class, never a string match) end the exchange
+as `answered` with the model's last prose, `sql` and `run` both null, rather
+than feeding the refusal back for an eleventh restatement. `PROMPT_VERSION`
+does not move for this fix: the loop and the claude-code adapter carry the
+breaker, not the prompt. Tested on both paths (`loop.test`, the claude-code
+adapter's own test).
 
 ### 4.6 Post (code + cheap model)
 - Final SQL extracted from the answer (tolerant: fenced, tool-call syntax,
@@ -335,10 +356,18 @@ agent_answers(turn_id, sql, row_count, assumptions_json, sanity_json, status)
 ```
 `session_key` (v7) is the provider session the thread resumes; NULL reads as
 the thread id (both selects `COALESCE(session_key, id)`, no backfill). A cut
-(W4: a send from edit mode, Restart on an older exchange) deletes turns, and
-`claude -p` resumes a session that remembers them and cannot rewind, so the
-cut writes a fresh uuid here and the adapter resumes THAT (`ThreadRef.session`)
-while `id` still names the thread's MCP session and its rows. The cut,
+(W4: a send from edit mode; W7: Restart on ANY exchange, not only an older
+one) deletes turns, and `claude -p` resumes a session that remembers them
+and cannot rewind, so the cut writes a fresh uuid here and the adapter
+resumes THAT (`ThreadRef.session`) while `id` still names the thread's MCP
+session and its rows. Before W7, Restart on the NEWEST exchange skipped the
+cut and resumed the same session unmodified, so the model answered from its
+own remembered tool results in a few seconds with no new tool call, chips
+included; W7 closes that hole by giving every Restart the cut, exclusive of
+the exchange restarted (that exchange's own turns and answer are deleted,
+everything before it kept), so the re-minted session replays the kept
+exchanges (as below) and the model re-inspects the live database before it
+answers again, on the newest exchange exactly as on an older one. The cut,
 `agent_thread_truncate(thread_id, turn_ids)`, deletes the NAMED turns and
 their answers in one transaction, answers first: the store names each
 exchange's two rows (`userTurnId`, `turnId`) because neither `idx` nor write
@@ -350,9 +379,12 @@ position, which a reload compacts over a gap while the rows keep their idx;
 when the next exchange leaves no room, `agent_turns_shift(thread_id, from_idx,
 by)` moves the tail up first, a separate call from the insert so a failure
 leaves a gap and never a collision. A reload reads `ORDER BY idx, id`. A
-re-run (Restart, Fix It, a chip toggle) rewrites its
-assistant turn in place (`agent_turn_update`) so a reload never pairs old
-prose with a new answer. The first run after a cut carries a compact replay
+re-run that does not cut (Fix It, a chip toggle) rewrites its assistant turn
+in place (`agent_turn_update`) so a reload never pairs old prose with a new
+answer; Restart (W7) goes through the cut above instead, exclusive of the
+exchange restarted, so its old answer is deleted rather than overwritten and
+the re-minted session is what forces the fresh answer, not a rewritten row.
+The first run after a cut carries a compact replay
 of the KEPT exchanges as a prefix of the USER message, never the system
 prompt: `Earlier in this thread:` then one `Q:` / `SQL: <final sql or none>`
 / `A: <first sentence>` block per exchange, capped at 2000 characters with
