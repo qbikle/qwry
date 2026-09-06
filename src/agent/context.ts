@@ -23,7 +23,7 @@
 import type { SchemaSnapshot, TableInfo } from "../stores/schema";
 import { MODEL_ROW_CAP, UI_ROW_CAP } from "./tools";
 import type { Mention } from "./mentions";
-import type { AgentRun, SanityFragment } from "./types";
+import type { AgentRun, KnowledgeRow, SanityFragment, Synonym } from "./types";
 
 /** One column as the prefilter and the DDL renderer see it. */
 export interface ColumnMeta {
@@ -62,6 +62,10 @@ export interface FkMeta {
 export interface SchemaMeta {
   tables: TableMeta[];
   byDisplay: Map<string, TableMeta>;
+  /** `schema.name` to the display name: what a STORED key resolves through.
+   * A knowledge row's target is always qualified and a display name is bare
+   * whenever it can be, so the two never meet without this map. */
+  byKey: Map<string, string>;
   fks: FkMeta[];
 }
 
@@ -138,14 +142,73 @@ export function toks(text: string): Set<string> {
   return out;
 }
 
-/** The question's tokens plus its synonym expansions. */
-export function questionTokens(question: string): Set<string> {
+/** The question's tokens plus its synonym expansions. The connection's own
+ * synonyms (A2 item 4) are merged OVER the static map, so a word the user
+ * mapped means what the user said it means and not what the map guessed. */
+export function questionTokens(
+  question: string,
+  synonyms: Readonly<Record<string, string>> = {},
+): Set<string> {
+  const map = { ...SYN, ...synonyms };
   const q = toks(question);
   for (const w of question.toLowerCase().match(/[a-z0-9-]+/g) ?? []) {
-    const syn = SYN[w];
+    const syn = map[w];
     if (syn) q.add(syn);
   }
   return q;
+}
+
+/** The `synonym` rows as the run reads them: the user's word, lowercased the
+ * way the question's words are, against the object it names. A word written
+ * twice keeps the first row, the way the mention resolver keeps the first
+ * table of a name. */
+export function synonymMap(rows: readonly KnowledgeRow[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const row of rows) {
+    if (row.kind !== "synonym" || !row.target) continue;
+    const word = row.text.trim().toLowerCase();
+    if (!word || word in out) continue;
+    out[word] = row.target;
+  }
+  return out;
+}
+
+/** The synonyms a question actually used, in the order the words appear in
+ * it. The same word twice fires once: the block lists what was injected, not
+ * how often it was typed. */
+export function synonymsFired(
+  question: string,
+  synonyms: Readonly<Record<string, string>>,
+): Synonym[] {
+  const out: Synonym[] = [];
+  const seen = new Set<string>();
+  for (const w of question.toLowerCase().match(/[a-z0-9-]+/g) ?? []) {
+    const target = synonyms[w];
+    if (!target || seen.has(w)) continue;
+    seen.add(w);
+    out.push({ word: w, target });
+  }
+  return out;
+}
+
+/** The display name a stored key names: the name as written when the model
+ * already sees it that way, else the qualified key's own display. Null when
+ * the snapshot has no such relation (LESSONS 5: a target for a dropped table
+ * costs the question nothing). */
+export function displayOf(meta: SchemaMeta, name: string): string | null {
+  if (meta.byDisplay.has(name)) return name;
+  return meta.byKey.get(name) ?? null;
+}
+
+/** The table a synonym's target names: the target itself when it is a table,
+ * its owner when it is a column, nothing when the snapshot has neither. Both
+ * halves go through `displayOf`, because a stored target is qualified
+ * (`public.order_v2`) and the pick it must match is bare (`order_v2`). */
+export function synonymTable(meta: SchemaMeta, target: string): string | null {
+  const self = displayOf(meta, target);
+  if (self) return self;
+  const dot = target.lastIndexOf(".");
+  return dot > 0 ? displayOf(meta, target.slice(0, dot)) : null;
 }
 
 const LEGACY_SUFFIX = /_v\d+$/;
@@ -211,10 +274,30 @@ export function buildMeta(snapshot: SchemaSnapshot): SchemaMeta {
     fks.push({ src, srcCol: fk.src_cols[0], dst, dstCol: fk.dst_cols[0] });
   }
 
-  return { tables, byDisplay, fks };
+  return { tables, byDisplay, byKey, fks };
 }
 
 // ---- prefilter (section 4.1) ----------------------------------------------
+
+/** Every name a candidate answers to, against the one the model sees: its
+ * display name maps to itself, its qualified key maps to the display. A
+ * knowledge row's target is minted qualified (stores/knowledge
+ * `knowledgeTarget`) and a pick is bare whenever the name is unique, so
+ * without this map a hint never meets its table; with it the KNOWLEDGE block
+ * can also print the name the CANDIDATE TABLES block already used, so one
+ * table wears one name in one message (prompt.ts `candidateName`). */
+export function candidateNames(
+  meta: SchemaMeta,
+  picked: readonly string[],
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const display of picked) {
+    out[display] = display;
+    const t = meta.byDisplay.get(display);
+    if (t) out[`${t.schema}.${t.name}`] = display;
+  }
+  return out;
+}
 
 /** Base tables only. Measured on the Pagila bench: including views and
  * materialised views costs a point of recall (30/33 against 31/33), because
@@ -246,14 +329,20 @@ export function mustIncludeFor(meta: SchemaMeta, mentions: readonly Mention[]): 
  * the top 5 picks. Target 15-25 names; the cap is k + 8. The lexical picks
  * give way to the tags rather than adding to them: k names reach the model
  * either way, and the one-hop expansion now hops out of what the user
- * pointed at. */
+ * pointed at.
+ *
+ * The connection's synonyms (A2 item 4) join the must-includes: a word the
+ * user mapped to a table puts that table in front of the lexical picks, the
+ * way an `@` tag does, because a user word that means a table is the same
+ * fact as a user pointing at it. Absent, the picks are the measured ones. */
 export function candidates(
   question: string,
   meta: SchemaMeta,
   k = 14,
   mustInclude: readonly string[] = [],
+  synonyms: Readonly<Record<string, string>> = {},
 ): string[] {
-  const q = questionTokens(question);
+  const q = questionTokens(question, synonyms);
   const base = meta.tables.filter(isBase);
 
   const tableToks = new Map<string, Set<string>>();
@@ -288,7 +377,10 @@ export function candidates(
     if (score) scored.push({ name: t.display, score, order });
   });
   scored.sort((a, b) => b.score - a.score || a.order - b.order);
-  const picked = [...new Set(mustInclude)].filter((n) => meta.byDisplay.has(n));
+  const pinned = synonymsFired(question, synonyms)
+    .map((s) => synonymTable(meta, s.target))
+    .filter((n): n is string => n !== null);
+  const picked = [...new Set([...mustInclude, ...pinned])].filter((n) => meta.byDisplay.has(n));
   for (const s of scored) {
     if (picked.length >= k) break;
     if (!picked.includes(s.name)) picked.push(s.name);

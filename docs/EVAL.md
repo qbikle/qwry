@@ -58,6 +58,11 @@ presentation mean where the bench has `insight` questions). The lab's
 live dashboard and single-question trace viewer port over as
 `scripts/agent-eval-dashboard.ts` when a session wants them.
 
+**A2, 2026-09-06:** the eval passes no profile to the loop, so every bench
+here measures the bare prompt — no run carries a hint, a definition, a
+synonym or an earlier answer (AGENT-SPEC §4.2, §4.8) — and a knowledge
+bench, one that seeds a profile before asking, is open (ROADMAP).
+
 **How to run.** The bench database defaults to the lab Postgres,
 `postgres://lab@127.0.0.1:5455/pagila`, never 5432 (on the maintainer's machine
 that port is a production bastion tunnel); `--dsn` points it elsewhere. Four
@@ -247,6 +252,13 @@ Haiku `pagila-hard.json` **5/5**; section 4's table has every row.
   so it sends no `WRITES:` block, and `loop.test.ts` pins the eval's message
   byte-identical to today's. No bench row in this file moves for a change no
   gated run ever sees.
+
+- **A2 moves no prompt byte**: `PROMPT_VERSION` stays `v4` through the
+  knowledge and history additions (AGENT-SPEC §4.2, §4.8); `prompt.test.ts`
+  keeps its v1–v4 pins unchanged and `loop.test.ts`'s no-profile message pin
+  is extended to assert the `KNOWLEDGE:` and `EARLIER ANSWERS ON THIS
+  DATABASE:` blocks are absent, so every row in the table below still reads
+  against the same bytes it always has.
 
 **Reference numbers, 2026-09-06** (W3b; provider `claude-code`, `--jobs 3`,
 `PROMPT_VERSION` v4, 0 turn-cap hits on every row except `pagila-insight.json`

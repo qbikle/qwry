@@ -73,6 +73,16 @@
 // 4.5 (`RESULT_CHOICE`) and the answer thread the discussion one
 // (`ANSWER_CHOICE`).
 //
+// The A2 states are one exchange each over the same order_v2 schema and
+// bookmarks (fixtures.knowledge.ts): `a2-explain` is `Explain with Ask` on a
+// tab, its bubble wearing the tab pill the exchange itself carries;
+// `a2-knowledge-trace` opens the drawer at the `knowledge` step of a question
+// this connection's own hints, definition, synonym and earlier answers fed;
+// `a2-ask-why` is the ordinary exchange a failed check's `Ask Why` opens.
+// AskHarness seeds their tabs as well as their thread (the first states to
+// seed `useTabs`), and `choiceFor` gives them the discussion thread's Haiku
+// 4.5, as every state over that schema reads.
+//
 // Follow-ups now live on the THREAD (useAgent.followUps), not on an answer, so
 // no fixture's exchange carries one: `followUpsFor` reads the row back out of
 // the last exchange's own `followups` trace step, which is where the loop
@@ -88,6 +98,7 @@ import { ACTIONS_CHOICE } from "./fixtures.actions";
 import { anatomyExchangeFor } from "./fixtures.anatomy";
 import { ANSWER_CHOICE, type AnswerState } from "./fixtures.answer";
 import { interactSeed } from "./fixtures.interact";
+import type { KnowledgeState } from "./fixtures.knowledge";
 import type { MentionState } from "./fixtures.mentions";
 import type { MentionsEchoState } from "./fixtures.mentions-echo";
 import { RESULT_CHOICE, type ResultState } from "./fixtures.result";
@@ -125,6 +136,7 @@ export type HarnessState =
   | "edit-latest"
   | "edit-stack"
   | AnswerState
+  | KnowledgeState
   | MentionState
   | MentionsEchoState
   | ResultState
@@ -181,6 +193,9 @@ export const HARNESS_STATES: readonly HarnessState[] = [
   "a4-ran",
   "a4-preview-busy",
   "a4-writes-off",
+  "a2-explain",
+  "a2-knowledge-trace",
+  "a2-ask-why",
 ];
 export const HARNESS_WIDTHS = [320, 392, 560] as const;
 export type HarnessTheme = "dark" | "light";
@@ -632,6 +647,9 @@ export function exchangeFor(state: HarnessState): Exchange | null {
     case "a4-ran":
     case "a4-preview-busy":
     case "a4-writes-off":
+    case "a2-explain":
+    case "a2-knowledge-trace":
+    case "a2-ask-why":
       return null;
     case "pending":
     case "retry":
@@ -676,6 +694,9 @@ export function choiceFor(state: HarnessState): { provider: string; model: strin
     case "mention-first":
     case "mention-echo":
     case "mention-trace":
+    case "a2-explain":
+    case "a2-knowledge-trace":
+    case "a2-ask-why":
       return ACTIONS_CHOICE;
     case "answer-actions":
     case "followups-end":

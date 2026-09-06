@@ -861,6 +861,27 @@ export function SqlEditor() {
             },
             ...(viewRef.current ? cteMenuItem(viewRef.current) : []),
             {
+              // the app's own Explain (⌘E) is the plan view, so the new verb
+              // keeps its qualifier: one term per concept (WRITING rule 5).
+              // Scope is ⌘↩'s: the selection, else the statement at the caret,
+              // else the tab, and the pill in the bubble names the tab it came
+              // from, never the text
+              kind: "item",
+              label: "Explain with Ask",
+              onSelect: () => {
+                const v = viewRef.current;
+                if (!v) return;
+                const sql = runTarget(v).text.trim();
+                if (!sql) return;
+                const { tabs, activeId } = useTabs.getState();
+                const name = tabs.find((t) => t.id === activeId)?.name ?? "";
+                window.dispatchEvent(new CustomEvent("qwry:open-ask"));
+                void import("../stores/agent").then(({ useAgent }) =>
+                  useAgent.getState().explainWithAsk(sql, name),
+                );
+              },
+            },
+            {
               kind: "item",
               label: "Format SQL",
               hint: "⇧⌘F",

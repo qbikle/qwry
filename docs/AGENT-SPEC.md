@@ -112,6 +112,20 @@ travels. A tag the snapshot no longer resolves yields nothing (LESSONS 5).
 The eval sends no tags, so its messages are byte-identical to the measured
 ones (a loop test pins this).
 
+Synonyms (A2, 2026-09-06): the connection's own synonyms — `agent_knowledge`
+rows of kind `synonym`, §9 — merge over the static `SYN` map at call time.
+`candidates(question, meta, k, mustInclude, synonyms)` takes them as a
+fourth argument and never mutates the static map; a synonym whose target is
+a column pulls in the column's table exactly as a lexical hit would. This is
+the `t4-02` class of miss (EVAL §4: the prefilter's candidate set misses a
+table the gold SQL uses while the model still answers it right anyway) — a
+user's own word for a table the static map does not carry, one query away
+from the schema's real name. Synonyms are the only knowledge kind that
+touches candidate selection: a hint or a definition never changes which
+tables the prefilter picks, only what the model reads once they are picked
+(§4.2). Unmeasured this wave: no eval run moves a prompt byte or a bench
+number (EVAL §3).
+
 ### 4.2 Context (code)
 User message = question + `CANDIDATE TABLES` block: one line per candidate
 `table(col, col, …)  -- <table comment>` plus FK edges among candidates. The
@@ -138,6 +152,44 @@ line naming the table and the row's primary key, then the row's own
 `column = value` lines. One block, because both are the same fact, that the
 user pointed at this. The trace's context step
 carries the tags as `{ kind, token }` beside the exact text.
+
+**Knowledge and history (A2, 2026-09-06).** Two more blocks ride the same
+user message, each absent, whole, when it has nothing to say — no header,
+no block, the same tell as `TAGGED BY THE USER:` above. `knowledgeMessage`
+in `prompt.ts` renders `KNOWLEDGE:` then one line per fact, in this order: a
+hint on a candidate table (`<table>  -- <hint text>`) or one of its columns
+(`<table.column>  -- <hint text>`); a synonym that fired, one line per name
+(`<name> -> <target>`), only for a target already among the candidates; a
+definition whose term's every token appears among the question's own tokens
+(`<term>: <meaning>`, the prefilter's own tokenizer, §4.1). Capped at 1200
+characters; over the cap, the oldest-updated fact drops first, whole lines
+only, never a fact cut mid-line (a half a hint is a wrong hint).
+`historyMessage` renders `EARLIER ANSWERS ON THIS DATABASE:` then up to
+three `Q:` / `SQL:` pairs drawn from `agent_history_pairs` (§4.8), scored by
+the same lexical overlap the prefilter scores table names with, highest
+first; capped at 1500 characters, the lowest-scoring pair dropping first
+when the three do not fit, oldest first on a tie. Both blocks sit after
+`CANDIDATE TABLES` and its FK edges and before `TAGGED BY THE USER:` (when
+tags exist) and `RISK CHECK:` (when the question is risky), which still
+stays last: `KNOWLEDGE:` then a blank line then `EARLIER ANSWERS ON THIS
+DATABASE:` when both fire, either alone with no blank line to spare, neither
+at all leaving the message exactly as it would read without this wave. Like
+`TAGGED BY THE USER:`, neither rides the small-tier message (§4.7): a
+tagged table and a fired synonym both still reach it as must-include
+candidates, but the text explaining either is hybrid-only. Both blocks are
+USER message only and both are absent from the eval's no-profile call, so
+`SYSTEM_PROMPT` and `PROMPT_VERSION` stay v4 byte-equal and `loop.test`'s
+no-profile pin is extended to assert their absence (EVAL §3, §4). The trace
+gains a step, `{ step: 'knowledge', ms, counts: { hints?, definitions?,
+synonyms?, history? }, text }` (`TraceStep`, `src/agent/types.ts`): `text`
+is exactly the bytes above, whichever block fired or both, and `counts` is
+read off the same data that built `text`, never recomputed for the label
+(LESSONS 13), so the drawer's `2 hints · 1 definition · 1 synonym · 2
+earlier answers` (AGENT-UX §14) can never disagree with the block under it;
+a zero-valued kind is omitted from `counts` entirely, never shown as `0
+definitions` (rule 11). A question that used neither carries no `knowledge`
+step at all, the same absence rule `mentions` already has on `context`
+(AGENT-UX §5).
 
 ### 4.3 Turn 1 (model, parallel tools)
 The prompt instructs: call `describe_tables` for every table you will use
@@ -191,6 +243,23 @@ adapter's own test).
 ### 4.7 Small-tier path
 Steps 4.1–4.2 then ONE model call producing SQL; execute; on error feed the
 error back once or twice; no tools, no chips beyond code-detected filters.
+
+### 4.8 History few-shot (A2, 2026-09-06)
+`agent_history_pairs(profile_id, limit)` (§9) returns up to `limit` rows of
+`{ question, sql, created_at }` from `agent_turns` × `agent_answers` where
+`status = 'answered'` and `sql is not null`, newest first, pooled across
+every thread of the connection — a few-shot pool, not one thread's replay:
+replay (§9) is a THREAD's own memory carried forward through a cut; history
+is the CONNECTION's, carried into a thread that has never asked the
+question before. `historyMessage` (§4.2) scores each of the `limit` pairs
+the loop fetches by the same lexical overlap `candidates` (§4.1) scores
+table names with, keeps the top three, and orders the kept set oldest first
+so the most relevant-and-recent earlier answer reads last, immediately
+before the question it is context for. A connection with no answered turn,
+or none whose SQL survived a later cut (`sql is not null` already excludes a
+turn a Restart deleted, §9), sends no block. Small-tier questions get none
+either, the same treatment `KNOWLEDGE:` gets (§4.2): the tier's one call
+stays the minimal message it always was.
 
 ## 5. Tools (contract)
 
@@ -483,6 +552,64 @@ track commit state itself this wave: the tab's own transaction is the only
 record of whether a `ran` row is committed, rolled back or still open
 (AGENT-UX §13.6's `uncommitted`), so a reload mid-transaction reads `ran`
 with no way to ask the tab what it later decided.
+
+**Knowledge and saved checks (A2; appdb v8 in this worktree — the merge
+renumbers it, so the migration arm is written `8 => knowledge_v8(&tx)?` and
+no test names the literal version).**
+
+```
+agent_knowledge(id, profile_id, kind CHECK IN ('hint','definition','synonym'),
+                target TEXT NULL, text TEXT NOT NULL, created_at, updated_at)
+```
+
+`target` is `table` or `table.column` for a `hint` or a `synonym`, `NULL`
+for a `definition`. A `hint` row's `text` is the line's own words with any
+trailing `aka` clause already stripped (AGENT-UX §14); a `synonym` row's
+`text` is one bare name from that clause, one row per name, sharing the
+hint's `target` — a target with no hint row can still carry synonym rows (a
+user who writes only `aka orders, purchases` with no prose), because the two
+kinds are edited as one line by the UI, never joined by the schema. A
+`definition` row's `text` is the palette's own `term = meaning` line
+verbatim: no separate `term` column exists, so the term is always the
+substring before the first ` = ` (parse and write share one function,
+LESSONS 1), used both to match a question's tokens (§4.2) and to fill the
+palette row's two slots on render and its input again on re-edit.
+`saved_queries` gains three columns through `add_column_if_missing`:
+`question TEXT NULL` (a quick-ask's own text, AGENT-UX §15), `expect_json
+TEXT NULL` (a check's expectation — `{ kind: 'rows', op: 'eq'|'gte'|'lte',
+n }`, `{ kind: 'scalar', eq: string }`, or `{ kind: 'nonempty' }`), and
+`last_check_json TEXT NULL` (`{ ok: boolean, rows: number, scalar?: string |
+null, at: string, error?: string }`, the last `Run Checks` verdict for that
+row, read straight onto the palette's dot and its failed-row detail,
+AGENT-UX §15). The verdict carries the row count whatever the expectation's
+kind, because a scalar check whose result stopped being one cell has to say
+so (`2 rows · expected 7`); `scalar` is absent when the result was not one
+cell and `null` when that cell held SQL NULL; `error` is the first line of a
+run that could not run at all, which is a failed check and never a silent
+pass (LESSONS 9).
+
+Commands (`lib.rs`, appended): `agent_knowledge_list(profile_id)`;
+`agent_knowledge_upsert(row)` (upsert by `id`, which TS mints as saved
+queries do: an edit rewrites the row and keeps its `created_at`, so a hint
+edited in place stays where a cap would drop it from);
+`agent_knowledge_delete(id)`; `agent_history_pairs
+(profile_id, limit)` (§4.8). None of the four touch a connection's live
+session: knowledge is appdb-local like a saved query, read once alongside
+the connection's other rows, never fetched mid-turn. Saving an edited hint
+line is the store's own read-modify-write, not a single command:
+`src/stores/knowledge.ts` diffs the parsed line against what it already
+holds for that target and calls `agent_knowledge_upsert` / `_delete` per row
+that changed (the hint row, each added or removed synonym name), so the
+four commands stay plain CRUD and the parse/write pairing (LESSONS 1) lives
+once, in TS. `src/stores/knowledge.ts` holds a connection's knowledge rows
+(hints, definitions, synonyms), loaded alongside the schema snapshot;
+`src/stores/saved.ts`'s `SavedQuery` gains `question?`, `expect_json?`,
+`last_check_json?`, snake_case like the row's other wire fields, and its
+`upsert` merges over the row it already holds so a rename cannot drop the
+question a quick-ask kept or the check on it. Reading either blob is
+`src/stores/checks.ts`'s `checkOf` / `lastCheckOf`, paired with
+`writeExpect` / `writeResult` (LESSONS 1); a blob this build cannot read
+leaves an ordinary bookmark rather than a check nobody can explain.
 
 ## 10. Budgets
 

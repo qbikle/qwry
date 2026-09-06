@@ -105,10 +105,12 @@ interface Hot {
   value: string;
 }
 
-/** the mark each kind wears, the sidebar's and the titlebar's own glyphs: a
- * saved query is the Bookmark it is saved under, a thread the chat bubble Ask
- * opens with */
-const KIND_ICON: Record<MentionKind, LucideIcon> = {
+/** the mark each OFFERED kind wears, the sidebar's and the titlebar's own
+ * glyphs: a saved query is the Bookmark it is saved under, a thread the chat
+ * bubble Ask opens with. `tab` is not here and never will be: it is minted by
+ * `Explain with Ask`, never typed, so the popover has no row for it
+ * (AGENT-UX 15) */
+const KIND_ICON: Record<Exclude<MentionKind, "tab">, LucideIcon> = {
   table: Table2,
   column: Columns3,
   saved: Bookmark,

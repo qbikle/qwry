@@ -12,3 +12,10 @@
   display: flex;
   flex-direction: column;
 }
+/* the Structure view is a TAB's surface, not a pane: it scrolls itself inside
+   the card the way the browser's tab does, and the card is only there so the
+   frame has the app's own edge around it (A2) */
+.harness-structure {
+  height: 100%;
+  overflow: auto;
+}

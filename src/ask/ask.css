@@ -1669,8 +1669,15 @@
 .trace-step-h.static {
   cursor: default;
 }
+/* the kind column carries the widest kind whole: `KNOWLEDGE` measures 73px in
+   this face and touched its label at 56 (A2). It widens on every trace, not
+   only the ones with a knowledge step, and the 20px comes out of the label,
+   which ellipsizes as every trace label does; the ms column does not move.
+   `memory` would have fitted the old 56 and names the same four things, but
+   the body under the step is headed `KNOWLEDGE:` and a step is called what its
+   body is called (DESIGN rule 14's cousin: one name per thing) */
 .trace-kind {
-  width: 56px;
+  width: 76px;
   flex-shrink: 0;
   font-size: var(--text-2xs);
   font-weight: 700;

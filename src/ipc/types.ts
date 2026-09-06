@@ -610,3 +610,31 @@ export interface WritePreview {
   /** code facts, one token each: "missing_where", "many_rows" */
   warnings: string[];
 }
+
+/** what a hint, a synonym or a definition is (appdb agent_knowledge; the kind
+ * is checked in SQL, so an unknown one is a write error) */
+export type KnowledgeKind = "hint" | "definition" | "synonym";
+
+/** one thing the user told Ask about this connection (appdb agent_knowledge).
+ * `target` is the object a hint or a synonym hangs on (`table` or
+ * `table.column`) and null for a definition, whose `term = meaning` line is
+ * the row's own text: a definition has no object to hang on. Rust always sends
+ * the timestamps; optional here so a fixture row and an upsert can leave them
+ * out, as the store assigns them. */
+export interface KnowledgeRow {
+  id: string;
+  profile_id: string;
+  kind: KnowledgeKind;
+  target: string | null;
+  text: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/** one question this connection already answered and the SQL that answered it
+ * (appdb agent_history_pairs), for the prompt's EARLIER ANSWERS block */
+export interface AgentHistoryPair {
+  question: string;
+  sql: string;
+  created_at: string;
+}

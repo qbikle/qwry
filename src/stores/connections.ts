@@ -528,6 +528,13 @@ async function connectInner(
   // hydrate the persisted schema snapshot NOW: sidebar + completion are
   // live at t=0 while the handshake and the fresh introspect run behind it
   void import("./schema").then(({ useSchema }) => useSchema.getState().hydrate(profileId));
+  // what this connection knows (A2): appdb rows, no session needed, read here
+  // with the snapshot so the Structure view's hint lines, the palette's
+  // definitions and the run's KNOWLEDGE block all see them from t=0
+  void import("./knowledge").then(({ useKnowledge }) =>
+    // a knowledge read that fails costs the connection nothing (LESSONS 5)
+    useKnowledge.getState().load(profileId).catch((e: unknown) => console.error("knowledge load failed", e)),
+  );
   try {
     const sessionId = await ipc.connect(profileId);
     // the profile was edited/deleted mid-handshake: this session belongs to

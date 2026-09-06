@@ -40,8 +40,11 @@ export interface TokenUsage {
 
 /** What kind of thing an `@` tag names (src/agent/mentions.ts). Declared
  * here because this module imports nothing: the grammar builds on it, the
- * trace's context step carries it. */
-export type MentionKind = "table" | "column" | "saved" | "thread";
+ * trace's context step carries it. `tab` is the one kind the resolver never
+ * mints: it is resolved once, when `Explain with Ask` fires, and carried on
+ * the exchange, so a tab closed since cannot un-pill a bubble that already
+ * reported what it sent (AGENT-UX 15). */
+export type MentionKind = "table" | "column" | "saved" | "thread" | "tab";
 
 /** How a thread's question ended. The tokens are persisted verbatim in
  * `agent_answers.status`, so they never drift between store and appdb.
@@ -149,7 +152,28 @@ export type TraceStep =
       /** the questions parsed out of it */
       questions: string[];
       usage?: TokenUsage;
+    }
+  | {
+      /** what this connection's own knowledge added to the user message (A2
+       * item 4, AGENT-SPEC section 4.2). `text` is the block as sent, headers
+       * included; `counts` is read off the same data that built it, so the
+       * drawer's label can never disagree with the body under it (LESSONS
+       * 13). The step is absent when the profile added nothing. */
+      step: "knowledge";
+      ms: number;
+      text: string;
+      counts: KnowledgeCounts;
     };
+
+/** What the knowledge step's label counts. A kind that contributed nothing is
+ * ABSENT, never a zero: `2 hints · 1 earlier answer`, never `0 definitions`
+ * (DESIGN rule 11). */
+export interface KnowledgeCounts {
+  hints?: number;
+  definitions?: number;
+  synonyms?: number;
+  history?: number;
+}
 
 /** One Ask thread. Threads belong to a connection: switching connections
  * switches threads (AGENT-UX 1). `id` is the thread's identity and the name
@@ -207,4 +231,36 @@ export interface Answer {
   assumptions: Assumption[];
   sanity: SanityFragment[];
   status: AnswerStatus;
+}
+
+/** What the user told this connection that the schema does not say (A2 item
+ * 1). `hint` and `synonym` name their object in `target` (`table` or
+ * `table.column`, as the Structure view writes it); `definition` names no
+ * object and carries `term = meaning` in `text`, the grammar the palette's
+ * input reads back. The loop reads these three fields alone, so the store's
+ * wire row (`KnowledgeRow` in src/ipc/types.ts), which also carries its id,
+ * its profile and its timestamps, is one of these as it stands. Rows arrive
+ * oldest first, which is the order a capped block drops from. */
+export type KnowledgeKind = "hint" | "definition" | "synonym";
+
+export interface KnowledgeRow {
+  kind: KnowledgeKind;
+  target: string | null;
+  text: string;
+}
+
+/** One question this connection already answered, with the statement that
+ * answered it (appdb `agent_history_pairs`, newest first). */
+export interface HistoryPair {
+  question: string;
+  sql: string;
+}
+
+/** A word the user mapped to one of the connection's objects, and the object
+ * it names (A2 item 4). Built from the `synonym` rows and merged over the
+ * static SYN map for the run. */
+export interface Synonym {
+  word: string;
+  /** `table` or `table.column`, as written */
+  target: string;
 }

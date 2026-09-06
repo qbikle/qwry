@@ -38,6 +38,9 @@
 // injection from 4/4 questions failing to 8/8 passing. Do not soften it.
 
 import { RISK_BLOCK, isRisky } from "./risk";
+import { toks } from "./context";
+import { parseDefinition } from "./definitions";
+import type { HistoryPair, KnowledgeKind, KnowledgeRow, Synonym } from "./types";
 
 /** Bumped whenever any string in this file changes. EVAL baselines are tied
  * to it (EVAL.md section 4), so a bump means a re-baseline. */
@@ -96,18 +99,29 @@ export function askMessage(args: {
   risky?: boolean;
   /** the tagged lines mentionContext() built, without their header */
   context?: string;
+  /** the KNOWLEDGE block, header included, when the connection has one (A2
+   * item 4). Standing reference, so it sits with the candidates it talks
+   * about, above what this one question tagged and above the risk block. */
+  knowledge?: string;
+  /** the EARLIER ANSWERS block, header included */
+  history?: string;
 }): string {
   const risky = args.risky ?? isRisky(args.question);
   return (
     `${args.question}\n\nCANDIDATE TABLES (pre-selected from ${args.totalTables} tables; ` +
     `if none fit, call list_tables):\n${args.index}` +
+    (args.knowledge ? `\n\n${args.knowledge}` : "") +
+    (args.history ? `\n\n${args.history}` : "") +
     (args.context ? `\n\nTAGGED BY THE USER:\n${args.context}` : "") +
     (risky ? RISK_BLOCK : "")
   );
 }
 
 /** The small tier's single user message: the candidates' DDL and the
- * question. */
+ * question, and nothing else. The tags do not ride it and neither do the A2
+ * blocks (AGENT-SPEC 4.2): a fired synonym still reaches this tier as a
+ * must-include candidate, but the tier's one call stays the minimal message
+ * it was measured as. */
 export function smallAskMessage(schema: string, question: string): string {
   return `Schema:\n\n${schema}\n\nQuestion: ${question}`;
 }
@@ -160,4 +174,230 @@ export function writesMessage(): string {
 WRITES: the user has allowed changes to this database. If the question asks to change data, finish with exactly ONE INSERT, UPDATE or DELETE
 statement in the final \`\`\`sql block, with a WHERE clause that names the rows it touches. Do NOT call run_sql with it: run_sql runs reads only,
 and the statement in your final block is shown to the user, who runs it. Anything the question only asks about is read-only work as before.`;
+}
+
+// ---- what this connection knows (A2 item 4) --------------------------------
+//
+// Two blocks, both in the USER message, both absent when the profile has
+// nothing to add: SYSTEM_PROMPT and PROMPT_VERSION do not move, and the eval,
+// which passes no profile, measures the same bytes it always did (a loop test
+// pins that). Each renders the fact in its own grammar and nothing else: a
+// hint is the object then the sentence, a synonym is the word then the object
+// it names, a definition is the term then its meaning. Both cap by dropping
+// whole entries, never by cutting one: a halved hint reads as a whole one and
+// is followed as one (LESSONS 9).
+
+/** the KNOWLEDGE block's cap, in characters, header included */
+export const KNOWLEDGE_CAP = 1200;
+/** the EARLIER ANSWERS block's cap, in characters, header included */
+export const HISTORY_CAP = 1500;
+/** how many earlier answers travel at most, however well they score */
+export const HISTORY_MAX = 3;
+
+const KNOWLEDGE_HEAD = "KNOWLEDGE:";
+const HISTORY_HEAD = "EARLIER ANSWERS ON THIS DATABASE:";
+
+/** A block as sent, and the names that survived its cap: the trace's label
+ * counts THESE, so what it says is what the model got (LESSONS 13). */
+export interface KnowledgeBlock {
+  /** the block, header included; empty when nothing travelled */
+  text: string;
+  /** hint targets, in the block's order */
+  hints: string[];
+  /** the terms of the definitions that fired */
+  definitions: string[];
+  /** the words that fired, without their targets */
+  synonyms: string[];
+}
+
+export interface HistoryBlock {
+  text: string;
+  /** the questions of the pairs that travelled, oldest first */
+  questions: string[];
+}
+
+/** one line of a block, with what the cap needs to know about it */
+interface Entry {
+  line: string;
+  /** the name the trace prints for it */
+  name: string;
+  kind: KnowledgeKind;
+  /** how old the fact is: the row's place in the store's list, which loads
+   * oldest first. The block groups by kind, so the cap cannot read its own
+   * order and reads this one. */
+  age: number;
+}
+
+const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
+
+/** Entries under the cap, oldest dropped first. Whole lines only: the block
+ * is a list of facts and half a fact is a wrong one. */
+function fitBlock(head: string, entries: readonly Entry[], cap: number): {
+  text: string;
+  kept: Entry[];
+} {
+  const out = new Set(entries.map((_, i) => i));
+  const kept = () => entries.filter((_, i) => out.has(i));
+  const render = () => `${head}\n${kept().map((e) => e.line).join("\n")}`;
+  const oldestFirst = entries
+    .map((e, i) => ({ e, i }))
+    .sort((a, b) => a.e.age - b.e.age || a.i - b.i);
+  let text = render();
+  for (const { i } of oldestFirst) {
+    if (text.length <= cap) break;
+    out.delete(i);
+    text = render();
+  }
+  return out.size === 0 || text.length > cap ? { text: "", kept: [] } : { text, kept: kept() };
+}
+
+/** `term` and `meaning` out of one definition row. The palette writes
+ * `term = meaning` into `text` and leaves `target` null; a row that carries
+ * its term in `target` instead is read the same way rather than dropped
+ * (LESSONS 5: what is stored may inform, never refuse). */
+function definitionParts(row: KnowledgeRow): { term: string; meaning: string } | null {
+  const raw = oneLine(row.text);
+  if (!raw) return null;
+  if (row.target) return { term: oneLine(row.target), meaning: raw };
+  return parseDefinition(raw);
+}
+
+/** The name the MESSAGE gives a hint's or a synonym's object, or null when
+ * the message never named it: a hint on a table the model cannot see is
+ * noise. A target is stored schema-qualified while the model sees the display
+ * name (bare whenever it is unique), so the answer is the display name and a
+ * column's is its owner's plus the column, and the block prints the same name
+ * the candidates do (context.ts `candidateNames`, DESIGN rule 14). */
+function candidateName(target: string, names: Readonly<Record<string, string>>): string | null {
+  const self = names[target];
+  if (self) return self;
+  const dot = target.lastIndexOf(".");
+  if (dot <= 0) return null;
+  const owner = names[target.slice(0, dot)];
+  return owner ? `${owner}${target.slice(dot)}` : null;
+}
+
+/** The KNOWLEDGE block: hints on the candidate tables and their columns, the
+ * synonyms that fired, the definitions whose term the question's words carry.
+ * Order is the order the sketch draws it, objects before vocabulary. */
+export function knowledgeMessage(args: {
+  rows: readonly KnowledgeRow[];
+  /** every name the message's tables answer to, against the one the model
+   * sees (context.ts `candidateNames`): a hint's target is stored qualified
+   * and a pick is bare whenever it can be, and the block prints the pick's
+   * own name */
+  names: Readonly<Record<string, string>>;
+  /** the question's tokens, stemmed (context.ts questionTokens) */
+  tokens: ReadonlySet<string>;
+  /** the synonyms this question fired, computed once by the caller */
+  fired: readonly Synonym[];
+}): KnowledgeBlock {
+  const named = args.names;
+  const hints: Entry[] = [];
+  const definitions: Entry[] = [];
+  // the row each fired word came from, so a synonym is as old as its row
+  const wordAge = new Map<string, number>();
+  args.rows.forEach((row, age) => {
+    if (row.kind === "synonym") {
+      const word = row.text.trim().toLowerCase();
+      if (word && !wordAge.has(word)) wordAge.set(word, age);
+      return;
+    }
+    if (row.kind === "hint") {
+      const target = row.target?.trim();
+      const text = oneLine(row.text);
+      const name = target ? candidateName(target, named) : null;
+      if (!name || !text) return;
+      hints.push({ line: `${name}  -- ${text}`, name, kind: "hint", age });
+      return;
+    }
+    const parts = definitionParts(row);
+    if (!parts) return;
+    const term = [...toks(parts.term)];
+    if (term.length === 0 || !term.every((t) => args.tokens.has(t))) return;
+    definitions.push({
+      line: `${parts.term}: ${parts.meaning}`,
+      name: parts.term,
+      kind: "definition",
+      age,
+    });
+  });
+  const synonyms: Entry[] = args.fired
+    // a synonym whose target this message never named fired for nothing, and
+    // teaching the model a name for a table it cannot see is worse than
+    // silence (LESSONS 5)
+    .map((s) => ({ word: s.word, name: candidateName(s.target, named) }))
+    .filter((s): s is { word: string; name: string } => s.name !== null)
+    .map((s) => ({
+      line: `${s.word} -> ${s.name}`,
+      name: s.word,
+      kind: "synonym",
+      age: wordAge.get(s.word) ?? args.rows.length,
+    }));
+
+  const entries = [...hints, ...synonyms, ...definitions];
+  if (entries.length === 0) return { text: "", hints: [], definitions: [], synonyms: [] };
+  const { text, kept } = fitBlock(KNOWLEDGE_HEAD, entries, KNOWLEDGE_CAP);
+  const names = (kind: KnowledgeKind) => kept.filter((e) => e.kind === kind).map((e) => e.name);
+  return {
+    text,
+    hints: names("hint"),
+    definitions: names("definition"),
+    synonyms: names("synonym"),
+  };
+}
+
+/** The EARLIER ANSWERS block: at most three questions this connection already
+ * answered, the ones whose words this question shares, oldest first so the
+ * pair reads as a conversation. Scored with the prefilter's own vocabulary
+ * (stemmed tokens, IDF over the candidates), so a word every past question
+ * carries counts for nothing. The question being asked is never its own
+ * earlier answer: a Restart would read its own last statement back and write
+ * it again instead of looking at the database (AGENT-SPEC section 9). */
+export function historyMessage(
+  question: string,
+  pairs: readonly HistoryPair[],
+): HistoryBlock {
+  const q = toks(question);
+  const asked = oneLine(question).toLowerCase();
+  const usable = pairs.filter(
+    (p) => p.question.trim() && p.sql.trim() && oneLine(p.question).toLowerCase() !== asked,
+  );
+  if (usable.length === 0 || q.size === 0) return { text: "", questions: [] };
+
+  const toksOf = usable.map((p) => toks(p.question));
+  const df = new Map<string, number>();
+  for (const set of toksOf) for (const w of set) df.set(w, (df.get(w) ?? 0) + 1);
+  const idf = (w: string) => Math.log(usable.length / (df.get(w) ?? 1)) + 0.1;
+
+  const scored = usable
+    .map((pair, i) => {
+      let score = 0;
+      for (const w of toksOf[i]) if (q.has(w)) score += idf(w);
+      return { pair, score, i };
+    })
+    .filter((s) => s.score > 0)
+    .sort((a, b) => b.score - a.score || a.i - b.i)
+    .slice(0, HISTORY_MAX);
+  // the cap takes the least relevant pair first, the oldest of a tie: what
+  // survives is what this question has most to do with
+  const dropFirst = new Map(
+    [...scored]
+      .sort((a, b) => a.score - b.score || b.i - a.i)
+      .map((s, rank) => [s.i, rank] as const),
+  );
+
+  const entries: Entry[] = scored
+    // the pairs arrive newest first, so the highest index is the oldest, and
+    // the most relevant reads last, next to the question it is context for
+    .sort((a, b) => b.i - a.i)
+    .map(({ pair, i }) => ({
+      line: `Q: ${oneLine(pair.question)}\nSQL: ${oneLine(pair.sql)}`,
+      name: oneLine(pair.question),
+      kind: "hint",
+      age: dropFirst.get(i) ?? 0,
+    }));
+  if (entries.length === 0) return { text: "", questions: [] };
+  const { text, kept } = fitBlock(HISTORY_HEAD, entries, HISTORY_CAP);
+  return { text, questions: kept.map((e) => e.name) };
 }

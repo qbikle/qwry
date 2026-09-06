@@ -401,7 +401,12 @@ never inside it (the block stays exactly what was sent, TAGGED BY THE USER
 lines included; the line is their summary, the `19 candidate tables` label's
 precedent); it wraps rather than cuts (a truncated tag is not a summary) and
 is absent when nothing was tagged (rule 11). The step's label does not
-change. This is a teaching
+change. Since A2 the context step's body is the message WITHOUT the
+`KNOWLEDGE:` and `EARLIER ANSWERS ON THIS DATABASE:` blocks — those are the
+`knowledge` step's own body (§14), and a block standing in two slots is the
+same fact twice (rule 14); with no profile, which is exactly what the eval
+sends, the two steps' bodies add up to the whole message and the context
+step alone holds it. This is a teaching
 surface (WRITING: keycaps allowed) and a trust surface: everything the model
 received is shown, nothing is summarised away.
 
@@ -854,3 +859,198 @@ headline swaps its text on `swapIn`; the tab's own ceremony (danger
 confirm, prod safe mode) opens over the window, never the pane. Reduced
 motion: the chip appears, the faces swap, the band is gone, with no
 crossfade or spring of its own.
+
+## 14. Knowledge
+
+Four things the user knows and the model does not — a table's hint, a
+column's hint, a synonym, a definition — each edited where the thing it
+describes already stands, none given a screen of its own (the exemplar:
+VS Code's inline rename, DESIGN rule 15). No knowledge screen and no new
+panel anywhere in this section.
+
+**The hint line.** Its home is the table tab's Structure view
+(`StructureTab.tsx`), not an Inspector card: the Inspector inspects a cell
+and carries no table or column card to put a hint on, so the one place the
+app already prints a table's live `COMMENT` is where the hint goes. Today
+that view spends a `Comments` heading and a second table of column comments
+at its foot, restating the Comment column the Columns table already showed
+above it (DESIGN rule 14, one fact in two slots): that heading and its
+table go. The table's own comment line moves to the first line of the view,
+under its header, and becomes the hint line: 8 headings and 2 comment slots
+(10 elements for one table) become 8. The column's hint lives in the
+Columns table's existing `Comment` cell — same line, one row tall,
+ellipsized at rest (its own overflow) and shown whole while it is being
+edited; the column heading stays `Comment` (the Postgres word), because the
+line's own tier is the only sign of whose words are showing.
+
+The line carries one of three faces, its own tier saying which: the live
+database comment, tier 2 (`--fg-muted`), when a comment exists and no hint
+does; the hint's own words, tier 1 (`--fg`), once one is saved; the
+placeholder `Hint for Ask…`, the placeholder register, when neither exists
+(deleting this string would delete the way in, rule 11 — it stays). When
+both a comment and a hint exist the hint stands and the comment does not
+vanish: it becomes the line's own tooltip at rest and the edit field's
+placeholder while editing, so clearing the field previews exactly what will
+stand once saved. Click the line, or press ↩ while it holds focus, and it
+opens in place with no travel: the same padding, a 1px ring that was
+transparent turns accent, the fill goes `--bg-app`. ↩ saves, Esc cancels,
+and a line emptied then saved deletes the hint (and any synonyms riding it,
+below) so the database comment, if any, reads again. No pencil icon, no
+label, no second line anywhere in the view. A column's cell with neither a
+hint nor a comment prints nothing at rest; its placeholder shows only on
+its row's hover or the cell's own focus (rule 8's two discoverability
+routes), so a sixty-column table never prints sixty lines of chrome — the
+table's own line, always visible, is the one place the feature says its
+name.
+
+**Synonyms** ride the same line as a trailing clause, never a field of
+their own (an own field would cost one line per table and per column; the
+clause costs nothing). The grammar: the LAST literal ` aka ` in the line,
+followed by comma-separated identifier-shaped names, is the clause; every
+grammar-conformant clause is a synonym list, and everything before the LAST
+one is hint prose, so a hint whose own prose happens to contain ` aka `
+mid-sentence is read correctly as long as what follows it does not also
+parse as a name list (a case the parser's property test, LESSONS 1, must
+cover in both directions). Rest and edit show the identical string; the
+rest face alone colors `aka` at tier 2 and sets the names in mono (data
+wearing data's clothes, WRITING's identifiers rule). `order_v2  aka orders,
+purchases` is both what is typed and what is read back.
+
+**Definitions** live in the palette, the one candidate of three that adds
+nothing to any always-visible surface (the Ask pane, the Threads sheet, a
+Settings screen — the exemplar forbids a settings screen for what an object
+can hold itself). `Define…` stands in the palette's Actions group (the
+`Plus` glyph, the palette's own create mark; the ellipsis earned, since it
+opens an input mode rather than acting at once) and swaps the palette's own
+input for a one-line mode, VS Code's quick input: the grammar is `term =
+meaning`, the assumption chips' own `=` and no other punctuation, kept for
+definitions alone so a hint line never reads as an assertion. ↩ saves and
+returns the normal palette; Esc returns it unsaved; the hint line's own
+delete gesture works here too — clear the input and press ↩ — with the cue
+`Definition removed`; no trash icon, no second field. A `Definitions` group
+draws in the normal palette ONLY once a definition exists (rule 11: a
+connection with none does not announce having none): `BookA` glyph, the
+term at tier 1, the meaning in the row's own detail slot at tier 2; ↩ on a
+row loads its `term = meaning` back into the very same input for editing.
+
+**The knowledge trace step.** What was injected is a new trace step, kind
+`knowledge`, standing where §4.2 builds it — after `context`, before the
+first model turn. Every trace's kind column widens 56px to 76px (`KNOWLEDGE`
+measures 73px in the kind face and touched its own label at 56), giving up
+20px from the label column; the ms column does not move. The step's label
+states counts in one fixed order, `2 hints · 1 definition · 1 synonym · 2
+earlier answers`, and a kind with nothing to say is left out entirely,
+never printed as `0 definitions` (rule 11); like every trace label it
+ellipsizes at 320 and 392 and reads whole only from about 560, and the body
+underneath carries the whole regardless (LESSONS 13: the label's counts are
+read off the same data the body holds, never a second count that could
+drift from it). That body, expanded, is exactly the bytes AGENT-SPEC §4.2
+sent: the `KNOWLEDGE:` block, a blank line, then `EARLIER ANSWERS ON THIS
+DATABASE:`, whichever fired or both — one step, one name, because the model
+read them as one contiguous block and a step is called what its body is
+called, not `memory` (which would fit the narrower column but names the
+mechanism, not what stands under it). A question that drew on neither
+carries no `knowledge` step at all, the same absence rule the `context`
+step's own `mentions` field already follows (§5).
+
+## 15. Explain and checks
+
+**Explain with Ask.** Two new entries, both reached where the SQL already
+stands: the editor's context menu gains `Explain with Ask`, appended after
+`Run`; the palette gains the same action beside the Ask row's own
+`MessageSquare`, appended to Actions. The qualifier stays because the app
+already owns `Explain` (⌘E, the plan view) — one term per concept (WRITING
+rule 5) means the new verb cannot borrow the old one's name. Either entry
+opens the pane in Ask and sends the fixed question `Explain this query`
+with the SQL as context through `askMessage`'s existing `context` argument
+— the editor's current selection, else the statement at the caret, else the
+whole tab.
+
+The sent question carries one mention of a new kind, `tab`
+(`MentionKind` gains a fourth member, alongside `table` | `column` |
+`saved` | `thread`), quoted like a saved query's (`@"cohort retention"`)
+because a tab's name can hold spaces and shares its quoted namespace with a
+saved query's and a thread's. The bubble wears the one `.mention` face
+every kind wears (§1a) with no icon of its own — the kind is already stated
+by the menu row the pick was made from. Unlike the other three kinds, which
+`AnswerBlock` re-resolves against the CURRENT snapshot, saved queries and
+threads on every render (§2 item 1, so a table dropped since renders as
+plain text), a `tab` mention is resolved once, at the moment `Explain with
+Ask` fires, and carried on the exchange itself rather than looked up again:
+a tab that closes later must not un-pill a bubble that already reported
+what it sent, because the pill states a fact about the exchange, not a fact
+about the workspace (the SQL itself stays in the trace regardless). The `@`
+popover offers no `tab` rows (§1a): this kind is never typed, only
+produced by the two entry points above.
+
+The exchange that follows carries one pill in its bubble and one more chip
+in the thinking strip, `run EXPLAIN` (the strip's own species; the run's
+actual statement is the one thing this chip names as an exception). The
+model's answer is prose only — its own `EXPLAIN` ran through `run_sql`, not
+the final fenced statement — so with no `sql` fence in the text, `sql`
+stays null on the answer row, no result block stands, and `Save Query`
+sits disabled in the prose's own
+cluster exactly as it already does for any SQL-less answer (§2 item 3's own
+matrix; no new state). The plan's own rows live in the trace, under the
+tool call that ran them, the same as any `run_sql` result. Chrome count:
+the editor menu and the palette each gain one row; the Ask pane's own
+always-visible count does not move, 6 on an older exchange and 7 on the
+newest, exactly as W7 left it — the pill lives inside a bubble that already
+exists, the chip inside a strip that already exists, the prose inside a
+slot that already exists.
+
+**Quick-asks.** `Save Query` (§2 item 3) now writes the question into the
+saved row's own `question` alongside its SQL, in the same click — no second
+button, no second list. The palette's Saved rows drop their `saved` detail
+text (the group's own heading already says `Saved`, rule 14): a row goes
+from icon · name · detail to icon · name, 3 elements to 2. A row whose
+saved query carries a question swaps its glyph from `Bookmark` to
+`MessageSquare`, the Ask pane's own mark, and nothing else about the row
+changes. ↩ still opens a Saved row's SQL in a tab; ⌘↩ is new and is the
+row's Ask-shaped chord throughout this section — on a quick-ask it asks the
+saved question again as a fresh exchange, on a failed check (below) it
+fires `Ask Why`, and on any other Saved row it is simply ↩ (no dead chord).
+
+**Checks.** A saved query gains an expectation from its own existing
+context menu: `Expect Current Shape` runs the query once, read-only,
+through `agent_run_readonly` (AGENT-SPEC §5, the same gate every tool call
+answers to), and records the result's shape (AGENT-SPEC §9): a countable
+row set becomes `rows eq n`, a result of exactly one row and one column
+becomes `scalar eq <that cell's text>`, anything else becomes `nonempty`.
+Once a query carries an expectation the same menu offers `Remove Check` in
+its place. There is no `Save as Check` face of `Save Query`: that would add
+a button to the answer's own cluster on every single exchange for a check
+only some exchanges will ever want, and it could never reach a query saved
+straight from a tab, which has no exchange behind it at all — the menu item
+reaches every saved query alike.
+
+The palette gains `Run Checks` (Actions group), drawn only when the
+connection holds at least one check (rule 11: nothing announces having
+none). It runs every check the connection has, each through
+`agent_run_readonly` against its own `expect_json`, and writes pass or fail
+into `last_check_json`. The action's own detail slot and the toast on
+completion both read the identical string, `3 checks · 1 failed` (or `3
+checks` when all pass), through the app's one cue path (`copyCue`): one
+count, read once, shown twice (LESSONS 9).
+
+A checked row wears one more mark, last in the row: the connection dot's
+own 8px mark (§9), painted `--ok` or `--danger`. A passing row says nothing
+beyond its dot — 2 elements become 3, and the exception speaks while the
+norm stays silent (rule 11). A failed row alone adds two more: the drift,
+in the status register, in its own detail slot (`12 rows · expected 0`, `82
+rows · expected ≥ 100`, `4 · expected 7`, `0 rows · expected some` — the
+actual shape first, the expectation second, every time), and `Ask Why`, a
+`.linkish` link recoloured to `--accent-fg` on the row's own hot state so
+it reads as the row's, not a stray underline elsewhere on the palette; a
+failed row is 5 elements. `Ask Why` sends `Why did @"…" fail its check?`
+(the check's own name, Sentence case, the app's own composed-question
+form), the check itself riding as a saved-query mention (an existing kind:
+its SQL travels in the tag block exactly as any tagged saved query's does)
+with one more line appended to that tag's context text, stating the
+expectation and the actual shape in the very words the palette row's own
+detail used (one string, one place, DESIGN rule 14). The answer that comes
+back is an ordinary exchange — the drifted rows in the result block, the
+drift explained in bullets, an `Assumed` chip wherever the model had to
+read a state to explain it, follow-ups at the thread's end — no new
+species anywhere in it, and the Ask pane's always-visible count is
+unmoved by any of it.

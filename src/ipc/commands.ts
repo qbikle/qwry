@@ -21,6 +21,7 @@ import type {
 import type { ImportProgress, ImportReport, ImportSpec } from "./types";
 import type {
   AgentAnswer,
+  AgentHistoryPair,
   AgentRun,
   AgentThread,
   AgentTurn,
@@ -31,6 +32,7 @@ import type {
   GateVerdict,
   HttpChunk,
   HttpDone,
+  KnowledgeRow,
   McpCall,
   McpEndpoint,
   PeekResult,
@@ -510,3 +512,21 @@ export const PROD_WRITE_CODE = "QWRY_WRITE_ON_PROD";
  * thrown away after; nothing it does survives the call */
 export const agentWritePreview = (profileId: string, sql: string, timeoutMs: number) =>
   invoke<WritePreview>("agent_write_preview", { profileId, sql, timeoutMs });
+
+/** what the user told Ask about this connection, oldest first: the order the
+ * prompt's capped KNOWLEDGE block drops from */
+export const agentKnowledgeList = (profileId: string) =>
+  invoke<KnowledgeRow[]>("agent_knowledge_list", { profileId });
+
+/** upsert by id: editing a hint where it stands rewrites its row, it does not
+ * add a second fact about the same object */
+export const agentKnowledgeUpsert = (row: KnowledgeRow) =>
+  invoke<void>("agent_knowledge_upsert", { row });
+
+export const agentKnowledgeDelete = (id: string) =>
+  invoke<void>("agent_knowledge_delete", { id });
+
+/** this connection's answered questions and the SQL that answered them,
+ * newest first */
+export const agentHistoryPairs = (profileId: string, limit: number) =>
+  invoke<AgentHistoryPair[]>("agent_history_pairs", { profileId, limit });

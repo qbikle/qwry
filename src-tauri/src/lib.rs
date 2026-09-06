@@ -370,6 +370,10 @@ pub fn run() {
             agent_mcp::agent_mcp_stop,
             agent_mcp::agent_mcp_log,
             agent_write::agent_write_preview,
+            commands::agent_knowledge_list,
+            commands::agent_knowledge_upsert,
+            commands::agent_knowledge_delete,
+            commands::agent_history_pairs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

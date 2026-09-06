@@ -52,13 +52,21 @@ export interface ThreadRef {
   replay?: string;
 }
 
+/** A query tab, by the name it wore when `Explain with Ask` fired. The
+ * statement is NOT here: it travelled in the exchange's own context line and
+ * stands in the trace, and the pill names what was sent (AGENT-UX 15). */
+export interface TabRef {
+  name: string;
+}
+
 /** One resolved tag. The ref is the thing itself, so no consumer ever splits
  * a dotted string back apart (LESSONS 4). */
 export type Mention =
   | { span: Span; token: string; kind: "table"; ref: TableRef }
   | { span: Span; token: string; kind: "column"; ref: ColumnRef }
   | { span: Span; token: string; kind: "saved"; ref: SavedRef }
-  | { span: Span; token: string; kind: "thread"; ref: ThreadRef };
+  | { span: Span; token: string; kind: "thread"; ref: ThreadRef }
+  | { span: Span; token: string; kind: "tab"; ref: TabRef };
 
 /** One `@…` span the grammar found, before anything is known about what it
  * names. An unresolved one is plain text: no chip, no context. */
@@ -286,6 +294,7 @@ export function canonicalToken(kind: "table", ref: TableRef): string;
 export function canonicalToken(kind: "column", ref: ColumnRef): string;
 export function canonicalToken(kind: "saved", ref: SavedRef): string;
 export function canonicalToken(kind: "thread", ref: ThreadRef): string;
+export function canonicalToken(kind: "tab", ref: TabRef): string;
 export function canonicalToken(kind: MentionKind, ref: Mention["ref"]): string {
   // one cast per branch: the overloads above are the contract callers see
   switch (kind) {
@@ -305,6 +314,10 @@ export function canonicalToken(kind: MentionKind, ref: Mention["ref"]): string {
       return `@${quoted((ref as SavedRef).name)}`;
     case "thread":
       return `@${quoted((ref as ThreadRef).title)}`;
+    // never typed and never offered by the popover: the two Explain entries
+    // write it, and the echo reads it back off the exchange (AGENT-UX 15)
+    case "tab":
+      return `@${quoted((ref as TabRef).name)}`;
   }
 }
 
@@ -321,12 +334,16 @@ function refKey(m: Mention): string {
       return `saved:${m.ref.id}`;
     case "thread":
       return `thread:${m.ref.id}`;
+    case "tab":
+      return `tab:${m.ref.name}`;
   }
 }
 
 /** Text the model reads, so a cut says so: a silently halved query reads as
- * the whole query and is answered as one (LESSONS 9). */
-const clip = (text: string) =>
+ * the whole query and is answered as one (LESSONS 9). Exported because the
+ * app's own composed context lines (a tab's statement, A2 item 5) ride under
+ * the same header and must cut by the same rule. */
+export const clip = (text: string) =>
   text.length <= MENTION_TEXT_CAP
     ? text
     : `${text.slice(0, MENTION_TEXT_CAP)}\n… (truncated)`;
@@ -362,6 +379,11 @@ export function mentionContext(mentions: readonly Mention[]): string {
         lines.push(replay ? `thread "${m.ref.title}":\n${clip(replay)}` : `thread "${m.ref.title}"`);
         break;
       }
+      // the statement rides the exchange's own context line beside these
+      // (stores/agent explainWithAsk), so the tag says only which tab
+      case "tab":
+        lines.push(`query tab "${m.ref.name}"`);
+        break;
     }
   }
   return lines.join("\n");

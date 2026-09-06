@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Bookmark, ChevronDown, ChevronRight, Pencil, Search, Trash2 } from "lucide-react";
 import { copyCue } from "../lib/copyCue";
 import { useSaved, visibleSaved, type SavedQuery } from "../stores/saved";
+import { checkOf, expectCurrentShape, removeCheck } from "../stores/checks";
 import { useConnections } from "../stores/connections";
 import { isTabVisible, useTabs } from "../stores/tabs";
 import { ContextMenu, type MenuNode } from "../app/overlay/ContextMenu";
@@ -77,6 +78,20 @@ export function SavedQueries() {
           .upsert({ id: crypto.randomUUID(), name: `${q.name} copy`, sql: q.sql }),
     },
     { kind: "item", label: "Copy SQL", onSelect: () => void copyCue(q.sql) },
+    // a check is set from the query it is about (A2 item 6b): the row runs
+    // once, read-only, and keeps the shape it came back in as what it should
+    // return. One item, and its opposite once the row carries one
+    ...(checkOf(q)
+      ? [{ kind: "item" as const, label: "Remove Check", onSelect: () => void removeCheck(q.id) }]
+      : [
+          {
+            kind: "item" as const,
+            label: "Expect Current Shape",
+            onSelect: () => {
+              if (activeProfileId) void expectCurrentShape(activeProfileId, q.id);
+            },
+          },
+        ]),
     { kind: "sep" },
     {
       kind: "item",

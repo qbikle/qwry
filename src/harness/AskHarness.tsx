@@ -16,7 +16,8 @@
 //                       |result-table|result-sql|result-scalar|failure-cap
 //                       |answer-actions|followups-end
 //                       |a4-preview|a4-preview-warn|a4-preview-sql|a4-ran
-//                       |a4-preview-busy|a4-writes-off>
+//                       |a4-preview-busy|a4-writes-off
+//                       |a2-explain|a2-knowledge-trace|a2-ask-why>
 //             &w=<320|392|560>&theme=<dark|light>[&scroll=top|bottom]
 //
 // `scroll=top` parks the thread scroller at the question echo instead of the
@@ -78,6 +79,13 @@
 // would say, and every other state clears it; `a4-preview-busy` is the dry
 // run in flight, its `preview` chip spinning in the strip.
 //
+// A2: the `a2` states (fixtures.knowledge.ts) are one exchange each over the
+// W6 schema and bookmarks, and the first to seed the TABS store, because the
+// `Explain with Ask` exchange stands in a workspace with the tab it names
+// open; every other state resets it, the saved-queries precedent.
+// `a2-knowledge-trace` opens the drawer at its `knowledge` step (the anatomy
+// precedent) and the two answered states park at the question.
+//
 // scripts/ask-frames.ts drives headless Chrome over this route and writes
 // one PNG per state × width × theme. The dev build remains the final eyeball;
 // these frames are the evidence.
@@ -97,6 +105,7 @@ import { useSchema } from "../stores/schema";
 import { useSettings } from "../stores/settings";
 import { useSidePane } from "../stores/sidePane";
 import { useStarterPools } from "../stores/starters";
+import { useTabs } from "../stores/tabs";
 import {
   FIXTURE,
   HARNESS_STATES,
@@ -121,6 +130,13 @@ import {
   type MentionsEchoState,
 } from "./fixtures.mentions-echo";
 import { INTERACT_STATES, interactSeed, type InteractSeed, type InteractState } from "./fixtures.interact";
+import {
+  KNOWLEDGE_STATES,
+  knowledgeAfterMount,
+  knowledgeSeed,
+  knowledgeTraceFor,
+  type KnowledgeState,
+} from "./fixtures.knowledge";
 import { RESULT_STATES, resultAfterMount, resultSeed, type ResultState } from "./fixtures.result";
 import { RICH_STATES, richSeed, type RichState } from "./fixtures.rich";
 import { SHELL_THREADS, shellAfterMount } from "./fixtures.shell";
@@ -204,9 +220,15 @@ function seed({ state, w, theme }: Params) {
   // A4: one proposed change, with its own busy / phase (the result shape); the
   // seed also opens or clears the query tab's transaction `uncommitted` reads
   const writes = (WRITES_STATES as readonly string[]).includes(state) ? writesSeed(state as WritesState) : null;
+  // the A2 thread: the W6 schema and bookmarks again, plus the workspace's
+  // own tabs, which the `Explain with Ask` exchange was asked from
+  const know = (KNOWLEDGE_STATES as readonly string[]).includes(state)
+    ? knowledgeSeed(state as KnowledgeState)
+    : null;
   // the thread a state shows, oldest first: one seed wins, and the same list
   // is the active thread, the exchanges and what the follow-up row reads
   const list =
+    know?.exchanges ??
     w6?.exchanges ??
     w4?.exchanges ??
     result?.exchanges ??
@@ -234,7 +256,7 @@ function seed({ state, w, theme }: Params) {
   document.documentElement.dataset.theme = theme;
 
   useSchema.setState({
-    snapshots: { [pid]: w6?.snapshot ?? FIXTURE.snapshot },
+    snapshots: { [pid]: know?.snapshot ?? w6?.snapshot ?? FIXTURE.snapshot },
     source: { [pid]: "server" },
     loading: {},
     errors: {},
@@ -261,7 +283,12 @@ function seed({ state, w, theme }: Params) {
 
   // every other state resets the bookmarks (the starter pools precedent), so
   // one persisted by an earlier page never reaches a frame
-  useSaved.setState({ queries: w6?.saved ?? [] });
+  useSaved.setState({ queries: know?.saved ?? w6?.saved ?? [] });
+
+  // the workspace behind the pane: only the A2 states have one, and every
+  // other state clears it, so a tab persisted by an earlier page never
+  // reaches a frame (the bookmarks' own rule, above)
+  useTabs.setState({ tabs: know?.tabs ?? [], activeId: know?.activeTabId ?? null });
 
   useSidePane.setState({ mode: "ask", open: true, width: w });
   useAsk.setState({
@@ -294,7 +321,9 @@ function Harness({ state, w, scroll }: Params) {
       ? anatomyTraceFor(state as AnatomyState)
       : (MENTIONS_ECHO_STATES as readonly string[]).includes(state)
         ? mentionsEchoTraceFor(state as MentionsEchoState)
-        : null;
+        : (KNOWLEDGE_STATES as readonly string[]).includes(state)
+          ? knowledgeTraceFor(state as KnowledgeState)
+          : null;
     if (t) useAsk.getState().openTrace(t.exchangeId, t.stepId);
     const interact = interactFor(state);
     const id = requestAnimationFrame(() => {
@@ -317,6 +346,7 @@ function Harness({ state, w, scroll }: Params) {
       editAfterMount(state);
       mentionsAfterMount(state);
       mentionsEchoAfterMount(state);
+      knowledgeAfterMount(state);
       if (scroll === "top") {
         const el = document.querySelector<HTMLElement>(".ask-scroll");
         if (el) el.scrollTop = 0;

@@ -43,7 +43,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { AnimatePresence, motion, usePresence } from "motion/react";
 import { answerText, footerStatus } from "../agent/display";
-import { mentionsIn } from "../agent/mentions";
+import { canonicalToken, mentionsIn, parseMentions, type Mention } from "../agent/mentions";
 import type { ProviderId } from "../agent/providers/types";
 import { prefersReducedMotion, spring } from "../design/springs";
 import { msText } from "../lib/duration";
@@ -286,20 +286,31 @@ export const AnswerBlock = memo(function AnswerBlock({
   const writing = useAgent((s) => s.writing[exchange.id] === true);
 
   // the chips in the echo (W6): resolved once per exchange against what the
-  // connection has now, never against what it had when the question was sent
+  // connection has now, never against what it had when the question was sent.
+  // The one exception is a tab (A2 item 5): its pill is minted from the
+  // exchange's own `tabName` over the token the question already carries, and
+  // never looked up, because a tab closed since must not un-pill a bubble
+  // that reported what it sent (AGENT-UX 15). The token is the tab's however
+  // the connection now uses that name, the same claim the store makes when
+  // the question is sent (stores/agent `ask`)
   const snapshot = useSchema((s) => s.snapshots[profileId]);
   const saved = useSaved((s) => s.queries);
   const threads = useAgent((s) => s.threads[profileId]);
-  const mentions = useMemo(
-    () =>
-      mentionsIn(question, {
-        snapshot,
-        saved: visibleSaved(saved, profileId),
-        threads: threads ?? [],
-        currentThreadId: threadId,
-      }),
-    [question, snapshot, saved, threads, profileId, threadId],
-  );
+  const tabName = exchange.tabName;
+  const mentions = useMemo(() => {
+    const resolved = mentionsIn(question, {
+      snapshot,
+      saved: visibleSaved(saved, profileId),
+      threads: threads ?? [],
+      currentThreadId: threadId,
+    });
+    if (!tabName) return resolved;
+    const token = canonicalToken("tab", { name: tabName }).slice(1);
+    const raw = parseMentions(question).find((r) => r.token === token);
+    if (!raw) return resolved;
+    const tab: Mention = { span: raw.span, token, kind: "tab", ref: { name: tabName } };
+    return [...resolved.filter((m) => m.token !== token), tab];
+  }, [question, snapshot, saved, threads, profileId, threadId, tabName]);
 
   // the question echo: the user's words in a bubble at the right edge, the
   // anatomy below staying left (ask.css .ans-echo-row). The newest echo is

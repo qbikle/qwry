@@ -29,6 +29,9 @@ import type {
 import type {
   AgentRun,
   Assumption,
+  HistoryPair,
+  KnowledgeCounts,
+  KnowledgeRow,
   SanityFragment,
   TokenUsage,
   ToolName,
@@ -36,7 +39,17 @@ import type {
   Verdict,
 } from "./types";
 import type { SchemaSnapshot } from "../stores/schema";
-import { buildMeta, candidates, indexFor, mustIncludeFor, recallOf } from "./context";
+import {
+  buildMeta,
+  candidateNames,
+  candidates,
+  indexFor,
+  mustIncludeFor,
+  questionTokens,
+  recallOf,
+  synonymMap,
+  synonymsFired,
+} from "./context";
 import { type Mention, mentionContext, mentionTags } from "./mentions";
 import { isRisky } from "./risk";
 import { probeNoun } from "./probeNoun";
@@ -45,9 +58,13 @@ import {
   SMALL_SYSTEM_PROMPT,
   SYSTEM_PROMPT,
   askMessage,
+  historyMessage,
+  knowledgeMessage,
   repairMessage,
   smallAskMessage,
   writesMessage,
+  type HistoryBlock,
+  type KnowledgeBlock,
 } from "./prompt";
 import { buildAssumptions, extractSql } from "./extract";
 import { answerText } from "./display";
@@ -173,6 +190,22 @@ export interface AskRequest {
    * model wrote rather than hand it to a tool that would refuse it in the
    * gate's words (AGENT-SPEC 8.9). */
   writes?: WriteMode;
+  /** what the app composed for a code entry point (A2 items 5 and 6): the
+   * tab a `Explain with Ask` sent, the expectation a failed check drifted
+   * from. It rides under the same header as the `@` tags because it is the
+   * same fact, what this question came with (DESIGN rule 15). */
+  context?: string;
+  /** what this connection knows that the schema does not say (A2 item 4):
+   * hints on its tables and columns, definitions of its own words, synonyms
+   * that reach a table the prefilter would have missed. Absent on the eval
+   * path, which passes no profile. */
+  knowledge?: readonly KnowledgeRow[];
+  /** questions this connection already answered, newest first */
+  history?: readonly HistoryPair[];
+  /** word to `table` or `table.column`, merged OVER the static SYN map.
+   * Defaults to the map the knowledge rows themselves make, so the block and
+   * the prefilter can never read two different maps (LESSONS 13). */
+  synonyms?: Readonly<Record<string, string>>;
   /** injectable clock so the harness can be deterministic */
   now?: () => number;
   maxTurns?: number;
@@ -231,11 +264,17 @@ const firstLine = (e: unknown): string => {
 const writeRefusal = (w: WriteMode): string => (w.prod ? WRITES_OFF_PROD : WRITES_OFF);
 
 /** The `TAGGED BY THE USER:` block's lines: what the `@` tags resolved to,
- * and then the row Record View attached (A4 item 7). One block, because both
- * are the same fact (the user pointed at this), and an empty result keeps the
- * header off the message entirely. */
-const taggedContext = (mentions: readonly Mention[], row?: string): string =>
-  [mentionContext(mentions), (row ?? "").trim()].filter(Boolean).join("\n");
+ * then the row Record View attached (A4 item 7), then what a code entry point
+ * composed (A2 items 5 and 6). One block, because all three are the same fact
+ * (the user pointed at this), and an empty result keeps the header off the
+ * message entirely. */
+const taggedContext = (
+  mentions: readonly Mention[],
+  ...attached: readonly (string | undefined)[]
+): string =>
+  [mentionContext(mentions), ...attached.map((a) => (a ?? "").trim())]
+    .filter(Boolean)
+    .join("\n");
 
 /** Whitespace-insensitive statement identity. Case is preserved on purpose:
  * `'Paid'` and `'paid'` are different queries. */
@@ -340,6 +379,21 @@ async function callTool(
   }
 }
 
+const EMPTY_KNOWLEDGE: KnowledgeBlock = { text: "", hints: [], definitions: [], synonyms: [] };
+const EMPTY_HISTORY: HistoryBlock = { text: "", questions: [] };
+
+/** The knowledge step's label, as numbers: a kind that contributed nothing is
+ * absent, never a zero (DESIGN rule 11). Read off the blocks that were built,
+ * so the label and the body are one reading (LESSONS 13). */
+function knowledgeCounts(know: KnowledgeBlock, past: HistoryBlock): KnowledgeCounts {
+  return {
+    ...(know.hints.length ? { hints: know.hints.length } : {}),
+    ...(know.definitions.length ? { definitions: know.definitions.length } : {}),
+    ...(know.synonyms.length ? { synonyms: know.synonyms.length } : {}),
+    ...(past.questions.length ? { history: past.questions.length } : {}),
+  };
+}
+
 /** The user message a run actually sends. A cut thread's first call carries
  * the kept exchanges as a prefix, because its provider session is brand new
  * (store: cutPending). Everything else, the eval path included, sends the
@@ -363,31 +417,72 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
   emit({ type: "status", phase: "context" });
   const meta = buildMeta(req.snapshot);
   const mentions = req.mentions ?? [];
-  const picked = candidates(req.question, meta, undefined, mustIncludeFor(meta, mentions));
+  const rows = req.knowledge ?? [];
+  const synonyms = req.synonyms ?? synonymMap(rows);
+  const fired = synonymsFired(req.question, synonyms);
+  const picked = candidates(
+    req.question,
+    meta,
+    undefined,
+    mustIncludeFor(meta, mentions),
+    synonyms,
+  );
   const risky = isRisky(req.question);
+  // the small tier's one call stays the minimal message it was measured as:
+  // a fired synonym reaches it as a must-include candidate, the text that
+  // explains one does not (AGENT-SPEC 4.2)
+  const small = req.tier === "small";
+  const knowledgeAt = now();
+  const know = small
+    ? EMPTY_KNOWLEDGE
+    : knowledgeMessage({
+        rows,
+        // every name a pick answers to, against the one the model sees: a
+        // stored target is qualified and a pick is bare when it can be
+        names: candidateNames(meta, picked),
+        tokens: questionTokens(req.question, synonyms),
+        fired,
+      });
+  const past = small ? EMPTY_HISTORY : historyMessage(req.question, req.history ?? []);
+  // its own time, not the run's so far: every trace row states what that row
+  // cost (AGENT-UX 5, LESSONS 13)
+  const knowledgeMs = Math.round(now() - knowledgeAt);
+  const askArgs = {
+    question: req.question,
+    index: indexFor(meta, picked),
+    totalTables: meta.tables.length,
+    risky,
+    context: taggedContext(mentions, req.rowContext, req.context),
+  };
+  // A4: last, after the risk block when both fire (the risk block instructs
+  // the next turn's probes, this one the final fence). Absent whenever edits
+  // are off, which is what keeps the eval's bytes and every baseline row
+  // exactly where v4 left them (EVAL 4)
+  const writes = req.writes?.on ? writesMessage() : "";
   const userMsg = withReplay(
     req,
-    askMessage({
-      question: req.question,
-      index: indexFor(meta, picked),
-      totalTables: meta.tables.length,
-      risky,
-      context: taggedContext(mentions, req.rowContext),
-    }) +
-      // A4: last, after the risk block when both fire (the risk block
-      // instructs the next turn's probes, this one the final fence). Absent
-      // whenever edits are off, which is what keeps the eval's bytes and
-      // every baseline row exactly where v4 left them (EVAL 4)
-      (req.writes?.on ? writesMessage() : ""),
+    askMessage({ ...askArgs, knowledge: know.text, history: past.text }) + writes,
   );
   trace.push({
     step: "context",
     ms: Math.round(now() - started),
     candidates: picked,
-    text: userMsg,
+    // the message WITHOUT the two knowledge blocks: they are the next step's
+    // body, and a block in two slots is the same fact twice (DESIGN rule 14).
+    // With no profile this is the whole message, which is what the eval sends
+    text: withReplay(req, askMessage(askArgs) + writes),
     // absent, not empty: a question that tagged nothing has no tagged line
     ...(mentions.length > 0 ? { mentions: mentionTags(mentions) } : {}),
   });
+  const knowledgeText = [know.text, past.text].filter(Boolean).join("\n\n");
+  if (knowledgeText) {
+    trace.push({
+      step: "knowledge",
+      ms: knowledgeMs,
+      text: knowledgeText,
+      counts: knowledgeCounts(know, past),
+    });
+  }
 
   const base = {
     trace,
@@ -462,7 +557,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
     return answer;
   };
 
-  if (req.tier === "small") {
+  if (small) {
     return runSmall(req, { meta, picked, now, emit, trace, usage, finish, maxTurns });
   }
 

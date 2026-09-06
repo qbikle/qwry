@@ -24,6 +24,13 @@
 //                                           with the one
 //   agent_key_has                           false: ModelPicker.loadSourceState asks
 //                                           per hosted provider; no key is saved
+//   history_search                          no rows: the palette harness asks on
+//                                           open, and a connection with no history
+//                                           draws no History group
+//   table_stats                             the canned order_v2 stats: the Structure
+//                                           harness's view asks on mount, and the
+//                                           hint line is framed in its real
+//                                           neighbourhood rather than over an error
 //   agent_http_stream                       the llama.cpp preset's GET /models is
 //                                           answered over the Channel with the canned
 //                                           LFM list (a `small` row with a ctx hint);
@@ -67,6 +74,7 @@ import type { GateVerdict, HttpChunk, HttpDone, WritePreview, WriteVerb } from "
 import { FIXTURE, LOCAL_MODELS_JSON, LOCAL_MODELS_URL } from "./fixtures";
 import { MENTION_STATES, mentionThreadRows } from "./fixtures.mentions";
 import { SHELL_THREAD_ROWS } from "./fixtures.shell";
+import { structureStats } from "./fixtures.structure";
 
 const harnessState = () => new URLSearchParams(location.search).get("state");
 
@@ -173,6 +181,14 @@ export function installTauriShim(): void {
               : [FIXTURE.threadRow];
         case "agent_key_has":
           return false;
+        // the palette's own history query (PaletteHarness): no rows, so the
+        // History group is absent, which is what a fresh connection shows
+        case "history_search":
+          return [];
+        // the Structure view asks for these on mount (StructureHarness): the
+        // canned stats of the wave's order_v2
+        case "table_stats":
+          return structureStats();
         case "agent_http_stream":
           return httpStream(payload);
         case "agent_gate": {

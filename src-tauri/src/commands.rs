@@ -902,3 +902,42 @@ pub(crate) async fn ephemeral_session(
     )
     .await
 }
+
+/// What the user told Ask about this connection: hints on tables and columns,
+/// the names its people use, and this database's own terms (A2). Oldest first,
+/// which is the order the prompt's capped KNOWLEDGE block drops from.
+#[tauri::command]
+pub async fn agent_knowledge_list(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> Result<Vec<crate::appdb::KnowledgeRow>> {
+    state.appdb.agent_knowledge_list(&profile_id)
+}
+
+/// Upsert one knowledge row by id: editing a hint where it stands rewrites the
+/// row, it does not add a second fact about the same object.
+#[tauri::command]
+pub async fn agent_knowledge_upsert(
+    state: State<'_, AppState>,
+    row: crate::appdb::KnowledgeRow,
+) -> Result<()> {
+    state.appdb.agent_knowledge_upsert(&row)
+}
+
+/// Delete one knowledge row: an emptied hint line, a dropped synonym, a
+/// cleared definition.
+#[tauri::command]
+pub async fn agent_knowledge_delete(state: State<'_, AppState>, id: String) -> Result<()> {
+    state.appdb.agent_knowledge_delete(&id)
+}
+
+/// This connection's answered questions and the SQL that answered them,
+/// newest first, for the prompt's EARLIER ANSWERS block.
+#[tauri::command]
+pub async fn agent_history_pairs(
+    state: State<'_, AppState>,
+    profile_id: String,
+    limit: i64,
+) -> Result<Vec<crate::appdb::AgentHistoryPair>> {
+    state.appdb.agent_history_pairs(&profile_id, limit)
+}

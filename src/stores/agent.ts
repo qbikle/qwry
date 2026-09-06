@@ -17,6 +17,7 @@ import {
   agentConnect,
   agentGate,
   agentWritePreview,
+  agentHistoryPairs,
   agentThreadCreate,
   agentThreadDelete,
   agentThreadList,
@@ -29,13 +30,21 @@ import {
   cancel as cancelSession,
   disconnect,
 } from "../ipc/commands";
-import type { AgentAnswer, AgentTurn, WritePreview, WriteVerb } from "../ipc/types";
+import type {
+  AgentAnswer,
+  AgentHistoryPair,
+  AgentTurn,
+  WritePreview,
+  WriteVerb,
+} from "../ipc/types";
 import { headToken } from "../editor/statements";
 import { useConnections } from "./connections";
 import { useAsk } from "./ask";
 import { useSchema } from "./schema";
-import { useSaved, visibleSaved } from "./saved";
+import { useSaved, visibleSaved, type SavedQuery } from "./saved";
 import { useSettings, writesAllowed } from "./settings";
+import { useKnowledge } from "./knowledge";
+import { driftLabel } from "./checks";
 import { createTauriTools } from "../agent/tools.tauri";
 import { tauriPlatform } from "../agent/platform.tauri";
 import { providerFor, tierOf } from "../agent/providers/index";
@@ -52,6 +61,8 @@ import { RUN_SQL_TIMEOUT_MS } from "../agent/tools";
 import { suggestFollowUps } from "../agent/followups";
 import {
   MENTION_TEXT_CAP,
+  canonicalToken,
+  clip,
   type Mention,
   parseMentions,
   resolveMentions,
@@ -61,6 +72,7 @@ import { answerText } from "../agent/display";
 import type {
   AnswerStatus,
   Assumption,
+  KnowledgeRow,
   SanityFragment,
   Thread,
   ToolCallRecord,
@@ -141,6 +153,16 @@ export interface Exchange {
    * reads `uncommitted` while that tab's transaction is open and drops the
    * word the moment it commits, rolls back or closes. Never persisted */
   ranTab?: string;
+  /** the tab an `Explain with Ask` named (A2 item 5): the echo paints the
+   * token quoting this name as a pill and never resolves it again, because a
+   * closed tab must not un-pill a bubble. The pill names what was SENT, a
+   * fact about the exchange and not about the workspace */
+  tabName?: string;
+  /** what that entry point attached under the tags' own header: the tab's
+   * statement, the check's drift. Kept on the exchange so every re-run asks
+   * with it again (a Retry that dropped it would ask about a query nobody
+   * sent) */
+  context?: string;
 }
 
 /** What a retry replaces: kept whole so restorePrior() is exact. */
@@ -201,7 +223,7 @@ interface AgentState {
   newThread: (profileId: string) => void;
   openThread: (profileId: string, threadId: string) => Promise<void>;
   deleteThread: (profileId: string, threadId: string) => Promise<void>;
-  ask: (question: string) => Promise<void>;
+  ask: (question: string, opts?: AskOpts) => Promise<void>;
   cancel: () => void;
   /** the W2 immediate re-run of one chip; kept for callers, no longer wired
    * to a chip click (a click toggles the pending set instead) */
@@ -248,6 +270,22 @@ interface AgentState {
   /** Delete All in the Threads sheet: every thread of the connection, one
    * appdb delete each, then the list reloaded from appdb (the truth) */
   deleteAllThreads: (profileId: string) => Promise<void>;
+  /** `Explain with Ask` (A2 item 5), from the editor's context menu and the
+   * palette: one ordinary question about the statement the tab holds. The
+   * caller opens the pane and picks the statement (the selection, else the
+   * one at the caret, else the tab) */
+  explainWithAsk: (sql: string, tabName: string) => Promise<void>;
+  /** `Ask Why` on a failed check (A2 item 6b): the check as a saved-query
+   * tag, its drift as the line under it */
+  askWhy: (check: SavedQuery) => Promise<void>;
+}
+
+/** What a code entry point sends beside the question (A2 items 5 and 6).
+ * `context` is one more line under the same header the `@` tags use, because
+ * it is the same fact, what this question came with (DESIGN rule 15). */
+export interface AskOpts {
+  context?: string;
+  tabName?: string;
 }
 
 /** A4: does the write gate read this statement as exactly one INSERT /
@@ -557,7 +595,7 @@ export const useAgent = create<AgentState>((set, get) => ({
     });
   },
 
-  ask: async (question) => {
+  ask: async (question, opts) => {
     const text = question.trim();
     if (!text) return;
     // capture everything the run depends on BEFORE the first await
@@ -566,8 +604,13 @@ export const useAgent = create<AgentState>((set, get) => ({
     const snapshot = useSchema.getState().snapshots[profileId];
     const choice = modelChoice(profileId);
     // the `@` tags, resolved against what this connection has RIGHT NOW and
-    // before the thread create below, like every other capture here
-    const mentions = mentionsFor(get, profileId, get().activeThread[profileId], text);
+    // before the thread create below, like every other capture here. A tab's
+    // own token is claimed by the tab: a saved query of the same name must
+    // not answer for it (the quoted ladder collides, A2 item 5)
+    const tabToken = opts?.tabName ? canonicalToken("tab", { name: opts.tabName }).slice(1) : null;
+    const mentions = mentionsFor(get, profileId, get().activeThread[profileId], text).filter(
+      (m) => m.token !== tabToken,
+    );
     // the row Record View attached, read and CLEARED in one call: a row's
     // values are true of the question asked over them and of no later one
     // (LESSONS 3). Before the first await, like everything else here
@@ -610,6 +653,8 @@ export const useAgent = create<AgentState>((set, get) => ({
       streaming: true,
       provider: choice?.providerId ?? "",
       model: choice?.model ?? "",
+      ...(opts?.tabName ? { tabName: opts.tabName } : {}),
+      ...(opts?.context ? { context: opts.context } : {}),
     };
     set((s) => ({
       exchanges: { ...s.exchanges, [tid]: [...(s.exchanges[tid] ?? []), exchange] },
@@ -960,7 +1005,36 @@ export const useAgent = create<AgentState>((set, get) => ({
       await get().loadThreads(profileId);
     }
   },
+
+  explainWithAsk: async (sql, tabName) => {
+    const statement = clip(sql.trim());
+    if (!statement) return;
+    const name = oneLine(tabName);
+    // the tab is named the way a saved query and a thread are, quoted, and by
+    // the same writer (canonicalToken), so the echo wears one pill and the
+    // model reads one line under the tags
+    await get().ask(name ? `Explain this query ${canonicalToken("tab", { name })}` : "Explain this query", {
+      context: name ? `tab "${name}":\n${statement}` : `tab:\n${statement}`,
+      ...(name ? { tabName: name } : {}),
+    });
+  },
+
+  askWhy: async (check) => {
+    const name = oneLine(check.name);
+    if (!name) return;
+    // the drift the failed row already prints: one reading of one fact, in
+    // the row and in the question's context line (LESSONS 13)
+    const drift = driftLabel(check);
+    const token = canonicalToken("saved", { id: check.id, name, sql: check.sql });
+    await get().ask(`Why did ${token} fail its check?`, {
+      context: drift ? `check "${name}": ${drift}` : `check "${name}"`,
+    });
+  },
 }));
+
+/** whitespace collapsed onto one line: a tag's token cannot hold a newline
+ * and neither can a context line's head */
+const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
 
 // ---- the one place a run is driven ----------------------------------------
 
@@ -1161,6 +1235,23 @@ async function withThreadReplays(mentions: readonly Mention[]): Promise<Mention[
     out.push(replay ? { ...m, ref: { ...m.ref, replay } } : m);
   }
   return out;
+}
+
+/** How many answered questions the EARLIER ANSWERS block picks from. The
+ * block sends at most three; the rest are the pool it scores against this
+ * question's words (prompt.ts historyMessage). */
+const HISTORY_READ = 20;
+
+/** This connection's earlier answers. History is a convenience, the same rule
+ * a tagged thread's replay follows: a read that fails costs the question
+ * nothing and the run goes on without it (LESSONS 5). */
+async function historyFor(profileId: string): Promise<AgentHistoryPair[]> {
+  try {
+    return await agentHistoryPairs(profileId, HISTORY_READ);
+  } catch (e) {
+    console.error("agent history read failed", e);
+    return [];
+  }
 }
 
 /** the answer in one line: its first sentence, whitespace collapsed */
@@ -1421,8 +1512,16 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
   // the cut kept: both read before the first await (LESSONS 3). The exchange
   // being asked is not in its own replay
   const sessionKey = threadSession(get, threadId);
+  // what this connection knows, read here with everything else the run
+  // depends on (LESSONS 3). The rows load with the connection, oldest first,
+  // which is the order the prompt's capped block drops from
+  const knowledge: KnowledgeRow[] = useKnowledge.getState().rows[profileId] ?? [];
   const onScreen = get().exchanges[threadId] ?? [];
   const asked = onScreen.findIndex((e) => e.id === exchangeId);
+  // what a code entry point attached to this question, read off the exchange
+  // so every re-run (Retry, Fix It, Restart, a chip toggle) asks with it
+  // again rather than only the first send
+  const attached = asked < 0 ? undefined : onScreen[asked].context;
   const replay = cutPending.has(threadId)
     ? replayOf(asked < 0 ? onScreen : onScreen.slice(0, asked))
     : "";
@@ -1529,7 +1628,10 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
     // a persisted provider id no adapter claims throws here, inside the same
     // net as the run: the exchange fails with the message, busy clears
     provider = providerFor(args.choice, tauriPlatform);
-    const mentions = await withThreadReplays(args.mentions ?? []);
+    const [mentions, history] = await Promise.all([
+      withThreadReplays(args.mentions ?? []),
+      historyFor(profileId),
+    ]);
     answer = await runner.runAsk({
       question: args.askText,
       snapshot: args.snapshot,
@@ -1547,6 +1649,9 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
       writes,
       ...(mentions.length > 0 ? { mentions } : {}),
       ...(args.rowContext ? { rowContext: args.rowContext } : {}),
+      ...(attached ? { context: attached } : {}),
+      knowledge,
+      history,
       onEvent,
     });
     resumed.add(threadId);

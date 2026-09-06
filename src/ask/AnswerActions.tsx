@@ -16,6 +16,11 @@
 //
 // Save Query wears lucide Bookmark, the sidebar's saved-query glyph, so the
 // verb and its noun carry one mark.
+//
+// W A2: the save also keeps the QUESTION on the row, which is what makes it a
+// quick-ask; nothing new stands here for it (the button, its glyph and its cue
+// are unchanged), because a second save action for a second kind of row is the
+// second block DESIGN rule 15 refuses.
 
 import { Bookmark, Copy } from "lucide-react";
 import { copyCue, copyCueShow } from "../lib/copyCue";
@@ -41,7 +46,17 @@ async function saveQuery(question: string, sql: string): Promise<void> {
   const saved = useSaved.getState();
   const twin = saved.queries.find((q) => q.name === name && q.sql === sql);
   try {
-    await saved.upsert({ id: twin?.id ?? crypto.randomUUID(), name, sql, profile_id: twin?.profile_id });
+    // the question travels with the statement (A2 item 6a): a saved query that
+    // kept the question it answered is a quick-ask, told apart in the palette's
+    // Saved group by the glyph it wears and asked again with ⌘↩. One save, one
+    // list, no second action (DESIGN rule 15)
+    await saved.upsert({
+      id: twin?.id ?? crypto.randomUUID(),
+      name,
+      sql,
+      profile_id: twin?.profile_id,
+      question: question.trim(),
+    });
     copyCueShow("Saved");
   } catch {
     copyCueShow("save failed");

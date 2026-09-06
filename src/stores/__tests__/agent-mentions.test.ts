@@ -126,8 +126,11 @@ function mockBackend() {
     const args = (payload ?? {}) as Record<string, unknown>;
     invoked.push({ cmd, args });
     if (cmd === "agent_turns_list") return TURNS_BY[String(args.threadId)] ?? [];
+    // the connection's earlier answers, which every ask now reads (A2 item 4)
+    if (cmd === "agent_history_pairs") return [];
     if (cmd === "agent_answers_list") return ANSWERS_BY[String(args.threadId)] ?? [];
     if (cmd === "agent_turn_add") return rowId++;
+    if (cmd === "agent_turn_update") return undefined;
     if (cmd === "agent_answer_put") return undefined;
     throw new Error(`no backend in this test: ${cmd}`);
   });

@@ -1053,3 +1053,140 @@ describe("a change the model proposed", () => {
     expect("content" in first ? (first.content ?? "") : "").not.toContain("WRITES:");
   });
 });
+
+// ---- what the connection knows (A2 item 4) ----------------------------------
+//
+// Two blocks in the USER message, never in the system prompt, and never at all
+// for a run that carries no profile: the eval passes none, so its bytes are
+// the measured ones and PROMPT_VERSION does not move. The trace shows each
+// block once, under a step of its own, because the context step showing it too
+// would be one fact in two slots (DESIGN rule 14).
+
+describe("the knowledge the profile carries", () => {
+  const HINT = { kind: "hint" as const, target: "film", text: "one row per title, not per copy" };
+  const DEF = { kind: "definition" as const, target: null, text: "catalogue = every film row" };
+  const PAIR = { question: "how many films are rated G", sql: "SELECT count(*) FROM film" };
+
+  const oneAsk = async (over: Partial<Parameters<typeof runAsk>[0]>) => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const { answer } = await ask(
+      scripted([[{ text: answerText }, done("stop")]], rec),
+      tools(rec),
+      over,
+    );
+    const first = rec.requests[0].messages[0];
+    return { answer, message: "content" in first ? (first.content ?? "") : "", rec };
+  };
+
+  const stepOf = (answer: { trace: import("../types").TraceStep[] }, step: string) =>
+    answer.trace.find((s) => s.step === step);
+
+  test("no profile, no blocks: the eval's message is byte-identical", async () => {
+    const evaluation = await oneAsk({});
+    const empty = await oneAsk({ knowledge: [], history: [], synonyms: {} });
+    expect(empty.message).toBe(evaluation.message);
+    expect(evaluation.message).not.toContain("KNOWLEDGE:");
+    expect(evaluation.message).not.toContain("EARLIER ANSWERS ON THIS DATABASE:");
+    expect(stepOf(evaluation.answer, "knowledge")).toBeUndefined();
+    expect(evaluation.answer.promptVersion).toBe("v4");
+  });
+
+  test("one hint, one definition and one earlier answer ride the user message", async () => {
+    const { message } = await oneAsk({
+      question: "how big is the film catalogue?",
+      knowledge: [HINT, DEF],
+      history: [PAIR],
+    });
+    expect(message).toContain(
+      "\n\nKNOWLEDGE:\nfilm  -- one row per title, not per copy\ncatalogue: every film row" +
+        "\n\nEARLIER ANSWERS ON THIS DATABASE:\nQ: how many films are rated G" +
+        "\nSQL: SELECT count(*) FROM film",
+    );
+    // standing reference, so it sits with the candidates it talks about and
+    // above what this one question tagged (AGENT-SPEC 4.2)
+    expect(message.indexOf("CANDIDATE TABLES")).toBeLessThan(message.indexOf("KNOWLEDGE:"));
+  });
+
+  test("the risk block stays last: it is the instruction for the next turn", async () => {
+    const { message } = await oneAsk({
+      question: "how many films joined the catalogue in the last 30 days?",
+      knowledge: [HINT, DEF],
+    });
+    expect(message.indexOf("KNOWLEDGE:")).toBeLessThan(message.indexOf("RISK CHECK REQUIRED"));
+  });
+
+  test("the knowledge step carries what went, and the context step does not repeat it", async () => {
+    const { answer, message } = await oneAsk({
+      question: "how big is the film catalogue?",
+      knowledge: [HINT, DEF, { kind: "synonym", target: "film", text: "catalogue" }],
+      history: [PAIR],
+    });
+    const step = stepOf(answer, "knowledge");
+    // a kind with nothing is absent, never a zero (DESIGN rule 11)
+    expect(step && step.step === "knowledge" && step.counts).toEqual({
+      hints: 1,
+      definitions: 1,
+      synonyms: 1,
+      history: 1,
+    });
+    const context = stepOf(answer, "context");
+    expect(context && context.step === "context" && context.text).not.toContain("KNOWLEDGE:");
+    // between them the two steps hold the whole message: nothing sent to a
+    // provider is hidden (spec 8.4), and neither step holds the other's half
+    const body = step && step.step === "knowledge" ? step.text : "";
+    const head = context && context.step === "context" ? context.text : "";
+    expect(message).toContain(body);
+    expect(message).toContain(head);
+    expect(head).not.toContain("EARLIER ANSWERS");
+    expect(body.split("\n")[0]).toBe("KNOWLEDGE:");
+    expect(body).toContain("\n\nEARLIER ANSWERS ON THIS DATABASE:\n");
+  });
+
+  test("a synonym puts its table in front of the candidates the question chose", async () => {
+    const { answer, message } = await oneAsk({
+      question: "how many actors are in the catalogue?",
+      knowledge: [{ kind: "synonym", target: "film", text: "catalogue" }],
+    });
+    expect(answer.candidates[0]).toBe("film");
+    expect(message).toContain("KNOWLEDGE:\ncatalogue -> film");
+  });
+
+  test("rows the question never reached for leave no header behind", async () => {
+    const { answer, message } = await oneAsk({
+      question: "how many films?",
+      knowledge: [{ kind: "hint", target: "staff", text: "two rows, both fake" }],
+      history: [{ question: "who runs store 2", sql: "SELECT 1" }],
+    });
+    expect(message).not.toContain("KNOWLEDGE:");
+    expect(message).not.toContain("EARLIER ANSWERS");
+    expect(stepOf(answer, "knowledge")).toBeUndefined();
+  });
+
+  test("the small tier's one call stays the message it was measured as", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const provider = scripted([[{ text: "```sql\nSELECT 1\n```" }, done("stop")]], rec);
+    const { answer } = await ask(provider, tools(rec), {
+      question: "how big is the film catalogue?",
+      tier: "small",
+      knowledge: [HINT, { kind: "synonym", target: "film", text: "catalogue" }],
+      history: [PAIR],
+    });
+    const first = rec.requests[0].messages[0];
+    const message = "content" in first ? (first.content ?? "") : "";
+    expect(message).toEndWith("Question: how big is the film catalogue?");
+    expect(stepOf(answer, "knowledge")).toBeUndefined();
+    // the synonym still reaches it, as a candidate rather than as a sentence
+    expect(answer.candidates[0]).toBe("film");
+  });
+
+  test("what a code entry point attached rides under the tags' own header", async () => {
+    const { message } = await oneAsk({
+      question: 'Explain this query @"cohort retention"',
+      context: 'tab "cohort retention":\nSELECT 1',
+      knowledge: [HINT],
+    });
+    expect(message).toContain('\n\nTAGGED BY THE USER:\ntab "cohort retention":\nSELECT 1');
+    // what this question came with sits below what the connection always knows
+    expect(message.indexOf("KNOWLEDGE:")).toBeLessThan(message.indexOf("TAGGED BY THE USER:"));
+  });
+});

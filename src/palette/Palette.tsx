@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Command } from "cmdk";
 import { motion } from "motion/react";
 import { popIn } from "../design/springs";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  BookA,
   Bookmark,
   Check,
   Clock,
   Database,
+  ListChecks,
   MessageSquare,
   Monitor,
   Moon,
@@ -25,7 +27,15 @@ import {
 } from "lucide-react";
 import { editorFormat, editorTimeTraveling } from "../editor/editorBus";
 import { copyCueShow } from "../lib/copyCue";
-import { useSaved, visibleSaved } from "../stores/saved";
+import { checkOf, driftLabel, lastCheckOf, runChecks } from "../stores/checks";
+import {
+  definitionsOf,
+  parseDefinition,
+  removeDefinition,
+  saveDefinition,
+  useKnowledge,
+} from "../stores/knowledge";
+import { useSaved, visibleSaved, type SavedQuery } from "../stores/saved";
 import { openSavedQuery } from "../sidebar/SavedQueries";
 import { confirmTxRollback, useConnections } from "../stores/connections";
 import { useResults } from "../stores/results";
@@ -33,13 +43,51 @@ import { useSchema } from "../stores/schema";
 import { useSettings, type Mode } from "../stores/settings";
 import { useUI } from "../stores/ui";
 import { useTabs, visibleTabs } from "../stores/tabs";
-import { Modal } from "../app/overlay/Overlay";
+import { Modal, useOverlayLayer } from "../app/overlay/Overlay";
 import type { HistoryRow } from "../ipc/types";
 import "./palette.css";
+
+/** Define mode's own rung of the Esc ladder: the overlay stack owns Escape, so
+ * a mode living inside an overlay registers a layer of its own rather than
+ * reading the key (the mention completion's precedent, AGENT-UX 1a). */
+function EscLayer({ onEsc }: { onEsc: () => void }) {
+  useOverlayLayer(onEsc);
+  return null;
+}
+
+/** Define mode's state: the line being typed, and the term it was loaded from
+ * when it came off a row, so an edit that renames a definition moves it
+ * instead of leaving a twin behind. */
+interface DefineMode {
+  from: string | null;
+  line: string;
+}
+
+/** the Ask way into a row (W7's ⌘↩, A2 item 6a): a quick-ask is asked again, a
+ * failed check is asked why, and on every other row it is ↩, so the chord is
+ * never dead (LESSONS 9). */
+function openAsk(): void {
+  window.dispatchEvent(new CustomEvent("qwry:open-ask"));
+}
+
+/** one count, read once (LESSONS 13): the run reports what it ran, and the
+ * `Run Checks` detail says the same about the run that stands */
+function checkCue(total: number, failed: number): string {
+  return `${total} check${total === 1 ? "" : "s"}${failed > 0 ? ` · ${failed} failed` : " passed"}`;
+}
+
+/** cmdk's value for a saved row: the id disambiguates duplicate names, and the
+ * chord handler reads the row back out of it */
+const savedValue = (q: SavedQuery) => `saved ${q.id} ${q.name}`;
 
 export function Palette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [query, setQuery] = useState("");
   const [history, setHistory] = useState<HistoryRow[]>([]);
+  // define mode (A2 item 3): the palette's own input becomes the definition
+  // line, `term = meaning`, and the list under it is what already stands. Null
+  // = the palette as it was; Esc returns to it with the query it held
+  const [define, setDefine] = useState<DefineMode | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   const profiles = useConnections((s) => s.profiles);
   const allTabs = useTabs((s) => s.tabs);
@@ -55,9 +103,38 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
   const tabs = visibleTabs(allTabs, pinnedTabs, activeProfileId);
   const allSaved = useSaved((s) => s.queries);
   const saved = visibleSaved(allSaved, activeProfileId);
+  const knowledge = useKnowledge((s) => (activeProfileId ? s.rows[activeProfileId] : undefined));
+  const definitions = definitionsOf(knowledge);
+  // a saved query with an expectation is a check; its verdict is the row's dot,
+  // and every count printed here comes off the same rows (LESSONS 13)
+  const checks = saved.filter((q) => checkOf(q) !== null);
+  const ran = checks.filter((q) => lastCheckOf(q) !== null);
+  const failedChecks = ran.filter((q) => lastCheckOf(q)?.ok === false).length;
+  const activeTab = tabs.find((t) => t.id === activeTabId);
+  // `Explain with Ask` acts on the tab's SQL: a tab with none is a dead row
+  const explainable = activeTab && activeTab.kind === "query" && activeTab.sql.trim() !== "" ? activeTab : null;
+  const defining = define !== null;
+  // one list of rows, drawn under the heading in the palette and under the
+  // line in define mode: what stands is never two lists (DESIGN rule 14)
+  const definitionRows = definitions.map((d) => (
+    <Command.Item
+      key={d.id}
+      value={`definition ${d.id} ${d.term}`}
+      // ↩ loads the row into the input, where it is edited and deleted by the
+      // hint line's own gesture: clear the meaning and press ↩
+      onSelect={() => setDefine({ from: d.term, line: `${d.term} = ${d.meaning}` })}
+    >
+      <BookA size={12} />
+      {d.term}
+      <span className="pal-detail">{d.meaning}</span>
+    </Command.Item>
+  ));
 
   useEffect(() => {
-    if (!open) setQuery("");
+    if (!open) {
+      setQuery("");
+      setDefine(null);
+    }
   }, [open]);
 
   // fuzzy-match over the WHOLE catalog ourselves, render only the top hits:
@@ -102,6 +179,51 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
 
   const close = () => onClose();
 
+  // the definition line's grammar is the store's, parsed there and written
+  // there (`term = meaning`, the assumption chips' own `=`). A line the parse
+  // refuses is a delete when it names a term or came from a row, the hint
+  // line's own gesture; an empty line that came from nowhere reaches for the
+  // hot row instead, so the keyboard can pick a definition up to edit
+  const commitDefine = () => {
+    if (!define) return;
+    const pid = activeProfileId;
+    const parsed = parseDefinition(define.line);
+    const typed = define.line.slice(0, define.line.indexOf("=")).trim();
+    const gone = define.from && (!parsed || parsed.term !== define.from) ? define.from : null;
+    if (!pid) return;
+    if (parsed) {
+      // an edit that renames the term moves the row rather than twinning it
+      void (gone ? removeDefinition(pid, gone) : Promise.resolve()).then(() =>
+        saveDefinition(pid, parsed.term, parsed.meaning),
+      );
+      setDefine(null);
+      return;
+    }
+    const term = gone ?? (define.line.includes("=") ? typed : "");
+    if (term) {
+      void removeDefinition(pid, term).then(() => copyCueShow("Definition removed"));
+      setDefine(null);
+      return;
+    }
+    // a half-typed line waits for its meaning rather than being taken for a
+    // command; only an empty one reaches for the row under the keyboard
+    if (define.line.trim() !== "") return;
+    const hot = hotValue();
+    const d = hot?.startsWith("definition ")
+      ? definitions.find((x) => hot === `definition ${x.id} ${x.term}`)
+      : null;
+    if (d) setDefine({ from: d.term, line: `${d.term} = ${d.meaning}` });
+  };
+
+  /** the row the keyboard is on, read where cmdk keeps it */
+  function hotValue(): string | null {
+    return (
+      rootRef.current
+        ?.querySelector('[cmdk-item][aria-selected="true"]')
+        ?.getAttribute("data-value") ?? null
+    );
+  }
+
   const browseTable = (oid: number) => {
     const t = snapshot?.tables.find((t) => t.table_oid === oid);
     if (t) {
@@ -128,14 +250,51 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
   return (
     <Modal backdropClassName="pal-backdrop" label="Command Palette" onClose={close}>
       <motion.div className="pal-wrap" {...popIn}>
-      <Command className="pal" shouldFilter={true} loop>
+      {defining && <EscLayer onEsc={() => setDefine(null)} />}
+      <Command
+        ref={rootRef}
+        className="pal"
+        shouldFilter={!defining}
+        loop
+        // cmdk offers this handler the key first and stands down on a
+        // preventDefault, so both chords are read here and nothing else moves
+        onKeyDown={(e) => {
+          if (e.key !== "Enter") return;
+          if (defining) {
+            e.preventDefault();
+            commitDefine();
+            return;
+          }
+          if (!e.metaKey) return;
+          const v = hotValue();
+          const q = v?.startsWith("saved ") ? saved.find((x) => v === savedValue(x)) : undefined;
+          // ⌘↩ is ↩ on every other row: leave the key to cmdk (LESSONS 9)
+          if (!q) return;
+          if (q.question) {
+            e.preventDefault();
+            const question = q.question;
+            openAsk();
+            close();
+            void import("../stores/agent").then(({ useAgent }) => useAgent.getState().ask(question));
+          } else if (lastCheckOf(q)?.ok === false) {
+            e.preventDefault();
+            openAsk();
+            close();
+            void import("../stores/agent").then(({ useAgent }) => useAgent.getState().askWhy(q));
+          }
+        }}
+      >
         <Command.Input
           autoFocus
-          placeholder="Tables, actions, history…"
-          value={query}
-          onValueChange={setQuery}
+          placeholder={defining ? "term = meaning" : "Tables, actions, history…"}
+          value={defining ? define.line : query}
+          onValueChange={(v) => (define ? setDefine({ ...define, line: v }) : setQuery(v))}
         />
         <Command.List>
+          {defining ? (
+            <Command.Group heading="Definitions">{definitionRows}</Command.Group>
+          ) : (
+          <>
           <Command.Empty>No results</Command.Empty>
 
           <Command.Group heading="Actions">
@@ -304,6 +463,45 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
             >
               <Clock size={12} /> Clear History Older than 7 Days
             </Command.Item>
+            {explainable && (
+              <Command.Item
+                // the app's own Explain (⌘E) is the plan view, so this verb
+                // keeps its qualifier: one term per concept (WRITING rule 5)
+                value="explain with ask query plan"
+                onSelect={() => {
+                  const { sql, name } = explainable;
+                  openAsk();
+                  close();
+                  void import("../stores/agent").then(({ useAgent }) =>
+                    useAgent.getState().explainWithAsk(sql, name),
+                  );
+                }}
+              >
+                <MessageSquare size={12} /> Explain with Ask
+              </Command.Item>
+            )}
+            {checks.length > 0 && (
+              <Command.Item
+                value="run checks saved expectations"
+                onSelect={() => {
+                  const pid = activeProfileId;
+                  close();
+                  if (pid) void runChecks(pid).then((r) => copyCueShow(checkCue(r.total, r.failed)));
+                }}
+              >
+                <ListChecks size={12} /> Run Checks
+                {ran.length > 0 && (
+                  <span className="pal-detail">{checkCue(ran.length, failedChecks)}</span>
+                )}
+              </Command.Item>
+            )}
+            <Command.Item
+              value="define term meaning definition"
+              // the ellipsis is earned: the input becomes the line
+              onSelect={() => setDefine({ from: null, line: "" })}
+            >
+              <Plus size={12} /> Define…
+            </Command.Item>
           </Command.Group>
 
           <Command.Group heading="Open Tabs">
@@ -341,22 +539,52 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
 
           {saved.length > 0 && (
             <Command.Group heading="Saved">
-              {saved.map((q) => (
-                <Command.Item
-                  key={q.id}
-                  // q.id disambiguates duplicate names, like tabs/connections
-                  value={`saved ${q.id} ${q.name}`}
-                  onSelect={() => {
-                    openSavedQuery(q);
-                    close();
-                  }}
-                >
-                  <Bookmark size={12} />
-                  {q.name}
-                  <span className="pal-detail">saved</span>
-                </Command.Item>
-              ))}
+              {saved.map((q) => {
+                // a quick-ask kept its question (A2 item 6a): it wears the chat
+                // glyph and ⌘↩ asks it again. The heading already says `Saved`,
+                // so no row repeats it (DESIGN rule 14)
+                const check = lastCheckOf(q);
+                const drift = check?.ok === false ? driftLabel(q) : "";
+                return (
+                  <Command.Item
+                    key={q.id}
+                    // q.id disambiguates duplicate names, like tabs/connections
+                    value={savedValue(q)}
+                    onSelect={() => {
+                      openSavedQuery(q);
+                      close();
+                    }}
+                  >
+                    {q.question ? <MessageSquare size={12} /> : <Bookmark size={12} />}
+                    {q.name}
+                    {/* only the exception speaks: a passing row is its dot and
+                        nothing more (DESIGN rule 11) */}
+                    {drift && (
+                      <button
+                        type="button"
+                        className="linkish pal-askwhy"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openAsk();
+                          close();
+                          void import("../stores/agent").then(({ useAgent }) =>
+                            useAgent.getState().askWhy(q),
+                          );
+                        }}
+                      >
+                        Ask Why
+                      </button>
+                    )}
+                    {drift && <span className="pal-detail">{drift}</span>}
+                    {check && <span className={`pal-dot${check.ok ? " ok" : " fail"}`} />}
+                  </Command.Item>
+                );
+              })}
             </Command.Group>
+          )}
+
+          {definitions.length > 0 && (
+            <Command.Group heading="Definitions">{definitionRows}</Command.Group>
           )}
 
           <Command.Group heading="Appearance">
@@ -457,6 +685,8 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 </Command.Item>
               ))}
             </Command.Group>
+          )}
+          </>
           )}
         </Command.List>
       </Command>

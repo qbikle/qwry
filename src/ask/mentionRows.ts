@@ -121,7 +121,9 @@ export function rowsHint(reltuples: number | null | undefined): string | null {
 // ---- rows ----------------------------------------------------------------------
 
 export interface MentionRow {
-  kind: MentionKind;
+  /** never `tab`: that kind is minted by `Explain with Ask` and never typed,
+   * so the popover has no row for it (AGENT-UX 15) */
+  kind: Exclude<MentionKind, "tab">;
   /** cmdk's value: unique (kind and identity), so Enter routes by it */
   value: string;
   /** what a pick inserts, `@` included (mentions.ts canonicalToken) */

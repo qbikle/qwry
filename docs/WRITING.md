@@ -27,6 +27,14 @@ data chrome, and consistency within the app outranks literal compliance.
 | Errors | Sentence case | no period unless multi-sentence | `couldn't establish a session. Check the connection` |
 | Placeholders | Sentence case or literal value | no period | `Filter tables…`, `nextval('t_id_seq')` |
 | Empty states | Sentence case | no period | `No columns match` |
+| App-composed questions (A2) | Sentence case | question mark when it asks | `Explain this query @"cohort retention"`, `Why did @"Unpaid orders older than a week" fail its check?` |
+
+A word on the last row: a question the APP writes into the composer on the
+user's behalf (`Explain with Ask`, `Ask Why`) is the user's own words as far
+as the model and the thread are concerned, so it reads as a person would type
+it — Sentence case, no terminal period unless it asks, and the object it is
+about named as a pill (`@"…"`, the `@` grammar's own quoted form) rather than
+described. It is never Title Case: it is prose in a bubble, not a control.
 
 ## Rules
 

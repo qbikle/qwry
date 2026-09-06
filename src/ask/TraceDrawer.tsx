@@ -47,7 +47,7 @@ export interface TraceDrawerProps {
   onClose: () => void;
 }
 
-type Kind = "context" | "model" | "tool" | "verdict";
+type Kind = "context" | "knowledge" | "model" | "tool" | "verdict";
 
 type ToolStep = Extract<TraceStep, { step: "tool" }>;
 
@@ -266,6 +266,30 @@ function rowsFromTrace(exchange: Exchange, trace: TraceStep[], timed: boolean): 
         });
         break;
       }
+      case "knowledge": {
+        // the counts in one fixed order, a kind with nothing left out
+        // entirely (never `0 definitions`, DESIGN rule 11); they are read off
+        // the step, which read them off the same lists that built the body,
+        // so the label can never disagree with what opens under it
+        const c = step.counts;
+        const parts = [
+          c.hints ? plural(c.hints, "hint", "hints") : "",
+          c.definitions ? plural(c.definitions, "definition", "definitions") : "",
+          c.synonyms ? plural(c.synonyms, "synonym", "synonyms") : "",
+          c.history ? plural(c.history, "earlier answer", "earlier answers") : "",
+        ].filter(Boolean);
+        rows.push({
+          key: "knowledge",
+          // no colour class: what this connection told the model reads as
+          // context does, because that is what it is (AGENT-UX 14)
+          kind: "knowledge",
+          kindLabel: "knowledge",
+          label: parts.join(" · "),
+          ms: ms(step.ms),
+          body: step.text,
+        });
+        break;
+      }
       case "followups":
         // the one model call made after the verdict (spec 4.6); shown because
         // nothing sent to a provider is hidden (spec 8.4). It is outside the
@@ -399,7 +423,11 @@ export function TraceDrawer({ open, exchange, focusStepId, onClose }: TraceDrawe
     }
     const fresh = revealedFor.current !== exchange.id;
     revealedFor.current = exchange.id;
-    const key = focusStepId ? toolKey(focusStepId) : firstKey;
+    // what the opener asked for: a row's own key when it names one (a step
+    // that is one row, `knowledge`), else a tool call's id, which is what a
+    // chip and a sanity fragment carry
+    const named = focusStepId !== null && rows.some((r) => r.key === focusStepId);
+    const key = focusStepId ? (named ? focusStepId : toolKey(focusStepId)) : firstKey;
     setExpanded((prev) => {
       const next = fresh ? new Set<string>() : new Set(prev);
       if (key) next.add(key);
@@ -500,7 +528,11 @@ export function TraceDrawer({ open, exchange, focusStepId, onClose }: TraceDrawe
           const isOpen = row.body !== null && expanded.has(row.key);
           const head = (
             <>
-              <span className={`trace-kind${row.kind === "context" ? "" : ` ${row.kind}`}`}>{row.kindLabel}</span>
+              <span
+                className={`trace-kind${row.kind === "context" || row.kind === "knowledge" ? "" : ` ${row.kind}`}`}
+              >
+                {row.kindLabel}
+              </span>
               <span className="trace-lbl">{row.label}</span>
               {row.ms !== null && <span className="trace-ms">{fmtMs(row.ms)}</span>}
             </>

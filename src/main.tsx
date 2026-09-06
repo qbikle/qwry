@@ -12,10 +12,17 @@ import "./design/tokens.css";
 installNoAutocorrect();
 
 const root = document.getElementById("root") as HTMLElement;
-if (import.meta.env.DEV && new URLSearchParams(location.search).get("harness") === "ask") {
+const harness = import.meta.env.DEV ? new URLSearchParams(location.search).get("harness") : null;
+if (harness === "ask") {
   // the Ask fixture harness (src/harness, taste-gate evidence): DEV only, so
   // the branch and its import are dead code in the production bundle
   void import("./harness/AskHarness").then((m) => m.mountAskHarness(root));
+} else if (harness === "palette") {
+  // the palette's own root (A2): a modal over the window, not a pane in a card
+  void import("./harness/PaletteHarness").then((m) => m.mountPaletteHarness(root));
+} else if (harness === "structure") {
+  // the Structure view's own root (A2): the hint line lives in a tab's width
+  void import("./harness/StructureHarness").then((m) => m.mountStructureHarness(root));
 } else {
   ReactDOM.createRoot(root).render(
     <React.StrictMode>

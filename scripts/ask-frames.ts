@@ -6,6 +6,11 @@
 //                             [--themes dark,light] [--scroll top] [--port 1420]
 //                             [--jobs 6]
 //
+//   --harness  ask (default), palette or structure: which root to drive. The
+//              palette is a modal over the window, so it has one width (620)
+//              and its own taller frame (states a2-palette,a2-define,
+//              a2-checks); the Structure view is a tab's surface at 560,780,
+//              1040 (states a2-hint,a2-hint-edit)
 //   --out      where the PNGs land; default
 //              ~/projects/qwry-agent-lab/docs/research/w2d-frames
 //   --states   subset of answer,empty,busy,picker,failure,disconnected,small,
@@ -15,8 +20,9 @@
 //              insight,insight-prose,insight-steps,insight-code,insight-stream,
 //              mention-popover,mention-draft,mention-first,mention-echo,
 //              mention-trace,result-table,result-sql,result-scalar,failure-cap,
-//              answer-actions,followups-end
-//              (default: all forty-four)
+//              answer-actions,followups-end,a2-explain,a2-knowledge-trace,
+//              a2-ask-why
+//              (default: all forty-seven)
 //   --widths   subset of 320,392,560 (default: all three)
 //   --themes   subset of dark,light (default: both)
 //   --scroll   bottom (default): the pane as it mounts, pinned to the newest content,
@@ -234,13 +240,34 @@ const ALL_STATES = [
   "a4-ran",
   "a4-preview-busy",
   "a4-writes-off",
+  "a2-explain",
+  "a2-knowledge-trace",
+  "a2-ask-why",
 ] as const;
+/** the second root (A2): the palette is a modal over the window, not a pane in
+ * a card, so it has one width, its own (`src/harness/PaletteHarness.tsx`) */
+const PALETTE_STATES = ["a2-palette", "a2-define", "a2-checks"] as const;
+/** the third root (A2 item 2): the hint line lives in the Structure view, a
+ * tab's whole width (`src/harness/StructureHarness.tsx`) */
+const STRUCTURE_STATES = ["a2-hint", "a2-hint-edit"] as const;
 const ALL_WIDTHS = [320, 392, 560] as const;
+const PALETTE_WIDTHS = [620] as const;
+const STRUCTURE_WIDTHS = [560, 780, 1040] as const;
+/** the palette's list and the Structure view both run longer than an answer:
+ * their windows are taller */
+const PALETTE_H = 900;
+const STRUCTURE_H = 900;
 const ALL_THEMES = ["dark", "light"] as const;
 const SCROLLS = ["bottom", "top"] as const;
 type Scroll = (typeof SCROLLS)[number];
-type State = (typeof ALL_STATES)[number];
-type Width = (typeof ALL_WIDTHS)[number];
+type State =
+  | (typeof ALL_STATES)[number]
+  | (typeof PALETTE_STATES)[number]
+  | (typeof STRUCTURE_STATES)[number];
+type Width =
+  | (typeof ALL_WIDTHS)[number]
+  | (typeof PALETTE_WIDTHS)[number]
+  | (typeof STRUCTURE_WIDTHS)[number];
 type Theme = (typeof ALL_THEMES)[number];
 
 /** the harness card is 640 tall inside one --sp-6 gutter on every side */
@@ -270,8 +297,18 @@ function subset<T extends string | number>(raw: string | undefined, all: readonl
 }
 
 const OUT = resolve(flag("out") ?? DEFAULT_OUT);
-const STATES = subset<State>(flag("states"), ALL_STATES, "state");
-const WIDTHS = subset<Width>(flag("widths"), ALL_WIDTHS, "width");
+/** which root to drive: the Ask pane, or the palette's own (A2) */
+const HARNESS = flag("harness") ?? "ask";
+if (HARNESS !== "ask" && HARNESS !== "palette" && HARNESS !== "structure") {
+  console.error(`ask-frames: unknown harness "${HARNESS}" (choose from ask, palette, structure)`);
+  process.exit(2);
+}
+const PALETTE = HARNESS === "palette";
+const STRUCTURE = HARNESS === "structure";
+const ROOT_STATES = PALETTE ? PALETTE_STATES : STRUCTURE ? STRUCTURE_STATES : ALL_STATES;
+const ROOT_WIDTHS = PALETTE ? PALETTE_WIDTHS : STRUCTURE ? STRUCTURE_WIDTHS : ALL_WIDTHS;
+const STATES = subset<State>(flag("states"), ROOT_STATES, "state");
+const WIDTHS = subset<Width>(flag("widths"), ROOT_WIDTHS, "width");
 const THEMES = subset<Theme>(flag("themes"), ALL_THEMES, "theme");
 const SCROLL = subset<Scroll>(flag("scroll"), SCROLLS, "scroll")[0] ?? "bottom";
 /** `--scroll bottom` written out overrides the harness's own top-parking states */
@@ -424,11 +461,14 @@ async function connect(profile: string, deadline: number): Promise<Cdp> {
 }
 
 async function shoot(base: string, f: Frame): Promise<boolean> {
-  const url =
-    `${base}/?harness=ask&state=${f.state}&w=${f.w}&theme=${f.theme}` +
-    (SCROLL === "top" || SCROLL_EXPLICIT ? `&scroll=${SCROLL}` : "");
+  const url = PALETTE
+    ? `${base}/?harness=palette&state=${f.state}&theme=${f.theme}`
+    : STRUCTURE
+      ? `${base}/?harness=structure&state=${f.state}&w=${f.w}&theme=${f.theme}`
+      : `${base}/?harness=ask&state=${f.state}&w=${f.w}&theme=${f.theme}` +
+        (SCROLL === "top" || SCROLL_EXPLICIT ? `&scroll=${SCROLL}` : "");
   const width = f.w + 2 * MARGIN;
-  const height = CARD_H + 2 * MARGIN;
+  const height = (PALETTE ? PALETTE_H : STRUCTURE ? STRUCTURE_H : CARD_H) + 2 * MARGIN;
   const profile = mkdtempSync(join(tmpdir(), "ask-frames-"));
   const proc = Bun.spawn(
     [

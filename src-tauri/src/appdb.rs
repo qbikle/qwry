@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::driver::{DriverError, Profile, Result};
 
 /// bump when appending a migration in `migrate`
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 /// per-row stored SQL cap (bytes, cut at a char boundary): a pasted multi-MB
 /// INSERT must not bloat the appdb forever
 const HISTORY_SQL_CAP: usize = 20_000;
@@ -66,6 +66,18 @@ pub struct SavedQuery {
     /// next saved under a connection: adopt-on-touch, mirrors tabs)
     #[serde(default)]
     pub profile_id: Option<String>,
+    /// the question a `Save Query` on an answer kept: a quick-ask is a saved
+    /// query that remembers what was asked, not a second kind of row (A2)
+    #[serde(default)]
+    pub question: Option<String>,
+    /// what a check asserts about this query's shape, JSON (`CheckExpect` in
+    /// src/stores/checks.ts); NULL = an ordinary saved query, not a check
+    #[serde(default)]
+    pub expect_json: Option<String>,
+    /// what the last `Run Checks` found here, JSON (`CheckResult`); NULL until
+    /// the check has run once
+    #[serde(default)]
+    pub last_check_json: Option<String>,
 }
 
 /// mirrored in src/ipc/types.ts
@@ -227,6 +239,7 @@ fn migrate(conn: &mut Connection) -> Result<()> {
             5 => buffer_snapshots_v5(&tx)?,
             6 => agent_threads_v6(&tx)?,
             7 => agent_thread_session_v7(&tx)?,
+            8 => knowledge_v8(&tx)?,
             n => return Err(DriverError::Internal(format!("appdb: no migration to v{n}"))),
         }
         tx.pragma_update(None, "user_version", next).map_err(internal)?;
@@ -379,6 +392,36 @@ fn agent_threads_v6(conn: &Connection) -> Result<()> {
 /// NULL reads as the thread id, so no backfill runs over existing threads.
 fn agent_thread_session_v7(conn: &Connection) -> Result<()> {
     add_column_if_missing(conn, "agent_threads", "session_key", "TEXT")
+}
+
+/// What the user knows and the catalog does not (A2): a table's or column's
+/// hint, the names its people call it by, and the terms this database uses.
+/// `target` names the object a hint or a synonym hangs on (`table` or
+/// `table.column`); a definition has no object to hang on, so its target is
+/// NULL and its `term = meaning` line is the row's own text.
+///
+/// Saved queries gain the three columns a quick-ask and a check need: the
+/// question a `Save Query` on an answer kept, the expectation a check asserts,
+/// and what its last run found.
+fn knowledge_v8(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS agent_knowledge (
+             id         TEXT PRIMARY KEY,
+             profile_id TEXT NOT NULL,
+             kind       TEXT NOT NULL CHECK (kind IN ('hint', 'definition', 'synonym')),
+             target     TEXT,
+             text       TEXT NOT NULL,
+             created_at TEXT NOT NULL DEFAULT (datetime('now')),
+             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+         );
+         CREATE INDEX IF NOT EXISTS agent_knowledge_profile
+             ON agent_knowledge (profile_id, kind, target);",
+    )
+    .map_err(internal)?;
+    add_column_if_missing(conn, "saved_queries", "question", "TEXT")?;
+    add_column_if_missing(conn, "saved_queries", "expect_json", "TEXT")?;
+    add_column_if_missing(conn, "saved_queries", "last_check_json", "TEXT")?;
+    Ok(())
 }
 
 fn has_column(conn: &Connection, table: &str, col: &str) -> Result<bool> {
@@ -652,7 +695,11 @@ impl AppDb {
     pub fn saved_list(&self) -> Result<(Vec<SavedQuery>, usize)> {
         let conn = self.0.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, name, sql, created_at, profile_id FROM saved_queries ORDER BY name")
+            .prepare(
+                "SELECT id, name, sql, created_at, profile_id, question, expect_json,
+                        last_check_json
+                 FROM saved_queries ORDER BY name",
+            )
             .map_err(internal)?;
         let rows = stmt
             .query_map([], |r| {
@@ -662,6 +709,9 @@ impl AppDb {
                     sql: r.get(2)?,
                     created_at: r.get(3)?,
                     profile_id: r.get(4)?,
+                    question: r.get(5)?,
+                    expect_json: r.get(6)?,
+                    last_check_json: r.get(7)?,
                 })
             })
             .map_err(internal)?;
@@ -673,10 +723,26 @@ impl AppDb {
             .lock()
             .unwrap()
             .execute(
-                "INSERT INTO saved_queries (id, name, sql, profile_id) VALUES (?1, ?2, ?3, ?4)
+                // the caller sends the whole row: src/stores/saved.ts merges an
+                // upsert over the row it already holds, so a rename cannot drop
+                // the question a quick-ask kept or the check on it
+                "INSERT INTO saved_queries
+                     (id, name, sql, profile_id, question, expect_json, last_check_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(id) DO UPDATE SET name = excluded.name, sql = excluded.sql,
-                                               profile_id = excluded.profile_id",
-                rusqlite::params![q.id, q.name, q.sql, q.profile_id],
+                                               profile_id = excluded.profile_id,
+                                               question = excluded.question,
+                                               expect_json = excluded.expect_json,
+                                               last_check_json = excluded.last_check_json",
+                rusqlite::params![
+                    q.id,
+                    q.name,
+                    q.sql,
+                    q.profile_id,
+                    q.question,
+                    q.expect_json,
+                    q.last_check_json,
+                ],
             )
             .map_err(internal)?;
         Ok(())
@@ -1289,6 +1355,131 @@ impl AppDb {
             })
             .map_err(internal)?;
         Ok(collect_ok(rows, "agent answer").0)
+    }
+}
+
+/// One thing the user told Ask about this database (A2). `kind` is checked in
+/// SQL, so an unknown kind is a write error and never a row anyone reads.
+/// `target` is the object a hint or a synonym hangs on (`table` or
+/// `table.column`) and NULL for a definition, whose term lives in its own
+/// `term = meaning` text: a definition has no object to hang on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgeRow {
+    pub id: String,
+    pub profile_id: String,
+    pub kind: String,
+    #[serde(default)]
+    pub target: Option<String>,
+    pub text: String,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
+}
+
+/// One question this connection already answered and the SQL that answered it,
+/// for the `EARLIER ANSWERS ON THIS DATABASE:` block (A2 item 4).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentHistoryPair {
+    pub question: String,
+    pub sql: String,
+    pub created_at: String,
+}
+
+/// User knowledge, per connection. Local only, like every other appdb table:
+/// nothing here leaves the machine except into the model's own user message.
+impl AppDb {
+    /// Every row for a connection, oldest first: the prompt's KNOWLEDGE block
+    /// is capped and drops the oldest first, so age is the order it wants.
+    pub fn agent_knowledge_list(&self, profile_id: &str) -> Result<Vec<KnowledgeRow>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, profile_id, kind, target, text, created_at, updated_at
+                 FROM agent_knowledge WHERE profile_id = ?1
+                 ORDER BY created_at, rowid",
+            )
+            .map_err(internal)?;
+        let rows = stmt
+            .query_map([profile_id], |r| {
+                Ok(KnowledgeRow {
+                    id: r.get(0)?,
+                    profile_id: r.get(1)?,
+                    kind: r.get(2)?,
+                    target: r.get(3)?,
+                    text: r.get(4)?,
+                    created_at: r.get(5)?,
+                    updated_at: r.get(6)?,
+                })
+            })
+            .map_err(internal)?;
+        Ok(collect_ok(rows, "knowledge row").0)
+    }
+
+    /// Upsert by id. `created_at` stays what the row was born with; editing a
+    /// hint in place is an edit, not a new fact.
+    pub fn agent_knowledge_upsert(&self, row: &KnowledgeRow) -> Result<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO agent_knowledge (id, profile_id, kind, target, text)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(id) DO UPDATE SET kind = excluded.kind,
+                                               target = excluded.target,
+                                               text = excluded.text,
+                                               updated_at = datetime('now')",
+                rusqlite::params![row.id, row.profile_id, row.kind, row.target, row.text],
+            )
+            .map_err(internal)?;
+        Ok(())
+    }
+
+    pub fn agent_knowledge_delete(&self, id: &str) -> Result<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM agent_knowledge WHERE id = ?1", [id])
+            .map_err(internal)?;
+        Ok(())
+    }
+
+    /// The connection's answered questions and their SQL, newest first. An
+    /// exchange is a pair of turns, the question at `idx` and its answer one
+    /// above it (see `agent_turns_list`), so the question is joined by that
+    /// neighbour and not by write order, which a retry does not follow. Only
+    /// answered turns that landed SQL qualify: a failed run has nothing to
+    /// show a later question.
+    pub fn agent_history_pairs(
+        &self,
+        profile_id: &str,
+        limit: i64,
+    ) -> Result<Vec<AgentHistoryPair>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT q.content, a.sql, t.created_at
+                 FROM agent_answers a
+                 JOIN agent_turns t ON t.id = a.turn_id
+                 JOIN agent_threads th ON th.id = t.thread_id
+                 JOIN agent_turns q ON q.thread_id = t.thread_id
+                                   AND q.idx = t.idx - 1
+                                   AND q.role = 'user'
+                 WHERE th.profile_id = ?1 AND a.status = 'answered' AND a.sql IS NOT NULL
+                 ORDER BY t.created_at DESC, t.id DESC
+                 LIMIT ?2",
+            )
+            .map_err(internal)?;
+        let rows = stmt
+            .query_map(rusqlite::params![profile_id, limit], |r| {
+                Ok(AgentHistoryPair {
+                    question: r.get(0)?,
+                    sql: r.get(1)?,
+                    created_at: r.get(2)?,
+                })
+            })
+            .map_err(internal)?;
+        Ok(collect_ok(rows, "agent history pair").0)
     }
 }
 
@@ -2006,5 +2197,206 @@ mod tests {
             prompt_version: "v1".into(),
             ms: 1.0,
         }
+    }
+
+    fn knowledge(
+        id: &str,
+        profile_id: &str,
+        kind: &str,
+        target: Option<&str>,
+        text: &str,
+    ) -> KnowledgeRow {
+        KnowledgeRow {
+            id: id.into(),
+            profile_id: profile_id.into(),
+            kind: kind.into(),
+            target: target.map(str::to_string),
+            text: text.into(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn knowledge_rows_are_scoped_upserted_in_place_and_deleted() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+
+        db.agent_knowledge_upsert(&knowledge("k1", "p1", "hint", Some("order_v2"), "Checkout attempts"))
+            .unwrap();
+        db.agent_knowledge_upsert(&knowledge("k2", "p1", "synonym", Some("order_v2"), "purchases"))
+            .unwrap();
+        db.agent_knowledge_upsert(&knowledge("k3", "p1", "definition", None, "AOV = revenue over orders"))
+            .unwrap();
+        db.agent_knowledge_upsert(&knowledge("k4", "p2", "hint", Some("order_v2"), "Another connection"))
+            .unwrap();
+
+        let rows = db.agent_knowledge_list("p1").unwrap();
+        assert_eq!(rows.len(), 3, "knowledge belongs to its connection");
+        assert_eq!(
+            rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            vec!["k1", "k2", "k3"],
+            "oldest first: the prompt's block drops the oldest first"
+        );
+        assert_eq!(rows[2].target, None, "a definition hangs on no object");
+
+        // editing a hint in place is an edit, not a second fact
+        let born = rows[0].created_at.clone();
+        db.agent_knowledge_upsert(&knowledge("k1", "p1", "hint", Some("order_v2"), "Failed ones stay"))
+            .unwrap();
+        let rows = db.agent_knowledge_list("p1").unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].text, "Failed ones stay");
+        assert_eq!(rows[0].created_at, born, "an edit keeps the row's age, and its place");
+
+        db.agent_knowledge_delete("k2").unwrap();
+        let rows = db.agent_knowledge_list("p1").unwrap();
+        assert_eq!(rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), vec!["k1", "k3"]);
+        assert_eq!(db.agent_knowledge_list("p2").unwrap().len(), 1, "a delete is scoped to its row");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn knowledge_kind_is_checked_in_sql() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+        assert!(
+            db.agent_knowledge_upsert(&knowledge("k1", "p1", "note", None, "x")).is_err(),
+            "an unknown kind is a write error, never a row someone reads"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The db this migration meets in the wild: everything the previous
+    /// version wrote, none of what this one adds. Built by taking a current db
+    /// back one version rather than by hand, so the test says nothing about
+    /// which number this migration lands on (the merge renumbers it).
+    #[test]
+    fn migration_adds_the_knowledge_table_and_the_saved_columns() {
+        let dir = tmp_dir();
+        {
+            let db = AppDb::open(&dir).unwrap();
+            db.saved_upsert(&SavedQuery {
+                id: "s1".into(),
+                name: "Unpaid orders".into(),
+                sql: "SELECT 1".into(),
+                created_at: String::new(),
+                profile_id: Some("p1".into()),
+                question: Some("which orders are unpaid?".into()),
+                expect_json: Some("{\"kind\":\"nonempty\"}".into()),
+                last_check_json: None,
+            })
+            .unwrap();
+        }
+        {
+            let conn = Connection::open(dir.join("qwry.sqlite")).unwrap();
+            conn.execute_batch(
+                "DROP TABLE agent_knowledge;
+                 ALTER TABLE saved_queries DROP COLUMN question;
+                 ALTER TABLE saved_queries DROP COLUMN expect_json;
+                 ALTER TABLE saved_queries DROP COLUMN last_check_json;",
+            )
+            .unwrap();
+            conn.pragma_update(None, "user_version", SCHEMA_VERSION - 1).unwrap();
+        }
+
+        let db = AppDb::open(&dir).unwrap();
+        assert_eq!(user_version(&db), SCHEMA_VERSION);
+
+        let (saved, skipped) = db.saved_list().unwrap();
+        assert_eq!(skipped, 0);
+        assert_eq!(saved.len(), 1, "the bookmark survives the columns it never had");
+        assert_eq!(saved[0].name, "Unpaid orders");
+        assert_eq!(saved[0].question, None, "a bookmark from before is no quick-ask");
+        assert_eq!(saved[0].expect_json, None);
+
+        db.agent_knowledge_upsert(&knowledge("k1", "p1", "hint", Some("order_v2"), "Attempts"))
+            .unwrap();
+        assert_eq!(db.agent_knowledge_list("p1").unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn saved_query_keeps_its_question_and_check_across_a_reload() {
+        let dir = tmp_dir();
+        {
+            let db = AppDb::open(&dir).unwrap();
+            db.saved_upsert(&SavedQuery {
+                id: "s1".into(),
+                name: "Unpaid orders older than a week".into(),
+                sql: "SELECT 1".into(),
+                created_at: String::new(),
+                profile_id: Some("p1".into()),
+                question: Some("which orders are still unpaid after a week?".into()),
+                expect_json: Some("{\"kind\":\"rows\",\"op\":\"eq\",\"n\":0}".into()),
+                last_check_json: Some("{\"ok\":false,\"rows\":12,\"scalar\":null,\"at\":\"t\"}".into()),
+            })
+            .unwrap();
+        }
+        let db = AppDb::open(&dir).unwrap();
+        let (saved, _) = db.saved_list().unwrap();
+        assert_eq!(saved[0].question.as_deref(), Some("which orders are still unpaid after a week?"));
+        assert_eq!(saved[0].expect_json.as_deref(), Some("{\"kind\":\"rows\",\"op\":\"eq\",\"n\":0}"));
+        assert!(saved[0].last_check_json.is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// One exchange: the question at `idx` and its answer one above it, which
+    /// is the pairing `agent_history_pairs` joins on.
+    fn exchange(
+        db: &AppDb,
+        thread_id: &str,
+        idx: i64,
+        question: &str,
+        sql: Option<&str>,
+        status: &str,
+    ) {
+        db.agent_turn_add(&AgentTurnInput { content: question.into(), ..turn(thread_id, idx) })
+            .unwrap();
+        let id = db.agent_turn_add(&turn(thread_id, idx + 1)).unwrap();
+        db.agent_answer_put(&AgentAnswer {
+            turn_id: id,
+            sql: sql.map(str::to_string),
+            row_count: Some(1),
+            assumptions_json: None,
+            sanity_json: None,
+            status: status.into(),
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn agent_history_pairs_newest_first_limited_and_scoped() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+        db.agent_thread_create("th-1", "p1", "Revenue").unwrap();
+        db.agent_thread_create("th-2", "p1", "More revenue").unwrap();
+        db.agent_thread_create("th-3", "p2", "Another connection").unwrap();
+
+        exchange(&db, "th-1", 0, "how many orders last month?", Some("SELECT 1"), "answered");
+        exchange(&db, "th-1", 2, "and the failed ones?", None, "failed");
+        exchange(&db, "th-1", 4, "what did they spend?", Some("SELECT 2"), "answered");
+        // a turn cap left SQL on record but never answered with it
+        exchange(&db, "th-2", 0, "who bought twice?", Some("SELECT 3"), "turn_cap");
+        exchange(&db, "th-2", 2, "how many signed up?", Some("SELECT 4"), "answered");
+        exchange(&db, "th-3", 0, "not this connection", Some("SELECT 5"), "answered");
+
+        let pairs = db.agent_history_pairs("p1", 10).unwrap();
+        assert_eq!(
+            pairs.iter().map(|p| p.question.as_str()).collect::<Vec<_>>(),
+            vec!["how many signed up?", "what did they spend?", "how many orders last month?"],
+            "newest first; a failed run and a capped one have nothing to show"
+        );
+        assert_eq!(pairs[0].sql, "SELECT 4", "the SQL is the answer's, not the question's");
+        assert!(!pairs[0].created_at.is_empty());
+
+        let three = db.agent_history_pairs("p1", 1).unwrap();
+        assert_eq!(three.len(), 1, "the limit is the caller's");
+        assert_eq!(three[0].question, "how many signed up?");
+
+        let other = db.agent_history_pairs("p2", 10).unwrap();
+        assert_eq!(other.len(), 1, "history belongs to its connection");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
