@@ -32,7 +32,7 @@ bunx tsc --noEmit                # TS typecheck
 
 ## Layout
 
-- `src/`: React frontend. Subdirs: `app/` shell, `stores/` zustand, `ipc/` typed Tauri bridge, `editor/` CodeMirror + completion engine, `grid/` virtualized results grid, `inspector/`, `sidebar/`, `browser/`, `palette/`, `explain/`, `design/` tokens+springs.
+- `src/`: React frontend. Subdirs: `app/` shell, `stores/` zustand, `ipc/` typed Tauri bridge, `editor/` CodeMirror + completion engine, `grid/` virtualized results grid, `inspector/`, `sidebar/`, `browser/`, `palette/`, `explain/`, `design/` tokens+springs, `agent/` agent core, `ask/` Ask panel UI, `harness/` design-lint pixel harness.
 - `src-tauri/src/`: Rust core. `driver/` DbDriver trait + `driver/postgres/`, `tunnel.rs` ssh, `secrets.rs` keychain, `appdb.rs` rusqlite app-state, `commands.rs` IPC handlers.
 - `docs/`: ARCHITECTURE.md (design truth), ROADMAP.md (shipped + open key points), ROADMAP_log.md (dated session log), DECISIONS.md (ADR-lite), AGENT-SPEC.md / AGENT-UX.md / EVAL.md (agent law + gates).
 

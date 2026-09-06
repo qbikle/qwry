@@ -23,6 +23,7 @@ import type { SchemaSnapshot } from "../stores/schema";
 import {
   PEEK_MAX,
   PROBE_MAX,
+  RUN_SQL_TIMEOUT_MS,
   UI_ROW_CAP,
   type AgentTools,
   type PeekOutcome,
@@ -52,7 +53,8 @@ export interface TauriToolsInit {
   /** the active connection's cached snapshot: list_tables and every name
    * resolution read it, so no round trip pays for structure twice */
   snapshot: SchemaSnapshot;
-  /** overrides the statement_timeout setting; 0 = no timeout, as in connect */
+  /** overrides the statement_timeout setting; 0 falls through to the section 5
+   * default, exactly as the setting's own 0 does */
   timeoutMs?: number;
 }
 
@@ -124,10 +126,13 @@ function valueMap(values: TableValues[], meta: SchemaMeta): ColumnValueMap {
 
 export function createTauriTools(init: TauriToolsInit): AgentTools {
   const meta = buildMeta(init.snapshot);
+  // 0 means "no timeout" for a session (ipc/commands.ts connect), a shape a
+  // tool call does not have: agent.rs would clamp it to the one-second FLOOR,
+  // handing the tightest timeout to whoever switched the timeout off. It falls
+  // through to the section 5 default instead, as platform.tauri.ts does.
   const timeout = () => {
-    if (init.timeoutMs !== undefined) return init.timeoutMs;
-    const secs = useSettings.getState().statementTimeoutSecs;
-    return secs > 0 ? secs * 1000 : 0;
+    const ms = init.timeoutMs ?? useSettings.getState().statementTimeoutSecs * 1000;
+    return ms > 0 ? ms : RUN_SQL_TIMEOUT_MS;
   };
 
   const unknown = (kind: string, name: string): ToolOutcome<never> => ({

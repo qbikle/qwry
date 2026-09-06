@@ -25,7 +25,7 @@
 // answer scroller stays honest and the rows it promises clear its own
 // horizontal scrollbar.
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { AnimatePresence, motion, usePresence } from "motion/react";
 import { footerStatus } from "../agent/display";
 import { mentionsIn } from "../agent/mentions";
@@ -145,7 +145,11 @@ export function statementFromRun(run: AgentRun, sql: string | null): StatementSt
   };
 }
 
-export function AnswerBlock({
+// memo: a streamed delta replaces one Exchange and the thread's array, so the
+// panel renders every block; the settled ones get the same props (patchExchange
+// keeps their identity, `asked` is stable per question list) and skip, or a
+// delta's cost would grow with the thread (ARCHITECTURE ideology 1)
+export const AnswerBlock = memo(function AnswerBlock({
   exchange,
   profile,
   threadId,
@@ -435,4 +439,4 @@ export function AnswerBlock({
       </AnimatePresence>
     </article>
   );
-}
+});

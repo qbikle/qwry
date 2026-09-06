@@ -83,6 +83,7 @@ import {
 } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowUp, History, Plus, Square } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { mentionsIn, type Mention, type MentionCtx } from "../agent/mentions";
 import type { Thread } from "../agent/types";
 import { chordGlyphs } from "../design/Kbd";
@@ -431,7 +432,13 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
     if (el) el.scrollTop = el.scrollHeight;
   }, [exchangeCount, threadId]);
 
-  const asked = useMemo(() => new Set(exchanges.map((e) => e.question)), [exchanges]);
+  // the questions asked, read shallowly so a streamed delta (a new array, the
+  // same questions) leaves the Set's identity alone and the settled blocks
+  // skip their render (AnswerBlock's memo)
+  const questions = useAgent(
+    useShallow((s) => (threadId ? s.exchanges[threadId] ?? NO_EXCHANGES : NO_EXCHANGES).map((e) => e.question)),
+  );
+  const asked = useMemo<ReadonlySet<string>>(() => new Set(questions), [questions]);
 
   // the lift (file header): `lift` is the ghost's data from ↩ until the
   // exchange lands, and the id the newest echo takes in the render that

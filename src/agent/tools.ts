@@ -63,6 +63,13 @@ export const PEEK_MAX = 50;
 export const PROBE_MAX = 6;
 export const PROBE_ROW_CAP = 5;
 
+/** run_sql's timeout when the statement_timeout setting names none (section 5).
+ * The setting's 0 means "no timeout" for a SESSION, which is not a shape a tool
+ * call has: agent.rs clamps a tool timeout to a one-second floor, so 0 has to
+ * land here rather than there. agent_mcp.rs::RUN_SQL_TIMEOUT_MS is the same
+ * number for the child process that cannot read the setting. */
+export const RUN_SQL_TIMEOUT_MS = 10_000;
+
 /** Every AgentTools method returns BOTH halves of a tool call: `textForModel`
  * is exactly what goes back into the conversation, `result` is the structured
  * data the UI keeps (grid rows, sanity fragments, trace entries). Neither is

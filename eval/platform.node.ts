@@ -155,6 +155,31 @@ class Pipe<T> {
  * invented (claudecode.ts exitError). */
 const STDERR_TAIL = 4_000;
 
+/** What a `claude -p` child is allowed to see of this process's environment:
+ * agent_claude.rs ENV_PASSTHROUGH, verbatim. The app spawns with
+ * `.env_clear().envs(child_env())` so a stray ANTHROPIC_API_KEY never picks
+ * the CLI's auth path for it, and the bench's shell carries worse (the
+ * staging DSN's parts, sourced to build `--dsn`); a child that inherited
+ * everything would take them all, per question (AGENT-SPEC section 8.3). */
+export const ENV_PASSTHROUGH: readonly string[] = [
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "TMPDIR",
+  "LANG",
+  "CLAUDE_CONFIG_DIR",
+];
+
+export function childEnv(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of ENV_PASSTHROUGH) {
+    const value = process.env[key];
+    if (value !== undefined) out[key] = value;
+  }
+  return out;
+}
+
 function makeSpawn(init: NodePlatformInit) {
   return function spawn(
     cmd: string,
@@ -162,10 +187,10 @@ function makeSpawn(init: NodePlatformInit) {
     stdin: string,
     signal?: AbortSignal,
   ): SpawnedProcess {
-    // the adapter names the binary it wants; the harness decides where it is,
-    // exactly as agent_claude.rs does for the app
+    // the adapter names the binary it wants; the harness decides where it is
+    // and what it sees, exactly as agent_claude.rs does for the app
     const bin = cmd === "claude" ? (init.claudeBin ?? "claude") : cmd;
-    const child = childSpawn(bin, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const child = childSpawn(bin, args, { stdio: ["pipe", "pipe", "pipe"], env: childEnv() });
     const pipe = new Pipe<string>();
     let stderrTail = "";
     let buffer = "";
