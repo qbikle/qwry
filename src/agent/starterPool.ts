@@ -75,8 +75,9 @@ const isTable = (kind: TableInfo["kind"]) => kind === "r" || kind === "p";
  * parent is the relation), a system schema, the migration ledger, a LEGACY
  * twin. Read from the snapshot, because buildMeta keeps an inheritance child
  * whose parent is a plain table (Timescale's shape) and drops only the
- * children of declared partitioned parents. */
-const banned = (t: TableInfo) =>
+ * children of declared partitioned parents. The `@` popover offers no such
+ * row either (mentionRows.ts). */
+export const isBannedRelation = (t: TableInfo) =>
   t.parent_oid != null ||
   SYSTEM_SCHEMAS.has(t.schema) ||
   HOUSEKEEPING.test(t.name) ||
@@ -117,7 +118,7 @@ export function starterSummary(
   budget = STARTER_PROMPT_CHAR_BUDGET,
 ): StarterSummary {
   const meta = buildMeta(snapshot);
-  const out = snapshot.tables.filter((t) => isTable(t.kind) && banned(t));
+  const out = snapshot.tables.filter((t) => isTable(t.kind) && isBannedRelation(t));
   const outKeys = new Set(out.map(key));
   const kept = meta.tables.filter((t) => isTable(t.kind) && !outKeys.has(key(t))).sort(bySize);
 

@@ -10,7 +10,11 @@
 // echo row carries Copy · Restart · Jump Back (EchoActions) and is the door
 // to edit mode: a click, or Jump Back, sends the words back to the composer;
 // the anatomy under the bubble is one node (Body) so a fold can let it leave
-// as one, parked where it stood, on the same fade run backwards.
+// as one, parked where it stood, on the same fade run backwards. The bubble
+// keeps the draft's @ chips (W6, MentionText): the question persists as
+// typed and re-resolves on render against the connection's current snapshot,
+// its saved queries and its threads, so a mention that no longer resolves
+// stands as plain text (LESSONS 5).
 //
 // The result slot: a run of one row and up to four columns renders as values
 // (ScalarResult: a table of one cell is chrome around nothing); anything
@@ -24,6 +28,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { AnimatePresence, motion, usePresence } from "motion/react";
 import { footerStatus } from "../agent/display";
+import { mentionsIn } from "../agent/mentions";
 import type { ProviderId } from "../agent/providers/types";
 import type { AgentRun } from "../agent/types";
 import { prefersReducedMotion, spring } from "../design/springs";
@@ -33,6 +38,8 @@ import { avatarColor } from "../sidebar/avatar";
 import { useAgent, type Exchange } from "../stores/agent";
 import { useAsk } from "../stores/ask";
 import type { StatementState } from "../stores/results";
+import { useSaved, visibleSaved } from "../stores/saved";
+import { useSchema } from "../stores/schema";
 import { useTabs } from "../stores/tabs";
 import type { Profile } from "../ipc/types";
 import type { AskPhase } from "../agent/loop";
@@ -41,6 +48,7 @@ import { AssumptionChips } from "./AssumptionChips";
 import { EchoActions, editLiftId } from "./EchoActions";
 import { FailureBlock } from "./FailureBlock";
 import { FollowUps, questionLayoutId } from "./FollowUps";
+import { MentionText } from "./Mention";
 import { modelLabel } from "./modelSources";
 import { SanityLine } from "./SanityLine";
 import { sanityStep } from "./sanityStep";
@@ -239,6 +247,22 @@ export function AnswerBlock({
   };
   const model = modelLabel({ providerId: exchange.provider as ProviderId, model: exchange.model });
 
+  // the chips in the echo (W6): resolved once per exchange against what the
+  // connection has now, never against what it had when the question was sent
+  const snapshot = useSchema((s) => s.snapshots[profileId]);
+  const saved = useSaved((s) => s.queries);
+  const threads = useAgent((s) => s.threads[profileId]);
+  const mentions = useMemo(
+    () =>
+      mentionsIn(question, {
+        snapshot,
+        saved: visibleSaved(saved, profileId),
+        threads: threads ?? [],
+        currentThreadId: threadId,
+      }),
+    [question, snapshot, saved, threads, profileId, threadId],
+  );
+
   // the question echo: the user's words in a bubble at the right edge, the
   // anatomy below staying left (ask.css .ans-echo-row). The newest echo is
   // what the sent text or a picked suggestion travels into (section 6): a
@@ -278,7 +302,7 @@ export function AnswerBlock({
           armEdit();
         }}
       >
-        {exchange.question}
+        <MentionText text={question} mentions={mentions} />
       </motion.div>
     </div>
   );

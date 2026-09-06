@@ -34,7 +34,8 @@ import type {
   Verdict,
 } from "./types";
 import type { SchemaSnapshot } from "../stores/schema";
-import { buildMeta, candidates, indexFor, recallOf } from "./context";
+import { buildMeta, candidates, indexFor, mustIncludeFor, recallOf } from "./context";
+import { type Mention, mentionContext, mentionTags } from "./mentions";
 import { isRisky } from "./risk";
 import { probeNoun } from "./probeNoun";
 import {
@@ -136,6 +137,12 @@ export interface AskRequest {
    * cut starts from a session that remembers nothing. Never in the system
    * prompt: PROMPT_VERSION and the eval's prompt bytes must not move. */
   thread?: { id: string; session?: string; firstCall: boolean; replay?: string };
+  /** what the user tagged with `@`, already resolved by the caller against
+   * the connection it belongs to (W6). The tagged tables lead the candidate
+   * block and every tag is spelled out under it; the question itself is sent
+   * with its `@` tokens exactly as typed. Absent on the eval path, where the
+   * message must stay byte-identical to the measured one. */
+  mentions?: Mention[];
   /** injectable clock so the harness can be deterministic */
   now?: () => number;
   maxTurns?: number;
@@ -298,7 +305,8 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
   // 4.1 prefilter + 4.2 context: code, milliseconds, zero tokens
   emit({ type: "status", phase: "context" });
   const meta = buildMeta(req.snapshot);
-  const picked = candidates(req.question, meta);
+  const mentions = req.mentions ?? [];
+  const picked = candidates(req.question, meta, undefined, mustIncludeFor(meta, mentions));
   const risky = isRisky(req.question);
   const userMsg = withReplay(
     req,
@@ -307,6 +315,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
       index: indexFor(meta, picked),
       totalTables: meta.tables.length,
       risky,
+      context: mentionContext(mentions),
     }),
   );
   trace.push({
@@ -314,6 +323,8 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
     ms: Math.round(now() - started),
     candidates: picked,
     text: userMsg,
+    // absent, not empty: a question that tagged nothing has no tagged line
+    ...(mentions.length > 0 ? { mentions: mentionTags(mentions) } : {}),
   });
 
   const base = {

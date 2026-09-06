@@ -12,12 +12,14 @@ import {
   candidates,
   goldTables,
   indexFor,
+  mustIncludeFor,
   recallOf,
   renderDescribe,
   stem,
   toks,
   type ColumnValueMap,
 } from "../context";
+import type { Mention } from "../mentions";
 import type { SchemaSnapshot } from "../../stores/schema";
 import snapshot from "./fixtures/pagila-snapshot.json";
 import questions from "./fixtures/pagila-questions.json";
@@ -131,6 +133,43 @@ const twinSnapshot = (): SchemaSnapshot => ({
   schemas: ["public"],
   indexes: [],
   enums: [],
+});
+
+describe("the tables an @ tag must include (W6)", () => {
+  const question = "how many rentals were there last month?";
+  const tagged: Mention[] = [
+    { span: [0, 1], token: "actor", kind: "table", ref: { schema: "public", table: "actor" } },
+    {
+      span: [2, 3],
+      token: "staff.email",
+      kind: "column",
+      ref: { schema: "public", table: "staff", column: "email" },
+    },
+    { span: [4, 5], token: "actor", kind: "table", ref: { schema: "public", table: "actor" } },
+    { span: [6, 7], token: "gone", kind: "table", ref: { schema: "public", table: "gone" } },
+  ];
+
+  test("a tag names its table once, a column names the table it belongs to, a stale ref names nothing", () => {
+    expect(mustIncludeFor(pagila, tagged)).toEqual(["actor", "staff"]);
+    expect(mustIncludeFor(pagila, [])).toEqual([]);
+  });
+
+  test("the tagged tables lead, and the lexical picks give way rather than adding", () => {
+    const plain = candidates(question, pagila);
+    const withTags = candidates(question, pagila, undefined, ["actor", "staff"]);
+    expect(withTags.slice(0, 2)).toEqual(["actor", "staff"]);
+    // the same question, two names of its own traded away for the two tags:
+    // the model still reads k picks plus the hubs and the one hop
+    expect(withTags).toContain("rental");
+    expect(withTags.length).toBeLessThanOrEqual(plain.length + 2);
+    expect(new Set(withTags).size).toBe(withTags.length);
+  });
+
+  test("a name the snapshot does not carry is dropped, never sent as a candidate", () => {
+    expect(candidates(question, pagila, undefined, ["nope"])).toEqual(
+      candidates(question, pagila),
+    );
+  });
 });
 
 describe("legacy twins and LEGACY comments", () => {

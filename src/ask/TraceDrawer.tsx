@@ -1,6 +1,7 @@
 // Trace drawer (AGENT-UX section 5): slides over the thread inside the card
 // (CSS transform, --dur-slow / --ease-std) and lists every step in loop order:
-// context (candidates, expandable to the exact block sent), each model turn
+// context (candidates, expandable to the exact block sent; what the user
+// tagged with @ summarised in one line over that block, W6), each model turn
 // (raw text, thinking), each tool call with its arguments and result, the
 // verdict. Timing per step in the status register; the verdict row carries
 // none, its ms is the whole run and the header already states that (DESIGN
@@ -19,6 +20,7 @@
 // drawer root; on close it returns to the opener, else to the panel root.
 
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -50,7 +52,9 @@ type Kind = "context" | "model" | "tool" | "verdict";
 type ToolStep = Extract<TraceStep, { step: "tool" }>;
 
 /** One rendered row. `body` null = nothing to expand (a chip of a run still
- * streaming: its arguments and result arrive with the answer). */
+ * streaming: its arguments and result arrive with the answer); `above` is the
+ * one line that sits between the row and its open body (the context step's
+ * tagged line), absent on every other row. */
 interface Row {
   key: string;
   kind: Kind;
@@ -58,6 +62,7 @@ interface Row {
   label: ReactNode;
   ms: number | null;
   body: ReactNode | null;
+  above?: ReactNode;
 }
 
 const toolKey = (id: string) => `tool:${id}`;
@@ -167,7 +172,12 @@ function rowsFromTrace(exchange: Exchange, trace: TraceStep[], timed: boolean): 
   for (let i = 0; i < trace.length; i++) {
     const step = trace[i];
     switch (step.step) {
-      case "context":
+      case "context": {
+        // what the user tagged, in the status register over the block: each
+        // tag its token without the `@` (the block already holds the TAGGED
+        // lines with the qualified names; the line is their summary and never
+        // their second slot); nothing when nothing was tagged (rule 11)
+        const tagged = step.mentions ?? [];
         rows.push({
           key: "context",
           kind: "context",
@@ -177,8 +187,21 @@ function rowsFromTrace(exchange: Exchange, trace: TraceStep[], timed: boolean): 
           }`,
           ms: ms(step.ms),
           body: step.text,
+          above:
+            tagged.length > 0 ? (
+              <div className="trace-tag">
+                tagged{" "}
+                {tagged.map((m, i) => (
+                  <Fragment key={i}>
+                    {i > 0 && " · "}
+                    <code>{m.token}</code>
+                  </Fragment>
+                ))}
+              </div>
+            ) : undefined,
         });
         break;
+      }
       case "turn": {
         const calls: string[] = [];
         for (let j = i + 1; j < trace.length; j++) {
@@ -491,6 +514,7 @@ export function TraceDrawer({ open, exchange, focusStepId, onClose }: TraceDrawe
                   {head}
                 </button>
               )}
+              {isOpen && row.above}
               {isOpen && <div className="trace-step-b">{row.body}</div>}
             </div>
           );

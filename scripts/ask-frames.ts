@@ -12,8 +12,9 @@
 //              pending,retry,strip,threads,scalar,kv,wide,trace,echo,echo-long,
 //              starters,starters-fallback,qwrying,qwrying-trail,kv-wide,
 //              actions,actions-latest,actions-busy,edit,edit-latest,edit-stack,
-//              insight,insight-prose,insight-steps,insight-code,insight-stream
-//              (default: all thirty-three)
+//              insight,insight-prose,insight-steps,insight-code,insight-stream,
+//              mention-popover,mention-draft,mention-echo,mention-trace
+//              (default: all thirty-seven)
 //   --widths   subset of 320,392,560 (default: all three)
 //   --themes   subset of dark,light (default: both)
 //   --scroll   bottom (default): the pane as it mounts, pinned to the newest content,
@@ -134,6 +135,25 @@
 // insight exchange mid-stream, every chip landed, the second bullet cut
 // mid-sentence, the Stop face.
 //
+// W6 (the sketch's "@ context tags" rows; fixtures.mentions.ts,
+// fixtures.mentions-echo.ts): the discussion thread's first exchange over
+// the order_v2 schema on Haiku 4.5. mention-popover = the composer holding
+// `which @ord`, focused, the `@` popover standing over the box at its width:
+// Tables `order_v2` · `erp_order_cost_snapshot` with their row estimates,
+// Columns `order_v2.order_status` · `erp_order_cost_snapshot.order_id` ·
+// `.order_ref` with their types (at 320 the table part ellipsizes and the
+// column stays whole), Saved Queries `Orders by day`, Threads `how many
+// orders were refunded in August`, the first row hot; headless Chrome paints
+// no caret, so the box's focus border is the focus evidence (the edit
+// states' precedent); mention-draft = the composer holding `compare
+// @order_v2 with @"Monthly revenue" for August` with two pills behind the
+// glyphs, the second wrapping with its words at 320; mention-echo = the same
+// question sent, the bubble wearing both pills (three lines at its cap at
+// 320, the second pill split across the wrap at 392, one line at 560), the
+// scroller parked at that exchange; mention-trace = its trace open at the
+// context step, `tagged order_v2 · "Monthly revenue"` over the block whose
+// last lines are the TAGGED BY THE USER block the loop sent.
+//
 // The first frame runs alone so vite compiles the module graph once; the rest
 // run in parallel. Whole run: ~60 s warm for the full matrix.
 
@@ -179,6 +199,10 @@ const ALL_STATES = [
   "insight-steps",
   "insight-code",
   "insight-stream",
+  "mention-popover",
+  "mention-draft",
+  "mention-echo",
+  "mention-trace",
 ] as const;
 const ALL_WIDTHS = [320, 392, 560] as const;
 const ALL_THEMES = ["dark", "light"] as const;

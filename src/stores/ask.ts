@@ -1,7 +1,8 @@
 // Ask UI state (AGENT-UX section 1). Chrome only: which trace is showing,
 // whether the Threads sheet or the picker is up, the composer drafts, one per
-// connection, and which exchange the composer is editing (W4 jump back: the
-// mode, not the truncation, which is the agent store's).
+// connection, which exchange the composer is editing (W4 jump back: the
+// mode, not the truncation, which is the agent store's), and the `@` the
+// caret is inside (W6: the mention popover's query, not its rows).
 // Whether Ask is on screen and how wide it is belong to the one right pane
 // (src/stores/sidePane.ts: Ask is a MODE of it, not a card of its own); this
 // store mirrors `open` for its readers and clears its transient chrome when
@@ -37,6 +38,16 @@ export interface AskEdit {
   question: string;
 }
 
+/** The `@` token the composer's caret is inside (W6): where it starts in the
+ * draft and the text typed after the `@` up to the caret. AskPanel derives it
+ * from the textarea on every change and caret move; the MentionPopover
+ * renders while it is set and unmounts when nothing matches. The harness
+ * opens it through `openMentions` (a DOM-free door, like beginEdit). */
+export interface MentionQuery {
+  at: number;
+  filter: string;
+}
+
 interface AskState {
   /** mirror: the side pane is open AND showing Ask. Read-only here; the
    * pane store is the truth and App.tsx drives it */
@@ -46,6 +57,9 @@ interface AskState {
    * trace are the pane's two slide-overs and never show together */
   threadsOpen: boolean;
   pickerOpen: boolean;
+  /** null = the caret is not inside an `@` token; a slide-over, a blur, Esc,
+   * a pick or a connection switch clears it */
+  mentionQuery: MentionQuery | null;
   /** unsent composer text per connection (LESSONS 4: a draft typed toward one
    * connection carries that origin and never surfaces in another's
    * composer; it comes back when its connection does). Lives here so Ask
@@ -67,6 +81,8 @@ interface AskState {
   openThreads: () => void;
   closeThreads: () => void;
   setPickerOpen: (open: boolean) => void;
+  openMentions: (at: number, filter: string) => void;
+  closeMentions: () => void;
   setDraftFor: (profileId: string | null) => void;
   /** enter edit mode: the exchange's question becomes its connection's draft
    * and the composer takes focus. The fold and the travel are the panel's */
@@ -90,21 +106,29 @@ export const useAsk = create<AskState>()((set) => ({
   traceOpenFor: null,
   threadsOpen: false,
   pickerOpen: false,
+  mentionQuery: null,
   drafts: {},
   draftFor: null,
   focusSeq: 0,
   edit: null,
 
   openTrace: (exchangeId, stepId = null) =>
-    set({ traceOpenFor: { exchangeId, stepId }, threadsOpen: false, pickerOpen: false }),
+    set({ traceOpenFor: { exchangeId, stepId }, threadsOpen: false, pickerOpen: false, mentionQuery: null }),
   closeTrace: () => set({ traceOpenFor: null }),
-  openThreads: () => set({ threadsOpen: true, traceOpenFor: null, pickerOpen: false }),
+  openThreads: () => set({ threadsOpen: true, traceOpenFor: null, pickerOpen: false, mentionQuery: null }),
   closeThreads: () => set({ threadsOpen: false }),
-  setPickerOpen: (pickerOpen) => set({ pickerOpen }),
+  // the two popovers over the composer never show together
+  setPickerOpen: (pickerOpen) => set(pickerOpen ? { pickerOpen, mentionQuery: null } : { pickerOpen }),
+  openMentions: (at, filter) =>
+    set((s) =>
+      s.mentionQuery?.at === at && s.mentionQuery.filter === filter ? {} : { mentionQuery: { at, filter } },
+    ),
+  closeMentions: () => set((s) => (s.mentionQuery === null ? {} : { mentionQuery: null })),
   // a connection change cancels the edit: the fold belongs to the thread on
-  // screen, and the draft stays with the connection it was typed toward
+  // screen, and the draft stays with the connection it was typed toward; the
+  // `@` under the caret belongs to the composer that leaves with it
   setDraftFor: (draftFor) =>
-    set((s) => ({ draftFor, edit: s.edit?.profileId === draftFor ? s.edit : null })),
+    set((s) => ({ draftFor, edit: s.edit?.profileId === draftFor ? s.edit : null, mentionQuery: null })),
   beginEdit: (edit) =>
     set((s) => ({
       edit,
@@ -132,6 +156,6 @@ useSidePane.subscribe(() => {
   const open = showing();
   if (useAsk.getState().open === open) return;
   useAsk.setState(
-    open ? { open } : { open, traceOpenFor: null, threadsOpen: false, pickerOpen: false },
+    open ? { open } : { open, traceOpenFor: null, threadsOpen: false, pickerOpen: false, mentionQuery: null },
   );
 });

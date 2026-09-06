@@ -22,6 +22,7 @@
 
 import type { SchemaSnapshot, TableInfo } from "../stores/schema";
 import { MODEL_ROW_CAP, UI_ROW_CAP } from "./tools";
+import type { Mention } from "./mentions";
 import type { AgentRun, SanityFragment } from "./types";
 
 /** One column as the prefilter and the DDL renderer see it. */
@@ -222,11 +223,36 @@ export function buildMeta(snapshot: SchemaSnapshot): SchemaMeta {
  * model finds through list_tables is describable and queryable. */
 const isBase = (t: TableMeta) => t.kind === "r" || t.kind === "p";
 
-/** Table names, in the order the model should see them: IDF-weighted lexical
- * match (table-name tokens weigh 3x, an exact base-name hit is worth +6),
- * LEGACY tables excluded, then the top-3 inbound FK hubs, then a one-hop FK
- * expansion of the top 5 picks. Target 15-25 names; the cap is k + 8. */
-export function candidates(question: string, meta: SchemaMeta, k = 14): string[] {
+/** The display names of the tables an `@` tag names, in the order they were
+ * typed: a tagged table, and the table a tagged column belongs to. What the
+ * user pointed at is a must-include candidate, LEGACY or not: the prefilter
+ * guesses and the user does not, and the prompt still says a LEGACY table is
+ * never the answer. A ref the snapshot no longer has yields nothing (LESSONS
+ * 5: stale never refuses). */
+export function mustIncludeFor(meta: SchemaMeta, mentions: readonly Mention[]): string[] {
+  const out: string[] = [];
+  for (const m of mentions) {
+    if (m.kind !== "table" && m.kind !== "column") continue;
+    const t = meta.tables.find((x) => x.schema === m.ref.schema && x.name === m.ref.table);
+    if (t && !out.includes(t.display)) out.push(t.display);
+  }
+  return out;
+}
+
+/** Table names, in the order the model should see them: the tagged tables
+ * first (`mustInclude`, W6), then IDF-weighted lexical match (table-name
+ * tokens weigh 3x, an exact base-name hit is worth +6), LEGACY tables
+ * excluded, then the top-3 inbound FK hubs, then a one-hop FK expansion of
+ * the top 5 picks. Target 15-25 names; the cap is k + 8. The lexical picks
+ * give way to the tags rather than adding to them: k names reach the model
+ * either way, and the one-hop expansion now hops out of what the user
+ * pointed at. */
+export function candidates(
+  question: string,
+  meta: SchemaMeta,
+  k = 14,
+  mustInclude: readonly string[] = [],
+): string[] {
   const q = questionTokens(question);
   const base = meta.tables.filter(isBase);
 
@@ -262,7 +288,11 @@ export function candidates(question: string, meta: SchemaMeta, k = 14): string[]
     if (score) scored.push({ name: t.display, score, order });
   });
   scored.sort((a, b) => b.score - a.score || a.order - b.order);
-  const picked = scored.slice(0, k).map((s) => s.name);
+  const picked = [...new Set(mustInclude)].filter((n) => meta.byDisplay.has(n));
+  for (const s of scored) {
+    if (picked.length >= k) break;
+    if (!picked.includes(s.name)) picked.push(s.name);
+  }
 
   const inbound = new Map<string, number>();
   for (const fk of meta.fks) inbound.set(fk.dst, (inbound.get(fk.dst) ?? 0) + 1);

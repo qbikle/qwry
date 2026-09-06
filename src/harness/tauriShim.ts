@@ -45,6 +45,7 @@ import type { Channel, InvokeArgs } from "@tauri-apps/api/core";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { HttpChunk, HttpDone } from "../ipc/types";
 import { FIXTURE, LOCAL_MODELS_JSON, LOCAL_MODELS_URL } from "./fixtures";
+import { MENTION_STATES, mentionThreadRows } from "./fixtures.mentions";
 import { SHELL_THREAD_ROWS } from "./fixtures.shell";
 
 const harnessState = () => new URLSearchParams(location.search).get("state");
@@ -80,7 +81,11 @@ export function installTauriShim(): void {
     (cmd, payload) => {
       switch (cmd) {
         case "agent_thread_list":
-          return harnessState() === "threads" ? SHELL_THREAD_ROWS : [FIXTURE.threadRow];
+          return harnessState() === "threads"
+            ? SHELL_THREAD_ROWS
+            : (MENTION_STATES as readonly string[]).includes(harnessState() ?? "")
+              ? mentionThreadRows()
+              : [FIXTURE.threadRow];
         case "agent_key_has":
           return false;
         case "agent_http_stream":

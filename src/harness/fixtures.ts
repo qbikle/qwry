@@ -50,6 +50,18 @@
 // over the order_v2 thread, the answer slot's blocks the subject; the seed
 // carries its own busy / phase (`insight-stream` streams) and the thread reads
 // Haiku 4.5 (`RICH_CHOICE`). The file imports nothing from here.
+//
+// The W6 states are the discussion thread again, over the one order_v2
+// schema of fixtures.mentions.ts (`MENTION_SNAPSHOT`, `mentionSaved`,
+// `mentionThreads`), so a tag typed in one frame resolves in every other:
+// fixtures.mentions.ts (`mention-popover`, `mention-draft`: the `@` popover
+// over `which @ord` and two pills in the draft; the draft and the popover are
+// written after mount through the store's own doors) and
+// fixtures.mentions-echo.ts (`mention-echo`, `mention-trace`: the tagged
+// question sent, its bubble wearing the pills, and its trace with the tagged
+// line over the block). Both read `FIXTURE` only inside functions (the
+// anatomy precedent) and `choiceFor` gives them the discussion thread's
+// Haiku 4.5.
 
 import type { AskAnswer } from "../agent/loop";
 import type { AgentRun, Assumption, Thread, TraceStep } from "../agent/types";
@@ -59,6 +71,8 @@ import type { Exchange, ToolChip } from "../stores/agent";
 import { ACTIONS_CHOICE } from "./fixtures.actions";
 import { anatomyExchangeFor } from "./fixtures.anatomy";
 import { interactSeed } from "./fixtures.interact";
+import type { MentionState } from "./fixtures.mentions";
+import type { MentionsEchoState } from "./fixtures.mentions-echo";
 import { RICH_CHOICE, richSeed, type RichState } from "./fixtures.rich";
 import { stripSeed } from "./fixtures.strip";
 
@@ -91,6 +105,8 @@ export type HarnessState =
   | "edit"
   | "edit-latest"
   | "edit-stack"
+  | MentionState
+  | MentionsEchoState
   | RichState;
 export const HARNESS_STATES: readonly HarnessState[] = [
   "answer",
@@ -126,6 +142,10 @@ export const HARNESS_STATES: readonly HarnessState[] = [
   "insight-steps",
   "insight-code",
   "insight-stream",
+  "mention-popover",
+  "mention-draft",
+  "mention-echo",
+  "mention-trace",
 ];
 export const HARNESS_WIDTHS = [320, 392, 560] as const;
 export type HarnessTheme = "dark" | "light";
@@ -563,6 +583,10 @@ export function exchangeFor(state: HarnessState): Exchange | null {
     case "edit":
     case "edit-latest":
     case "edit-stack":
+    case "mention-popover":
+    case "mention-draft":
+    case "mention-echo":
+    case "mention-trace":
       return null;
     case "pending":
     case "retry":
@@ -602,6 +626,10 @@ export function choiceFor(state: HarnessState): { provider: string; model: strin
     case "edit":
     case "edit-latest":
     case "edit-stack":
+    case "mention-popover":
+    case "mention-draft":
+    case "mention-echo":
+    case "mention-trace":
       return ACTIONS_CHOICE;
     case "insight":
     case "insight-prose":

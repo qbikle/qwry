@@ -369,6 +369,29 @@
   caret-color: var(--fg);
 }
 
+/* ---- @ mention chips (Mention.tsx, W6) ----------------------------------- */
+/* one face, two homes: the composer's backdrop (.ask-ta-back) paints it
+   behind a resolved mention's glyphs in the draft, the question echo wears it
+   in the bubble, and the lift ghost carries it between them. A marked run of
+   text, never a control (rule 8's inverse): accent-soft fill, the bubble's
+   22% ring, 4px corners, no hover, no font of its own (the textarea paints
+   the glyphs, and a backdrop set in mono would drift off them; the @ and the
+   quotes are the data costume). The box outdents 2px each side over its own
+   margin, so the glyph run stays where the textarea put it and a pill
+   appearing or leaving never moves a letter; a pill the line breaks keeps
+   rounded ends on both fragments. In the bubble the same fill stacks on the
+   bubble's tint and reads one step deeper, the way .chip.active reads over
+   any surface: one declaration, two readings */
+.mention {
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: var(--radius-xs);
+  margin: 0 -2px;
+  padding: 0 2px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
 /* ---- edit mode (W4): the travel's composer side and the fold's stack ----- */
 /* the edit ghost (AskPanel `travel`): the send ghost run backwards. `in`
    mounts under the bubble's edit id as the bubble leaves, so the words spring
@@ -1108,6 +1131,8 @@
   border-color: var(--accent);
 }
 .ask-ta {
+  position: relative; /* above the backdrop (.ask-ta-back): the textarea's glyphs stay tier 1 */
+  z-index: 1;
   width: 100%;
   min-height: 20px;
   max-height: 96px;
@@ -1135,6 +1160,33 @@
 .ask-ta:disabled {
   opacity: var(--o-disabled);
   cursor: default;
+}
+/* the draft's @ chips (W6, AskPanel): the textarea is the truth and paints
+   its own glyphs; the backdrop under it repeats the text in the same font,
+   size, 20px lines and width (the .ask-ghost technique) with its glyphs
+   transparent, so all it paints is one .mention pill (Mention.tsx) behind
+   each tag that resolves. The wrap is a flex box so the textarea sizes it
+   with no line-box slack under an inline-block; the backdrop clips and takes
+   the textarea's scrollTop from AskPanel. While a ghost carries the words it
+   hides with the textarea's text, so the pills exist once */
+.ask-ta-wrap {
+  position: relative;
+  display: flex;
+}
+.ask-ta-back {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  line-height: 20px;
+  color: transparent;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  pointer-events: none;
+}
+.ask-ta-back.ghosted {
+  visibility: hidden;
 }
 .ask-ctl {
   display: flex;
@@ -1171,6 +1223,65 @@
 }
 .ask-send.stop:hover:not(:disabled) {
   background: var(--bg-hover);
+}
+
+/* ---- @ completion popover (MentionPopover, W6) -------------------------- */
+/* the picker's box (.picker-pop, .picker-anchor: raised, border-strong,
+   radius-md, shadow-pop, 4px padding, grown upward from a zero-height anchor)
+   at the composer box's width, its edges on the box's outer edges 4px above
+   it; past 320px of rows it scrolls. No title, no footer, no empty row. The
+   anchor is portaled and fixed at the box's top-left on the anchored popups'
+   rung (overlay.css's 40), under the overlay stack (50+) it never joins */
+.mention-anchor {
+  position: fixed;
+  z-index: 40;
+}
+.mention-pop {
+  width: 100%;
+  max-height: 320px;
+}
+/* the picker's menu rows at one fixed height, so a mono identifier row and a
+   text row are one row (the sketch gate: 26 against 27 was a jitter) */
+.mention-pop .picker-item {
+  height: 28px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+/* identifiers wear data's clothes (WRITING): mono, ellipsized at the end like
+   a title in the Threads sheet */
+.mention-name,
+.mention-path {
+  min-width: 0;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.mention-name,
+.mention-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* a column row is two spans: the table part owns the overflow and ellipsizes
+   at its end, the column with its dot in front is never cut, because a title
+   discriminates at its start and a dotted path at its end, and two columns
+   of one table must stay two rows at the floor (DECISIONS W6) */
+.mention-path {
+  display: flex;
+}
+.mention-pre {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mention-col {
+  flex: none;
+}
+/* the hint slot carries data only (a table's row estimate, a column's type):
+   the picker's hint face in mono, tabular, never cut */
+.mention-pop .picker-ctx {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---- empty states ------------------------------------------------------- */
@@ -1498,6 +1609,21 @@
   overflow-wrap: anywhere;
   user-select: text;
   -webkit-user-select: text;
+}
+/* the context step's tagged line (W6): what the user tagged, in the status
+   register between the row and its block, never inside the block, which
+   stays exactly what was sent; identifiers mono at tier 1, the lead at tier
+   2. It wraps as the chips row does (a cut tag is not a summary) and a long
+   identifier breaks anywhere; absent when nothing was tagged (rule 11) */
+.trace-tag {
+  padding: 0 var(--sp-2) var(--sp-1);
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+.trace-tag code {
+  font-family: var(--font-mono);
+  color: var(--fg);
 }
 /* sub-labels inside a body (thinking / text, args / result): the kind
    label's costume, smaller, tier 2 */

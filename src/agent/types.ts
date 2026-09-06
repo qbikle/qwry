@@ -38,6 +38,11 @@ export interface TokenUsage {
   cacheWrite?: number;
 }
 
+/** What kind of thing an `@` tag names (src/agent/mentions.ts). Declared
+ * here because this module imports nothing: the grammar builds on it, the
+ * trace's context step carries it. */
+export type MentionKind = "table" | "column" | "saved" | "thread";
+
 /** How a thread's question ended. The tokens are persisted verbatim in
  * `agent_answers.status`, so they never drift between store and appdb. */
 export type AnswerStatus = "answered" | "failed" | "turn_cap" | "cancelled";
@@ -88,6 +93,11 @@ export type TraceStep =
       candidates: string[];
       /** the exact CANDIDATE TABLES block sent to the model */
       text: string;
+      /** the `@` tags the question carried, in the order they were typed
+       * (W6). Absent when nothing was tagged, which is what keeps the
+       * trace's summary line off the step; the tags themselves are already
+       * inside `text`, under TAGGED BY THE USER. */
+      mentions?: { kind: MentionKind; token: string }[];
     }
   | {
       step: "turn";

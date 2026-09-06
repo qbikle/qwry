@@ -6,6 +6,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { runAsk, type AskEvent } from "../loop";
+import { mentionsIn } from "../mentions";
 import type {
   AgentEvent,
   ChatRequest,
@@ -664,3 +665,69 @@ describe("a cut thread's replay", () => {
 function expect_names(rec: Recorded): unknown {
   return (rec.calls.find((c) => c.name === "describeTables")?.args ?? []) as unknown;
 }
+
+// ---- @ context tags (W6) ----------------------------------------------------
+
+describe("the tags the user wrote", () => {
+  const ctx = {
+    snapshot,
+    saved: [{ id: "s1", name: "Monthly revenue", sql: "SELECT 1 AS revenue;" }],
+    threads: [
+      { id: "t-9", profileId: "p", title: "which films rent most", createdAt: "2026-09-06" },
+    ],
+    currentThreadId: null,
+  };
+
+  const oneAsk = async (over: Partial<Parameters<typeof runAsk>[0]>) => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const { answer } = await ask(
+      scripted([[{ text: answerText }, done("stop")]], rec),
+      tools(rec),
+      over,
+    );
+    const first = rec.requests[0].messages[0];
+    return { answer, message: "content" in first ? (first.content ?? "") : "" };
+  };
+
+  test("the tagged tables lead the candidate block, once each, and a column brings its table", async () => {
+    const mentions = mentionsIn("@actor and @customer.email", ctx);
+    expect(mentions.map((m) => m.kind)).toEqual(["table", "column"]);
+    const { answer } = await oneAsk({ mentions });
+    expect(answer.candidates.slice(0, 2)).toEqual(["actor", "customer"]);
+    expect(answer.candidates.filter((c) => c === "actor")).toHaveLength(1);
+    // the lexical picks give way rather than being dropped: the question's own
+    // table is still there, and the cap still binds
+    expect(answer.candidates).toContain("film");
+    expect(answer.candidates.length).toBeLessThanOrEqual(22);
+  });
+
+  test("the block sits under the candidates, above the risk block, question as typed", async () => {
+    const mentions = mentionsIn('@actor and @"Monthly revenue"', ctx);
+    const { message } = await oneAsk({
+      question: "how many actors joined within 30 days? @actor and @\"Monthly revenue\"",
+      mentions,
+    });
+    expect(message).toStartWith('how many actors joined within 30 days? @actor and @"Monthly revenue"\n\n');
+    expect(message).toContain(
+      '\n\nTAGGED BY THE USER:\ntable public.actor\nsaved query "Monthly revenue":\nSELECT 1 AS revenue;\nRISK CHECK REQUIRED',
+    );
+    expect(message.indexOf("CANDIDATE TABLES")).toBeLessThan(message.indexOf("TAGGED BY THE USER"));
+  });
+
+  test("no tags, no block: the eval path's message is byte-identical", async () => {
+    const evaluation = await oneAsk({});
+    const empty = await oneAsk({ mentions: [] });
+    expect(empty.message).toBe(evaluation.message);
+    expect(evaluation.message).not.toContain("TAGGED BY THE USER");
+    expect(evaluation.answer.candidates).toEqual(empty.answer.candidates);
+  });
+
+  test("the trace's context step carries the tags, and carries none when there were none", async () => {
+    const tagged = await oneAsk({ mentions: mentionsIn("@actor", ctx) });
+    const step = tagged.answer.trace.find((s) => s.step === "context");
+    expect(step).toMatchObject({ mentions: [{ kind: "table", token: "actor" }] });
+    const plain = await oneAsk({});
+    const bare = plain.answer.trace.find((s) => s.step === "context");
+    expect(bare && "mentions" in bare).toBe(false);
+  });
+});

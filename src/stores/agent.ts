@@ -27,8 +27,9 @@ import {
   cancel as cancelSession,
   disconnect,
 } from "../ipc/commands";
-import type { AgentTurn } from "../ipc/types";
+import type { AgentAnswer, AgentTurn } from "../ipc/types";
 import { useSchema } from "./schema";
+import { useSaved, visibleSaved } from "./saved";
 import { useSettings } from "./settings";
 import { createTauriTools } from "../agent/tools.tauri";
 import { tauriPlatform } from "../agent/platform.tauri";
@@ -36,6 +37,12 @@ import { providerFor, tierOf } from "../agent/providers/index";
 import type { Provider, ProviderId } from "../agent/providers/types";
 import { runAsk, type AskAnswer, type AskErrorKind, type AskEvent, type AskPhase } from "../agent/loop";
 import { suggestFollowUps } from "../agent/followups";
+import {
+  MENTION_TEXT_CAP,
+  type Mention,
+  parseMentions,
+  resolveMentions,
+} from "../agent/mentions";
 import { buildAssumptions, extractSql } from "../agent/extract";
 import { answerText } from "../agent/display";
 import type {
@@ -439,6 +446,9 @@ export const useAgent = create<AgentState>((set, get) => ({
     if (!profileId) return;
     const snapshot = useSchema.getState().snapshots[profileId];
     const choice = modelChoice(profileId);
+    // the `@` tags, resolved against what this connection has RIGHT NOW and
+    // before the thread create below, like every other capture here
+    const mentions = mentionsFor(get, profileId, get().activeThread[profileId], text);
 
     let threadId = get().activeThread[profileId];
     // a question typed into a busy thread would abort the live run through
@@ -499,6 +509,7 @@ export const useAgent = create<AgentState>((set, get) => ({
       askText: text,
       snapshot,
       choice,
+      mentions,
     });
   },
 
@@ -527,6 +538,7 @@ export const useAgent = create<AgentState>((set, get) => ({
     const snapshot = useSchema.getState().snapshots[profileId];
     const choice = modelChoice(profileId);
     if (!snapshot || !choice) return;
+    const mentions = mentionsFor(get, profileId, threadId, exchange.question);
 
     // v1 re-asks with the assumption stated as a constraint rather than
     // rewriting the SQL: the model knows which predicate the words meant, and
@@ -546,6 +558,7 @@ export const useAgent = create<AgentState>((set, get) => ({
       askText,
       snapshot,
       choice,
+      mentions,
       flips: [{ id: chipId, label: chip.label, active: flipped }],
     });
   },
@@ -574,7 +587,7 @@ export const useAgent = create<AgentState>((set, get) => ({
   applyPending: async (exchangeId) => {
     const found = locateExchange(get, exchangeId);
     if (!found) return;
-    const { profileId, threadId, exchange, snapshot, choice } = found;
+    const { profileId, threadId, exchange, snapshot, choice, mentions } = found;
     const flips = pendingFlips(exchange, get().pending[exchangeId]);
     if (flips.length === 0) return;
     // the toggleAssumption shape, every flip listed: the model knows which
@@ -596,6 +609,7 @@ export const useAgent = create<AgentState>((set, get) => ({
       askText,
       snapshot,
       choice,
+      mentions,
       flips,
     });
   },
@@ -603,7 +617,7 @@ export const useAgent = create<AgentState>((set, get) => ({
   fixIt: async (exchangeId, sql) => {
     const found = locateExchange(get, exchangeId);
     if (!found) return;
-    const { profileId, threadId, exchange, snapshot, choice } = found;
+    const { profileId, threadId, exchange, snapshot, choice, mentions } = found;
     const reason = exchange.error?.message ?? "the last query failed";
     // the same re-ask shape as a chip toggle: the model gets the question, the
     // failure, and the user's corrected SQL as the starting point; it never
@@ -620,13 +634,14 @@ export const useAgent = create<AgentState>((set, get) => ({
       askText,
       snapshot,
       choice,
+      mentions,
     });
   },
 
   retry: async (exchangeId) => {
     const found = locateExchange(get, exchangeId);
     if (!found) return;
-    const { profileId, threadId, exchange, snapshot, choice } = found;
+    const { profileId, threadId, exchange, snapshot, choice, mentions } = found;
     rearm(set, threadId, exchangeId);
     await runInto(set, get, {
       profileId,
@@ -636,6 +651,7 @@ export const useAgent = create<AgentState>((set, get) => ({
       askText: exchange.question,
       snapshot,
       choice,
+      mentions,
     });
   },
 
@@ -707,7 +723,7 @@ export const useAgent = create<AgentState>((set, get) => ({
   restartFrom: async (exchangeId) => {
     const found = locateExchange(get, exchangeId);
     if (!found) return;
-    const { profileId, threadId, exchange, snapshot, choice } = found;
+    const { profileId, threadId, exchange, snapshot, choice, mentions } = found;
     const exchanges = get().exchanges[threadId] ?? [];
     // the latest exchange loses nothing: that is the retry shape, prior and
     // all, and it needs no confirm
@@ -725,6 +741,7 @@ export const useAgent = create<AgentState>((set, get) => ({
       askText: exchange.question,
       snapshot,
       choice,
+      mentions,
     });
   },
 
@@ -777,7 +794,31 @@ function locateExchange(get: () => AgentState, exchangeId: string) {
   const snapshot = useSchema.getState().snapshots[profileId];
   const choice = modelChoice(profileId);
   if (!snapshot || !choice) return null;
-  return { profileId, threadId, exchange, snapshot, choice };
+  // the question is re-asked as the user wrote it, tags included: they are
+  // resolved again HERE, against the connection as it stands now, so a table
+  // dropped since the first ask simply stops being context (LESSONS 5)
+  const mentions = mentionsFor(get, profileId, threadId, exchange.question);
+  return { profileId, threadId, exchange, snapshot, choice, mentions };
+}
+
+/** The `@` tags of one question, resolved against this connection as it
+ * stands: its snapshot, the bookmarks it sees, its OTHER threads. Sync by
+ * design, so every caller can run it before its first await (LESSONS 3), and
+ * built fresh each time: a resolution cache is a stale cache. */
+function mentionsFor(
+  get: () => AgentState,
+  profileId: string,
+  threadId: string | null,
+  text: string,
+): Mention[] {
+  const raw = parseMentions(text);
+  if (raw.length === 0) return [];
+  return resolveMentions(raw, {
+    snapshot: useSchema.getState().snapshots[profileId],
+    saved: visibleSaved(useSaved.getState().queries, profileId),
+    threads: get().threads[profileId] ?? [],
+    currentThreadId: threadId,
+  });
 }
 
 /** the appdb rows an exchange owns: its question's turn and its answer's, by
@@ -818,20 +859,96 @@ function threadSession(get: () => AgentState, threadId: string): string {
  * question after a cut is not mostly history. */
 const REPLAY_CAP = 2000;
 
+/** The little an exchange contributes to a replay. Exchange satisfies it;
+ * so does a pair of appdb turns, which is what a `@thread` tag replays. */
+interface ReplayExchange {
+  question: string;
+  text: string;
+  answer: { sql: string | null; text: string } | null;
+}
+
 /** The kept exchanges as the first call after a cut states them: one block
  * each, oldest dropped first until the whole fits under the cap. Sent as a
  * prefix of the user message and nowhere else, so PROMPT_VERSION and the
- * eval's prompt bytes do not move (loop.ts withReplay). */
-export function replayOf(exchanges: readonly Exchange[]): string {
-  const head = "Earlier in this thread:";
+ * eval's prompt bytes do not move (loop.ts withReplay). A `@thread` tag
+ * replays another thread through this same helper, headless and under its
+ * own cap, because two replay formats would drift apart by the second one. */
+export function replayOf(
+  exchanges: readonly ReplayExchange[],
+  opts: { head?: string; cap?: number } = {},
+): string {
+  const head = opts.head ?? "Earlier in this thread:";
+  const cap = opts.cap ?? REPLAY_CAP;
   const blocks = exchanges.map((e) => {
     const sql = e.answer?.sql ?? null;
     const said = firstSentence(answerText(e.answer?.text ?? e.text));
     return `Q: ${e.question}\nSQL: ${sql ?? "none"}\nA: ${said || "none"}`;
   });
-  const size = () => head.length + 2 + blocks.join("\n\n").length;
-  while (blocks.length > 0 && size() > REPLAY_CAP) blocks.shift();
-  return blocks.length === 0 ? "" : `${head}\n\n${blocks.join("\n\n")}`;
+  const body = () => blocks.join("\n\n");
+  const size = () => (head ? head.length + 2 : 0) + body().length;
+  while (blocks.length > 0 && size() > cap) blocks.shift();
+  if (blocks.length === 0) return "";
+  return head ? `${head}\n\n${body()}` : body();
+}
+
+/** A tagged thread's exchanges, rebuilt from its appdb rows the way a
+ * reloaded thread rebuilds them (openThread): each user turn with the
+ * assistant turn that answered it, and the SQL out of the verdict its answer
+ * row recorded. The text is the fallback only when it FENCED its SQL:
+ * extractSql falls back to `how: "raw"` and returns the whole prose, and a
+ * paragraph sent under `SQL:` is a lie the model reads as one (LESSONS 9).
+ * An exchange with neither replays as `SQL: none`, which is the truth. */
+export function replayPairs(
+  turns: readonly AgentTurn[],
+  answers: readonly AgentAnswer[] = [],
+): ReplayExchange[] {
+  const byTurn = new Map(answers.map((a) => [a.turn_id, a]));
+  const out: ReplayExchange[] = [];
+  for (const turn of turns) {
+    if (turn.role === "user") {
+      out.push({ question: turn.content, text: "", answer: null });
+      continue;
+    }
+    if (turn.role !== "assistant") continue;
+    const current = out[out.length - 1];
+    if (!current) continue;
+    const found = extractSql(turn.content);
+    current.text = turn.content;
+    current.answer = {
+      sql: byTurn.get(turn.id)?.sql ?? (found.how === "raw" ? null : found.sql),
+      text: turn.content,
+    };
+  }
+  return out;
+}
+
+/** Fill each `@thread` tag with the replay the loop sends under it: one
+ * round trip per tagged thread, on the way to the run and never during
+ * resolution, which is sync by law. History is a convenience (the cut's
+ * rule): a thread whose rows cannot be read is still tagged, by name, with
+ * no replay under it. */
+async function withThreadReplays(mentions: readonly Mention[]): Promise<Mention[]> {
+  if (!mentions.some((m) => m.kind === "thread")) return [...mentions];
+  const out: Mention[] = [];
+  for (const m of mentions) {
+    if (m.kind !== "thread") {
+      out.push(m);
+      continue;
+    }
+    let replay = "";
+    try {
+      // what was said and what was concluded, the two tables openThread reads
+      const [turns, answers] = await Promise.all([
+        agentTurnsList(m.ref.id),
+        agentAnswersList(m.ref.id),
+      ]);
+      replay = replayOf(replayPairs(turns, answers), { head: "", cap: MENTION_TEXT_CAP });
+    } catch (e) {
+      console.error("agent thread replay failed", e);
+    }
+    out.push(replay ? { ...m, ref: { ...m.ref, replay } } : m);
+  }
+  return out;
 }
 
 /** the answer in one line: its first sentence, whitespace collapsed */
@@ -991,6 +1108,8 @@ interface RunArgs {
   askText: string;
   snapshot: ReturnType<typeof useSchema.getState>["snapshots"][string];
   choice: ModelChoice;
+  /** the question's `@` tags, resolved by the caller before its first await */
+  mentions?: Mention[];
   /** chip states the user chose, reapplied to the landed chips whatever the
    * re-run's own Assumptions line said */
   flips?: Flip[];
@@ -1108,6 +1227,7 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
     // a persisted provider id no adapter claims throws here, inside the same
     // net as the run: the exchange fails with the message, busy clears
     provider = providerFor(args.choice, tauriPlatform);
+    const mentions = await withThreadReplays(args.mentions ?? []);
     answer = await runner.runAsk({
       question: args.askText,
       snapshot: args.snapshot,
@@ -1119,6 +1239,7 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
       thread: replay
         ? { id: threadId, session: sessionKey, firstCall: !resumed.has(threadId), replay }
         : { id: threadId, session: sessionKey, firstCall: !resumed.has(threadId) },
+      ...(mentions.length > 0 ? { mentions } : {}),
       onEvent,
     });
     resumed.add(threadId);

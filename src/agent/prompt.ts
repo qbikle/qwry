@@ -67,17 +67,24 @@ export const SMALL_SYSTEM_PROMPT =
 
 /** The user message for the tool loop: the question, the pre-selected
  * candidate tables (with the total so the model can tell how much was hidden
- * and ask for more), and the RISK CHECK block when section 4.4 fires. */
+ * and ask for more), what the user tagged with `@` (W6, empty for every
+ * question that tagged nothing and for the whole eval path), and the RISK
+ * CHECK block when section 4.4 fires. The tag block sits under the
+ * candidates and above the risk block, which stays last because it is the
+ * instruction for the next turn. */
 export function askMessage(args: {
   question: string;
   index: string;
   totalTables: number;
   risky?: boolean;
+  /** the tagged lines mentionContext() built, without their header */
+  context?: string;
 }): string {
   const risky = args.risky ?? isRisky(args.question);
   return (
     `${args.question}\n\nCANDIDATE TABLES (pre-selected from ${args.totalTables} tables; ` +
     `if none fit, call list_tables):\n${args.index}` +
+    (args.context ? `\n\nTAGGED BY THE USER:\n${args.context}` : "") +
     (risky ? RISK_BLOCK : "")
   );
 }

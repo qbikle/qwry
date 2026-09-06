@@ -53,6 +53,24 @@
 // thread on screen (a cut, a thread switch; the connection switch is the
 // store's), the draft left where it is (LESSONS 4). Reduced motion renders no
 // ghost either way: the textarea holds the text and the stack stands.
+//
+// @ context tags (W6): the textarea stays plain text and the truth. On every
+// change and caret move it is read for the `@` token under the caret
+// (mentionRows.ts mentionQueryAt) into useAsk.mentionQuery, and while that is
+// set the MentionPopover hangs over the composer box; a pick splices the
+// canonical token plus one space over the whole token and parks the caret
+// after the space. The popover is the composer's completion and never an
+// overlay (its header): onComposerKey offers it every key first and it takes
+// only ↑↓ ↩ ⇥ and Esc while it is up, so the pane's Esc ladder gets the next
+// Esc and ⌘ chords reach the window; a blur, a press outside it, Esc or the
+// caret leaving the token closes it, and a query dismissed by Esc or a press
+// stays dismissed until the caret's `@` or its fragment changes. The
+// draft's chips are a backdrop (.ask-ta-back) behind the textarea: the same
+// glyphs in the same font, lines and width with their colour transparent, its
+// scrollTop mirrored, painting one .mention pill (Mention.tsx, the echo's own
+// class) behind each mention that resolves against the connection's snapshot,
+// visible saved queries and threads, and nothing behind one that does not.
+// Both ghosts render the same segments, so the pills travel with the words.
 
 import {
   useCallback,
@@ -65,16 +83,22 @@ import {
 } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowUp, History, Plus, Square } from "lucide-react";
+import { mentionsIn, type Mention, type MentionCtx } from "../agent/mentions";
+import type { Thread } from "../agent/types";
 import { chordGlyphs } from "../design/Kbd";
 import { prefersReducedMotion, spring, swapIn } from "../design/springs";
 import type { Profile } from "../ipc/types";
 import { modelChoice, pendingTarget, retryLabel, useAgent, type Exchange } from "../stores/agent";
-import { useAsk } from "../stores/ask";
+import { useAsk, type MentionQuery } from "../stores/ask";
+import { useSaved, visibleSaved } from "../stores/saved";
 import { useSchema, type SchemaSnapshot } from "../stores/schema";
 import { useSettings } from "../stores/settings";
 import { AnswerBlock } from "./AnswerBlock";
 import { editLiftId } from "./EchoActions";
 import { FollowUps } from "./FollowUps";
+import { MentionText } from "./Mention";
+import { MentionPopover, type MentionPopoverHandle } from "./MentionPopover";
+import { mentionQueryAt, mentionTokenEnd } from "./mentionRows";
 import { ModelPicker } from "./ModelPicker";
 import { RetryPill } from "./RetryPill";
 import { SetupCard } from "./SetupCard";
@@ -84,6 +108,8 @@ import { useStarters } from "./useStarters";
 import "./ask.css";
 
 const NO_EXCHANGES: Exchange[] = [];
+const NO_THREADS: Thread[] = [];
+const NO_MENTIONS: Mention[] = [];
 const COMPOSER_MAX_H = 96;
 
 /** a question on its way from the composer into the thread */
@@ -98,6 +124,8 @@ interface Lift {
   question: string;
   /** the textarea's text as typed, so the ghost overlays it glyph for glyph */
   raw: string;
+  /** the tags that resolved in `raw` at send: the ghost wears their pills */
+  mentions: Mention[];
   /** the textarea's scroll at send: past four lines it shows its tail */
   scrollTop: number;
   /** exchanges in the thread at send; one more and the question has landed */
@@ -183,6 +211,9 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
   const rootRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const backRef = useRef<HTMLDivElement>(null);
+  const mentionPop = useRef<MentionPopoverHandle>(null);
 
   // the shell pushes the connection whose threads are on screen (LESSONS 4:
   // provenance is structural; the store never guesses from navigation)
@@ -216,6 +247,76 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
   const traceOpenFor = useAsk((s) => s.traceOpenFor);
   const pickerOpen = useAsk((s) => s.pickerOpen);
   const threadsOpen = useAsk((s) => s.threadsOpen);
+  const mentionQuery = useAsk((s) => s.mentionQuery);
+
+  // the draft's tags (file header): what they resolve against is what the
+  // store's ask() will resolve against, captured here per render so the
+  // pills and the context agree; the ctx ref serves the send, whose callback
+  // must not re-bind on every keystroke
+  const savedAll = useSaved((s) => s.queries);
+  const saved = useMemo(() => visibleSaved(savedAll, profileId), [savedAll, profileId]);
+  const mentionCtx = useMemo<MentionCtx>(
+    () => ({ snapshot, saved, threads: threads ?? NO_THREADS, currentThreadId: threadId }),
+    [snapshot, saved, threads, threadId],
+  );
+  const mentionCtxRef = useRef(mentionCtx);
+  mentionCtxRef.current = mentionCtx;
+  const mentions = useMemo(() => (draft ? mentionsIn(draft, mentionCtx) : NO_MENTIONS), [draft, mentionCtx]);
+
+  // the `@` under the caret: read from the textarea itself, never derived
+  // from the draft alone (a selection is not a caret, and the caret moves
+  // without the text changing). A query Esc dismissed is remembered until
+  // the caret's `@` or the fragment differs, else the very next keyup would
+  // reopen what Esc just closed
+  const dismissed = useRef<MentionQuery | null>(null);
+  const syncMentions = useCallback(() => {
+    const ta = taRef.current;
+    const a = useAsk.getState();
+    const q =
+      ta && document.activeElement === ta && ta.selectionStart === ta.selectionEnd
+        ? mentionQueryAt(ta.value, ta.selectionStart)
+        : null;
+    if (q === null) {
+      dismissed.current = null;
+      a.closeMentions();
+      return;
+    }
+    const d = dismissed.current;
+    if (d !== null && d.at === q.at && d.filter === q.filter) return;
+    dismissed.current = null;
+    a.openMentions(q.at, q.filter);
+  }, []);
+  const dismissMentions = useCallback(() => {
+    const a = useAsk.getState();
+    dismissed.current = a.mentionQuery;
+    a.closeMentions();
+  }, []);
+
+  // a pick: the canonical token and one space over the whole token the caret
+  // sits in; the caret lands after the space once the textarea holds the new
+  // text (the layout effect below), so the next keyup reads no token
+  const pendingCaret = useRef<number | null>(null);
+  const pickMention = useCallback(
+    (token: string) => {
+      const a = useAsk.getState();
+      const q = a.mentionQuery;
+      const ta = taRef.current;
+      if (q === null || !ta || a.draftFor !== profileId) return;
+      const text = ta.value;
+      const end = mentionTokenEnd(text, q.at, Math.max(ta.selectionStart, q.at + 1));
+      pendingCaret.current = q.at + token.length + 1;
+      dismissed.current = null;
+      a.setDraft(`${text.slice(0, q.at)}${token} ${text.slice(end)}`);
+      a.closeMentions();
+    },
+    [profileId],
+  );
+  useLayoutEffect(() => {
+    const p = pendingCaret.current;
+    if (p === null) return;
+    pendingCaret.current = null;
+    taRef.current?.setSelectionRange(p, p);
+  }, [draft]);
 
   // a trace target from another thread (or a deleted exchange) closes itself
   const traceExchange = traceOpenFor
@@ -315,7 +416,12 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
     ta.style.height = "auto";
     ta.style.height = `${Math.min(ta.scrollHeight, COMPOSER_MAX_H)}px`;
     if (sc && atEnd) sc.scrollTop = sc.scrollHeight;
+    // the backdrop follows the textarea's own scroll (a paste past four lines)
+    if (backRef.current) backRef.current.scrollTop = ta.scrollTop;
   }, [draft]);
+  const mirrorScroll = useCallback(() => {
+    if (backRef.current && taRef.current) backRef.current.scrollTop = taRef.current.scrollTop;
+  }, []);
 
   // a new question echo pins the scroller to the bottom, instantly (never
   // animate scroll); streaming growth after that belongs to the user
@@ -447,6 +553,7 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
       profileId,
       question: q,
       raw,
+      mentions: mentionsIn(raw, mentionCtxRef.current),
       scrollTop: taRef.current?.scrollTop ?? 0,
       count: from ? at : list.length,
       from,
@@ -455,6 +562,7 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
 
   const onComposerKey = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return;
+    if (mentionPop.current?.onKey(e)) return; // the popover's own keys, while it is up
     if (e.key === "Escape") return; // the root handler owns the Esc ladder
     if (e.metaKey || e.ctrlKey || e.altKey) return; // chords belong to the window
     if (e.key === "Enter" && !e.shiftKey) {
@@ -489,6 +597,10 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
 
   const openSettings = () => useSettings.getState().setSettingsOpen(true, "models");
 
+  // a ghost is on screen: the textarea and its backdrop paint nothing, so the
+  // words and their pills exist once
+  const ghosted = (lift !== null && !landed) || travel !== null;
+
   return (
     <div
       ref={rootRef}
@@ -496,10 +608,13 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
       tabIndex={-1}
       onKeyDown={onRootKey}
       // click-to-focus so Esc and ⌘. scope here: WKWebView never focuses
-      // ancestors on click. Inputs and the grid keep their own focus.
+      // ancestors on click. Inputs and the grid keep their own focus, and so
+      // does the @ popover, whose press reaches here through the React tree
+      // (a portal bubbles by ownership, not by DOM) and must leave the caret
+      // in the textarea for the pick
       onMouseDown={(e) => {
         const t = e.target as HTMLElement;
-        if (t.closest('input,textarea,select,[contenteditable="true"],.vgrid')) return;
+        if (t.closest('input,textarea,select,[contenteditable="true"],.vgrid,.mention-pop')) return;
         rootRef.current?.focus({ preventScroll: true });
       }}
     >
@@ -578,7 +693,9 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
               transition={spring.layout}
               aria-hidden="true"
             >
-              <span style={{ translate: `0 ${-lift.scrollTop}px` }}>{lift.raw}</span>
+              <span style={{ translate: `0 ${-lift.scrollTop}px` }}>
+                <MentionText text={lift.raw} mentions={lift.mentions} />
+              </span>
             </motion.div>
           )}
           {/* the edit ghost (file header): the words of the bubble that left,
@@ -595,24 +712,44 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
               onLayoutAnimationComplete={settleTravel}
               aria-hidden="true"
             >
-              <span>{draft}</span>
+              <span>
+                <MentionText text={draft} mentions={mentions} />
+              </span>
             </motion.div>
           )}
-          <div className="ask-box">
-            <textarea
-              ref={taRef}
-              className={`ask-ta${(lift !== null && !landed) || travel !== null ? " ghosted" : ""}`}
-              rows={1}
-              placeholder={connected ? `Ask about ${profile.dbname}…` : "Connect to ask"}
-              aria-label="Ask"
-              disabled={!connected}
-              value={draft}
-              onChange={(e) => {
-                setDraft(e.target.value);
-                if (editing && e.target.value === "") cancelEdit();
-              }}
-              onKeyDown={onComposerKey}
-            />
+          <div className="ask-box" ref={boxRef}>
+            <div className="ask-ta-wrap">
+              {/* the draft's pills (file header): the textarea's glyphs again,
+                  transparent, a .mention span around each resolved tag; the
+                  trailing newline gives a draft that ends in one the empty
+                  last line the textarea shows, so the two scroll as one */}
+              {connected && (
+                <div ref={backRef} className={`ask-ta-back${ghosted ? " ghosted" : ""}`} aria-hidden="true">
+                  <MentionText text={draft} mentions={mentions} />
+                  {"\n"}
+                </div>
+              )}
+              <textarea
+                ref={taRef}
+                className={`ask-ta${ghosted ? " ghosted" : ""}`}
+                rows={1}
+                placeholder={connected ? `Ask about ${profile.dbname}…` : "Connect to ask"}
+                aria-label="Ask"
+                disabled={!connected}
+                value={draft}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  if (editing && e.target.value === "") cancelEdit();
+                  syncMentions();
+                }}
+                onKeyDown={onComposerKey}
+                onKeyUp={syncMentions}
+                onClick={syncMentions}
+                onSelect={syncMentions}
+                onBlur={() => useAsk.getState().closeMentions()}
+                onScroll={mirrorScroll}
+              />
+            </div>
             <div className="ask-ctl">
               <ModelPicker
                 profileId={profileId}
@@ -634,6 +771,18 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
               </button>
             </div>
           </div>
+          {mentionQuery !== null && connected && (
+            <MentionPopover
+              ref={mentionPop}
+              query={mentionQuery}
+              draft={draft}
+              boxRef={boxRef}
+              textareaRef={taRef}
+              ctx={mentionCtx}
+              onPick={pickMention}
+              onClose={dismissMentions}
+            />
+          )}
         </div>
       )}
 

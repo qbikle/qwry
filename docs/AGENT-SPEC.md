@@ -100,12 +100,36 @@ tables, plus one-hop FK expansion of the top picks (bridge tables), minus any
 table whose comment contains `LEGACY`. Target 15–25 candidates. Measured
 recall 28/28 on staging. Recall is logged per question (EVAL.md).
 
+Must-include candidates (W6, 2026-09-06): the tables the user tagged with `@`
+in the question (a tagged column's table too), resolved by the caller against
+the connection's snapshot (`src/agent/mentions.ts`; never fetched here), lead
+the list in the order they were typed, and the lexical picks fill the rest to
+the same k, so k names reach the model either way and the one-hop expansion
+hops out of what the user pointed at. A tagged table is included LEGACY or
+not: the prefilter guesses and the user does not, and §6 rule 3 still
+travels. A tag the snapshot no longer resolves yields nothing (LESSONS 5).
+The eval sends no tags, so its messages are byte-identical to the measured
+ones (a loop test pins this).
+
 ### 4.2 Context (code)
 User message = question + `CANDIDATE TABLES` block: one line per candidate
 `table(col, col, …)  -- <table comment>` plus FK edges among candidates. The
 system prompt (§6) is frozen text so providers can cache it. Tables whose
 name differs from another only by a `_v\d+` suffix get the note
 `-- possible legacy twin of <other>` when neither carries a comment.
+
+When the question carries `@` tags (W6), a `TAGGED BY THE USER:` block
+follows the candidate block and precedes the RISK CHECK block (which stays
+last: it is the instruction for the next turn), one line per tag in the order
+typed, the same thing tagged twice one line: `table public.users`, `column
+users.email` (the owner qualified only outside `public`), `saved query
+"Monthly revenue":` followed by the query's SQL verbatim, `thread "<title>":`
+followed by a compact replay of that thread (Q / SQL / A per exchange, the
+store's own replay helper, oldest dropped first). SQL and replay are each
+capped at 1,500 characters and a cut says `… (truncated)` (LESSONS 9). The
+question text itself is sent with its `@` tokens exactly as typed;
+`SYSTEM_PROMPT` and `PROMPT_VERSION` do not move. The trace's context step
+carries the tags as `{ kind, token }` beside the exact text.
 
 ### 4.3 Turn 1 (model, parallel tools)
 The prompt instructs: call `describe_tables` for every table you will use
@@ -194,7 +218,11 @@ v2 and v3, and `src/agent/__tests__/prompt.test.ts` pins each as a literal so
 the measured rules cannot drift under a formatting edit. The re-baseline the
 bump owes is W3's; until it records the v3 rows, every gated v3 run reads as
 unmeasured (EVAL §4). A cut thread's replay (§9) is a prefix of the user
-message, not prompt text: it never moves `PROMPT_VERSION`.
+message, not prompt text: it never moves `PROMPT_VERSION`. Neither does the
+`TAGGED BY THE USER:` block of §4.2 (W6, 2026-09-06): the header is a string
+`askMessage` appends to the user message only when a tag exists, the eval
+sends none, and a loop test pins the untagged message byte for byte, so v3's
+rows measure the same bytes before and after W6.
 
 ## 7. Providers
 

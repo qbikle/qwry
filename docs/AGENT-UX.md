@@ -58,6 +58,58 @@ crossfade when they change; no shuffle control. Starters are drawn from the
 schema ("How many rows in each table?" is never one of them; use the
 connection's real nouns).
 
+### 1a. The composer's `@` completion (W6)
+
+Typing `@` at a word boundary in the textarea (the grammar of
+`src/agent/mentions.ts`: `a@b` and an email are one word and never a tag)
+opens a completion over the composer: the model picker's box (§8) opened
+upward from the composer box at the composer's own width, its edges on the
+box's outer edges 4px above it at every width (DESIGN rule 13), no title (the
+`@` under the caret is the title), no footer, and never an empty row: when
+nothing matches, the box is gone (a `No results` row is rule 11 dead text).
+It is the composer's completion, not an overlay: it never joins the overlay
+stack, so no click catcher stands over Send or the model pill and every
+window chord stays live while an `@word` is under the caret (LESSONS 10). It
+is focusless like the picker: the caret never leaves the textarea. The filter
+is the text typed after the `@` up to the caret, read from the textarea on
+every change and caret move (a caret placed back inside a finished token
+reopens it; a selection is no caret); a quoted fragment (`@"Monthly rev`)
+keeps its spaces until its closing quote, an identifier fragment ends at a
+space or any character outside `[A-Za-z0-9_.]`. Rows are the picker's menu
+rows at a fixed 28px, grouped in this order and each group drawn only when
+it has rows: `Tables` (name, with its `schema.` only outside `public`; the
+hint slot carries the row estimate, else the column count), `Columns`
+(`table.column`, from two typed characters, capped at 40, matched on the
+column's name; the hint is the type in psql's short spelling), `Saved
+Queries` (name, no hint), `Threads` (title, this connection's other threads,
+no hint). A dotted fragment (`order_v2.`) names the table and filters its
+columns; a quoted fragment offers saved queries and threads only. Legacy and
+foreign tables are never offered (AGENT-SPEC §6 rule 3: a row that cannot be
+the answer is a dead row). The match is substring on the name the user would
+type, a prefix outranking a substring, ties in the connection's own order;
+never cmdk's fuzzy scorer. Keys: ↑↓ move the hot row, ↩ or ⇥ pick (the
+canonical token plus one space replaces the whole token under the caret, the
+caret parks after the space), Esc closes the completion only (the pane's Esc
+ladder gets the next Esc); every other key is the textarea's, Home and End
+included, and ⌘ chords bubble to the window. A click on a row picks it; a
+mousedown anywhere else closes the box and lands where it was aimed (Send
+sends, the pill opens the picker). Blur closes it. Identifiers in the rows
+are mono (WRITING: data wears data's clothes); the group headings are Title
+Case in the picker's uppercase face.
+
+In the draft, every RESOLVED mention (a table, a column, a saved query, a
+thread the ladder of `resolveMentions` finds) wears a pill: the textarea
+stays the source of truth (plain text; copy and paste work) and a backdrop
+behind it paints `.mention` (accent-soft fill, a 1px ring at 22% accent, 4px
+corners, outdented 2px so no letter moves when a pill appears or leaves;
+`box-decoration-break: clone` so a pill the line breaks keeps rounded ends on
+both fragments) under exactly the mention's glyphs, in the surrounding text's
+own font. An `@word` that resolves to nothing gets no pill and sends no
+context; it is plain text and the question still runs (LESSONS 5). The pill,
+the `@` and the quotes are the data costume; WRITING's mono form applies to
+the rows and to the trace's `tagged` line, never to the chip. The lift on
+send carries the pills into the bubble (§2 item 1).
+
 ## 2. Anatomy of an answer
 
 Top to bottom, every answer block has the same skeleton; parts that do not
@@ -72,7 +124,14 @@ apply are omitted, never left as dead space (DESIGN rule 2 scope note):
    28px apart, and two neighbouring folded bubbles close to 8px (§2a). On
    send the draft's text travels from the composer into the bubble (a
    position-only shared layout spring, `spring.layout`) while the fill fades
-   in behind it; reduced motion is the bubble appearing. Every bubble carries
+   in behind it; reduced motion is the bubble appearing. The bubble keeps the
+   draft's pills (W6, §1a): each resolved `@` mention renders as
+   `<span class="mention">` with the one chip face, the text otherwise
+   unchanged, and the ghost that lifts the words paints the same pills, so
+   one face travels from composer to bubble. The question persists as typed;
+   an older bubble re-resolves its mentions against the current snapshot,
+   saved queries and threads on render, so a table dropped since renders as
+   plain text and nothing refuses (LESSONS 5). Every bubble carries
    three actions, `Copy` · `Restart` · `Jump Back` (Icon button species, the
    18px tier; lucide `Copy` · `Repeat` · `CornerUpLeft` at `--icon-sm`),
    sitting LEFT of the bubble, bottom-aligned with its last line, Jump Back
@@ -253,7 +312,14 @@ verdict row carries no time of its own, its ms being the run's total the
 header already states (rule 14); the one note strip belongs to Claude Code
 alone (`Claude Code’s harness prefix is not shown.`), since every other
 provider's trace is complete and a strip saying so is dead space (rule 11).
-This is a teaching
+When the question carried `@` tags (W6), the context step's expanded body
+opens with one line in the status register, `tagged order_v2 · "Monthly
+revenue"`, each tag its token without the `@` in mono, above the block and
+never inside it (the block stays exactly what was sent, TAGGED BY THE USER
+lines included; the line is their summary, the `19 candidate tables` label's
+precedent); it wraps rather than cuts (a truncated tag is not a summary) and
+is absent when nothing was tagged (rule 11). The step's label does not
+change. This is a teaching
 surface (WRITING: keycaps allowed) and a trust surface: everything the model
 received is shown, nothing is summarised away.
 
@@ -364,6 +430,16 @@ one section fade (`--dur-slow` opacity, never height), a block that grows
 keeps its node, and nothing counts up or fades per block; a streaming answer
 grows the way prose grows, by its next word (ARCHITECTURE ideology 6).
 
+The `@` completion (W6, §1a) enters with `menuIn`, the picker's preset, and
+leaves the way the picker leaves; nothing else about it moves. The pills in
+the draft appear and leave with no animation at all: they are painted under
+typing, and typing is never animated (CLAUDE.md conventions; LESSONS 7's
+cousin: the caret is the one authority over where the words are). The lift
+on send carries the pills inside the travelling words on the same
+`spring.layout`, and the bubble's pills stand still once the echo lands.
+Reduced motion changes nothing here that it does not already change for the
+picker and the lift.
+
 ## 11. Register
 
 Controls Title Case: `Ask`, `Threads`, `New Thread`, `Fix It`, `Open in
@@ -402,3 +478,14 @@ hidden, so the first announcement is not lost). A link in the text is a real
 anchor with its `href`, so the status bar and the context menu read it while
 the click goes to the opener and never navigates the webview; it is the one
 focusable thing inside the slot and wears the app's focus ring.
+
+The `@` completion (§1a) is a cmdk `Command` labelled `Tags` whose list is
+`aria-label` `Tags`; its rows are never focused (the textarea keeps focus and
+the hot row is cmdk's `data-selected`), ↑↓ ↩ ⇥ Esc reach it through the
+composer's keydown before the textarea sees them, and every other key, Home
+and End included, and every ⌘ chord are the textarea's and the window's
+(LESSONS 10). It joins no overlay stack, so it never traps focus and never
+restores it: there is nothing to restore, the caret never left. The draft's
+pills are a backdrop marked `aria-hidden`; the textarea's own text is what a
+screen reader reads. A mention in a bubble is a `<span class="mention">` with
+no role: text wearing a costume, not a control (DESIGN rule 8's inverse).

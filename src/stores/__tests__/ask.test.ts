@@ -34,7 +34,8 @@ afterAll(() => {
   for (const k of shimmed) Reflect.deleteProperty(globalThis, k);
 });
 
-const reset = () => useAsk.setState({ drafts: {}, draftFor: null, edit: null });
+const reset = () =>
+  useAsk.setState({ drafts: {}, draftFor: null, edit: null, mentionQuery: null, threadsOpen: false, traceOpenFor: null });
 
 describe("useAsk drafts", () => {
   beforeEach(reset);
@@ -114,5 +115,39 @@ describe("useAsk edit mode", () => {
     useAsk.getState().setDraftFor("prod");
     expect(useAsk.getState().edit).toBeNull();
     expect(useAsk.getState().drafts["staging"]).toBe(EDIT.question);
+  });
+});
+
+// W6: the `@` the caret is inside is chrome state, opened by the composer
+// (or the harness) and closed by anything that takes the composer's focus
+// or the caret away; the popover reads it and never writes the draft.
+describe("useAsk mention query", () => {
+  beforeEach(reset);
+
+  test("opening keeps the same query's identity, so a re-read never re-renders", () => {
+    useAsk.getState().openMentions(6, "ord");
+    const q = useAsk.getState().mentionQuery;
+    expect(q).toEqual({ at: 6, filter: "ord" });
+    useAsk.getState().openMentions(6, "ord");
+    expect(useAsk.getState().mentionQuery).toBe(q);
+    useAsk.getState().openMentions(6, "orde");
+    expect(useAsk.getState().mentionQuery).toEqual({ at: 6, filter: "orde" });
+  });
+
+  test("closing, a slide-over and a connection switch clear it", () => {
+    useAsk.getState().openMentions(6, "ord");
+    useAsk.getState().closeMentions();
+    expect(useAsk.getState().mentionQuery).toBeNull();
+    useAsk.getState().openMentions(6, "ord");
+    useAsk.getState().openThreads();
+    expect(useAsk.getState().mentionQuery).toBeNull();
+    useAsk.getState().closeThreads();
+    useAsk.getState().openMentions(6, "ord");
+    useAsk.getState().openTrace("ex-1");
+    expect(useAsk.getState().mentionQuery).toBeNull();
+    useAsk.getState().closeTrace();
+    useAsk.getState().openMentions(6, "ord");
+    useAsk.getState().setDraftFor("prod");
+    expect(useAsk.getState().mentionQuery).toBeNull();
   });
 });
