@@ -176,11 +176,17 @@
 /* one auto push per row: the first of them takes it, the rest sit 4px apart
    (the .pal-detail ~ .pal-check precedent above) */
 .pal-askwhy {
-  /* .linkish's own -4px side margins would pull the row's last three elements
-     out of the 4px rhythm; the vertical hairline stays */
-  margin: -1px 0 -1px auto;
   flex-shrink: 0;
   font-size: var(--text-xs);
+}
+/* written at the row's own specificity, like every other rule in this block:
+   `.linkish` (tokens.css) sets the same property at one class, and tokens.css
+   is imported AFTER this file, so a bare `.pal-askwhy` lost the auto push and
+   left the tail packed against the name. Its -4px side margins would also pull
+   the row's last three elements out of the 4px rhythm; the vertical hairline
+   stays */
+.pal [cmdk-item] .pal-askwhy {
+  margin: -1px 0 -1px auto;
 }
 .pal-askwhy ~ .pal-detail,
 .pal-askwhy ~ .pal-dot,

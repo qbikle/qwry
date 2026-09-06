@@ -23,3 +23,14 @@ export function copyCue(text: string, label = "Copied"): Promise<boolean> {
     },
   );
 }
+
+/** the cue an action that FAILED shows: its error's first line, in the status
+ * register, so a refused write says so instead of the surface snapping back
+ * with nothing (LESSONS 9). One helper rather than a firstLine copy per call
+ * site; `.catch(copyCueError)` is the whole idiom. */
+export function copyCueError(e: unknown): void {
+  const line = String((e as { message?: string })?.message ?? e)
+    .split("\n")[0]
+    .trim();
+  copyCueShow(line || "the write failed");
+}

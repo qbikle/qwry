@@ -1669,6 +1669,16 @@
 .trace-step-h.static {
   cursor: default;
 }
+/* the one row whose label this chrome wrote rather than read off the run (the
+   knowledge step's counts): it wraps instead of ellipsizing, so the row grows
+   with it while the kind and the ms stay centred on it. Every other label is a
+   statement or a tool name, data that ellipsizes (DESIGN rule 13) */
+.trace-step-h.wrap {
+  height: auto;
+  min-height: 28px;
+  padding-top: var(--sp-1);
+  padding-bottom: var(--sp-1);
+}
 /* the kind column carries the widest kind whole: `KNOWLEDGE` measures 73px in
    this face and touched its label at 56 (A2). It widens on every trace, not
    only the ones with a knowledge step, and the 20px comes out of the label,
@@ -1700,6 +1710,12 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+/* a summary cut in half is not a summary: the knowledge step's counts wrap at
+   the 320 floor the way the context step's tagged line below does, and only
+   they do (AGENT-UX section 5) */
+.trace-lbl.wrap {
+  white-space: normal;
 }
 .trace-lbl code {
   font-family: var(--font-mono);

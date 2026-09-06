@@ -4,7 +4,8 @@
 // (fixtures.structure.ts) instead of a database. Mounted by src/main.tsx
 // instead of <App/> when the URL says so, DEV builds only:
 //
-//   /?harness=structure&state=<a2-hint|a2-hint-edit>&w=<560|780|1040>&theme=<dark|light>
+//   /?harness=structure&state=<a2-hint|a2-hint-edit|a2-hint-rest|a2-hint-aka>
+//     &w=<560|780|1040>&theme=<dark|light>
 //
 // A root of its own (A2): the hint line lives in this view, which is a tab's
 // whole width and not a pane in a card, so the frame is the view at the widths
@@ -25,6 +26,7 @@ import { useKnowledge } from "../stores/knowledge";
 import { useSchema } from "../stores/schema";
 import { useSettings } from "../stores/settings";
 import {
+  setStructureFixture,
   STRUCTURE_SNAPSHOT,
   STRUCTURE_STATES,
   STRUCTURE_TABLE,
@@ -61,7 +63,10 @@ function paramsFrom(search: string): Params {
   };
 }
 
-function seed({ theme }: Params) {
+function seed({ state, theme }: Params) {
+  // the canned `table_stats` answers per state (a2-hint-aka is uncommented):
+  // set before the view mounts and asks for them
+  setStructureFixture(state);
   useSettings.setState({
     gridDensity: "normal",
     uiZoom: 100,
@@ -84,7 +89,7 @@ function seed({ theme }: Params) {
     loading: {},
     errors: {},
   });
-  useKnowledge.setState({ rows: { [PROFILE]: structureKnowledge() } });
+  useKnowledge.setState({ rows: { [PROFILE]: structureKnowledge(state) } });
 }
 
 function Harness({ state, w }: Params) {
@@ -94,6 +99,13 @@ function Harness({ state, w }: Params) {
     const id = setTimeout(() => {
       if (state === "a2-hint-edit") {
         document.querySelector<HTMLElement>(".st-hint")?.click();
+      }
+      // an empty cell prints its placeholder on its row's hover OR on focus
+      // (DESIGN rule 8's two routes). A still cannot hold a pointer, so the
+      // frame takes the focus route on the `currency` row and the hover one is
+      // the dev build's eyeball
+      if (state === "a2-hint-rest") {
+        emptyCell("currency")?.focus({ preventScroll: true });
       }
       requestAnimationFrame(() => {
         document.documentElement.dataset.harnessReady = "1";
@@ -108,6 +120,15 @@ function Harness({ state, w }: Params) {
       </div>
     </div>
   );
+}
+
+/** the hint cell of the column row with this name, when it is an empty one */
+function emptyCell(column: string): HTMLElement | null {
+  for (const tr of document.querySelectorAll("tbody tr")) {
+    if (tr.querySelector(".st-name")?.textContent?.trim() !== column) continue;
+    return tr.querySelector<HTMLElement>(".st-comment .st-hint.empty");
+  }
+  return null;
 }
 
 export function mountStructureHarness(root: HTMLElement): void {

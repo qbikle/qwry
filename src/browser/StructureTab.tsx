@@ -11,6 +11,7 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import * as ipc from "../ipc/commands";
 import type { TableStats } from "../ipc/types";
 import { useConnections } from "../stores/connections";
+import { copyCueError } from "../lib/copyCue";
 import { hintLineFor, knowledgeTarget, parseHintLine, saveHintLine, useKnowledge } from "../stores/knowledge";
 import type { TableInfo } from "../stores/schema";
 import "./browser.css";
@@ -109,7 +110,11 @@ function HintLine({
     if (done.current) return;
     done.current = true;
     setDraft(null);
-    if (profileId && text.trim() !== line.trim()) void saveHintLine(profileId, target, text);
+    // the line has already snapped back to what stands: a refused write has to
+    // say why, or the hint just disappeared (LESSONS 9)
+    if (profileId && text.trim() !== line.trim()) {
+      saveHintLine(profileId, target, text).catch(copyCueError);
+    }
   };
   const cancel = () => {
     done.current = true;

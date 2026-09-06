@@ -272,11 +272,15 @@ function rowsFromTrace(exchange: Exchange, trace: TraceStep[], timed: boolean): 
         // the step, which read them off the same lists that built the body,
         // so the label can never disagree with what opens under it
         const c = step.counts;
+        // this is the one trace label that wraps, so each count holds together
+        // inside itself and the line breaks only at the `·` separators: a
+        // number stranded from the thing it counts is not a count
+        const whole = (s: string) => s.replace(/ /g, "\u00a0");
         const parts = [
-          c.hints ? plural(c.hints, "hint", "hints") : "",
-          c.definitions ? plural(c.definitions, "definition", "definitions") : "",
-          c.synonyms ? plural(c.synonyms, "synonym", "synonyms") : "",
-          c.history ? plural(c.history, "earlier answer", "earlier answers") : "",
+          c.hints ? whole(plural(c.hints, "hint", "hints")) : "",
+          c.definitions ? whole(plural(c.definitions, "definition", "definitions")) : "",
+          c.synonyms ? whole(plural(c.synonyms, "synonym", "synonyms")) : "",
+          c.history ? whole(plural(c.history, "earlier answer", "earlier answers")) : "",
         ].filter(Boolean);
         rows.push({
           key: "knowledge",
@@ -526,6 +530,9 @@ export function TraceDrawer({ open, exchange, focusStepId, onClose }: TraceDrawe
       <div className="trace-steps">
         {rows.map((row) => {
           const isOpen = row.body !== null && expanded.has(row.key);
+          // the knowledge step's label is chrome's own count, not a line read
+          // off the run: it wraps where the others ellipsize
+          const wrap = row.kind === "knowledge" ? " wrap" : "";
           const head = (
             <>
               <span
@@ -533,16 +540,20 @@ export function TraceDrawer({ open, exchange, focusStepId, onClose }: TraceDrawe
               >
                 {row.kindLabel}
               </span>
-              <span className="trace-lbl">{row.label}</span>
+              <span className={`trace-lbl${wrap}`}>{row.label}</span>
               {row.ms !== null && <span className="trace-ms">{fmtMs(row.ms)}</span>}
             </>
           );
           return (
             <div key={row.key} className={`trace-step${isOpen ? " expanded" : ""}`} data-step={row.key}>
               {row.body === null ? (
-                <div className="trace-step-h static">{head}</div>
+                <div className={`trace-step-h static${wrap}`}>{head}</div>
               ) : (
-                <button className="trace-step-h" aria-expanded={isOpen} onClick={() => toggle(row.key)}>
+                <button
+                  className={`trace-step-h${wrap}`}
+                  aria-expanded={isOpen}
+                  onClick={() => toggle(row.key)}
+                >
                   {head}
                 </button>
               )}

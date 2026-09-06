@@ -940,8 +940,12 @@ measures 73px in the kind face and touched its own label at 56), giving up
 20px from the label column; the ms column does not move. The step's label
 states counts in one fixed order, `2 hints · 1 definition · 1 synonym · 2
 earlier answers`, and a kind with nothing to say is left out entirely,
-never printed as `0 definitions` (rule 11); like every trace label it
-ellipsizes at 320 and 392 and reads whole only from about 560, and the body
+never printed as `0 definitions` (rule 11). It is the ONE trace label that
+wraps instead of ellipsizing, because it is a summary this chrome wrote
+rather than a line read off the run, and half a summary is not one (the
+context step's tagged line, same drawer, wraps for the same reason): three
+lines at the 320 floor, two at 392, one from 560, each count held together
+by a non-breaking space so the line can only break at a `·`. The body
 underneath carries the whole regardless (LESSONS 13: the label's counts are
 read off the same data the body holds, never a second count that could
 drift from it). That body, expanded, is exactly the bytes AGENT-SPEC §4.2

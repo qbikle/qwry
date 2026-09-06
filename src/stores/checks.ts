@@ -145,6 +145,16 @@ export function driftLabel(q: SavedQuery): string {
   return `${rowsText(result.rows)} · expected some`;
 }
 
+/** What a check that was just SET says it now expects, in the status register:
+ * the same fact `driftLabel` measures against, said forward. The pair is why
+ * it lives here (LESSONS 1): one shape, one vocabulary, read twice. */
+export function expectCue(expect: CheckExpect): string {
+  if (expect.kind === "scalar") return `Expecting ${expect.eq}`;
+  if (expect.kind === "nonempty") return "Expecting some rows";
+  if (expect.op === "eq") return `Expecting ${rowsText(expect.n)}`;
+  return `Expecting ${expect.op === "gte" ? "≥" : "≤"} ${rowsText(expect.n)}`;
+}
+
 /** The seam the tests stand in: everything a check run needs from outside. */
 export const runner = {
   connect: agentConnect,

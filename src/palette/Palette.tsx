@@ -26,7 +26,7 @@ import {
   X,
 } from "lucide-react";
 import { editorFormat, editorTimeTraveling } from "../editor/editorBus";
-import { copyCueShow } from "../lib/copyCue";
+import { copyCueError, copyCueShow } from "../lib/copyCue";
 import { checkOf, driftLabel, lastCheckOf, runChecks } from "../stores/checks";
 import {
   definitionsOf,
@@ -193,15 +193,15 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
     if (!pid) return;
     if (parsed) {
       // an edit that renames the term moves the row rather than twinning it
-      void (gone ? removeDefinition(pid, gone) : Promise.resolve()).then(() =>
-        saveDefinition(pid, parsed.term, parsed.meaning),
-      );
+      void (gone ? removeDefinition(pid, gone) : Promise.resolve())
+        .then(() => saveDefinition(pid, parsed.term, parsed.meaning))
+        .catch(copyCueError);
       setDefine(null);
       return;
     }
     const term = gone ?? (define.line.includes("=") ? typed : "");
     if (term) {
-      void removeDefinition(pid, term).then(() => copyCueShow("Definition removed"));
+      void removeDefinition(pid, term).then(() => copyCueShow("Definition removed"), copyCueError);
       setDefine(null);
       return;
     }
@@ -486,7 +486,12 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 onSelect={() => {
                   const pid = activeProfileId;
                   close();
-                  if (pid) void runChecks(pid).then((r) => copyCueShow(checkCue(r.total, r.failed)));
+                  if (pid) {
+                    void runChecks(pid).then(
+                      (r) => copyCueShow(checkCue(r.total, r.failed)),
+                      copyCueError,
+                    );
+                  }
                 }}
               >
                 <ListChecks size={12} /> Run Checks

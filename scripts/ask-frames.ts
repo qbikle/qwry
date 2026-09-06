@@ -10,7 +10,7 @@
 //              palette is a modal over the window, so it has one width (620)
 //              and its own taller frame (states a2-palette,a2-define,
 //              a2-checks); the Structure view is a tab's surface at 560,780,
-//              1040 (states a2-hint,a2-hint-edit)
+//              1040 (states a2-hint,a2-hint-edit,a2-hint-rest,a2-hint-aka)
 //   --out      where the PNGs land; default
 //              ~/projects/qwry-agent-lab/docs/research/w2d-frames
 //   --states   subset of answer,empty,busy,picker,failure,disconnected,small,
@@ -249,7 +249,7 @@ const ALL_STATES = [
 const PALETTE_STATES = ["a2-palette", "a2-define", "a2-checks"] as const;
 /** the third root (A2 item 2): the hint line lives in the Structure view, a
  * tab's whole width (`src/harness/StructureHarness.tsx`) */
-const STRUCTURE_STATES = ["a2-hint", "a2-hint-edit"] as const;
+const STRUCTURE_STATES = ["a2-hint", "a2-hint-edit", "a2-hint-rest", "a2-hint-aka"] as const;
 const ALL_WIDTHS = [320, 392, 560] as const;
 const PALETTE_WIDTHS = [620] as const;
 const STRUCTURE_WIDTHS = [560, 780, 1040] as const;

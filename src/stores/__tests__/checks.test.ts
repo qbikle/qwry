@@ -43,6 +43,7 @@ const { clearMocks, mockIPC } = await import("@tauri-apps/api/mocks");
 const {
   checkOf,
   driftLabel,
+  expectCue,
   expectCurrentShape,
   lastCheckOf,
   removeCheck,
@@ -197,6 +198,17 @@ describe("what a saved query says about its check", () => {
       expect(checkOf(bookmark({ id: "s1", expect_json: blob }))).toBeNull();
     }
     expect(lastCheckOf(bookmark({ id: "s1", last_check_json: '{"ok":1}' }))).toBeNull();
+  });
+});
+
+describe("what a row that just became a check says", () => {
+  test("the five forms, singular at one", () => {
+    expect(expectCue({ kind: "rows", op: "eq", n: 0 })).toBe("Expecting 0 rows");
+    expect(expectCue({ kind: "rows", op: "eq", n: 1 })).toBe("Expecting 1 row");
+    expect(expectCue({ kind: "rows", op: "gte", n: 100 })).toBe("Expecting ≥ 100 rows");
+    expect(expectCue({ kind: "rows", op: "lte", n: 5 })).toBe("Expecting ≤ 5 rows");
+    expect(expectCue({ kind: "scalar", eq: "4" })).toBe("Expecting 4");
+    expect(expectCue({ kind: "nonempty" })).toBe("Expecting some rows");
   });
 });
 

@@ -14,6 +14,15 @@
 //                 the ring turned accent, and the database's own comment as
 //                 the placeholder, so clearing the field previews what will
 //                 read again
+//   a2-hint-rest  the same view over a connection that knows NOTHING: the
+//                 table's line is the database's own comment in tier 2 and
+//                 every uncommented column cell prints nothing, with the
+//                 `currency` cell focused so the placeholder's second route
+//                 is in the frame (rule 8: hover OR focus)
+//   a2-hint-aka   one hinted column and no comments anywhere: the table's own
+//                 line wears `Hint for Ask…` at rest, the one place the
+//                 feature says its name, and `payment_status` carries the
+//                 `aka` clause in a cell one row high
 //
 // The stats are canned because the view asks the database for them on mount
 // (tauriShim answers `table_stats`): everything below the Columns table is
@@ -24,10 +33,19 @@ import type { KnowledgeRow, TableStats } from "../ipc/types";
 import type { SchemaSnapshot, TableInfo } from "../stores/schema";
 import { MENTION_SNAPSHOT, ORDER_V2_COMMENT } from "./fixtures.mentions";
 
-export const STRUCTURE_STATES = ["a2-hint", "a2-hint-edit"] as const;
+export const STRUCTURE_STATES = ["a2-hint", "a2-hint-edit", "a2-hint-rest", "a2-hint-aka"] as const;
 export type StructureState = (typeof STRUCTURE_STATES)[number];
 
 const PROFILE = "harness-staging";
+
+/** the state the canned `table_stats` answers for. tauriShim asks this module
+ * for the stats with no arguments (it answers one command, not one state), so
+ * the harness hands the state here before it mounts. */
+let fixtureState: StructureState = "a2-hint";
+
+export function setStructureFixture(state: StructureState): void {
+  fixtureState = state;
+}
 
 export const STRUCTURE_TABLE: TableInfo =
   MENTION_SNAPSHOT.tables.find((t) => t.name === "order_v2") ?? MENTION_SNAPSHOT.tables[0];
@@ -35,8 +53,10 @@ export const STRUCTURE_TABLE: TableInfo =
 export const STRUCTURE_SNAPSHOT: SchemaSnapshot = MENTION_SNAPSHOT;
 
 /** what this connection knows about the table on screen: a hint with the
- * names its people call it by, and one hinted column among eight */
-export function structureKnowledge(): KnowledgeRow[] {
+ * names its people call it by, and one hinted column among eight. A connection
+ * that knows nothing (`a2-hint-rest`) is the empty list, which is what a
+ * database reads like before anyone has typed into this feature. */
+export function structureKnowledge(state: StructureState = "a2-hint"): KnowledgeRow[] {
   const at = "2026-09-05T18:40:00Z";
   const row = (id: string, target: string, kind: KnowledgeRow["kind"], text: string): KnowledgeRow => ({
     id,
@@ -47,6 +67,19 @@ export function structureKnowledge(): KnowledgeRow[] {
     created_at: at,
     updated_at: at,
   });
+  if (state === "a2-hint-rest") return [];
+  if (state === "a2-hint-aka") {
+    return [
+      row(
+        "harness-hint-payment",
+        "public.order_v2.payment_status",
+        "hint",
+        "Set by the gateway",
+      ),
+      row("harness-syn-status", "public.order_v2.payment_status", "synonym", "status"),
+      row("harness-syn-state", "public.order_v2.payment_status", "synonym", "payment_state"),
+    ];
+  }
   return [
     row(
       "harness-hint-order",
@@ -86,12 +119,17 @@ const ix = (
 /** the stats the view asks for on mount, as `agent`-free canned data: the
  * numbers are the wave's own order_v2 (2.1M rows) */
 export function structureStats(): TableStats {
+  // `a2-hint-aka` is the table the database never commented: the hint line has
+  // nothing under it, so it wears its placeholder at rest
+  const bare = fixtureState === "a2-hint-aka";
   return {
-    comment: ORDER_V2_COMMENT,
-    column_comments: [
-      { column: "payment_status", comment: "paid, pending, failed, refunded, cod_pending" },
-      { column: "paid_at", comment: "null until the gateway confirms" },
-    ],
+    comment: bare ? null : ORDER_V2_COMMENT,
+    column_comments: bare
+      ? []
+      : [
+          { column: "payment_status", comment: "paid, pending, failed, refunded, cod_pending" },
+          { column: "paid_at", comment: "null until the gateway confirms" },
+        ],
     columns: STRUCTURE_TABLE.columns.map((c) => ({
       name: c.name,
       attnum: c.attnum,
