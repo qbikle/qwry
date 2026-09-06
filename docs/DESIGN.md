@@ -195,8 +195,10 @@ moment a second width was drawn.
 A fact renders in exactly one slot. Results in the grid, the query in the SQL
 row, interpretations in the assumption chips, timing in the status line,
 provenance in the footer's connection dot; prose never repeats any of them. Answer prose
-is one or two sentences of interpretation, what the numbers mean, not what
-they are; the model's text is chrome here, because the anatomy already
+is interpretation in the shape the question asks for, a direct question one
+sentence, an insight question an optional one-line lead-in and two to four
+bullets of one finding each (AGENT-UX §2 item 3), what the numbers mean, not
+what they are; the model's text is chrome here, because the anatomy already
 carries the data. The rule binds chrome to chrome too: a name in the header
 and again in the footer, a row count above the grid and again below it, are
 two slots for one fact and one of them goes. Precedent: the W2 answer prose,

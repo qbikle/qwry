@@ -166,17 +166,35 @@ The system prompt states, verbatim in spirit:
    4/4 questions failing to 8/8 passing.)
 2. Return exactly the columns the question asks for.
 3. Tables marked LEGACY are never the answer.
-4. Work plan: turn 1 describe + peek in one go; turn 2 run; then answer with
-   the final SQL in a ```sql block and an `Assumptions:` line (may be "none").
+4. Work plan: turn 1 describe + peek in one go; turn 2 run; then answer in
+   the shape of rule 6 with the final SQL in a ```sql block and an
+   `Assumptions:` line (may be "none").
 5. RISK CHECK block (appended only when §4.4 fires): before trusting the
    final query, probe min()/max() of every timestamp you filter or compare on,
    check for rows outside the expected order (an event dated before its
    entity existed), apply lower AND upper bounds explicitly, state what the
    probes showed.
+6. Answer shape (v3, 2026-09-06): a direct question gets ONE sentence of
+   interpretation; an insight question (insights, patterns, what stands out,
+   anomalies, a summary or overview of a table or a period) gets an optional
+   one-line bold lead-in ending in a colon and two to four bullets, each ONE
+   finding carrying its own figure, a comparison the grid cannot make for
+   itself, none a row of the result read back, none over 25 words; never a
+   heading, never a markdown table of the result, the SQL only in its fence.
+   One GOOD and one BAD example, set over an orders question so a bench answer
+   cannot be copied from them (`prompt.test.ts` asserts the prompt names no
+   Pagila noun). What renders is AGENT-UX §2 item 3; what scores it is EVAL
+   §3.x.
 
-The prompt is versioned (`PROMPT_VERSION`); EVAL.md ties baselines to it.
-A cut thread's replay (§9) is a prefix of the user message, not prompt text:
-it never moves `PROMPT_VERSION`.
+The prompt is versioned (`PROMPT_VERSION`, now `v3`); EVAL.md ties baselines
+to it. v3 changed the finish line of the base prompt and step 3 of the work
+plan and nothing else: rule 1, the column rule, LEGACY, the two-turn work
+plan, the Assumptions line and both fence phrasings are byte-equal across v1,
+v2 and v3, and `src/agent/__tests__/prompt.test.ts` pins each as a literal so
+the measured rules cannot drift under a formatting edit. The re-baseline the
+bump owes is W3's; until it records the v3 rows, every gated v3 run reads as
+unmeasured (EVAL §4). A cut thread's replay (§9) is a prefix of the user
+message, not prompt text: it never moves `PROMPT_VERSION`.
 
 ## 7. Providers
 

@@ -1,0 +1,68 @@
+// What v3 was allowed to touch, and what it was not (AGENT-SPEC section 6,
+// EVAL.md section 4). The measured lines of this prompt are the reason the
+// agent scores what it scores: rule 1 alone took judgment injection from 4/4
+// failing to 8/8 passing, and the two-turn work plan is what keeps a bench
+// question at one turn. W5 rewrote the ANSWER SHAPE and nothing else, so
+// those lines are pinned here byte for byte. A future wave that needs to move
+// one of them moves this test in the same commit, deliberately, and
+// re-baselines.
+
+import { describe, expect, test } from "bun:test";
+import { PROMPT_VERSION, SYSTEM_PROMPT } from "../prompt";
+
+/** byte-equal across v1, v2 and v3 */
+const MEASURED = [
+  "- Do NOT add filters the question did not ask for (no is_deleted, no user_id <> 0, no status filters unless asked). If you think one is warranted, answer the question exactly as asked and list the assumption on the Assumptions line.",
+  "- Return exactly the columns the question asks for, no extras.",
+  "- Tables marked LEGACY are never the answer.",
+  "Work plan (aim for two turns):",
+  "1. FIRST turn: call describe_tables for every table you will use AND peek_values for every text/enum/status column you will filter on, all in the same turn.",
+  "2. SECOND turn: run_sql. If the question came with a RISK CHECK, run the check queries in the same turn as (or before) the final query and act on what they show.",
+  'one line starting with "Assumptions:" listing every interpretation you made that the question did not state, separated by semicolons. Each is a label of at most six words in Title Case, naming the column when one is involved (Added = sent_at; Excluding Deleted Users; This Year = 2026), never a quoted sentence. Write "Assumptions: none" when you made none.',
+  "the final SQL in a ```sql block",
+  "the final SQL in a ```sql code block",
+];
+
+describe("prompt v3", () => {
+  test("the measured rules and the work plan are byte-equal to v2", () => {
+    for (const line of MEASURED) expect(SYSTEM_PROMPT).toContain(line);
+  });
+
+  test("the version moved, because a string in this file did", () => {
+    expect(PROMPT_VERSION).toBe("v3");
+  });
+
+  test("it says what the two shapes are and which question gets which", () => {
+    expect(SYSTEM_PROMPT).toContain("A direct question gets ONE sentence.");
+    expect(SYSTEM_PROMPT).toContain("two to four bullets");
+    expect(SYSTEM_PROMPT).toContain("one-line bold lead-in ending in a colon");
+    expect(SYSTEM_PROMPT).toContain("what stands out");
+  });
+
+  test("it shows the shape once well and once badly", () => {
+    expect(SYSTEM_PROMPT).toContain("GOOD, for");
+    expect(SYSTEM_PROMPT).toContain("BAD, same question");
+    // the bad example is the failure mode the score names, in the shape the
+    // model actually produces: a heading, and bullets that read the grid back
+    expect(SYSTEM_PROMPT).toContain("## Orders in August");
+    expect(SYSTEM_PROMPT).toContain("- 611 of 2,763 orders were COD, 22% of the month.");
+  });
+
+  test("it says what a bullet IS, not only what it must carry", () => {
+    // the measured miss of v3's first draft: the shape arrived and DESIGN
+    // rule 14 did not, because nothing in the prompt named the row read
+    // aloud as the failure (EVAL.md section 3.x)
+    expect(SYSTEM_PROMPT).toContain("never a row of the result read aloud");
+    expect(SYSTEM_PROMPT).toContain("Each bullet is a comparison the grid cannot make for itself");
+  });
+
+  test("the examples are not the bench, so a bench answer cannot be copied from them", () => {
+    for (const word of ["rental", "film", "pagila", "customer"]) {
+      expect(SYSTEM_PROMPT.toLowerCase()).not.toContain(word);
+    }
+  });
+
+  test("headings and a markdown table of the result are still refused", () => {
+    expect(SYSTEM_PROMPT).toContain("Never a heading, never a markdown table of the result.");
+  });
+});

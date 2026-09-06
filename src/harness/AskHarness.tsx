@@ -10,15 +10,17 @@
 //                       |echo|echo-long|starters|starters-fallback
 //                       |qwrying|qwrying-trail|kv-wide
 //                       |actions|actions-latest|actions-busy|edit|edit-latest
-//                       |edit-stack>
+//                       |edit-stack|insight|insight-prose|insight-steps
+//                       |insight-code|insight-stream>
 //             &w=<320|392|560>&theme=<dark|light>[&scroll=top|bottom]
 //
 // `scroll=top` parks the thread scroller at the question echo instead of the
 // pane's own mount position (pinned to the newest content): a 640px card
 // cannot hold the whole live answer, so the two ends are two frames. The
-// `strip` and `kv-wide` states park at the top unless the URL says
-// `scroll=bottom`: their subject (the thinking strip; the one-row pairs) sits
-// above the fold when the scroller is pinned to the newest content.
+// `strip`, `kv-wide` and `insight*` states park at the top unless the URL
+// says `scroll=bottom`: their subject (the thinking strip; the one-row pairs;
+// the answer text's blocks) sits above the fold when the scroller is pinned
+// to the newest content.
 //
 // Round 3 (W2d): the `echo` states seed a whole thread of exchanges
 // (fixtures.echo.ts); the `starters` states seed the starter pools store
@@ -33,6 +35,13 @@
 // the same thread and enter edit mode after mount through the store's own
 // door (fixtures.edit.ts: beginEdit writes the draft and asks for focus), so
 // the frame shows the fold the product renders.
+//
+// W5: the `insight` states (fixtures.rich.ts) are one exchange each over the
+// order_v2 thread with their own busy / phase (`insight-stream` streams with
+// the run landed on its chip and the second bullet cut mid-sentence), so the
+// frame shows the answer slot's blocks as the parser and AnswerText render
+// them; a link click in a frame reaches the opener plugin, which tauriShim
+// answers with nothing.
 //
 // scripts/ask-frames.ts drives headless Chrome over this route and writes
 // one PNG per state × width × theme. The dev build remains the final eyeball;
@@ -66,6 +75,7 @@ import { ANATOMY_STATES, anatomyTraceFor, type AnatomyState } from "./fixtures.a
 import { ECHO_STATES, echoExchangesFor, type EchoState } from "./fixtures.echo";
 import { EDIT_STATES, editAfterMount, editSeed, type EditState } from "./fixtures.edit";
 import { INTERACT_STATES, interactSeed, type InteractSeed, type InteractState } from "./fixtures.interact";
+import { RICH_STATES, richSeed, type RichState } from "./fixtures.rich";
 import { SHELL_THREADS, shellAfterMount } from "./fixtures.shell";
 import { STARTER_STATES, startersSeed, type StarterState } from "./fixtures.starters";
 import { STRIP_STATES, stripSeed, type StripState } from "./fixtures.strip";
@@ -95,7 +105,10 @@ function paramsFrom(search: string): Params {
     w: (HARNESS_WIDTHS as readonly number[]).includes(w) ? w : 392,
     theme: theme === "light" ? "light" : "dark",
     scroll:
-      scroll === "top" || (scroll !== "bottom" && (state === "strip" || state === "kv-wide")) ? "top" : "bottom",
+      scroll === "top" ||
+      (scroll !== "bottom" && (state === "strip" || state === "kv-wide" || state.startsWith("insight")))
+        ? "top"
+        : "bottom",
   };
 }
 
@@ -116,6 +129,7 @@ function seed({ state, w, theme }: Params) {
   const exchange = interact?.exchange ?? exchangeFor(state);
   const echo = (ECHO_STATES as readonly string[]).includes(state) ? echoExchangesFor(state as EchoState) : null;
   const strip = (STRIP_STATES as readonly string[]).includes(state) ? stripSeed(state as StripState) : null;
+  const rich = (RICH_STATES as readonly string[]).includes(state) ? richSeed(state as RichState) : null;
   // the W4 thread: the actions seed carries busy / phase, the edit seed is a
   // landed thread whose mode is entered after mount
   const w4 = (ACTIONS_STATES as readonly string[]).includes(state)
@@ -154,9 +168,21 @@ function seed({ state, w, theme }: Params) {
     sessions: {},
     pending: interact?.pending ?? {},
     phase: {
-      [tid]: w4 ? w4.phase : interact ? interact.phase : strip ? strip.phase : state === "busy" ? "tools" : null,
+      [tid]: w4
+        ? w4.phase
+        : interact
+          ? interact.phase
+          : strip
+            ? strip.phase
+            : rich
+              ? rich.phase
+              : state === "busy"
+                ? "tools"
+                : null,
     },
-    busy: { [tid]: w4 ? w4.busy : interact ? interact.busy : strip ? strip.busy : state === "busy" },
+    busy: {
+      [tid]: w4 ? w4.busy : interact ? interact.busy : strip ? strip.busy : rich ? rich.busy : state === "busy",
+    },
   });
   useStarterPools.setState(
     (STARTER_STATES as readonly string[]).includes(state)

@@ -11,17 +11,20 @@
 //   --states   subset of answer,empty,busy,picker,failure,disconnected,small,
 //              pending,retry,strip,threads,scalar,kv,wide,trace,echo,echo-long,
 //              starters,starters-fallback,qwrying,qwrying-trail,kv-wide,
-//              actions,actions-latest,actions-busy,edit,edit-latest,edit-stack
-//              (default: all twenty-eight)
+//              actions,actions-latest,actions-busy,edit,edit-latest,edit-stack,
+//              insight,insight-prose,insight-steps,insight-code,insight-stream
+//              (default: all thirty-three)
 //   --widths   subset of 320,392,560 (default: all three)
 //   --themes   subset of dark,light (default: both)
 //   --scroll   bottom (default): the pane as it mounts, pinned to the newest content,
 //              the footer and composer in view; top: the scroller at the question
 //              echo and the thinking strip instead (the 640px card cannot hold the
 //              whole live answer, so the two ends are two runs). Frames of a top run
-//              carry a -top suffix so the two sets sit side by side. The `strip`
-//              and `kv-wide` states park at the top in both runs (the harness's
-//              own default for them: their subject sits above the fold)
+//              carry a -top suffix so the two sets sit side by side. The `strip`,
+//              `kv-wide` and `insight*` states park at the top by default (the
+//              harness's own default for them: their subject sits above the fold);
+//              an EXPLICIT `--scroll bottom` reaches the harness as `scroll=bottom`
+//              and pins them like every other state, so their footers can be framed
 //   --port     the vite dev server to use when one already answers (default 1420);
 //              otherwise vite is started on a free port for the run and stopped after
 //   --jobs     Chrome processes in flight at once (default 6)
@@ -116,6 +119,21 @@
 // gives 28px, the one still that shows the stack's closed gap. Reduced motion
 // means no travel ghost: the textarea holds the text at once.
 //
+// W5 (the sketch's "rich answer text" rows; fixtures.rich.ts): one exchange
+// each over the order_v2 thread on Haiku 4.5, parked at the top by default
+// (the text is the subject). insight = `what stood out in orders last month`:
+// a lead-in in the trace-kind register over three bullets, each one finding
+// with its figure, then the nine-row grid the bullets never restate;
+// insight-prose = a which-column question with no run: a sentence, the
+// model's own three-column comparison as the readOnly grid, a closing
+// sentence with a link whose text is an identifier in code; insight-steps = a
+// how-do-I question with no run: the table's comment quoted under the lead-in
+// that names it, then the two steps as the one ordered list; insight-code =
+// a count over a value with the JSON shape peek found as a non-SQL code block
+// in the editor register, the filter it implies a chip; insight-stream = the
+// insight exchange mid-stream, every chip landed, the second bullet cut
+// mid-sentence, the Stop face.
+//
 // The first frame runs alone so vite compiles the module graph once; the rest
 // run in parallel. Whole run: ~60 s warm for the full matrix.
 
@@ -156,6 +174,11 @@ const ALL_STATES = [
   "edit",
   "edit-latest",
   "edit-stack",
+  "insight",
+  "insight-prose",
+  "insight-steps",
+  "insight-code",
+  "insight-stream",
 ] as const;
 const ALL_WIDTHS = [320, 392, 560] as const;
 const ALL_THEMES = ["dark", "light"] as const;
@@ -196,6 +219,8 @@ const STATES = subset<State>(flag("states"), ALL_STATES, "state");
 const WIDTHS = subset<Width>(flag("widths"), ALL_WIDTHS, "width");
 const THEMES = subset<Theme>(flag("themes"), ALL_THEMES, "theme");
 const SCROLL = subset<Scroll>(flag("scroll"), SCROLLS, "scroll")[0] ?? "bottom";
+/** `--scroll bottom` written out overrides the harness's own top-parking states */
+const SCROLL_EXPLICIT = flag("scroll") !== undefined;
 const PORT = Number(flag("port") ?? 1420);
 const JOBS = Math.max(1, Number(flag("jobs") ?? 6));
 /** a frame that has not been captured by then is a failure */
@@ -346,7 +371,7 @@ async function connect(profile: string, deadline: number): Promise<Cdp> {
 async function shoot(base: string, f: Frame): Promise<boolean> {
   const url =
     `${base}/?harness=ask&state=${f.state}&w=${f.w}&theme=${f.theme}` +
-    (SCROLL === "top" ? "&scroll=top" : "");
+    (SCROLL === "top" || SCROLL_EXPLICIT ? `&scroll=${SCROLL}` : "");
   const width = f.w + 2 * MARGIN;
   const height = CARD_H + 2 * MARGIN;
   const profile = mkdtempSync(join(tmpdir(), "ask-frames-"));

@@ -35,6 +35,10 @@
 //   / agent_turns_shift                     the fixture thread on screen and has
 //                                           no appdb behind it, so the store's
 //                                           idx bookkeeping writes nowhere
+//   plugin:opener|open_url                  nothing: a link in the answer text
+//                                           asks the opener plugin for the
+//                                           browser, and a frame or a probe that
+//                                           clicks one never rejects
 //   everything else                         rejects Error("harness: <cmd> has no fixture")
 
 import type { Channel, InvokeArgs } from "@tauri-apps/api/core";
@@ -85,6 +89,7 @@ export function installTauriShim(): void {
         case "agent_thread_truncate":
         case "agent_thread_session_set":
         case "agent_turns_shift":
+        case "plugin:opener|open_url":
           return undefined;
         default:
           throw new Error(`harness: ${cmd} has no fixture`);

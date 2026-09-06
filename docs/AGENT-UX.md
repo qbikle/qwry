@@ -120,14 +120,36 @@ apply are omitted, never left as dead space (DESIGN rule 2 scope note):
    never wraps. A chip still running when the turn is
    stopped (⌘. / Stop) shows a hollow ring, never a spinner: a spinner under
    `cancelled` claims work that is not happening (LESSONS 9).
-3. **Answer text**: one or two sentences of interpretation, the model's LAST
-   text block that still says something once the SQL fence, the `Assumptions:`
-   line and any markdown table are stripped (each has its own slot below,
-   DESIGN rule 14); a closing block that is only the statement keeps the prose
-   before it, and while a tool call runs the prose already on screen stays
-   until the next block's first words replace it. Pre-tool narration from
-   earlier turns ("Now retrieving…") is never concatenated into it. Bold and inline code render; headings, lists,
-   tables and links do not. The raw text stays in the trace, untouched.
+3. **Answer text**: the model's interpretation in the shape the question
+   asks for (prompt v3): a direct question gets one sentence; an insight
+   question (insights, patterns, what stands out, a summary or overview of a
+   table or a period) gets an optional one-line lead-in ending in a colon and
+   two to four bullets, each ONE finding with its figure, none restating a row
+   of the grid. It is the model's LAST text block that still says something
+   once the SQL fence, the `Assumptions:` line and, with a run on screen, any
+   markdown table are stripped (each has its own slot below, DESIGN rule 14);
+   a closing block that is only the statement keeps the prose before it, and
+   while a tool call runs the prose already on screen stays until the next
+   block's first words replace it. Pre-tool narration from earlier turns
+   ("Now retrieving…") is never concatenated into it. The slot renders a
+   markdown subset (`parseBlocks` in `src/agent/display.ts`, drawn by
+   `AnswerText`): a lead-in (any heading depth, or a bold-only line ending in
+   a colon) in the trace-kind register, one per group and never a heading
+   hierarchy; bold, italic and inline code; ordered and unordered lists
+   (marker tier 2, items 4px apart, no clamp: the two-line cap on a bullet is
+   the prompt's ask and the presentation score's check, never the renderer's
+   knife, LESSONS 9); blockquotes as a hairline left rule in tier 2; links
+   that open in the browser through the opener plugin (http(s) only, anything
+   else renders as its text; a link whose text was backticked keeps the mono
+   face); non-SQL code blocks in the editor register (mono, panel-inset,
+   wraps, no highlighting); and a markdown table as the readOnly grid ONLY
+   when no run is on screen (with one it is the grid restated, rule 14, and
+   strips). Figures (a number with its sign, thousands separators, decimals,
+   currency mark, `%` or unit suffix) set in tabular numerals at weight 600
+   whether or not the model bolded them; dates, ids and version strings are
+   not figures. Streaming: every prefix of the text parses, and a block never
+   changes kind or vanishes once the block after it has begun. The raw text
+   stays in the trace, untouched.
 4. **Result**: a run of exactly one row is values, not a grid (a table of one
    cell is chrome around nothing): one column renders the value in the data
    register (mono, tabular numerals, the answer's one number) with the column
@@ -336,6 +358,12 @@ closing gap rides the spring, never a margin easing of its own. Reduced
 motion: the cluster's face is its settled one, the words appear in the
 composer with no ghost, and the stack stands at once.
 
+The answer slot's blocks add no motion of their own (W5): a lead-in, a
+list, a quote, a code block or the model's table arrives inside the slot's
+one section fade (`--dur-slow` opacity, never height), a block that grows
+keeps its node, and nothing counts up or fades per block; a streaming answer
+grows the way prose grows, by its next word (ARCHITECTURE ideology 6).
+
 ## 11. Register
 
 Controls Title Case: `Ask`, `Threads`, `New Thread`, `Fix It`, `Open in
@@ -365,4 +393,12 @@ visibility, which would drop it from the order) and is the bubble's keyboard
 route: the bubble itself is a div with no role and no focus. Restart and Jump
 Back are `disabled` while the thread is busy or the pane is in edit mode; the
 travelling ghost is `aria-hidden`, and a folding exchange's anatomy is
-`aria-hidden` while it fades.
+`aria-hidden` while it fades. The live region is the answer slot
+itself: `aria-live="polite"` on the newest exchange's slot and off on every
+older one, `aria-atomic` false so a delta announces the block it lands in and
+not the whole answer; the blocks inside it add no region and no role of their
+own, and the slot stays in the tree while it is empty (collapsed, never
+hidden, so the first announcement is not lost). A link in the text is a real
+anchor with its `href`, so the status bar and the context menu read it while
+the click goes to the opener and never navigates the webview; it is the one
+focusable thing inside the slot and wears the app's focus ring.

@@ -28,6 +28,7 @@ import { introspect, runReadonly, RUN_TIMEOUT_MS, type RawResult } from "../eval
 import { createNodeTools } from "../eval/tools.node";
 import { createNodePlatform, emptyTally, type McpTally } from "../eval/platform.node";
 import { normalise, sameRows, tieCheck } from "../eval/compare";
+import { presentationScore, presentationMean, type PresentationScore } from "../eval/presentation";
 
 const ROOT = resolvePath(dirname(new URL(import.meta.url).pathname), "..");
 
@@ -39,6 +40,11 @@ const DEFAULT_DSN = "postgres://lab@127.0.0.1:5455/pagila";
  * as harness.py run_sql does. A query that returns more than the grid would
  * ever show is not an answer to a bench question. */
 const COMPARE_ROW_CAP = 2000;
+
+/** Rows of the prediction's own result the presentation score reads, and the
+ * number the artifact keeps. ONE cap for both, so the score recomputed from
+ * `run_shape` in a results file equals the score the run printed. */
+const PRESENTATION_ROW_CAP = 200;
 
 /** One question's wall-clock ceiling. The loop has a turn cap; this catches a
  * child process that stops talking without exiting. */
@@ -86,6 +92,40 @@ interface Outcome {
    * section 5; anything here is a finding, not a statistic */
   mcp_unknown: string[];
   verdict: AskAnswer["verdict"]["status"];
+  /** the presentation score's two inputs, kept only for the questions it
+   * scores (EVAL.md section 3.x): the answer WHOLE, because `answer` above is
+   * a tail and a tail of an answer is not an answer, and the grid the answer
+   * sat beside. Recorded so the number can be recomputed from the artifact
+   * and nothing else, the rule every baseline row already follows. */
+  answer_full: string | null;
+  run_shape: { columns: string[]; rows: (string | null)[][] } | null;
+  /** the second number (EVAL.md section 3.x), on the insight questions only.
+   * `null` where there is nothing to score: another bench, or a question that
+   * never produced an answer. An answer nobody wrote is not a badly formatted
+   * answer, and averaging a zero for it would pay a prompt for staying quiet. */
+  presentation: PresentationScore | null;
+}
+
+/** The questions the presentation score applies to. Execution accuracy is not
+ * scored on them (their gold is null); this is what replaces it. */
+const isInsight = (q: { tags: string[] }) => q.tags.includes("insight");
+
+/** The run's presentation mean, over the answers it may be taken over: an
+ * insight question whose SQL RAN. An EXEC-FAIL leaves no grid beside the
+ * answer and `no_grid_restatement` is 1 where there is no grid (EVAL.md
+ * section 3.x), so averaging that answer in pays a prompt for breaking the
+ * query: the mean would rise as accuracy fell, and a gate that can be bought
+ * is not a gate. The score stays on the question's own row in the results
+ * file; what it may not enter is the number. */
+export function presentationOver<T extends { presentation: PresentationScore | null; ok: boolean }>(
+  rows: readonly T[],
+): { mean: number | null; scored: T[]; unscored: T[] } {
+  const scored = rows.filter((r) => r.presentation !== null && r.ok);
+  return {
+    mean: presentationMean(scored.map((r) => r.presentation as PresentationScore)),
+    scored,
+    unscored: rows.filter((r) => r.presentation !== null && !r.ok),
+  };
 }
 
 // ---- flags -----------------------------------------------------------------
@@ -297,11 +337,18 @@ async function evaluate(ctx: RunContext, q: Question): Promise<Outcome> {
 
   const predSql = answer?.sql ?? null;
   let predRows: string[][] | null = null;
+  let runShape: Outcome["run_shape"] = null;
   let error: string | null = failure;
   if (predSql) {
     try {
       const raw = await ctx.compare(predSql);
       predRows = normalise(raw.rows, raw.typeOids);
+      if (isInsight(q)) {
+        runShape = {
+          columns: raw.columns,
+          rows: raw.rows.slice(0, PRESENTATION_ROW_CAP).map((row) => [...row]),
+        };
+      }
     } catch (e) {
       error = (e as Error).message;
     }
@@ -364,6 +411,12 @@ async function evaluate(ctx: RunContext, q: Question): Promise<Outcome> {
     mcp_calls: served.calls,
     mcp_unknown: served.unknown,
     verdict: answer?.verdict.status ?? "failed",
+    answer_full: isInsight(q) ? (answer?.text ?? "") : null,
+    run_shape: runShape,
+    presentation:
+      isInsight(q) && (answer?.text ?? "").trim()
+        ? presentationScore(answer?.text ?? "", runShape)
+        : null,
   };
 }
 
@@ -437,6 +490,26 @@ function summarise(args: Args, results: Outcome[]): string {
     for (const [name, n] of Object.entries(r.tools)) allTools[name] = (allTools[name] ?? 0) + n;
   }
   lines.push(`  tools ${Object.entries(allTools).map(([k, v]) => `${k}=${v}`).join(" ") || "none"}`);
+  // the second number, printed beside accuracy and never instead of it
+  // (EVAL.md section 3.x): a bench with no insight question prints no line
+  const { mean: presentation, scored, unscored } = presentationOver(results);
+  if (presentation !== null) {
+    const checks: Record<string, number> = {};
+    for (const r of scored) {
+      for (const [name, v] of Object.entries(r.presentation?.checks ?? {})) {
+        checks[name] = (checks[name] ?? 0) + v;
+      }
+    }
+    lines.push(
+      `  presentation ${presentation} over ${scored.length}` +
+        (unscored.length ? `, ${unscored.length} not scored (the SQL never ran)` : ""),
+    );
+    lines.push(
+      `  ${Object.entries(checks).map(([k, v]) => `${k} ${v}/${scored.length}`).join("  ")}`,
+    );
+  } else if (unscored.length) {
+    lines.push(`  presentation not scored: no insight question's SQL ran`);
+  }
   // only the claude-code provider reaches the tools over the MCP listener;
   // every other provider calls AgentTools in-process, so these lines would
   // report every question as blind
@@ -474,6 +547,10 @@ interface BaselineRow {
   turn_cap_hits: number;
   avg_turns: number | null;
   date: string;
+  /** the presentation mean of that run, on a bench that has insight
+   * questions. Optional: every row recorded before W5 has none, and a row
+   * without one simply does not arm the presentation rule. */
+  presentation?: number | null;
 }
 
 interface Baseline {
@@ -481,15 +558,23 @@ interface Baseline {
   runs: BaselineRow[];
 }
 
+/** How far the presentation mean may slip before it is a regression rather
+ * than the model's own variance between runs (EVAL.md section 3.x). On a
+ * bench of eight, one check flipping on one answer moves the mean by 0.025
+ * and a whole answer collapsing from shaped to a wall moves it by 0.075: the
+ * slack sits between, so two checks of noise pass and one lost answer does
+ * not. */
+const PRESENTATION_SLACK = 0.05;
+
 /** A run's numbers against the committed baseline for the same bench, model
- * and PROMPT_VERSION. Three ways to fail, all from EVAL.md section 4: more
- * than one question lost, any turn-cap hit, or prefilter recall below the
- * baseline. A baseline that does not exist for this combination is NOT a
- * pass: it is reported as unmeasured, so a green run never stands in for a
- * measurement nobody took. */
+ * and PROMPT_VERSION. Four ways to fail, from EVAL.md sections 4 and 3.x:
+ * more than one question lost, any turn-cap hit, prefilter recall below the
+ * baseline, or the presentation mean down by more than the slack. A baseline
+ * that does not exist for this combination is NOT a pass: it is reported as
+ * unmeasured, so a green run never stands in for a measurement nobody took. */
 export function gateAgainst(
   baseline: Baseline,
-  run: { bench: string; provider: string; model: string; passed: number; total: number; recall: number | null; turnCapHits: number },
+  run: { bench: string; provider: string; model: string; passed: number; total: number; recall: number | null; turnCapHits: number; presentation?: number | null },
 ): { ok: boolean; lines: string[] } {
   const bench = run.bench.replace(/^.*\//, "");
   const row = baseline.runs.find(
@@ -524,6 +609,15 @@ export function gateAgainst(
   if (row.recall !== null && run.recall !== null && run.recall < row.recall) {
     ok = false;
     lines.push(`FAIL: prefilter recall ${run.recall} is below the baseline ${row.recall}`);
+  }
+  const base = row.presentation;
+  const now = run.presentation;
+  if (typeof base === "number" && typeof now === "number") {
+    lines.push(`presentation ${now} against the baseline ${base}`);
+    if (now < base - PRESENTATION_SLACK) {
+      ok = false;
+      lines.push(`FAIL: presentation ${now} is more than ${PRESENTATION_SLACK} below ${base}`);
+    }
   }
   if (ok) lines.push("gate: pass");
   return { ok, lines };
@@ -638,6 +732,9 @@ async function main() {
             mcp_calls: 0,
             mcp_unknown: [],
             verdict: "failed",
+            answer_full: isInsight(q) ? "" : null,
+            run_shape: null,
+            presentation: null,
           }),
         );
         results.push(outcome);
@@ -674,6 +771,7 @@ async function main() {
 
     results.sort((a, b) => (a.id < b.id ? -1 : 1));
     const passed = results.filter((r) => r.ok).length;
+    const pres = presentationOver(results);
     emit({ ev: "run_end", label: args.label, passed, total: results.length });
 
     const summary = summarise(args, results);
@@ -714,6 +812,9 @@ async function main() {
                   ? Math.round((100 * rows.filter((r) => r.recall).length) / rows.length) / 100
                   : null;
               })(),
+              presentation: pres.mean,
+              presentation_n: pres.scored.length,
+              presentation_unscored: pres.unscored.map((r) => r.id),
             },
             results,
           },
@@ -741,6 +842,7 @@ async function main() {
         total: results.length,
         recall,
         turnCapHits: results.filter((r) => r.turn_cap).length,
+        presentation: pres.mean,
       });
       console.log(`\n${gate.lines.join("\n")}`);
       if (!gate.ok) process.exitCode = 1;

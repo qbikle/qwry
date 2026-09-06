@@ -44,6 +44,12 @@
 // exchange so two folded bubbles neighbour). Both threads read Haiku 4.5, so
 // `choiceFor` gives the discussion states that choice and the pill matches
 // the footers.
+//
+// The W5 states (fixtures.rich.ts: `insight`, `insight-prose`,
+// `insight-steps`, `insight-code`, `insight-stream`) are one exchange each
+// over the order_v2 thread, the answer slot's blocks the subject; the seed
+// carries its own busy / phase (`insight-stream` streams) and the thread reads
+// Haiku 4.5 (`RICH_CHOICE`). The file imports nothing from here.
 
 import type { AskAnswer } from "../agent/loop";
 import type { AgentRun, Assumption, Thread, TraceStep } from "../agent/types";
@@ -53,6 +59,7 @@ import type { Exchange, ToolChip } from "../stores/agent";
 import { ACTIONS_CHOICE } from "./fixtures.actions";
 import { anatomyExchangeFor } from "./fixtures.anatomy";
 import { interactSeed } from "./fixtures.interact";
+import { RICH_CHOICE, richSeed, type RichState } from "./fixtures.rich";
 import { stripSeed } from "./fixtures.strip";
 
 export type HarnessState =
@@ -83,7 +90,8 @@ export type HarnessState =
   | "actions-busy"
   | "edit"
   | "edit-latest"
-  | "edit-stack";
+  | "edit-stack"
+  | RichState;
 export const HARNESS_STATES: readonly HarnessState[] = [
   "answer",
   "empty",
@@ -113,6 +121,11 @@ export const HARNESS_STATES: readonly HarnessState[] = [
   "edit",
   "edit-latest",
   "edit-stack",
+  "insight",
+  "insight-prose",
+  "insight-steps",
+  "insight-code",
+  "insight-stream",
 ];
 export const HARNESS_WIDTHS = [320, 392, 560] as const;
 export type HarnessTheme = "dark" | "light";
@@ -293,7 +306,7 @@ const run: AgentRun = {
 /** the model's last text block, verbatim: prose, the mandated fence, the
  * mandated Assumptions line. The display strip owns what of it renders. */
 const FINAL_TEXT =
-  "Counted by `sent_at`, the only timestamp on the table. 4.65M this year, 2.95M of it in August.\n\n" +
+  "Counted by `sent_at`, the only timestamp on the table. 4.65M this year, 63% of it in August.\n\n" +
   "```sql\n" +
   SQL +
   "\n```\n\n" +
@@ -564,12 +577,19 @@ export function exchangeFor(state: HarnessState): Exchange | null {
     case "qwrying-trail":
     case "kv-wide":
       return stripSeed(state).exchange;
+    case "insight":
+    case "insight-prose":
+    case "insight-steps":
+    case "insight-code":
+    case "insight-stream":
+      return richSeed(state).exchange;
   }
 }
 
 /** the configured provider and model a state runs under: the discussion
- * thread's states read its own Haiku 4.5 (the pill shows the thread's model,
- * as the footers do); everything else the sketch's Sonnet 5 */
+ * thread's states and the W5 order_v2 states read their own Haiku 4.5 (the
+ * pill shows the thread's model, as the footers do); everything else the
+ * sketch's Sonnet 5 */
 export function choiceFor(state: HarnessState): { provider: string; model: string } {
   switch (state) {
     case "small":
@@ -583,6 +603,12 @@ export function choiceFor(state: HarnessState): { provider: string; model: strin
     case "edit-latest":
     case "edit-stack":
       return ACTIONS_CHOICE;
+    case "insight":
+    case "insight-prose":
+    case "insight-steps":
+    case "insight-code":
+    case "insight-stream":
+      return RICH_CHOICE;
     default:
       return { provider: PROVIDER, model: MODEL };
   }

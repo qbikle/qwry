@@ -568,11 +568,15 @@
   user-select: none;
   -webkit-user-select: none;
 }
+/* the answer slot as blocks (AnswerText, W5): prose, lead-ins, lists,
+   quotes, code blocks and the model's own tables, each in the pane's
+   register for it. The slot is one section of the anatomy and fades in as
+   one (.ans-body > *); the blocks inside never animate on their own, so a
+   streaming answer grows the way prose grows by its next word */
 .ans-text {
   line-height: 1.5;
   color: var(--fg);
   user-select: text;
-  white-space: pre-wrap;
 }
 /* the live region exists before its text does (AGENT-UX section 12). Empty,
    it leaves the flex flow so the column gap reserves nothing for it (rule 2)
@@ -587,8 +591,121 @@
   clip-path: inset(50%);
   animation: none;
 }
+/* 8px between blocks, a lead-in 4px above its group; the gap rides every
+   block as its own top margin so no element's UA margin can out-rank it */
+.ans-text > * {
+  margin: var(--sp-2) 0 0;
+}
+.ans-text > :first-child {
+  margin-top: 0;
+}
+.ans-text > .ans-lead + * {
+  margin-top: var(--sp-1);
+}
+/* only prose keeps the model's line breaks; a list item or a lead-in is one
+   line of text however it was wrapped in the source */
+.ans-text p {
+  white-space: pre-wrap;
+}
 .ans-text b {
   font-weight: 650;
+}
+/* identifiers wear data's clothes (WRITING.md), one step under the prose */
+.ans-text code {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+/* figures: tabular numerals at 600 in the block's own tier, one face for a
+   quantity wherever it sits in the slot and never bold on its own (the face
+   is the emphasis, so a bold that is only a figure arrives as a figure; bold
+   stays 650 above it). The sketch drew 500 and the build tried both: at 500
+   a figure is found on inspection, at 600 it lands at a glance, 320 and 560,
+   both themes (w5-frames/build/cmp-fig-*.png). Inside a bolded phrase a
+   figure keeps the phrase's weight, as it keeps the lead-in's */
+.ans-text .fig {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.ans-text b .fig {
+  font-weight: inherit;
+}
+/* lead-in: the trace-kind face (.trace-kind, the picker's group heading: one
+   species), a label over its group and never a heading; the colon stays as
+   written, an identifier inside keeps its mono and its case, and a figure
+   keeps the label's weight but takes tier 1, the thinking chip's two tones */
+.ans-lead {
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  line-height: 16px;
+}
+.ans-lead code {
+  font-size: inherit;
+  text-transform: none;
+}
+.ans-lead .fig {
+  font-weight: inherit;
+  color: var(--fg);
+}
+/* lists: the marker in tier 2 (an ordinal in tabular numerals), a 16px
+   indent, items 4px apart, no clamp (a clipped answer lies, LESSONS 9) */
+.ans-text ul,
+.ans-text ol {
+  padding-left: var(--sp-4);
+}
+.ans-text li + li {
+  margin-top: var(--sp-1);
+}
+.ans-text li::marker {
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+/* quote: a hairline left rule and the text in tier 2 */
+.ans-text blockquote {
+  padding-left: var(--sp-3);
+  border-left: 1px solid var(--fg-muted);
+  color: var(--fg-muted);
+}
+/* a non-SQL code block: the editor register (the trace body's face at tier
+   1), wrapping, no highlighting */
+.ans-text pre {
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-app);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* the link: the one thing in the text that answers a pointer (rule 8), so
+   it announces at rest (accent, a hairline underline at 40%), responds on
+   hover (the underline fills) and acknowledges a press (the .linkish fill);
+   the keyboard ring is the app's one ring (tokens.css) on an element it does
+   not list */
+.ans-text a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  text-underline-offset: 2px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  transition: text-decoration-color var(--dur-quick) var(--ease-std);
+}
+.ans-text a:hover {
+  text-decoration-color: var(--accent);
+}
+.ans-text a:active {
+  background: var(--accent-soft);
+}
+.ans-text a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 /* the grid slot: the real Grid mounts here in readOnly mode and sizes itself
    (header + up to six rows + its own horizontal scrollbar, Grid maxRows), so

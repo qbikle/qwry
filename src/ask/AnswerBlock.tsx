@@ -23,7 +23,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { AnimatePresence, motion, usePresence } from "motion/react";
-import { answerText, footerStatus, renderInline } from "../agent/display";
+import { footerStatus } from "../agent/display";
 import type { ProviderId } from "../agent/providers/types";
 import type { AgentRun } from "../agent/types";
 import { prefersReducedMotion, spring } from "../design/springs";
@@ -36,6 +36,7 @@ import type { StatementState } from "../stores/results";
 import { useTabs } from "../stores/tabs";
 import type { Profile } from "../ipc/types";
 import type { AskPhase } from "../agent/loop";
+import { AnswerText } from "./AnswerText";
 import { AssumptionChips } from "./AssumptionChips";
 import { EchoActions, editLiftId } from "./EchoActions";
 import { FailureBlock } from "./FailureBlock";
@@ -221,6 +222,7 @@ export function AnswerBlock({
   // an empty result keeps the status line and drops the grid (no header-only
   // chrome over nothing); a one-row result is values, not a grid
   const scalar = run !== null && isScalarRun(run);
+  const hasRun = run !== null || exchange.chips.some((c) => c.name === "run_sql" && !c.isError);
   const stmt = useMemo(
     () => (run && run.rows.length > 0 && !isScalarRun(run) ? statementFromRun(run, sql) : null),
     [run, sql],
@@ -316,14 +318,15 @@ export function AnswerBlock({
             {/* mounted from the start and empty until the first delta: a live
                 region announces changes to content it already owns, so one that
                 arrives WITH its first text is silent for that text (section 12).
-                The display strip (agent/display.ts) drops the fence, the
-                Assumptions line and any table, which have their own slots below
-                (rule 14); an empty result renders no node, so .ans-text:empty
-                collapses it out of the flow with no gap (rule 2) while it stays
-                in the accessibility tree */}
-            <div className="ans-text" aria-live={isLatest ? "polite" : "off"} aria-atomic={false}>
-              {renderInline(answerText(exchange.text))}
-            </div>
+                The parser (agent/display.ts) drops the fence, the Assumptions
+                line and, with a run on screen, any table of the results, which
+                have their own slots below (rule 14); an empty parse renders no
+                node, so .ans-text:empty collapses the slot out of the flow with
+                no gap (rule 2) while it stays in the accessibility tree. A run
+                is on screen from the moment its chip lands, not from the
+                verdict: the final text streams after the run and would show a
+                table of it for the length of the stream otherwise */}
+            <AnswerText raw={exchange.text} hasRun={hasRun} live={isLatest} />
 
             {scalar && run && <ScalarResult run={run} />}
             {stmt && (
