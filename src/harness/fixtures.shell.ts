@@ -66,11 +66,6 @@ export const SHELL_THREAD_ROWS: AgentThread[] = SHELL_THREADS.map((t) => ({
   created_at: t.createdAt,
 }));
 
-/** the ask store's seed for the state */
-export const SHELL_ASK_SEED: Record<ShellState, { threadsOpen: boolean }> = {
-  threads: { threadsOpen: true },
-};
-
 /** after the pane has mounted: one ArrowDown on the sheet's list moves the
  * highlight off the current row onto the second, so the frame shows the
  * .hot row and its revealed delete beside the .active one (the sketch) */

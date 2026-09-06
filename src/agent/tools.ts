@@ -36,10 +36,6 @@ export type { ToolName } from "./types";
  * must stay stable between requests of a thread or the whole prefix misses. */
 export const TOOL_SCHEMAS: readonly ToolSchema[] = schema.tools;
 
-/** Bumped whenever tools.schema.json changes; EVAL baselines are tied to it
- * alongside PROMPT_VERSION. */
-export const TOOL_SCHEMA_VERSION: number = schema.version;
-
 export const TOOL_NAMES: readonly ToolName[] = [
   "list_tables",
   "describe_tables",
