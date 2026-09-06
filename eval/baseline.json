@@ -1,53 +1,79 @@
 {
-  "note": "Measured baselines for the PR gate (EVAL.md section 4). A row is claimed by bench + model + provider + prompt_version; `bun scripts/agent-eval.ts --baseline` fails the run when it drops more than one question below `passed`, hits the turn cap at all, or falls below `recall`. Never move a row in the same PR as the change it measures. avg_turns is 1 on every claude-code row because that provider owns its own loop: one qwry turn covers the whole conversation, so turns compare only within a provider (EVAL.md section 6). Every row is transcribed from the run artifact of the same name under eval/results/, `date` included: it is the harness's own `config.date`, so a row can be recomputed from its artifact and nothing else. That night's runs were spawned by a shell on UTC and so read 2026-09-04, one day behind the maintainer's local clock at the time (2026-09-05, 02:1x IST).",
+  "note": "Measured baselines for the PR gate (EVAL.md section 4). A row is claimed by bench + model + provider + prompt_version; `bun scripts/agent-eval.ts --baseline` fails the run when it drops more than one question below `passed`, hits the turn cap at all, falls below `recall`, or, where the row carries one, lands more than 0.05 under `presentation`. avg_turns is 1 on nearly every claude-code row because that provider owns its own loop: one qwry turn covers the whole conversation, so turns compare only within a provider (EVAL.md section 6). Every row is transcribed from the run artifact of the same name under eval/results/, `date` included: it is the harness's own `config.date`, so a row can be recomputed from its artifact and nothing else. A row is ONE artifact: where a run was sampled twice, the row is the run and the second sample is evidence about it, not a better version of it. \n\n2026-09-06, W3: every row is now PROMPT_VERSION v3 and the v1 rows measured 2026-09-04 are superseded, their numbers kept in the re-baseline commit message and ROADMAP_log rather than here. Section 4 says a baseline never moves in the same PR as the change it measures; this file breaks that rule once, by the maintainer's explicit W3 brief, because the branch that introduced prompt v3 (W5) is the branch that closes on it. Two rows record a loss and not a pass, written down because they were measured, not because they are accepted. `pagila.json` + claude-sonnet-5 is 28/33 where v1 stood at 32/33: t1-07 passes on a re-run and is noise, t4-02 failed at v1 too, and the three real new losses (t3-08, t4-04, t5-01) are one shape, an extra column kept beside the ones the question asked for, the column the prose wants a figure from. Haiku passes all four on the same prompt bytes, so the shape is model-specific and belongs to the next PROMPT_VERSION, not to v3. `pagila-hard.json` + claude-haiku-4-5 is 3/5 where v1 stood at 5/5: ph-05 fails identically in both v3 samples (rental and payment joined to customer in one pass, so the payment sum is multiplied by the rental count, where v1 pre-aggregated each in its own CTE) and ph-03 passes in the second sample, which scored 4/5. Neither loss is gate slack: a later v3 run that drops more than one question below these numbers still fails. \n\nThe two `pagila-insight.json` rows are new and arm the presentation rule (EVAL.md section 3.x) for the first time, one mean per model, each over 8 answers with none unscored. They carry `recall: null` because that bench has no gold SQL to recall tables from, and their two means are different models rather than a before and an after: what tests them is the first v3 re-run of either model. The staging benches still have no row at any prompt version and stay unmeasured, which the gate reads as red, not green.",
   "runs": [
     {
       "bench": "eval/bench/pagila.json",
       "provider": "claude-code",
       "model": "claude-haiku-4-5",
-      "prompt_version": "v1",
+      "prompt_version": "v3",
       "passed": 33,
       "total": 33,
       "recall": 0.94,
       "turn_cap_hits": 0,
       "avg_turns": 1,
-      "date": "2026-09-04"
+      "date": "2026-09-06"
     },
     {
       "bench": "eval/bench/pagila.json",
       "provider": "claude-code",
       "model": "claude-sonnet-5",
-      "prompt_version": "v1",
-      "passed": 32,
+      "prompt_version": "v3",
+      "passed": 28,
       "total": 33,
       "recall": 0.94,
       "turn_cap_hits": 0,
       "avg_turns": 1,
-      "date": "2026-09-04"
+      "date": "2026-09-06"
     },
     {
       "bench": "eval/bench/pagila-hard.json",
       "provider": "claude-code",
       "model": "claude-haiku-4-5",
-      "prompt_version": "v1",
-      "passed": 5,
+      "prompt_version": "v3",
+      "passed": 3,
       "total": 5,
       "recall": 1,
       "turn_cap_hits": 0,
       "avg_turns": 1,
-      "date": "2026-09-04"
+      "date": "2026-09-06"
     },
     {
       "bench": "eval/bench/pagila-hard.json",
       "provider": "claude-code",
       "model": "claude-sonnet-5",
-      "prompt_version": "v1",
+      "prompt_version": "v3",
       "passed": 5,
       "total": 5,
       "recall": 1,
       "turn_cap_hits": 0,
       "avg_turns": 1,
-      "date": "2026-09-04"
+      "date": "2026-09-06"
+    },
+    {
+      "bench": "eval/bench/pagila-insight.json",
+      "provider": "claude-code",
+      "model": "claude-haiku-4-5",
+      "prompt_version": "v3",
+      "passed": 8,
+      "total": 8,
+      "recall": null,
+      "turn_cap_hits": 0,
+      "avg_turns": 1,
+      "date": "2026-09-06",
+      "presentation": 0.85
+    },
+    {
+      "bench": "eval/bench/pagila-insight.json",
+      "provider": "claude-code",
+      "model": "claude-sonnet-5",
+      "prompt_version": "v3",
+      "passed": 8,
+      "total": 8,
+      "recall": null,
+      "turn_cap_hits": 0,
+      "avg_turns": 2.6,
+      "date": "2026-09-06",
+      "presentation": 0.825
     }
   ]
 }
