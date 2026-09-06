@@ -1,16 +1,19 @@
-// What v3 was allowed to touch, and what it was not (AGENT-SPEC section 6,
+// What v4 was allowed to touch, and what it was not (AGENT-SPEC section 6,
 // EVAL.md section 4). The measured lines of this prompt are the reason the
 // agent scores what it scores: rule 1 alone took judgment injection from 4/4
 // failing to 8/8 passing, and the two-turn work plan is what keeps a bench
 // question at one turn. W5 rewrote the ANSWER SHAPE and nothing else, so
-// those lines are pinned here byte for byte. A future wave that needs to move
-// one of them moves this test in the same commit, deliberately, and
-// re-baselines.
+// those lines are pinned here byte for byte. W3b added three SQL rules to the
+// same list W5 left alone and moved nothing else, so v3's shape and both of
+// its examples are pinned here too: v4 exists to win back the accuracy v3
+// spent, and a v4 that also moved the shape could not be read against it. A
+// future wave that needs to move one of these moves this test in the same
+// commit, deliberately, and re-baselines.
 
 import { describe, expect, test } from "bun:test";
 import { PROMPT_VERSION, SYSTEM_PROMPT } from "../prompt";
 
-/** byte-equal across v1, v2 and v3 */
+/** byte-equal across v1, v2, v3 and v4 */
 const MEASURED = [
   "- Do NOT add filters the question did not ask for (no is_deleted, no user_id <> 0, no status filters unless asked). If you think one is warranted, answer the question exactly as asked and list the assumption on the Assumptions line.",
   "- Return exactly the columns the question asks for, no extras.",
@@ -23,13 +26,44 @@ const MEASURED = [
   "the final SQL in a ```sql code block",
 ];
 
-describe("prompt v3", () => {
-  test("the measured rules and the work plan are byte-equal to v2", () => {
+/** the three SQL rules v4 added, one per measured loss (W3b) */
+const V4_RULES = [
+  "- Columns: the final SQL returns exactly the columns the question names and no other, not the column it orders by, not the count it ranked with, not an id; a figure the prose wants that the result will not carry comes from a query already run or one more run_sql, never from a column added to the final SQL.",
+  "- Joins: two one-to-many relations joined to the same parent in one pass multiply each other's rows and inflate every SUM and COUNT, so aggregate each in its own CTE first and join the aggregates.",
+  "- Rows and numbers: return the rows the data has, never padded with periods that have no rows (no generate_series spine unless the question asks for every period), and cast integer counts to numeric before dividing.",
+];
+
+describe("prompt v4", () => {
+  test("the measured rules and the work plan are byte-equal to v2 and v3", () => {
     for (const line of MEASURED) expect(SYSTEM_PROMPT).toContain(line);
   });
 
   test("the version moved, because a string in this file did", () => {
-    expect(PROMPT_VERSION).toBe("v3");
+    expect(PROMPT_VERSION).toBe("v4");
+  });
+
+  test("the three SQL rules v4 added are here, one per measured loss", () => {
+    for (const line of V4_RULES) expect(SYSTEM_PROMPT).toContain(line);
+  });
+
+  test("they sit in the list that overrides instincts, above the work plan", () => {
+    const rules = SYSTEM_PROMPT.indexOf("Rules that override your instincts:");
+    const plan = SYSTEM_PROMPT.indexOf("Work plan (aim for two turns):");
+    for (const line of V4_RULES) {
+      const at = SYSTEM_PROMPT.indexOf(line);
+      expect(at).toBeGreaterThan(rules);
+      expect(at).toBeLessThan(plan);
+    }
+    // beside the column rule they sharpen, not somewhere else in the list
+    expect(SYSTEM_PROMPT).toContain(
+      "- Return exactly the columns the question asks for, no extras.\n" + V4_RULES[0],
+    );
+  });
+
+  test("the escape from the extra column is another query, not another column", () => {
+    // t3-08, t4-04, t5-01 all kept the column the prose read its figure from
+    expect(SYSTEM_PROMPT).toContain("never from a column added to the final SQL");
+    expect(SYSTEM_PROMPT).toContain("comes from a query already run or one more run_sql");
   });
 
   test("it says what the two shapes are and which question gets which", () => {

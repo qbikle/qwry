@@ -257,8 +257,9 @@ describe("the mean the gate reads", () => {
 // first GOOD example read three cells of one result row back, which is
 // exactly what `no_grid_restatement` refuses, and the measured run followed
 // the example rather than the rule. So the example is scored here, against
-// the grid the question it answers would put on screen.
-describe("prompt v3's own examples, scored", () => {
+// the grid the question it answers would put on screen. v4 left both
+// examples byte-equal, so this stays the same test it was at v3.
+describe("the prompt's own examples, scored", () => {
   const afterLine = (marker: string) =>
     SYSTEM_PROMPT.slice(SYSTEM_PROMPT.indexOf("\n", SYSTEM_PROMPT.indexOf(marker)) + 1);
   const goodExample = afterLine("GOOD, for").split("BAD, same question")[0].trim();

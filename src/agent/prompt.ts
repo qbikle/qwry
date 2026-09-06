@@ -11,10 +11,24 @@
 // `no_grid_restatement` fell 7/7 to 1/7, EVAL.md section 3.x) because the GOOD
 // bullet read three cells of one result row back; the examples below are the
 // revision, made before any baseline row existed for v3, so the version still
-// names exactly one text. Every measured rule (no added filters, the
-// risk-check turn order, the work plan's two turns, the Assumptions line) is
-// byte-equal across all three, and prompt.test.ts pins that. The eval
-// baselines are v1 rows: the W3 baseline run re-measures them.
+// names exactly one text. v4 (2026-09-06) adds three SQL rules to the
+// "Rules that override your instincts" list and changes nothing else: v3
+// bought presentation (insight 0.514 -> 0.850 on Haiku) and paid for it in
+// SQL, claude-sonnet-5 on pagila.json 32/33 -> 28/33 and claude-haiku-4-5 on
+// pagila-hard.json 5/5 -> 3/5. The three losses Sonnet added are one shape,
+// an extra column kept beside the ones the question asked for, the column the
+// prose wants its figure from (t3-08, t4-04, t5-01; s5-02 once on staging),
+// which reads as v3's "each ONE finding carrying its own figure" winning
+// against a column rule that never said where else a figure may come from.
+// Haiku's two are a join fan-out (ph-05: rental and payment joined to
+// customer in one pass, so SUM(amount) is multiplied by the rental count) and
+// integer division before ROUND (ph-03). So: one rule names the trap and the
+// escape (another query, never another column), one names the fan-out and the
+// pre-aggregate that avoids it, one covers the row half of the same instinct
+// (a generate_series spine nobody asked for, s3-04) and the cast. Every
+// measured rule (no added filters, the risk-check turn order, the work plan's
+// two turns, the Assumptions line, the whole answer shape and both examples)
+// is byte-equal across all four, and prompt.test.ts pins that.
 //
 // SYSTEM_PROMPT is a constant with NO interpolation: providers cache the
 // system + tools prefix, and a per-question byte in it misses the cache for
@@ -27,7 +41,7 @@ import { RISK_BLOCK, isRisky } from "./risk";
 
 /** Bumped whenever any string in this file changes. EVAL baselines are tied
  * to it (EVAL.md section 4), so a bump means a re-baseline. */
-export const PROMPT_VERSION = "v3";
+export const PROMPT_VERSION = "v4";
 
 const BASE_PROMPT = `You are a PostgreSQL data analyst agent. You have tools to inspect the database and run read-only queries.
 Answer the user's question about the data. Work method:
@@ -39,6 +53,9 @@ const HYBRID_RULES = `
 Rules that override your instincts:
 - Do NOT add filters the question did not ask for (no is_deleted, no user_id <> 0, no status filters unless asked). If you think one is warranted, answer the question exactly as asked and list the assumption on the Assumptions line.
 - Return exactly the columns the question asks for, no extras.
+- Columns: the final SQL returns exactly the columns the question names and no other, not the column it orders by, not the count it ranked with, not an id; a figure the prose wants that the result will not carry comes from a query already run or one more run_sql, never from a column added to the final SQL.
+- Joins: two one-to-many relations joined to the same parent in one pass multiply each other's rows and inflate every SUM and COUNT, so aggregate each in its own CTE first and join the aggregates.
+- Rows and numbers: return the rows the data has, never padded with periods that have no rows (no generate_series spine unless the question asks for every period), and cast integer counts to numeric before dividing.
 - Tables marked LEGACY are never the answer.
 Work plan (aim for two turns):
 1. FIRST turn: call describe_tables for every table you will use AND peek_values for every text/enum/status column you will filter on, all in the same turn.
