@@ -553,9 +553,9 @@ record of whether a `ran` row is committed, rolled back or still open
 (AGENT-UX §13.6's `uncommitted`), so a reload mid-transaction reads `ran`
 with no way to ask the tab what it later decided.
 
-**Knowledge and saved checks (A2; appdb v8 in this worktree — the merge
-renumbers it, so the migration arm is written `8 => knowledge_v8(&tx)?` and
-no test names the literal version).**
+**Knowledge and saved checks (A2; appdb v8 — the merge left the number where
+the wave wrote it, A4 having added no migration, so the arm reads
+`8 => knowledge_v8(&tx)?` and no test names the literal version).**
 
 ```
 agent_knowledge(id, profile_id, kind CHECK IN ('hint','definition','synonym'),
