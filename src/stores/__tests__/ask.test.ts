@@ -34,7 +34,7 @@ afterAll(() => {
   for (const k of shimmed) Reflect.deleteProperty(globalThis, k);
 });
 
-const reset = () => useAsk.setState({ drafts: {}, draftFor: null });
+const reset = () => useAsk.setState({ drafts: {}, draftFor: null, edit: null });
 
 describe("useAsk drafts", () => {
   beforeEach(reset);
@@ -73,5 +73,46 @@ describe("useAsk drafts", () => {
     const before = useAsk.getState().drafts;
     useAsk.getState().setDraft("orphan");
     expect(useAsk.getState().drafts).toBe(before);
+  });
+});
+
+// W4: clicking an older bubble puts its question in the composer and folds
+// the thread from there. The store holds the mode; the fold, the travel and
+// the truncation live elsewhere.
+const EDIT = {
+  profileId: "staging",
+  threadId: "t-1",
+  exchangeId: "ex-1",
+  question: "how many orders shipped",
+};
+
+describe("useAsk edit mode", () => {
+  beforeEach(reset);
+
+  test("beginning an edit fills that connection's draft and asks for focus", () => {
+    const seq = useAsk.getState().focusSeq;
+    useAsk.getState().setDraftFor("staging");
+    useAsk.getState().beginEdit(EDIT);
+    expect(useAsk.getState().edit).toEqual(EDIT);
+    expect(useAsk.getState().drafts["staging"]).toBe(EDIT.question);
+    expect(useAsk.getState().focusSeq).toBe(seq + 1);
+  });
+
+  test("ending an edit leaves the draft where it is: the caller decides", () => {
+    useAsk.getState().setDraftFor("staging");
+    useAsk.getState().beginEdit(EDIT);
+    useAsk.getState().endEdit();
+    expect(useAsk.getState().edit).toBeNull();
+    expect(useAsk.getState().drafts["staging"]).toBe(EDIT.question);
+  });
+
+  test("switching connection cancels the edit and leaves the draft behind", () => {
+    useAsk.getState().setDraftFor("staging");
+    useAsk.getState().beginEdit(EDIT);
+    useAsk.getState().setDraftFor("staging");
+    expect(useAsk.getState().edit).toEqual(EDIT);
+    useAsk.getState().setDraftFor("prod");
+    expect(useAsk.getState().edit).toBeNull();
+    expect(useAsk.getState().drafts["staging"]).toBe(EDIT.question);
   });
 });

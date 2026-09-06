@@ -609,6 +609,57 @@ describe("error events", () => {
   });
 });
 
+// A thread cut back to an earlier question resumes a provider session that
+// never heard the exchanges it kept, so the store hands the first call after
+// the cut a replay of them. It rides the USER message: the system prompt is
+// PROMPT_VERSION's, and the eval, which never has a thread, must send the
+// same bytes it always did.
+describe("a cut thread's replay", () => {
+  const REPLAY = "Earlier in this thread:\n\nQ: how many films\nSQL: SELECT 1\nA: One thousand.";
+
+  const oneShot = async (over: Partial<Parameters<typeof runAsk>[0]>) => {
+    const rec: Recorded = { calls: [], requests: [] };
+    await ask(scripted([[{ text: answerText }, done("stop")]], rec), tools(rec), over);
+    return rec.requests[0];
+  };
+  /** the opening user message; a tool message has no `content` */
+  const opening = (req: ChatRequest): string => {
+    const first = req.messages[0];
+    return "content" in first ? (first.content ?? "") : "";
+  };
+
+  test("the replay prefixes the user message and nothing else", async () => {
+    const bare = await oneShot({ thread: { id: "t-1", firstCall: true } });
+    const cut = await oneShot({
+      thread: { id: "t-1", session: "fresh-key", firstCall: true, replay: REPLAY },
+    });
+    expect(opening(cut)).toBe(`${REPLAY}\n\n${opening(bare)}`);
+    expect(cut.system).toBe(bare.system);
+    expect(cut.messages).toHaveLength(bare.messages.length);
+    // the adapter resumes the key the cut minted; the thread id still names
+    // the thread's own MCP session
+    expect(cut.thread).toMatchObject({ id: "t-1", session: "fresh-key" });
+  });
+
+  test("no thread and a thread with no replay send byte-identical messages", async () => {
+    const evaluation = await oneShot({});
+    const app = await oneShot({ thread: { id: "t-1", firstCall: true } });
+    expect(app.messages).toEqual(evaluation.messages);
+    expect(app.system).toBe(evaluation.system);
+    expect(evaluation.thread).toBeUndefined();
+  });
+
+  test("the small path replays too: a stateless provider had no memory either", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const provider = scripted([[{ text: "```sql\nSELECT 1\n```" }, done("stop")]], rec);
+    await ask(provider, tools(rec), {
+      tier: "small",
+      thread: { id: "t-1", session: "fresh-key", firstCall: true, replay: REPLAY },
+    });
+    expect(opening(rec.requests[0])).toStartWith(`${REPLAY}\n\n`);
+  });
+});
+
 /** the describe call the small path makes carries the prefilter's own picks */
 function expect_names(rec: Recorded): unknown {
   return (rec.calls.find((c) => c.name === "describeTables")?.args ?? []) as unknown;

@@ -8,7 +8,9 @@
 //   /?harness=ask&state=<answer|empty|busy|picker|failure|disconnected|small
 //                       |pending|retry|strip|threads|scalar|kv|wide|trace
 //                       |echo|echo-long|starters|starters-fallback
-//                       |qwrying|qwrying-trail|kv-wide>
+//                       |qwrying|qwrying-trail|kv-wide
+//                       |actions|actions-latest|actions-busy|edit|edit-latest
+//                       |edit-stack>
 //             &w=<320|392|560>&theme=<dark|light>[&scroll=top|bottom]
 //
 // `scroll=top` parks the thread scroller at the question echo instead of the
@@ -23,6 +25,14 @@
 // (fixtures.starters.ts), and every other state resets it, so a pool
 // persisted by an earlier harness page never reaches a frame; the strip
 // states (fixtures.strip.ts) carry their own busy / phase.
+//
+// W4: the `actions` states seed the sketch's three-exchange thread with their
+// own busy / phase (fixtures.actions.ts) and stamp the hot bubble's face after
+// mount (a hover cannot be held in a still); `actions` parks the scroller at
+// the hot exchange unless the URL says `scroll=top`. The `edit` states seed
+// the same thread and enter edit mode after mount through the store's own
+// door (fixtures.edit.ts: beginEdit writes the draft and asks for focus), so
+// the frame shows the fold the product renders.
 //
 // scripts/ask-frames.ts drives headless Chrome over this route and writes
 // one PNG per state × width × theme. The dev build remains the final eyeball;
@@ -51,8 +61,10 @@ import {
   type HarnessState,
   type HarnessTheme,
 } from "./fixtures";
+import { ACTIONS_STATES, actionsAfterMount, actionsSeed, type ActionsState } from "./fixtures.actions";
 import { ANATOMY_STATES, anatomyTraceFor, type AnatomyState } from "./fixtures.anatomy";
 import { ECHO_STATES, echoExchangesFor, type EchoState } from "./fixtures.echo";
+import { EDIT_STATES, editAfterMount, editSeed, type EditState } from "./fixtures.edit";
 import { INTERACT_STATES, interactSeed, type InteractSeed, type InteractState } from "./fixtures.interact";
 import { SHELL_THREADS, shellAfterMount } from "./fixtures.shell";
 import { STARTER_STATES, startersSeed, type StarterState } from "./fixtures.starters";
@@ -93,10 +105,10 @@ function interactFor(state: HarnessState): InteractSeed | null {
 }
 
 /** every store the pane reads, filled before the first render; a state's
- * exchange is the thread's one exchange (the echo states seed a whole thread),
- * the empty state has no thread. The `threads` state lists the shell
- * builder's five threads, the first of them the fixture thread, so the
- * answered exchange sits behind the sheet */
+ * exchange is the thread's one exchange (the echo, actions and edit states
+ * seed a whole thread), the empty state has no thread. The `threads` state
+ * lists the shell builder's five threads, the first of them the fixture
+ * thread, so the answered exchange sits behind the sheet */
 function seed({ state, w, theme }: Params) {
   const pid = FIXTURE.profile.id;
   const tid = FIXTURE.thread.id;
@@ -104,6 +116,13 @@ function seed({ state, w, theme }: Params) {
   const exchange = interact?.exchange ?? exchangeFor(state);
   const echo = (ECHO_STATES as readonly string[]).includes(state) ? echoExchangesFor(state as EchoState) : null;
   const strip = (STRIP_STATES as readonly string[]).includes(state) ? stripSeed(state as StripState) : null;
+  // the W4 thread: the actions seed carries busy / phase, the edit seed is a
+  // landed thread whose mode is entered after mount
+  const w4 = (ACTIONS_STATES as readonly string[]).includes(state)
+    ? actionsSeed(state as ActionsState)
+    : (EDIT_STATES as readonly string[]).includes(state)
+      ? { exchanges: editSeed(state as EditState).exchanges, busy: false, phase: null }
+      : null;
   const choice = choiceFor(state);
 
   useSettings.setState({
@@ -130,12 +149,14 @@ function seed({ state, w, theme }: Params) {
   useAgent.setState({
     activeProfileId: pid,
     threads: { [pid]: state === "threads" ? SHELL_THREADS : [FIXTURE.thread] },
-    activeThread: { [pid]: exchange || echo ? tid : null },
-    exchanges: echo ? { [tid]: echo } : exchange ? { [tid]: [exchange] } : {},
+    activeThread: { [pid]: exchange || echo || w4 ? tid : null },
+    exchanges: w4 ? { [tid]: w4.exchanges } : echo ? { [tid]: echo } : exchange ? { [tid]: [exchange] } : {},
     sessions: {},
     pending: interact?.pending ?? {},
-    phase: { [tid]: interact ? interact.phase : strip ? strip.phase : state === "busy" ? "tools" : null },
-    busy: { [tid]: interact ? interact.busy : strip ? strip.busy : state === "busy" },
+    phase: {
+      [tid]: w4 ? w4.phase : interact ? interact.phase : strip ? strip.phase : state === "busy" ? "tools" : null,
+    },
+    busy: { [tid]: w4 ? w4.busy : interact ? interact.busy : strip ? strip.busy : state === "busy" },
   });
   useStarterPools.setState(
     (STARTER_STATES as readonly string[]).includes(state)
@@ -151,6 +172,7 @@ function seed({ state, w, theme }: Params) {
     pickerOpen: false,
     drafts: {},
     draftFor: null,
+    edit: null,
   });
 }
 
@@ -158,23 +180,27 @@ function Harness({ state, w, scroll }: Params) {
   // the pane's own mount effects run first (child before parent): they close
   // the picker, the trace and the Threads sheet for a fresh connection and
   // pin the scroller to the bottom; so the transient chrome a state shows is
-  // opened HERE, never seeded (a seeded target would be wiped), and
-  // `scroll=top` re-parks the scroller, instantly. The sheet's keyboard step
-  // and the strip's scroll position wait one frame for those opens to
-  // commit (the sheet's key handler reads `open` from its last render), and
-  // the ready mark follows them so a frame never lands between
+  // opened HERE, never seeded (a seeded target would be wiped). The sheet's
+  // keyboard step, the W4 hooks (the hot face, edit mode, the `actions`
+  // rest) and the strip's scroll position wait one frame for those opens to
+  // commit (the sheet's key handler reads `open` from its last render);
+  // `scroll=top` re-parks the scroller after them, instantly, so it wins
+  // over the `actions` rest; and the ready mark follows them all so a frame
+  // never lands between
   useEffect(() => {
     if (state === "picker") useAsk.getState().setPickerOpen(true);
     if (state === "threads") useAsk.getState().openThreads();
     const t = (ANATOMY_STATES as readonly string[]).includes(state) ? anatomyTraceFor(state as AnatomyState) : null;
     if (t) useAsk.getState().openTrace(t.exchangeId, t.stepId);
-    if (scroll === "top") {
-      const el = document.querySelector<HTMLElement>(".ask-scroll");
-      if (el) el.scrollTop = 0;
-    }
     const interact = interactFor(state);
     const id = requestAnimationFrame(() => {
       shellAfterMount(state);
+      actionsAfterMount(state);
+      editAfterMount(state);
+      if (scroll === "top") {
+        const el = document.querySelector<HTMLElement>(".ask-scroll");
+        if (el) el.scrollTop = 0;
+      }
       if (interact?.stripScroll != null) {
         const strip = document.querySelector<HTMLElement>(".ans-strip");
         if (strip) strip.scrollLeft = interact.stripScroll;

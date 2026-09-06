@@ -25,6 +25,7 @@ import type {
   AgentThread,
   AgentTurn,
   AgentTurnInput,
+  AgentTurnPatch,
   ClaudeExit,
   GateVerdict,
   HttpChunk,
@@ -453,9 +454,32 @@ export const agentThreadList = (profileId: string) =>
 export const agentThreadDelete = (threadId: string) =>
   invoke<void>("agent_thread_delete", { threadId });
 
+/** delete the turns a cut removed, answers included (W4 jump back / restart).
+ * The caller names the rows: write order is not thread order, so no boundary
+ * describes them (appdb agent_thread_truncate) */
+export const agentThreadTruncate = (threadId: string, turnIds: number[]) =>
+  invoke<void>("agent_thread_truncate", { threadId, turnIds });
+
+/** point the thread at a fresh provider session: a resumed claude -p session
+ * remembers the turns a cut deleted and cannot be rewound */
+export const agentThreadSessionSet = (threadId: string, sessionKey: string) =>
+  invoke<void>("agent_thread_session_set", { threadId, sessionKey });
+
+/** move the thread's turns from `fromIdx` up by `by`, freeing the slots a new
+ * pair needs between two exchanges. Called before the insert, never inside it:
+ * a gap in the indices costs nothing, a collision costs an answer its question
+ * (appdb agent_turns_shift) */
+export const agentTurnsShift = (threadId: string, fromIdx: number, by: number) =>
+  invoke<void>("agent_turns_shift", { threadId, fromIdx, by });
+
 /** returns the new turn's row id, which agentAnswerPut keys on */
 export const agentTurnAdd = (turn: AgentTurnInput) =>
   invoke<number>("agent_turn_add", { turn });
+
+/** rewrite a recorded assistant turn: a re-run answers the same question in
+ * the same place, and the row must say what was answered this time */
+export const agentTurnUpdate = (turn: AgentTurnPatch) =>
+  invoke<void>("agent_turn_update", { turn });
 
 export const agentTurnsList = (threadId: string) =>
   invoke<AgentTurn[]>("agent_turns_list", { threadId });

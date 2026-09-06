@@ -379,7 +379,9 @@ class ClaudeCodeProvider implements Provider {
         mcpConfig: mcpConfigJson(endpoint),
         maxTurns: Math.min(THREAD_TURN_CAP, thread.turnsRemaining),
         system: req.system,
-        threadId: thread.id,
+        // the session key, not the thread id: a cut thread resumes a session
+        // that never saw the turns it deleted
+        threadId: thread.session ?? thread.id,
         firstCall: thread.firstCall,
       });
       const child = this.platform.spawn(

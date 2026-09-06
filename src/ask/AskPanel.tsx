@@ -8,9 +8,10 @@
 // Keyboard contract (W2 plan, "focus and keyboard"):
 //   ↩ sends, ⇧↩ newline; the composer stops only unmodified typing keys
 //   (LESSONS 10), every ⌘ chord bubbles to the window handler.
-//   Esc: close the Threads sheet → close trace → close picker → discard the
-//   pending assumption set while the retry pill shows over an empty
-//   composer → blur the composer; never the pane.
+//   Esc: close the Threads sheet → close trace → close picker → leave edit
+//   mode (the words go home) → discard the pending assumption set while the
+//   retry pill shows over an empty composer → blur the composer; never the
+//   pane.
 //   ⌘. while a turn streams cancels it when focus is inside the pane; the
 //   menu accelerator path routes here from App.tsx by the same focus test.
 // The chords are not written on the chrome (DESIGN rule 11): the send
@@ -34,6 +35,24 @@
 // that follows a landing is subtracted before any layoutId descendant is
 // measured: the older exchanges' chips hold still and only the travelling
 // node moves (the scroller's own comment, below).
+//
+// Edit mode (W4): a click on a bubble, or Jump Back, puts that question in
+// the composer (useAsk.edit; AnswerBlock renders the fold: the edited
+// exchange leaves, the later ones stand as dimmed bubbles). This component
+// owns the mode's travel and its exits. The travel is the lift run backwards:
+// the composer mounts an edit ghost (.ask-ghost[data-edit]) under the bubble's
+// edit id in the commit the bubble unmounts, so the words spring from the
+// bubble's box to the textarea's text origin while the fill fades out behind
+// them; the textarea holds the same text unpainted until the spring settles.
+// Esc, or the draft emptied, sends the words home: one frame with the ghost
+// over the composer as the box the bubble will spring from, then the mode
+// ends and the draft clears in one commit as the exchange remounts. ↩ from
+// the mode is the lift with `from`: the store cuts the thread at the edited
+// exchange and asks in its place (askFrom), with no confirm, because the fold
+// was the preview. The mode ends on its own when its exchange leaves the
+// thread on screen (a cut, a thread switch; the connection switch is the
+// store's), the draft left where it is (LESSONS 4). Reduced motion renders no
+// ghost either way: the textarea holds the text and the stack stands.
 
 import {
   useCallback,
@@ -54,6 +73,7 @@ import { useAsk } from "../stores/ask";
 import { useSchema, type SchemaSnapshot } from "../stores/schema";
 import { useSettings } from "../stores/settings";
 import { AnswerBlock } from "./AnswerBlock";
+import { editLiftId } from "./EchoActions";
 import { FollowUps } from "./FollowUps";
 import { ModelPicker } from "./ModelPicker";
 import { RetryPill } from "./RetryPill";
@@ -82,7 +102,30 @@ interface Lift {
   scrollTop: number;
   /** exchanges in the thread at send; one more and the question has landed */
   count: number;
+  /** sent from edit mode: the exchange the thread is cut at (askFrom), whose
+   * index is `count`; `arrived` reads the landing against it */
+  from?: string;
 }
+
+/** the lifted question is in the thread: one more exchange than at send and,
+ * from edit mode, a different exchange at the cut. Before the cut the thread
+ * is longer than `count` but still holds the edited exchange there; after it
+ * the thread is exactly `count` long until the new one lands. Neither is a
+ * landing, and reading either as one drops the ghost before the words move */
+const arrived = (l: Lift, list: readonly Exchange[]) =>
+  list.length > l.count && (l.from === undefined || list[l.count]?.id !== l.from);
+
+/** the composer side of the edit travel: `in` while the words arrive from
+ * the bubble, `out` for the one frame before they leave for it */
+interface EditTravel {
+  exchangeId: string;
+  dir: "in" | "out";
+}
+
+/** the send net's timer, past spring.layout's settle: onLayoutAnimationComplete
+ * fires only when a layout animation ran, and a bubble that entered the mode
+ * without its arming frame would otherwise leave the words unpainted */
+const EDIT_TRAVEL_NET_MS = 600;
 
 /** the empty state (section 1): three starters docked above the composer and
  * nothing else. Its own component so useStarters mounts with the empty state
@@ -192,20 +235,86 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
     return () => useAsk.getState().setDraftFor(null);
   }, [profileId]);
 
+  // edit mode (file header): on while the edited exchange is in the thread on
+  // screen. A cut, a thread switch or New Thread takes it out and the mode
+  // ends with it, the draft staying where it was typed (LESSONS 4); the
+  // connection switch ends it in the store (setDraftFor)
+  const edit = useAsk((s) => s.edit);
+  const editAt =
+    edit !== null && edit.threadId === threadId ? exchanges.findIndex((e) => e.id === edit.exchangeId) : -1;
+  const editing = editAt !== -1;
+  useEffect(() => {
+    if (edit !== null && edit.profileId === profileId && !editing) useAsk.getState().endEdit();
+  }, [edit, profileId, editing]);
+
+  // the travel's composer side, derived in render and not in an effect: the
+  // ghost must mount in the very commit the bubble unmounts (motion pairs the
+  // two through the snapshot it takes of a layoutId node as it leaves) and
+  // leave in the commit the bubble returns
+  const [travel, setTravel] = useState<EditTravel | null>(null);
+  const editKey = editing && edit ? edit.exchangeId : null;
+  const [seenEdit, setSeenEdit] = useState<string | null>(null);
+  if (editKey !== seenEdit) {
+    setSeenEdit(editKey);
+    setTravel(editKey !== null && !prefersReducedMotion() ? { exchangeId: editKey, dir: "in" } : null);
+  }
+  const settleTravel = useCallback(() => setTravel((t) => (t?.dir === "in" ? null : t)), []);
+  useEffect(() => {
+    if (travel?.dir !== "in") return;
+    const t = setTimeout(settleTravel, EDIT_TRAVEL_NET_MS);
+    return () => clearTimeout(t);
+  }, [travel, settleTravel]);
+
+  // Esc, or the draft emptied: the words go home. The ghost stands over the
+  // composer for one frame as the box motion will pair from, then the mode
+  // ends and the draft clears in one commit, so the exchange remounts (its
+  // bubble under the edit id) as the ghost leaves and the fold unfolds
+  const cancelEdit = useCallback(() => {
+    const e = useAsk.getState().edit;
+    if (!e) return;
+    const finish = () => {
+      const a = useAsk.getState();
+      if (a.edit?.exchangeId !== e.exchangeId) return;
+      if (a.draftFor === e.profileId) a.setDraft("");
+      a.endEdit();
+    };
+    if (prefersReducedMotion()) {
+      finish();
+      return;
+    }
+    setTravel({ exchangeId: e.exchangeId, dir: "out" });
+    requestAnimationFrame(finish);
+  }, []);
+
   // focus requests (⌘J, palette, Ask Differently) land on the composer one
-  // frame later, after any overlay's focus-restore microtask
+  // frame later, after any overlay's focus-restore microtask. A question
+  // brought back for editing takes the caret after its last word
   useEffect(() => {
     if (!focusSeq) return;
-    const id = requestAnimationFrame(() => taRef.current?.focus({ preventScroll: true }));
+    const id = requestAnimationFrame(() => {
+      const ta = taRef.current;
+      if (!ta) return;
+      const arriving = document.activeElement !== ta;
+      ta.focus({ preventScroll: true });
+      if (arriving && useAsk.getState().edit) ta.setSelectionRange(ta.value.length, ta.value.length);
+    });
     return () => cancelAnimationFrame(id);
   }, [focusSeq]);
 
-  // the composer grows with its text up to four lines, then scrolls inside
+  // the composer grows with its text up to four lines, then scrolls inside.
+  // A thread read to its end stays read to its end: the composer's growth
+  // shrinks the scroller from below, which would hide the last footer behind
+  // it (a three-line question brought back for editing at 320 took 40px of
+  // thread with it), so a scroller at its end is re-pinned, instantly; one
+  // the user has scrolled up is left where it is
   useLayoutEffect(() => {
     const ta = taRef.current;
     if (!ta) return;
+    const sc = scrollRef.current;
+    const atEnd = sc !== null && sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 1;
     ta.style.height = "auto";
     ta.style.height = `${Math.min(ta.scrollHeight, COMPOSER_MAX_H)}px`;
+    if (sc && atEnd) sc.scrollTop = sc.scrollHeight;
   }, [draft]);
 
   // a new question echo pins the scroller to the bottom, instantly (never
@@ -229,11 +338,16 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
   // never created twice
   const [lift, setLift] = useState<Lift | null>(null);
   const sending = useRef(false);
-  const landed = lift !== null && exchanges.length > lift.count;
+  // a send from edit mode cuts the thread before it asks (askFrom): while the
+  // cut is out, a thread emptied by it keeps its scroller, so the starters
+  // never flash between the cut and the landing
+  const [cutFrom, setCutFrom] = useState<string | null>(null);
+  const landed = lift !== null && arrived(lift, exchanges);
   useEffect(() => {
     if (!landed) return;
     sending.current = false;
     setLift(null);
+    setCutFrom(null);
   }, [landed]);
   useEffect(() => {
     if (!lift) return;
@@ -242,6 +356,7 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
     if (lift.profileId !== profileId) {
       sending.current = false;
       setLift(null);
+      setCutFrom(null);
       return;
     }
     // one frame with the ghost in the DOM: motion snapshots a layout node as
@@ -259,8 +374,7 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
       };
       const unsub = useAgent.subscribe((s) => {
         const tid = s.activeThread[profileId];
-        const n = tid ? (s.exchanges[tid] ?? []).length : 0;
-        if (n <= lift.count) return;
+        if (!arrived(lift, tid ? s.exchanges[tid] ?? [] : [])) return;
         settle();
         const a = useAsk.getState();
         if (a.draftFor !== profileId) return;
@@ -269,16 +383,18 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
       });
       // ask() resolves without appending when it refuses (the thread went
       // busy, the connection changed) and rejects when the thread cannot be
-      // created: either way the ghost leaves and the draft stays, unsent
-      useAgent
-        .getState()
-        .ask(lift.question)
+      // created: either way the ghost leaves and the draft stays, unsent.
+      // From edit mode the same send goes through askFrom (the cut, then
+      // the ask), so the new exchange lands where the edited one stood
+      const agent = useAgent.getState();
+      (lift.from ? agent.askFrom(lift.from, lift.question) : agent.ask(lift.question))
         .catch(() => {})
         .finally(() => {
           if (done) return;
           settle();
           sending.current = false;
           setLift(null);
+          setCutFrom(null);
         });
     });
     return () => cancelAnimationFrame(id);
@@ -289,7 +405,10 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
   // then) and comes back when a cancelled retry restores the prior answer
   const pending = useAgent((s) => s.pending);
   const pillFor = useMemo(() => pendingTarget(exchanges, pending), [exchanges, pending]);
-  const pillLabel = pillFor !== null && !busy && connected ? retryLabel(pending[pillFor] ?? {}) : null;
+  // in edit mode the pill hides with the anatomy: a set on a folded exchange
+  // has nothing on screen to retry
+  const pillLabel =
+    pillFor !== null && !busy && connected && !editing ? retryLabel(pending[pillFor] ?? {}) : null;
   const applyPill = useCallback(() => {
     if (pillFor === null) return;
     void useAgent.getState().applyPending(pillFor);
@@ -308,10 +427,18 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
     if (agent.activeProfileId !== profileId) return;
     const tid = agent.activeThread[profileId];
     if (tid && agent.busy[tid]) return;
+    const list = tid ? agent.exchanges[tid] ?? [] : [];
+    // from edit mode the send replaces the thread from the edited exchange;
+    // the fold was the preview, so nothing asks again here
+    const e = useAsk.getState().edit;
+    const at = e && e.threadId === tid ? list.findIndex((x) => x.id === e.exchangeId) : -1;
+    const from = e && at !== -1 ? e.exchangeId : undefined;
+    if (from) setCutFrom(from);
     // reduced motion: nothing travels, the bubble simply appears
     if (prefersReducedMotion()) {
       useAsk.getState().setDraft("");
-      void agent.ask(q);
+      if (from) void agent.askFrom(from, q).finally(() => setCutFrom(null));
+      else void agent.ask(q);
       return;
     }
     sending.current = true;
@@ -321,7 +448,8 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
       question: q,
       raw,
       scrollTop: taRef.current?.scrollTop ?? 0,
-      count: tid ? (agent.exchanges[tid] ?? []).length : 0,
+      count: from ? at : list.length,
+      from,
     });
   }, [connected, profileId]);
 
@@ -343,6 +471,7 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
       if (a.threadsOpen) a.closeThreads();
       else if (a.traceOpenFor) a.closeTrace();
       else if (a.pickerOpen) a.setPickerOpen(false);
+      else if (editing) cancelEdit();
       else if (pillFor !== null && pillLabel !== null && (a.drafts[profileId] ?? "").trim() === "")
         useAgent.getState().discardPending(pillFor);
       else if (document.activeElement === taRef.current)
@@ -401,7 +530,7 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
           onConfigured={() => useAsk.getState().requestFocus()}
           onManage={openSettings}
         />
-      ) : exchanges.length === 0 ? (
+      ) : exchanges.length === 0 && cutFrom === null ? (
         <Starters profileId={profileId} snapshot={snapshot} asked={asked} connected={connected} />
       ) : (
         // a pending set reserves the pill's footprint at the scroller's end
@@ -420,7 +549,7 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
           className="ask-scroll"
           layoutScroll
           ref={scrollRef}
-          data-pill={pillFor !== null ? "" : undefined}
+          data-pill={pillFor !== null && !editing ? "" : undefined}
         >
           {exchanges.map((ex, i) => (
             <AnswerBlock
@@ -452,16 +581,36 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
               <span style={{ translate: `0 ${-lift.scrollTop}px` }}>{lift.raw}</span>
             </motion.div>
           )}
+          {/* the edit ghost (file header): the words of the bubble that left,
+              over the textarea's text, under the bubble's edit id; `in` wears
+              the fill that fades out, `out` is bare (the returning bubble's
+              own fill fades in as it lands) */}
+          {travel !== null && (
+            <motion.div
+              className="ask-ghost"
+              data-edit={travel.dir}
+              layoutId={editLiftId(travel.exchangeId)}
+              layout="position"
+              transition={spring.layout}
+              onLayoutAnimationComplete={settleTravel}
+              aria-hidden="true"
+            >
+              <span>{draft}</span>
+            </motion.div>
+          )}
           <div className="ask-box">
             <textarea
               ref={taRef}
-              className={`ask-ta${lift !== null && !landed ? " ghosted" : ""}`}
+              className={`ask-ta${(lift !== null && !landed) || travel !== null ? " ghosted" : ""}`}
               rows={1}
               placeholder={connected ? `Ask about ${profile.dbname}…` : "Connect to ask"}
               aria-label="Ask"
               disabled={!connected}
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                if (editing && e.target.value === "") cancelEdit();
+              }}
               onKeyDown={onComposerKey}
             />
             <div className="ask-ctl">

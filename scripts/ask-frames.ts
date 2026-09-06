@@ -10,8 +10,9 @@
 //              ~/projects/qwry-agent-lab/docs/research/w2d-frames
 //   --states   subset of answer,empty,busy,picker,failure,disconnected,small,
 //              pending,retry,strip,threads,scalar,kv,wide,trace,echo,echo-long,
-//              starters,starters-fallback,qwrying,qwrying-trail,kv-wide
-//              (default: all twenty-two)
+//              starters,starters-fallback,qwrying,qwrying-trail,kv-wide,
+//              actions,actions-latest,actions-busy,edit,edit-latest,edit-stack
+//              (default: all twenty-eight)
 //   --widths   subset of 320,392,560 (default: all three)
 //   --themes   subset of dark,light (default: both)
 //   --scroll   bottom (default): the pane as it mounts, pinned to the newest content,
@@ -99,6 +100,22 @@
 // with reduced motion forced, so the two qwrying frames show the static word
 // by design; the sweep is the dev build's eyeball.
 //
+// W4 (the sketch's "message actions and jumping back" rows; fixtures.actions.ts,
+// fixtures.edit.ts): the discussion thread plus a third exchange, a
+// ninety-one-character question over a value. actions = the second bubble hot
+// (Copy · Restart · Jump Back beside it, forced through data-hot since a still
+// cannot hover), the scroller parked at that exchange, the sketch's rest;
+// actions-latest = the newest bubble hot at the bottom pin; actions-busy = the
+// second bubble hot while the third streams: Restart and Jump Back disabled,
+// Copy live, the Stop face; edit = edit mode at the second exchange: its
+// question in the focused composer, the exchange gone (variant B), the third
+// standing as its dimmed bubble alone; edit-latest = the newest in the
+// composer, the first two whole; edit-stack = the second of FOUR exchanges (a
+// 41-character follow-up after the third) in the composer, so the third and
+// fourth fold together, two dimmed bubbles --sp-2 apart where the thread
+// gives 28px, the one still that shows the stack's closed gap. Reduced motion
+// means no travel ghost: the textarea holds the text at once.
+//
 // The first frame runs alone so vite compiles the module graph once; the rest
 // run in parallel. Whole run: ~60 s warm for the full matrix.
 
@@ -133,6 +150,12 @@ const ALL_STATES = [
   "qwrying",
   "qwrying-trail",
   "kv-wide",
+  "actions",
+  "actions-latest",
+  "actions-busy",
+  "edit",
+  "edit-latest",
+  "edit-stack",
 ] as const;
 const ALL_WIDTHS = [320, 392, 560] as const;
 const ALL_THEMES = ["dark", "light"] as const;

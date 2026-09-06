@@ -18,8 +18,12 @@ import {
   agentThreadCreate,
   agentThreadDelete,
   agentThreadList,
+  agentThreadSessionSet,
+  agentThreadTruncate,
   agentTurnAdd,
   agentTurnsList,
+  agentTurnsShift,
+  agentTurnUpdate,
   cancel as cancelSession,
   disconnect,
 } from "../ipc/commands";
@@ -33,6 +37,7 @@ import type { Provider, ProviderId } from "../agent/providers/types";
 import { runAsk, type AskAnswer, type AskErrorKind, type AskEvent, type AskPhase } from "../agent/loop";
 import { suggestFollowUps } from "../agent/followups";
 import { buildAssumptions, extractSql } from "../agent/extract";
+import { answerText } from "../agent/display";
 import type {
   Assumption,
   SanityFragment,
@@ -63,6 +68,18 @@ export interface Exchange {
   id: string;
   /** appdb agent_turns row of the ASSISTANT turn; null until persisted */
   turnId: number | null;
+  /** appdb agent_turns row of the USER turn; null until persisted. A cut names
+   * a thread's rows by these two ids rather than by any boundary, because
+   * neither `idx` nor write order can be read as one: an exchange that failed
+   * before persist() owns no rows at all, and a Retry on it writes them after
+   * its successors'. Absent means null, which is what a harness fixture means */
+  userTurnId?: number | null;
+  /** the `idx` of the USER turn's row; its answer's is `idx + 1`. Null until
+   * the pair is persisted (absent is null, as a harness fixture means it).
+   * This is where the thread's order lives: a new pair is allocated from its
+   * NEIGHBOURS' idx, never from the exchange's position on screen, which a
+   * reload compacts over the gap an unpersisted exchange leaves */
+  idx?: number | null;
   question: string;
   /** the answer slot's text: the model's last text block, streamed */
   text: string;
@@ -138,6 +155,19 @@ interface AgentState {
   fixIt: (exchangeId: string, sql: string) => Promise<void>;
   /** the retry a provider error offers: the same question, asked again */
   retry: (exchangeId: string) => Promise<void>;
+  /** cut the thread at an exchange: everything after it (and the exchange
+   * itself when `inclusive`) leaves the state and appdb, and the thread
+   * mints a fresh provider session, because a resumed one remembers the
+   * turns the cut deleted and cannot be rewound. Refused while busy */
+  truncateThread: (threadId: string, fromExchangeId: string, inclusive: boolean) => Promise<void>;
+  /** send from edit mode: the thread is cut from that exchange inclusive and
+   * the new question lands where the old one stood */
+  askFrom: (exchangeId: string, question: string) => Promise<void>;
+  /** Restart: the latest exchange takes the retry shape (nothing is lost, a
+   * cancel puts the prior answer back); an older one cuts every exchange
+   * after it and re-runs its own question. The confirm belongs to the UI,
+   * which knows what the user is looking at; the store never asks */
+  restartFrom: (exchangeId: string) => Promise<void>;
   /** thread closed or connection disconnected: the session goes with it */
   closeThread: (threadId: string) => Promise<void>;
   dropProfile: (profileId: string) => Promise<void>;
@@ -159,6 +189,11 @@ const controllers = new Map<string, AbortController>();
 const cancelRequested = new Set<string>();
 /** Threads whose provider has already been given a session id to resume. */
 const resumed = new Set<string>();
+/** Threads cut since their last run: the next run replays the kept exchanges
+ * in its user message, because the cut minted a session that has never heard
+ * of them. Cleared when a run lands, so the replay is carried once and a
+ * failed or cancelled first attempt keeps it for the next. */
+const cutPending = new Set<string>();
 
 const TITLE_CAP = 80;
 const title = (question: string) =>
@@ -272,6 +307,7 @@ export const useAgent = create<AgentState>((set, get) => ({
       profileId: r.profile_id,
       title: r.title,
       createdAt: r.created_at,
+      sessionKey: r.session_key ?? r.id,
     }));
     set((s) => ({ threads: { ...s.threads, [profileId]: threads } }));
   },
@@ -295,6 +331,11 @@ export const useAgent = create<AgentState>((set, get) => ({
         exchanges.push({
           id: `turn-${turn.id}`,
           turnId: null,
+          userTurnId: turn.id,
+          // the row's own slot, carried so the next pair is placed after it:
+          // the position this exchange takes on screen is not it (a thread
+          // with a gap compacts, the rows do not renumber)
+          idx: turn.idx,
           question: turn.content,
           text: "",
           thinking: "",
@@ -367,6 +408,7 @@ export const useAgent = create<AgentState>((set, get) => ({
 
   deleteThread: async (profileId, threadId) => {
     await get().closeThread(threadId);
+    cutPending.delete(threadId);
     await agentThreadDelete(threadId);
     set((s) => {
       const exchanges = { ...s.exchanges };
@@ -411,6 +453,7 @@ export const useAgent = create<AgentState>((set, get) => ({
         profileId: row.profile_id,
         title: row.title,
         createdAt: row.created_at,
+        sessionKey: row.session_key ?? row.id,
       };
       set((s) => ({
         threads: { ...s.threads, [profileId]: [thread, ...(s.threads[profileId] ?? [])] },
@@ -423,6 +466,8 @@ export const useAgent = create<AgentState>((set, get) => ({
     const exchange: Exchange = {
       id: crypto.randomUUID(),
       turnId: null,
+      userTurnId: null,
+      idx: null,
       question: text,
       text: "",
       thinking: "",
@@ -454,7 +499,6 @@ export const useAgent = create<AgentState>((set, get) => ({
       askText: text,
       snapshot,
       choice,
-      persistUserTurn: true,
     });
   },
 
@@ -502,7 +546,6 @@ export const useAgent = create<AgentState>((set, get) => ({
       askText,
       snapshot,
       choice,
-      persistUserTurn: false,
       flips: [{ id: chipId, label: chip.label, active: flipped }],
     });
   },
@@ -553,7 +596,6 @@ export const useAgent = create<AgentState>((set, get) => ({
       askText,
       snapshot,
       choice,
-      persistUserTurn: false,
       flips,
     });
   },
@@ -578,7 +620,6 @@ export const useAgent = create<AgentState>((set, get) => ({
       askText,
       snapshot,
       choice,
-      persistUserTurn: false,
     });
   },
 
@@ -595,9 +636,95 @@ export const useAgent = create<AgentState>((set, get) => ({
       askText: exchange.question,
       snapshot,
       choice,
-      // a provider failure never reached persist(): the user turn is still
-      // unwritten, so this run writes it; a persisted exchange keeps its rows
-      persistUserTurn: exchange.turnId === null,
+    });
+  },
+
+  truncateThread: async (threadId, fromExchangeId, inclusive) => {
+    // everything the cut depends on, read before the first await (LESSONS 3)
+    if (get().busy[threadId]) return;
+    const exchanges = get().exchanges[threadId] ?? [];
+    const at = exchanges.findIndex((e) => e.id === fromExchangeId);
+    if (at < 0) return;
+    const keep = inclusive ? at : at + 1;
+    // a cut that removes nothing is not a cut: the provider still remembers
+    // exactly what is on screen, so its session stands
+    if (keep >= exchanges.length) return;
+    const gone = exchanges.slice(keep);
+    const profileId = profileOf(get, threadId);
+    const sessionKey = crypto.randomUUID();
+    set((s) => {
+      let pending = s.pending;
+      for (const e of gone) pending = without(pending, e.id);
+      return {
+        exchanges: { ...s.exchanges, [threadId]: exchanges.slice(0, keep) },
+        pending,
+        threads: profileId
+          ? {
+              ...s.threads,
+              [profileId]: (s.threads[profileId] ?? []).map((t) =>
+                t.id === threadId ? { ...t, sessionKey } : t,
+              ),
+            }
+          : s.threads,
+      };
+    });
+    // claude -p resumes a session that remembers the cut turns and cannot be
+    // rewound: the thread starts a new one, and its first call replays what
+    // the cut kept (runInto)
+    resumed.delete(threadId);
+    cutPending.add(threadId);
+    // the cut NAMES its rows, because no boundary describes them: an exchange
+    // whose run failed before persist() owns none, and a Retry on it writes
+    // its pair after its own successors', so neither the row count nor the id
+    // order of a thread says where the cut falls
+    const cutRows = gone.flatMap(rowsOf);
+    try {
+      if (cutRows.length > 0) await agentThreadTruncate(threadId, cutRows);
+      await agentThreadSessionSet(threadId, sessionKey);
+    } catch (e) {
+      // history is a convenience: a lost write costs the thread its record of
+      // the cut, never the thread on screen
+      console.error("agent thread truncate failed", e);
+    }
+  },
+
+  askFrom: async (exchangeId, question) => {
+    const text = question.trim();
+    if (!text) return;
+    const found = findExchange(get, exchangeId);
+    if (!found || get().busy[found.threadId]) return;
+    await get().truncateThread(found.threadId, exchangeId, true);
+    // the cut's appdb round trip is a gap the user can switch threads in, and
+    // ask() writes to whatever is on screen then (LESSONS 3): the send is
+    // checked against the thread it was aimed at before it lands
+    const profileId = get().activeProfileId;
+    if (!profileId || get().activeThread[profileId] !== found.threadId) return;
+    // ask() appends to the truncated thread, so the new exchange lands on the
+    // spot the edited one stood on, turn rows included
+    await get().ask(text);
+  },
+
+  restartFrom: async (exchangeId) => {
+    const found = locateExchange(get, exchangeId);
+    if (!found) return;
+    const { profileId, threadId, exchange, snapshot, choice } = found;
+    const exchanges = get().exchanges[threadId] ?? [];
+    // the latest exchange loses nothing: that is the retry shape, prior and
+    // all, and it needs no confirm
+    if (exchanges[exchanges.length - 1]?.id === exchangeId) {
+      await get().retry(exchangeId);
+      return;
+    }
+    await get().truncateThread(threadId, exchangeId, false);
+    rearm(set, threadId, exchangeId);
+    await runInto(set, get, {
+      profileId,
+      threadId,
+      exchangeId,
+      question: exchange.question,
+      askText: exchange.question,
+      snapshot,
+      choice,
     });
   },
 
@@ -651,6 +778,67 @@ function locateExchange(get: () => AgentState, exchangeId: string) {
   const choice = modelChoice(profileId);
   if (!snapshot || !choice) return null;
   return { profileId, threadId, exchange, snapshot, choice };
+}
+
+/** the appdb rows an exchange owns: its question's turn and its answer's, by
+ * the ids their writes returned. An exchange whose run failed before persist()
+ * owns none, and a Retry on such an exchange writes its rows after everything
+ * that already stood below it, so these ids are the only honest account of
+ * what a cut removes (AGENT-SPEC §9) */
+function rowsOf(e: Exchange): number[] {
+  const rows: number[] = [];
+  if (e.userTurnId != null) rows.push(e.userTurnId);
+  if (e.turnId !== null) rows.push(e.turnId);
+  return rows;
+}
+
+/** the connection a thread belongs to, from the loaded lists rather than
+ * from what is on screen: a cut is about the thread it names, not about the
+ * navigation (LESSONS 4) */
+function profileOf(get: () => AgentState, threadId: string): string | null {
+  for (const [profileId, threads] of Object.entries(get().threads)) {
+    if (threads.some((t) => t.id === threadId)) return profileId;
+  }
+  return null;
+}
+
+/** the provider session a thread resumes: its own key, or the thread id for
+ * every thread that has never been cut */
+function threadSession(get: () => AgentState, threadId: string): string {
+  const profileId = profileOf(get, threadId);
+  const thread = profileId
+    ? (get().threads[profileId] ?? []).find((t) => t.id === threadId)
+    : undefined;
+  return thread?.sessionKey ?? threadId;
+}
+
+/** How much of a cut thread's replay the model is given. Two thousand
+ * characters is a few hundred tokens: enough for the four or five exchanges a
+ * follow-up actually refers back to, small enough that a long thread's first
+ * question after a cut is not mostly history. */
+const REPLAY_CAP = 2000;
+
+/** The kept exchanges as the first call after a cut states them: one block
+ * each, oldest dropped first until the whole fits under the cap. Sent as a
+ * prefix of the user message and nowhere else, so PROMPT_VERSION and the
+ * eval's prompt bytes do not move (loop.ts withReplay). */
+export function replayOf(exchanges: readonly Exchange[]): string {
+  const head = "Earlier in this thread:";
+  const blocks = exchanges.map((e) => {
+    const sql = e.answer?.sql ?? null;
+    const said = firstSentence(answerText(e.answer?.text ?? e.text));
+    return `Q: ${e.question}\nSQL: ${sql ?? "none"}\nA: ${said || "none"}`;
+  });
+  const size = () => head.length + 2 + blocks.join("\n\n").length;
+  while (blocks.length > 0 && size() > REPLAY_CAP) blocks.shift();
+  return blocks.length === 0 ? "" : `${head}\n\n${blocks.join("\n\n")}`;
+}
+
+/** the answer in one line: its first sentence, whitespace collapsed */
+function firstSentence(text: string): string {
+  const flat = text.trim().replace(/\s+/g, " ");
+  const end = flat.match(/^.*?[.!?](?=\s|$)/);
+  return (end ? end[0] : flat).slice(0, 300);
 }
 
 /** the exchange by id in the connection's active thread; null when gone */
@@ -803,7 +991,6 @@ interface RunArgs {
   askText: string;
   snapshot: ReturnType<typeof useSchema.getState>["snapshots"][string];
   choice: ModelChoice;
-  persistUserTurn: boolean;
   /** chip states the user chose, reapplied to the landed chips whatever the
    * re-run's own Assumptions line said */
   flips?: Flip[];
@@ -812,6 +999,15 @@ interface RunArgs {
 async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
   const { threadId, exchangeId, profileId } = args;
   cancelRequested.delete(threadId);
+  // the session the provider resumes and, after a cut, the transcript of what
+  // the cut kept: both read before the first await (LESSONS 3). The exchange
+  // being asked is not in its own replay
+  const sessionKey = threadSession(get, threadId);
+  const onScreen = get().exchanges[threadId] ?? [];
+  const asked = onScreen.findIndex((e) => e.id === exchangeId);
+  const replay = cutPending.has(threadId)
+    ? replayOf(asked < 0 ? onScreen : onScreen.slice(0, asked))
+    : "";
   let sessionId = get().sessions[threadId];
   if (!sessionId) {
     try {
@@ -920,10 +1116,15 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
       model: args.choice.model,
       tier: tierOf(args.choice.model, args.choice.providerId).tier,
       signal: controller.signal,
-      thread: { id: threadId, firstCall: !resumed.has(threadId) },
+      thread: replay
+        ? { id: threadId, session: sessionKey, firstCall: !resumed.has(threadId), replay }
+        : { id: threadId, session: sessionKey, firstCall: !resumed.has(threadId) },
       onEvent,
     });
     resumed.add(threadId);
+    // the replay is carried once: a run that never landed keeps it for the
+    // next attempt, since its session may never have heard the history
+    cutPending.delete(threadId);
   } catch (e) {
     const mine = authoritative();
     if (mine) controllers.delete(threadId);
@@ -1040,19 +1241,97 @@ export function applyFlips(chips: Assumption[], flips: readonly Flip[]): Assumpt
   return out;
 }
 
+/** The `idx` a new pair takes: the slot after the nearest EARLIER exchange
+ * that owns rows (0 when there is none), and, when the nearest LATER one is
+ * already sitting there, the slot the tail was shifted out of.
+ *
+ * Neighbours, never the position on screen: a reloaded thread compacts over
+ * the exchange that failed before persisting, so position × 2 lands on rows
+ * the thread is still showing (LESSONS 1). The shift and the insert are two
+ * IPC calls rather than one transaction, accepted deliberately: a failure
+ * between them leaves a hole in the indices, which nothing reads, where a
+ * shared slot would pair an answer with somebody else's question. */
+async function allocateIdx(
+  set: Setter,
+  threadId: string,
+  exchanges: readonly Exchange[],
+  at: number,
+): Promise<number> {
+  let prev: number | null = null;
+  for (let i = at - 1; i >= 0 && prev === null; i--) prev = exchanges[i].idx ?? null;
+  let next: number | null = null;
+  for (let i = at + 1; i < exchanges.length && next === null; i++) next = exchanges[i].idx ?? null;
+  const base = prev === null ? 0 : prev + 2;
+  if (next !== null && next < base + 2) {
+    const from = next;
+    const by = base + 2 - from;
+    await agentTurnsShift(threadId, from, by);
+    // the rows moved, so the exchanges holding them move with them: the state
+    // is the only account of which slot belongs to whom until the next reload
+    set((s) => ({
+      exchanges: {
+        ...s.exchanges,
+        [threadId]: (s.exchanges[threadId] ?? []).map((e) =>
+          e.idx != null && e.idx >= from ? { ...e, idx: e.idx + by } : e,
+        ),
+      },
+    }));
+  }
+  return base;
+}
+
 async function persist(set: Setter, get: () => AgentState, args: RunArgs, answer: AskAnswer) {
   const { threadId, exchangeId } = args;
   const provider = args.choice.providerId;
   const model = args.choice.model;
-  const existing = (get().exchanges[threadId] ?? []).find((e) => e.id === exchangeId);
+  const exchanges = get().exchanges[threadId] ?? [];
+  const at = exchanges.findIndex((e) => e.id === exchangeId);
+  // a cut or a closed thread took the exchange off screen while the answer was
+  // still in the air: writing it now would leave a row no thread shows
+  if (at < 0) return;
+  const existing = exchanges[at];
+  const calls: ToolCallRecord[] = [];
+  const results: ToolResultRecord[] = [];
+  for (const step of answer.trace) {
+    if (step.step !== "tool") continue;
+    calls.push({ id: step.id, name: step.name, args: step.args });
+    results.push({ id: step.id, name: step.name, result: step.result, isError: step.isError });
+  }
+  const said = {
+    content: answer.text,
+    tool_calls_json: JSON.stringify(calls),
+    tool_results_json: JSON.stringify(results),
+    usage_json: JSON.stringify(answer.usage),
+    model,
+    provider,
+    prompt_version: answer.promptVersion,
+    ms: answer.ms,
+  };
   try {
-    let turnId = existing?.turnId ?? null;
+    let turnId = existing.turnId;
     if (turnId === null) {
-      const idx = (get().exchanges[threadId] ?? []).length * 2;
-      if (args.persistUserTurn) {
-        await agentTurnAdd({
+      // `idx` is the thread's order: the question's slot and its answer's one
+      // above it, ALLOCATED BETWEEN NEIGHBOURS (allocateIdx) and never read
+      // out of the exchange's position on screen. A position is not a slot: a
+      // reload compacts over the gap an exchange that failed before persisting
+      // leaves, while every row keeps the idx it was written with, so a
+      // position doubled would hand the next question the slots the last kept
+      // exchange is already using (LESSONS 1, AGENT-SPEC §9). Gaps in the
+      // indices are fine and expected; a collision costs an answer its
+      // question, so the tail is shifted whenever a slot is not free
+      let idx = existing.idx ?? null;
+      if (idx === null) {
+        idx = await allocateIdx(set, threadId, exchanges, at);
+        // recorded before the row that takes it, so a failed write reuses the
+        // slot the shift already freed instead of shifting a second time
+        const allocated = idx;
+        patchExchange(set, threadId, exchangeId, (e) => ({ ...e, idx: allocated }));
+      }
+      let userTurnId = existing.userTurnId ?? null;
+      if (userTurnId === null) {
+        userTurnId = await agentTurnAdd({
           thread_id: threadId,
-          idx: Math.max(idx - 2, 0),
+          idx,
           role: "user",
           content: args.question,
           model,
@@ -1060,28 +1339,17 @@ async function persist(set: Setter, get: () => AgentState, args: RunArgs, answer
           prompt_version: answer.promptVersion,
           ms: 0,
         });
+        // recorded before the answer's own write, so a failure there costs the
+        // answer row and never leaves the question written twice
+        patchExchange(set, threadId, exchangeId, (e) => ({ ...e, userTurnId }));
       }
-      const calls: ToolCallRecord[] = [];
-      const results: ToolResultRecord[] = [];
-      for (const step of answer.trace) {
-        if (step.step !== "tool") continue;
-        calls.push({ id: step.id, name: step.name, args: step.args });
-        results.push({ id: step.id, name: step.name, result: step.result, isError: step.isError });
-      }
-      turnId = await agentTurnAdd({
-        thread_id: threadId,
-        idx: Math.max(idx - 1, 0),
-        role: "assistant",
-        content: answer.text,
-        tool_calls_json: JSON.stringify(calls),
-        tool_results_json: JSON.stringify(results),
-        usage_json: JSON.stringify(answer.usage),
-        model,
-        provider,
-        prompt_version: answer.promptVersion,
-        ms: answer.ms,
-      });
+      turnId = await agentTurnAdd({ thread_id: threadId, idx: idx + 1, role: "assistant", ...said });
       patchExchange(set, threadId, exchangeId, (e) => ({ ...e, turnId }));
+    } else {
+      // a re-run answers the same question in the same place: the turn is
+      // rewritten, or a reload pairs the old prose with the new SQL and shows
+      // an answer nobody was given (LESSONS 1)
+      await agentTurnUpdate({ id: turnId, ...said });
     }
     await agentAnswerPut({
       turn_id: turnId,

@@ -31,6 +31,10 @@
 //                                           chunk, so the other local runtimes read
 //                                           as not running (probeLocal yields [])
 //   agent_http_abort                        no-op
+//   agent_thread_truncate / _session_set    nothing: a cut in the harness moves
+//   / agent_turns_shift                     the fixture thread on screen and has
+//                                           no appdb behind it, so the store's
+//                                           idx bookkeeping writes nowhere
 //   everything else                         rejects Error("harness: <cmd> has no fixture")
 
 import type { Channel, InvokeArgs } from "@tauri-apps/api/core";
@@ -78,6 +82,9 @@ export function installTauriShim(): void {
         case "agent_http_stream":
           return httpStream(payload);
         case "agent_http_abort":
+        case "agent_thread_truncate":
+        case "agent_thread_session_set":
+        case "agent_turns_shift":
           return undefined;
         default:
           throw new Error(`harness: ${cmd} has no fixture`);

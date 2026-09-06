@@ -17,7 +17,8 @@ by overlaying, and the two modes share the one width. Each mode has its own
 floor (Inspector 220, Ask 320); switching modes clamps the width to the new
 floor. One store owns the pane (`src/stores/sidePane.ts`: mode, open, width,
 persisted the way the inspector's were); Ask-only UI state (per-connection
-composer drafts, focus requests) stays in `src/stores/ask.ts`. The pane opens
+composer drafts, focus requests, the edit mode of §2a) stays in
+`src/stores/ask.ts`. The pane opens
 from the titlebar pair (a radio: the lit icon is the mode; Ask's glyph is the
 chat bubble, lucide `MessageSquare`), the palette (`Ask`), the View menu, and
 the chords: ⌘J opens the pane in Ask, ⌘I in Inspector; the chord of the mode
@@ -64,11 +65,38 @@ apply are omitted, never left as dead space (DESIGN rule 2 scope note):
 
 1. **Question echo**: the user's text, tier-1 contrast, in a tinted bubble at
    the right edge (the sketch's variant B: `accent-soft` fill, a 22% accent
-   ring, one 6px corner toward the answer, at most 86% of the pane), the
-   anatomy below staying left; exchanges sit 28px apart. On send the draft's
-   text travels from the composer into the bubble (a position-only shared
-   layout spring, `spring.layout`) while the fill fades in behind it; reduced
-   motion is the bubble appearing.
+   ring, one 6px corner toward the answer), capped at `calc(100% - 76px)` of
+   the pane so its action cluster always fits beside it (three 18px icon
+   buttons 4px apart, the 8px gap, 6px to spare; DESIGN rule 2: the reveal
+   never moves the bubble), the anatomy below staying left; exchanges sit
+   28px apart, and two neighbouring folded bubbles close to 8px (§2a). On
+   send the draft's text travels from the composer into the bubble (a
+   position-only shared layout spring, `spring.layout`) while the fill fades
+   in behind it; reduced motion is the bubble appearing. Every bubble carries
+   three actions, `Copy` · `Restart` · `Jump Back` (Icon button species, the
+   18px tier; lucide `Copy` · `Repeat` · `CornerUpLeft` at `--icon-sm`),
+   sitting LEFT of the bubble, bottom-aligned with its last line, Jump Back
+   nearest the bubble (it duplicates the bubble's own click, so a stray
+   pointer meets the harmless Copy first); they rest invisible and reveal on
+   the bubble's hover, their own, and focus within them (opacity and a 4px
+   slide out of the bubble on `--dur-quick`, never visibility: the trio stays
+   in the tab order, which is its keyboard route), and the row's empty left
+   half reveals nothing. `Copy` puts the question on the clipboard through
+   the app's one copy path, cue included (LESSONS 9). `Restart` on the newest
+   exchange is the retry (§7: the new run streams over the prior answer, Stop
+   restores it exactly), no confirm; on an older exchange whose successors
+   hold a landed answer or error it asks through the app's danger confirm,
+   `Restart from Here?` · `The 2 questions after this one and their answers
+   will be deleted.` · `Delete 2 Questions` (singular `The question after
+   this one and its answer will be deleted.` · `Delete 1 Question`), then
+   every later exchange is deleted, on screen and in appdb, and the question
+   is asked again in its place. `Jump Back`, and a plain click anywhere on
+   the bubble (a click that selected no text; a drag-select stays a select),
+   enter edit mode (§2a). The bubble is a div of selectable text, never a
+   button: `cursor: default`, no focus of its own, its ring stepping to 40%
+   accent on hover as the one sign it answers a click. While the thread is
+   busy Restart and Jump Back are disabled and Copy stays live; nothing hides
+   (rule 2's matrix).
 2. **Thinking strip**: a FIXED-height row (rule 2, stable chrome). Tool calls
    appear as chips as they run: `describe order_v2` · `peek payment_status` ·
    `probe sent_at` · `run`; a probe is named by the column it measures (its
@@ -132,6 +160,34 @@ Streaming text renders as it arrives with no per-character animation
 (ARCHITECTURE ideology 6: never animate typing). Layout does not jump when
 a section arrives: sections reserve nothing until they exist, and appear with
 `--dur-slow` opacity, not height animation.
+
+## 2a. Edit mode and the fold
+
+`Jump Back`, or a plain click on a bubble, brings that question back to the
+composer to be edited. The bubble's text travels into the composer (the send
+lift run backwards: the same shared layout spring, position only, the
+bubble's fill fading out behind the travelling words), the composer holds it
+with focus and the caret after its last word, and the thread FOLDS from that
+exchange: the edited exchange leaves with its words (the sketch's variant B,
+no empty box holding its place), and every later exchange keeps only its
+bubble, dimmed to `var(--o-disabled)`, in a stack 8px apart; a folded bubble
+carries no actions and answers no click, its text stays selectable.
+Exchanges before it keep their anatomy, their Restart and Jump Back held for
+the mode's duration, and the retry pill hides with the anatomy. The mode is
+reversible: Esc over the composer, or the draft emptied, unfolds everything
+and the words travel back into their bubble, whose fill fades in as they
+land. Sending from edit mode truncates the thread from the edited exchange,
+inclusive, appdb rows too, and asks the composer's text as the new exchange
+in that place. There is NO dialog on that send: the fold is the preview and
+↩ is the commit; the dimmed stack showed exactly what goes, and Esc was the
+way back all along (DECISIONS › W4). Switching connection or thread while in
+edit mode cancels it and leaves the draft where it was typed (LESSONS 4), as
+does anything that takes the edited exchange off the screen (a cut, New
+Thread). A busy thread refuses edit mode, Restart and Jump Back, as the chips
+already refuse while busy. What a cut does to the provider's memory is
+AGENT-SPEC §9: the thread re-mints its session and the next call replays the
+kept exchanges. Reduced motion: no travel, the textarea holds the text at
+once and the stack stands.
 
 ## 3. Assumption chips
 
@@ -202,7 +258,8 @@ any thread of the connection (§1).
   (`check the key in Settings › Models`), and a retry. Rate limits show the
   wait when the provider gives one.
 - Cancelled (⌘.): `cancelled` in the status register; partial text stays.
-- A cancelled retry (the pill, `Fix It`, `Retry`) is no verdict on the
+- A cancelled retry (the pill, `Fix It`, `Retry`, `Restart` on the newest
+  exchange) is no verdict on the
   question: the previous answer comes back untouched, text, grid, status,
   SQL, chips and footer exactly as they were, and nothing is lost.
 
@@ -267,6 +324,18 @@ own transition), and a switch that also opens or closes the pane is instant
 instant variant; the lift and the travel are the bubble appearing, the sweep
 the static word. One language (DESIGN rule 6).
 
+The action cluster's reveal is CSS, not a spring: opacity and a 4px slide out
+of the bubble on `--dur-quick` / `--ease-std`, the strip chips' register.
+Edit mode's travel is the composer → echo lift run backwards on the same
+`spring.layout`, position only, the bubble's fill fading out behind the words
+on `--dur-slow` as they leave and back in as they return on Esc. The fold is
+one gesture in two registers: the bubbles that stay travel into the stack
+(and home on the unfold) on `spring.layout`, the anatomy that goes fades
+where it stood on `--dur-slow` with the stack settling over it, and the
+closing gap rides the spring, never a margin easing of its own. Reduced
+motion: the cluster's face is its settled one, the words appear in the
+composer with no ghost, and the stack stands at once.
+
 ## 11. Register
 
 Controls Title Case: `Ask`, `Threads`, `New Thread`, `Fix It`, `Open in
@@ -276,7 +345,12 @@ every unit (WRITING status register, `12 rows · 3.1 ms`): `1 turn · 20.4 s ·
 Sonnet 5`, `9 rows · 1861.9 ms`, `cancelled`, `stopped after 12 turns`; a
 model's name keeps its own case inside a status fragment. Chords appear only
 in tooltips and the Keyboard Shortcuts sheet, through `<Kbd>` (`Ask ↩`,
-`Stop ⌘.`); never as a line of chrome. No em dashes in any string.
+`Stop ⌘.`); never as a line of chrome. No em dashes in any string. The
+bubble's actions are `Copy`, `Restart`, `Jump Back`; the confirm on an older
+Restart is a dialog title in the house question form (`Restart from Here?`),
+a one-sentence detail naming the count, and a button naming the loss
+(`Delete 2 Questions`; `Delete`, never `Discard`: the rows are persisted like
+a thread's).
 
 ## 12. Accessibility
 
@@ -285,4 +359,10 @@ Streamed answer text lives in a polite live region; chips are buttons with
 inspector; the Threads sheet is a listbox whose roving highlight is
 `aria-activedescendant` (the rows are never focused), Tab wraps inside it and
 focus returns to the header's `Threads` button on close; every chord routes
-through `<Kbd>`.
+through `<Kbd>`. A bubble's action cluster is three labelled buttons in the
+tab order at rest (its reveal is opacity, so `:focus-within` shows it; never
+visibility, which would drop it from the order) and is the bubble's keyboard
+route: the bubble itself is a div with no role and no focus. Restart and Jump
+Back are `disabled` while the thread is busy or the pane is in edit mode; the
+travelling ghost is `aria-hidden`, and a folding exchange's anatomy is
+`aria-hidden` while it fades.

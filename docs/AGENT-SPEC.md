@@ -175,6 +175,8 @@ The system prompt states, verbatim in spirit:
    probes showed.
 
 The prompt is versioned (`PROMPT_VERSION`); EVAL.md ties baselines to it.
+A cut thread's replay (§9) is a prefix of the user message, not prompt text:
+it never moves `PROMPT_VERSION`.
 
 ## 7. Providers
 
@@ -256,13 +258,41 @@ parallel turn in ONE message). Bedrock/Vertex/Foundry are a research item.
 ## 9. Data model (appdb, rusqlite)
 
 ```
-agent_threads(id, profile_id, title, created_at)
+agent_threads(id, profile_id, title, created_at, session_key)
 agent_turns(id, thread_id, idx, role, content, tool_calls_json, tool_results_json,
             usage_json, model, provider, prompt_version, ms, created_at)
 agent_answers(turn_id, sql, row_count, assumptions_json, sanity_json, status)
 ```
-Provider/model choice and per-connection defaults live in `useSettings`
-(persisted). Keys: Keychain only (§2.4).
+`session_key` (v7) is the provider session the thread resumes; NULL reads as
+the thread id (both selects `COALESCE(session_key, id)`, no backfill). A cut
+(W4: a send from edit mode, Restart on an older exchange) deletes turns, and
+`claude -p` resumes a session that remembers them and cannot rewind, so the
+cut writes a fresh uuid here and the adapter resumes THAT (`ThreadRef.session`)
+while `id` still names the thread's MCP session and its rows. The cut,
+`agent_thread_truncate(thread_id, turn_ids)`, deletes the NAMED turns and
+their answers in one transaction, answers first: the store names each
+exchange's two rows (`userTurnId`, `turnId`) because neither `idx` nor write
+order is a boundary (an exchange that failed before persisting owns no rows;
+a Retry on it writes its pair after its successors'). `idx` is thread order —
+the question's slot and its answer's one above it, allocated between the
+pair's NEIGHBOURS (`prev.idx + 2`, or 0) and never from the exchange's
+position, which a reload compacts over a gap while the rows keep their idx;
+when the next exchange leaves no room, `agent_turns_shift(thread_id, from_idx,
+by)` moves the tail up first, a separate call from the insert so a failure
+leaves a gap and never a collision. A reload reads `ORDER BY idx, id`. A
+re-run (Restart, Fix It, a chip toggle) rewrites its
+assistant turn in place (`agent_turn_update`) so a reload never pairs old
+prose with a new answer. The first run after a cut carries a compact replay
+of the KEPT exchanges as a prefix of the USER message, never the system
+prompt: `Earlier in this thread:` then one `Q:` / `SQL: <final sql or none>`
+/ `A: <first sentence>` block per exchange, capped at 2000 characters with
+the oldest dropped first (`replayOf` in the store, `withReplay` in loop.ts on
+both the hybrid and the small path, so a stateless provider gets the same one
+behaviour per cut); it is carried once and kept for the next attempt when the
+run fails or is cancelled. The eval passes no thread, so its prompt bytes and
+`PROMPT_VERSION` do not move (loop.test pins the no-thread and no-replay
+messages byte-identical). Provider/model choice and per-connection defaults
+live in `useSettings` (persisted). Keys: Keychain only (§2.4).
 
 ## 10. Budgets
 

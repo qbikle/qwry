@@ -35,12 +35,22 @@
 // fixtures.strip.ts (`qwrying`, `qwrying-trail`: the waiting word alone and
 // trailing two chips; `kv-wide`: one row × three columns flowing as a row at
 // 560). fixtures.echo.ts and fixtures.strip.ts import nothing from here.
+//
+// The W4 states follow the echo shape, a whole thread read by AskHarness:
+// fixtures.actions.ts (`actions`, `actions-latest`, `actions-busy`: the
+// action cluster beside a hot bubble over the sketch's three-exchange
+// thread) and fixtures.edit.ts (`edit`, `edit-latest`, `edit-stack`: edit
+// mode entered through the store after mount; `edit-stack` adds a fourth
+// exchange so two folded bubbles neighbour). Both threads read Haiku 4.5, so
+// `choiceFor` gives the discussion states that choice and the pill matches
+// the footers.
 
 import type { AskAnswer } from "../agent/loop";
 import type { AgentRun, Assumption, Thread, TraceStep } from "../agent/types";
 import type { AgentThread, Profile } from "../ipc/types";
 import type { SchemaSnapshot, TableInfo } from "../stores/schema";
 import type { Exchange, ToolChip } from "../stores/agent";
+import { ACTIONS_CHOICE } from "./fixtures.actions";
 import { anatomyExchangeFor } from "./fixtures.anatomy";
 import { interactSeed } from "./fixtures.interact";
 import { stripSeed } from "./fixtures.strip";
@@ -67,7 +77,13 @@ export type HarnessState =
   | "starters-fallback"
   | "qwrying"
   | "qwrying-trail"
-  | "kv-wide";
+  | "kv-wide"
+  | "actions"
+  | "actions-latest"
+  | "actions-busy"
+  | "edit"
+  | "edit-latest"
+  | "edit-stack";
 export const HARNESS_STATES: readonly HarnessState[] = [
   "answer",
   "empty",
@@ -91,6 +107,12 @@ export const HARNESS_STATES: readonly HarnessState[] = [
   "qwrying",
   "qwrying-trail",
   "kv-wide",
+  "actions",
+  "actions-latest",
+  "actions-busy",
+  "edit",
+  "edit-latest",
+  "edit-stack",
 ];
 export const HARNESS_WIDTHS = [320, 392, 560] as const;
 export type HarnessTheme = "dark" | "light";
@@ -500,8 +522,9 @@ export const FIXTURE = {
 } as const;
 
 /** the exchange a state shows; null for the configured empty states (the
- * starters states among them) and for the echo states, whose whole thread
- * AskHarness reads from fixtures.echo.ts. The Threads sheet sits over the
+ * starters states among them) and for the echo, actions and edit states,
+ * whose whole thread AskHarness reads from fixtures.echo.ts,
+ * fixtures.actions.ts and fixtures.edit.ts. The Threads sheet sits over the
  * sketch's answer; the round-2 and round-3 builders' states come from their
  * own files */
 export function exchangeFor(state: HarnessState): Exchange | null {
@@ -521,6 +544,12 @@ export function exchangeFor(state: HarnessState): Exchange | null {
     case "starters-fallback":
     case "echo":
     case "echo-long":
+    case "actions":
+    case "actions-latest":
+    case "actions-busy":
+    case "edit":
+    case "edit-latest":
+    case "edit-stack":
       return null;
     case "pending":
     case "retry":
@@ -538,9 +567,23 @@ export function exchangeFor(state: HarnessState): Exchange | null {
   }
 }
 
-/** the configured provider and model a state runs under */
+/** the configured provider and model a state runs under: the discussion
+ * thread's states read its own Haiku 4.5 (the pill shows the thread's model,
+ * as the footers do); everything else the sketch's Sonnet 5 */
 export function choiceFor(state: HarnessState): { provider: string; model: string } {
-  return state === "small"
-    ? { provider: SMALL_PROVIDER, model: SMALL_MODEL }
-    : { provider: PROVIDER, model: MODEL };
+  switch (state) {
+    case "small":
+      return { provider: SMALL_PROVIDER, model: SMALL_MODEL };
+    case "echo":
+    case "echo-long":
+    case "actions":
+    case "actions-latest":
+    case "actions-busy":
+    case "edit":
+    case "edit-latest":
+    case "edit-stack":
+      return ACTIONS_CHOICE;
+    default:
+      return { provider: PROVIDER, model: MODEL };
+  }
 }

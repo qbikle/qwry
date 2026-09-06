@@ -184,15 +184,17 @@
 
 /* ---- thread scroller ---------------------------------------------------- */
 /* exchanges sit 28px apart: a bubble at the right and an answer at the left
-   need more air between them than the 20px the flat echo had (round 3) */
+   need more air between them than the 20px the flat echo had (round 3). The
+   28px rides the exchanges' margins (the edit-mode section, below), not a
+   gap here, so a fold can close two bubbles up */
 .ask-scroll {
+  position: relative; /* a folding exchange parks its leaving anatomy against the scroller (the fold, below) */
   flex: 1;
   min-height: 0;
   overflow: auto;
   padding: var(--sp-3) var(--sp-3) var(--sp-2);
   display: flex;
   flex-direction: column;
-  gap: 28px;
 }
 /* while an assumption set is pending the retry pill floats over the
    scroller's last rows (.ask-retry): the scroller reserves the pill's
@@ -217,8 +219,15 @@
   flex-direction: column;
   gap: var(--sp-2);
 }
-/* sections appear with opacity, never height (section 2) */
-.ans > * {
+/* the anatomy under the bubble is one node (AnswerBlock Body) so a fold can
+   let it leave as one; its sections appear with opacity, never height
+   (section 2) */
+.ans-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.ans-body > * {
   animation: ans-in var(--dur-slow) var(--ease-std);
 }
 @keyframes ans-in {
@@ -231,17 +240,27 @@
 }
 /* the question echo (section 2 item 1): the user's words in a bubble at the
    right edge, the answer's anatomy staying left (the sketch's variant B: the
-   active-chip tint, one soft corner toward the answer). The fill and border
-   ride a pseudo so they can fade in BEHIND text that is already there: on
-   send the text travels from the composer into the bubble (AskPanel's
-   .ask-ghost, a shared-layout position spring) and the container follows;
-   the text itself never fades or scales. isolation keeps the pseudo's
-   negative z-index under the text and above nothing else */
+   active-chip tint, one soft corner toward the answer). The bubble row (W4)
+   holds the action cluster, then the bubble, both bottom-aligned so the
+   cluster centres on the bubble's last line. The fill and border ride a
+   pseudo so they can fade in BEHIND text that is already there: on send the
+   text travels from the composer into the bubble (AskPanel's .ask-ghost, a
+   shared-layout position spring) and the container follows; the text itself
+   never fades or scales. isolation keeps the pseudo's negative z-index under
+   the text and above nothing else */
+.ans-echo-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-end;
+}
 .ans-echo {
   position: relative;
   isolation: isolate;
-  align-self: flex-end;
-  max-width: 86%;
+  /* the bubble yields the cluster's room at every width (rule 2, stable
+     chrome: the reveal never moves the bubble): three 18px buttons 4px
+     apart, the 8px gap, 6px to spare. 86% wins nowhere in the pane's range,
+     so the cap is written as what it is */
+  max-width: calc(100% - 76px);
   padding: var(--sp-2) var(--sp-3);
   border: 1px solid transparent; /* the ring the pseudo paints; keeps the geometry honest */
   border-radius: 16px 16px 6px 16px; /* optical */ /* the small corner points at the answer */
@@ -253,11 +272,7 @@
   overflow-wrap: anywhere;
   user-select: text;
   -webkit-user-select: text;
-}
-/* the section fade belongs to the fill, not the words (the words arrive by
-   travelling) */
-.ans > .ans-echo {
-  animation: none;
+  cursor: default; /* a click is Jump Back; an I-beam would promise a caret */
 }
 .ans-echo::before {
   content: "";
@@ -268,6 +283,54 @@
   background: var(--accent-soft);
   border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
   animation: ans-in var(--dur-slow) var(--ease-std);
+  transition: border-color var(--dur-quick) var(--ease-std);
+}
+/* on hover the ring steps up: the click answers on the thing clicked (rule 8) */
+.ans-echo-row:has(.ans-echo:hover) .ans-echo:not(.folded)::before {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+/* the frame between a click and the mode (AnswerBlock `arm`): the bubble
+   remounts under the edit id and its fill must not blink through the fade */
+.ans-echo.arming::before {
+  animation: none;
+}
+/* folded (edit mode, an exchange after the edited one): the anatomy is gone,
+   the bubble stands at the one disabled value, nothing to hover, nothing to
+   click, the words still selectable. !important because the newest bubble
+   carries a layoutId and motion leaves an inline `opacity: 1` on it after
+   the lift (the W2c chip precedent): without it the latest exchange folds at
+   full strength beside its dimmed neighbours (probed under normal motion,
+   scratchpad w4-fold-opacity-probe.ts; reduced motion clears the inline
+   value, so the stills alone never showed it) */
+.ans-echo.folded {
+  opacity: var(--o-disabled) !important;
+}
+/* the action cluster (EchoActions): Copy · Restart · Jump Back left of the
+   bubble, Jump Back nearest it. Its right padding is the gap to the bubble,
+   so a pointer crossing from bubble to buttons never leaves the hover zone;
+   its bottom padding is the bubble's padding plus its ring, so the 18px
+   buttons centre on the last line. Revealed on the bubble's hover, its own,
+   focus within it (opacity and a 4px slide out of the bubble on the strip
+   chips' register; never visibility, which drops the buttons from the tab
+   order) and under the harness's forced face (.ans[data-hot]); the row's
+   empty left half reveals nothing (rule 8) */
+.ans-echo-acts {
+  display: flex;
+  flex-shrink: 0;
+  gap: var(--sp-1);
+  padding: 0 var(--sp-2) calc(var(--sp-2) + 1px) 0; /* optical */ /* the bubble's padding plus its ring */
+  opacity: 0;
+  transform: translateX(4px);
+  transition:
+    opacity var(--dur-quick) var(--ease-std),
+    transform var(--dur-quick) var(--ease-std);
+}
+.ans-echo-row:has(.ans-echo:hover) .ans-echo-acts,
+.ans-echo-acts:hover,
+.ans-echo-acts:focus-within,
+.ans[data-hot] .ans-echo-acts {
+  opacity: 1;
+  transform: none;
 }
 /* the composer's ghost (AskPanel): for the frame between ↩ and the exchange
    landing, the draft's text rendered over the textarea glyph for glyph (same
@@ -304,6 +367,77 @@
 .ask-ta.ghosted {
   color: transparent;
   caret-color: var(--fg);
+}
+
+/* ---- edit mode (W4): the travel's composer side and the fold's stack ----- */
+/* the edit ghost (AskPanel `travel`): the send ghost run backwards. `in`
+   mounts under the bubble's edit id as the bubble leaves, so the words spring
+   from the bubble's box to the textarea's text origin while the bubble's fill
+   and ring, carried on the pseudo, fade out behind them; when the spring
+   settles the textarea paints its own text and the ghost leaves. `out` stands
+   one frame over the composer as the box the returning bubble springs from,
+   bare: the bubble's own fill fades in as it lands. The pseudo paints the
+   ring one pixel outside the box, so the clip moves from overflow to a
+   clip-path one pixel out; a question taller than the textarea's four lines
+   still clips at them */
+.ask-ghost[data-edit] {
+  isolation: isolate;
+  overflow: visible;
+  clip-path: inset(-1px);
+  border-radius: 16px 16px 6px 16px; /* optical */ /* the bubble's corners */
+}
+.ask-ghost[data-edit="in"]::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  animation: ans-out var(--dur-slow) var(--ease-std) forwards;
+}
+@keyframes ans-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+/* the fold, one gesture in the app's two registers: what stays travels on
+   spring.layout, what goes fades on --dur-slow. An exchange after the edited
+   one keeps its bubble (.ans-echo.folded), which dims here and springs into
+   the stack (AnswerBlock: the bubble's layoutDependency is the mode, so the
+   spring runs on the fold and the unfold and never on an ordinary
+   re-render); its anatomy (.ans-body) leaves parked where it stood
+   (AnimatePresence popLayout, against the scroller) on the section fade run
+   backwards, the stack settling over it. Neighbouring folded exchanges close
+   up from the thread's 28px to 8px with no transition of their own: the
+   spring carries the bubbles to the closed geometry, and a margin easing
+   beside it would be a second motion for one move */
+.ask-scroll > .ans + .ans {
+  margin-top: 28px;
+}
+.ask-scroll > .ans:has(> .ans-echo-row > .ans-echo.folded) + .ans:has(> .ans-echo-row > .ans-echo.folded) {
+  margin-top: var(--sp-2);
+}
+.ask-scroll .ans-echo {
+  transition: opacity var(--dur-slow) var(--ease-std);
+}
+.ans-body[data-leaving] {
+  animation: ans-out var(--dur-slow) var(--ease-std) forwards;
+  pointer-events: none;
+}
+/* the edited exchange itself: its bubble went to the composer and its anatomy
+   is parked and fading, so for that fade the article has no box of its own
+   and the flow reads as if it were already gone (AnswerBlock drops it when
+   the fade ends). The first article's successor keeps the first's zero
+   margin */
+.ask-scroll > .ans[data-leaving] {
+  display: contents;
+}
+.ask-scroll > .ans[data-leaving]:first-child + .ans {
+  margin-top: 0;
 }
 /* thinking strip: FIXED height (rule 2); chips scroll sideways past the
    edges, never wrap. The scrollbar is hidden (the masks say there is more,
@@ -1300,7 +1434,8 @@
 /* ---- end AnswerBlock anatomy ---- */
 
 @media (prefers-reduced-motion: reduce) {
-  .ans > *,
+  .ans-body > *,
+  .ans-body[data-leaving],
   .ans-echo::before {
     animation: none;
   }

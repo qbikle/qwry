@@ -486,13 +486,17 @@ export interface McpCall {
   is_error: boolean;
 }
 
-/** one Ask thread (appdb agent_threads). `id` is a uuid, reused verbatim as
- * the `claude -p` session id. */
+/** one Ask thread (appdb agent_threads). `id` is the row's identity and the
+ * MCP session's name; `session_key` is what `claude -p` resumes. They are the
+ * same uuid until a cut re-mints the key. Rust always sends it (the column
+ * reads as `id` while NULL); optional here so a fixture row can leave it out
+ * and mean the same thing. */
 export interface AgentThread {
   id: string;
   profile_id: string;
   title: string;
   created_at: string;
+  session_key?: string;
 }
 
 /** one recorded turn (appdb agent_turns). The *_json columns hold the loop's
@@ -518,6 +522,21 @@ export interface AgentTurnInput {
   thread_id: string;
   idx: number;
   role: string;
+  content: string;
+  tool_calls_json?: string | null;
+  tool_results_json?: string | null;
+  usage_json?: string | null;
+  model: string;
+  provider: string;
+  prompt_version: string;
+  ms: number;
+}
+
+/** what a re-run rewrites on an assistant turn already on record (Restart,
+ * Fix It, a chip toggle). Thread, index and role never move: the exchange
+ * answers the same question in the same place. */
+export interface AgentTurnPatch {
+  id: number;
   content: string;
   tool_calls_json?: string | null;
   tool_results_json?: string | null;

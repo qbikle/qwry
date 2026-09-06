@@ -129,13 +129,17 @@ export type TraceStep =
     };
 
 /** One Ask thread. Threads belong to a connection: switching connections
- * switches threads (AGENT-UX 1). `id` is a uuid, reused verbatim as the
- * `claude -p` session id. */
+ * switches threads (AGENT-UX 1). `id` is the thread's identity and the name
+ * of its MCP session; `sessionKey` is the `claude -p` session it resumes,
+ * re-minted by a cut so the provider never remembers a deleted turn. Absent
+ * means the two are the same uuid, which is every thread until its first
+ * cut. */
 export interface Thread {
   id: string;
   profileId: string;
   title: string;
   createdAt: string;
+  sessionKey?: string;
 }
 
 /** One recorded turn, with the loop structures already parsed out of the

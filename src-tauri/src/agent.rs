@@ -27,7 +27,7 @@ use pg_query::NodeEnum;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::appdb::{AgentAnswer, AgentThread, AgentTurn, AgentTurnInput};
+use crate::appdb::{AgentAnswer, AgentThread, AgentTurn, AgentTurnInput, AgentTurnPatch};
 use crate::driver::postgres::edit::{qi, ql, TableRef};
 use crate::driver::postgres::PgSession;
 use crate::driver::{DriverError, Result, SessionId};
@@ -919,6 +919,52 @@ pub async fn agent_thread_list(
 #[tauri::command]
 pub async fn agent_thread_delete(state: State<'_, AppState>, thread_id: String) -> Result<()> {
     state.appdb.agent_thread_delete(&thread_id)
+}
+
+/// Delete the turns a cut removed and their answers (W4 jump back / restart),
+/// in one transaction. The store names the rows, because write order is not
+/// thread order (see `AppDb::agent_thread_truncate`).
+#[tauri::command]
+pub async fn agent_thread_truncate(
+    state: State<'_, AppState>,
+    thread_id: String,
+    turn_ids: Vec<i64>,
+) -> Result<()> {
+    state.appdb.agent_thread_truncate(&thread_id, &turn_ids)
+}
+
+/// Point a thread at a fresh provider session. A cut calls this because a
+/// resumed `claude -p` session remembers the turns the cut deleted.
+#[tauri::command]
+pub async fn agent_thread_session_set(
+    state: State<'_, AppState>,
+    thread_id: String,
+    session_key: String,
+) -> Result<()> {
+    state
+        .appdb
+        .agent_thread_session_set(&thread_id, &session_key)
+}
+
+/// Rewrite an assistant turn a re-run answered again (W4 Restart, Fix It, a
+/// chip toggle): the row keeps its thread, index and role.
+#[tauri::command]
+pub async fn agent_turn_update(state: State<'_, AppState>, turn: AgentTurnPatch) -> Result<()> {
+    state.appdb.agent_turn_update(&turn)
+}
+
+/// Move a thread's turns from `from_idx` up by `by`, freeing the slots a new
+/// pair needs between two exchanges (see `AppDb::agent_turns_shift`). The
+/// store calls this before the insert, never inside it: a gap is harmless,
+/// a collision costs an answer its question.
+#[tauri::command]
+pub async fn agent_turns_shift(
+    state: State<'_, AppState>,
+    thread_id: String,
+    from_idx: i64,
+    by: i64,
+) -> Result<()> {
+    state.appdb.agent_turns_shift(&thread_id, from_idx, by)
 }
 
 /// Append one turn; returns its row id, which `agent_answer_put` keys on.

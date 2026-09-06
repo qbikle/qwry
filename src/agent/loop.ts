@@ -129,8 +129,13 @@ export interface AskRequest {
   tier: Tier;
   signal: AbortSignal;
   onEvent?: (ev: AskEvent) => void;
-  /** thread continuity for `ownsLoop` providers; stateless ones ignore it */
-  thread?: { id: string; firstCall: boolean };
+  /** thread continuity for `ownsLoop` providers; stateless ones ignore it.
+   * `session` is the provider session to open or resume (the thread id until
+   * a cut re-mints it); `replay` is the compact transcript of the exchanges a
+   * cut KEPT, prefixed to this run's user message so the first call after a
+   * cut starts from a session that remembers nothing. Never in the system
+   * prompt: PROMPT_VERSION and the eval's prompt bytes must not move. */
+  thread?: { id: string; session?: string; firstCall: boolean; replay?: string };
   /** injectable clock so the harness can be deterministic */
   now?: () => number;
   maxTurns?: number;
@@ -271,6 +276,15 @@ async function callTool(
   }
 }
 
+/** The user message a run actually sends. A cut thread's first call carries
+ * the kept exchanges as a prefix, because its provider session is brand new
+ * (store: cutPending). Everything else, the eval path included, sends the
+ * message askMessage() built, byte for byte. */
+function withReplay(req: AskRequest, userMsg: string): string {
+  const replay = req.thread?.replay;
+  return replay ? `${replay}\n\n${userMsg}` : userMsg;
+}
+
 // ---- the loop --------------------------------------------------------------
 
 export async function runAsk(req: AskRequest): Promise<AskAnswer> {
@@ -286,12 +300,15 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
   const meta = buildMeta(req.snapshot);
   const picked = candidates(req.question, meta);
   const risky = isRisky(req.question);
-  const userMsg = askMessage({
-    question: req.question,
-    index: indexFor(meta, picked),
-    totalTables: meta.tables.length,
-    risky,
-  });
+  const userMsg = withReplay(
+    req,
+    askMessage({
+      question: req.question,
+      index: indexFor(meta, picked),
+      totalTables: meta.tables.length,
+      risky,
+    }),
+  );
   trace.push({
     step: "context",
     ms: Math.round(now() - started),
@@ -410,6 +427,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
         thread: req.thread
           ? {
               id: req.thread.id,
+              session: req.thread.session,
               firstCall: req.thread.firstCall && turns === 1,
               turnsRemaining: maxTurns - turns + 1,
             }
@@ -758,7 +776,7 @@ async function runSmall(req: AskRequest, ctx: SmallCtx): Promise<AskAnswer> {
     });
 
     const messages: Msg[] = [
-      { role: "user", content: smallAskMessage(described.textForModel, req.question) },
+      { role: "user", content: withReplay(req, smallAskMessage(described.textForModel, req.question)) },
     ];
     const attempts = Math.min(SMALL_REPAIRS + 1, ctx.maxTurns);
     let lastError = "no SQL code block found in response";

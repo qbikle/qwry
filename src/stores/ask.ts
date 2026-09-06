@@ -1,6 +1,7 @@
 // Ask UI state (AGENT-UX section 1). Chrome only: which trace is showing,
-// whether the Threads sheet or the picker is up, and the composer drafts,
-// one per connection.
+// whether the Threads sheet or the picker is up, the composer drafts, one per
+// connection, and which exchange the composer is editing (W4 jump back: the
+// mode, not the truncation, which is the agent store's).
 // Whether Ask is on screen and how wide it is belong to the one right pane
 // (src/stores/sidePane.ts: Ask is a MODE of it, not a card of its own); this
 // store mirrors `open` for its readers and clears its transient chrome when
@@ -22,6 +23,18 @@ import { useSidePane } from "./sidePane";
 export interface TraceTarget {
   exchangeId: string;
   stepId: string | null;
+}
+
+/** The exchange the composer is editing (W4 jump back): its question is in
+ * the draft, it and every later exchange are folded away, and sending cuts
+ * the thread from it. The profile and thread are carried because a draft
+ * belongs to its connection (LESSONS 4) and a fold belongs to its thread:
+ * leaving either cancels the mode. */
+export interface AskEdit {
+  profileId: string;
+  threadId: string;
+  exchangeId: string;
+  question: string;
 }
 
 interface AskState {
@@ -46,6 +59,8 @@ interface AskState {
   /** bumped to ask AskPanel to focus the composer; consumed with rAF so an
    * overlay's focus-restore (escStack) lands first and loses */
   focusSeq: number;
+  /** null = the composer is writing a new question at the end of the thread */
+  edit: AskEdit | null;
 
   openTrace: (exchangeId: string, stepId?: string | null) => void;
   closeTrace: () => void;
@@ -53,6 +68,12 @@ interface AskState {
   closeThreads: () => void;
   setPickerOpen: (open: boolean) => void;
   setDraftFor: (profileId: string | null) => void;
+  /** enter edit mode: the exchange's question becomes its connection's draft
+   * and the composer takes focus. The fold and the travel are the panel's */
+  beginEdit: (edit: AskEdit) => void;
+  /** leave edit mode. The draft is the caller's to keep or clear: a cancel
+   * puts the words back in the bubble, a send has already spent them */
+  endEdit: () => void;
   /** writes the on-screen connection's draft; a no-op with no composer on
    * screen, since text with no connection to belong to is text with no home */
   setDraft: (text: string) => void;
@@ -72,6 +93,7 @@ export const useAsk = create<AskState>()((set) => ({
   drafts: {},
   draftFor: null,
   focusSeq: 0,
+  edit: null,
 
   openTrace: (exchangeId, stepId = null) =>
     set({ traceOpenFor: { exchangeId, stepId }, threadsOpen: false, pickerOpen: false }),
@@ -79,7 +101,17 @@ export const useAsk = create<AskState>()((set) => ({
   openThreads: () => set({ threadsOpen: true, traceOpenFor: null, pickerOpen: false }),
   closeThreads: () => set({ threadsOpen: false }),
   setPickerOpen: (pickerOpen) => set({ pickerOpen }),
-  setDraftFor: (draftFor) => set({ draftFor }),
+  // a connection change cancels the edit: the fold belongs to the thread on
+  // screen, and the draft stays with the connection it was typed toward
+  setDraftFor: (draftFor) =>
+    set((s) => ({ draftFor, edit: s.edit?.profileId === draftFor ? s.edit : null })),
+  beginEdit: (edit) =>
+    set((s) => ({
+      edit,
+      drafts: { ...s.drafts, [edit.profileId]: edit.question },
+      focusSeq: s.focusSeq + 1,
+    })),
+  endEdit: () => set({ edit: null }),
   setDraft: (text) =>
     set((s) => {
       if (!s.draftFor) return {};

@@ -161,6 +161,10 @@ export interface ProviderConfig {
  * already spent: `--max-turns` is per invocation, not cumulative (W0 section 9). */
 export interface ThreadRef {
   id: string;
+  /** the provider session to open or resume, which is the thread id until a
+   * cut re-mints it (a resumed session remembers the cut turns). `id` still
+   * names the thread's MCP session and its database rows. */
+  session?: string;
   firstCall: boolean;
   turnsRemaining: number;
 }

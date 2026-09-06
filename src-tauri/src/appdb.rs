@@ -6,14 +6,14 @@ use std::borrow::Cow;
 use std::path::Path;
 use std::sync::Mutex;
 
-use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
-use rusqlite::Connection;
+use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, Value, ValueRef};
+use rusqlite::{params_from_iter, Connection};
 use serde::{Deserialize, Serialize};
 
 use crate::driver::{DriverError, Profile, Result};
 
 /// bump when appending a migration in `migrate`
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 /// per-row stored SQL cap (bytes, cut at a char boundary): a pasted multi-MB
 /// INSERT must not bloat the appdb forever
 const HISTORY_SQL_CAP: usize = 20_000;
@@ -226,6 +226,7 @@ fn migrate(conn: &mut Connection) -> Result<()> {
             4 => undo_log_v4(&tx)?,
             5 => buffer_snapshots_v5(&tx)?,
             6 => agent_threads_v6(&tx)?,
+            7 => agent_thread_session_v7(&tx)?,
             n => return Err(DriverError::Internal(format!("appdb: no migration to v{n}"))),
         }
         tx.pragma_update(None, "user_version", next).map_err(internal)?;
@@ -370,6 +371,14 @@ fn agent_threads_v6(conn: &Connection) -> Result<()> {
          );",
     )
     .map_err(internal)
+}
+
+/// The provider session a thread resumes. A cut thread (W4 jump back) cannot
+/// ask `claude -p` to forget the turns it deleted, so the cut mints a fresh
+/// key and the adapter resumes THAT: the thread id stays the row's identity.
+/// NULL reads as the thread id, so no backfill runs over existing threads.
+fn agent_thread_session_v7(conn: &Connection) -> Result<()> {
+    add_column_if_missing(conn, "agent_threads", "session_key", "TEXT")
 }
 
 fn has_column(conn: &Connection, table: &str, col: &str) -> Result<bool> {
@@ -892,14 +901,18 @@ impl AppDb {
     }
 }
 
-/// One Ask thread (AGENT-SPEC §9). `id` is a uuid minted at creation because
-/// the `claude -p` provider reuses it verbatim as its `--session-id`.
+/// One Ask thread (AGENT-SPEC §9). `id` is the row's identity and the MCP
+/// session's name; `session_key` is what the `claude -p` provider passes as
+/// `--session-id` / `--resume`. They are the same uuid until a cut re-mints
+/// the key, which is how a truncated thread gets a provider that never saw
+/// the deleted turns. The column is NULL until then and reads as `id`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentThread {
     pub id: String,
     pub profile_id: String,
     pub title: String,
     pub created_at: String,
+    pub session_key: String,
 }
 
 /// One recorded turn. The `*_json` columns hold the loop's own structures
@@ -928,6 +941,26 @@ pub struct AgentTurnInput {
     pub thread_id: String,
     pub idx: i64,
     pub role: String,
+    pub content: String,
+    #[serde(default)]
+    pub tool_calls_json: Option<String>,
+    #[serde(default)]
+    pub tool_results_json: Option<String>,
+    #[serde(default)]
+    pub usage_json: Option<String>,
+    pub model: String,
+    pub provider: String,
+    pub prompt_version: String,
+    pub ms: f64,
+}
+
+/// What a re-run rewrites on an assistant turn already on record (W4 Restart,
+/// Fix It, a chip toggle). Thread, index and role never move: the exchange
+/// answers the same question in the same place, so only what the model said
+/// this time is written again.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTurnPatch {
+    pub id: i64,
     pub content: String,
     #[serde(default)]
     pub tool_calls_json: Option<String>,
@@ -973,7 +1006,8 @@ impl AppDb {
         )
         .map_err(internal)?;
         conn.query_row(
-            "SELECT id, profile_id, title, created_at FROM agent_threads WHERE id = ?1",
+            "SELECT id, profile_id, title, created_at, COALESCE(session_key, id)
+             FROM agent_threads WHERE id = ?1",
             [id],
             |r| {
                 Ok(AgentThread {
@@ -981,6 +1015,7 @@ impl AppDb {
                     profile_id: r.get(1)?,
                     title: r.get(2)?,
                     created_at: r.get(3)?,
+                    session_key: r.get(4)?,
                 })
             },
         )
@@ -992,7 +1027,8 @@ impl AppDb {
         let conn = self.0.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "SELECT id, profile_id, title, created_at FROM agent_threads
+                "SELECT id, profile_id, title, created_at, COALESCE(session_key, id)
+                 FROM agent_threads
                  WHERE profile_id = ?1 ORDER BY created_at DESC, rowid DESC",
             )
             .map_err(internal)?;
@@ -1003,6 +1039,7 @@ impl AppDb {
                     profile_id: r.get(1)?,
                     title: r.get(2)?,
                     created_at: r.get(3)?,
+                    session_key: r.get(4)?,
                 })
             })
             .map_err(internal)?;
@@ -1023,6 +1060,79 @@ impl AppDb {
         tx.execute("DELETE FROM agent_threads WHERE id = ?1", [id])
             .map_err(internal)?;
         tx.commit().map_err(internal)?;
+        Ok(())
+    }
+
+    /// Delete the named turns and their answers, in ONE transaction, so a
+    /// failure never leaves answer rows pointing at turns that are gone.
+    ///
+    /// The cut names ROW IDS, never a boundary. Neither `id` nor `idx` orders
+    /// a thread well enough to cut it at a position: a Retry on an older
+    /// exchange that failed before the store persisted it writes its rows
+    /// LAST, so the newest ids can belong to the oldest exchange on screen.
+    /// The store holds each exchange's ids and says exactly which go.
+    /// `thread_id` scopes it, so an id from anywhere else deletes nothing.
+    pub fn agent_thread_truncate(&self, thread_id: &str, turn_ids: &[i64]) -> Result<()> {
+        if turn_ids.is_empty() {
+            return Ok(());
+        }
+        let holes = vec!["?"; turn_ids.len()].join(",");
+        let mut args: Vec<Value> = Vec::with_capacity(turn_ids.len() + 1);
+        args.push(Value::Text(thread_id.to_owned()));
+        args.extend(turn_ids.iter().copied().map(Value::Integer));
+        let mut conn = self.0.lock().unwrap();
+        let tx = conn.transaction().map_err(internal)?;
+        // the answers first: they key on the turns, which are still there
+        tx.execute(
+            &format!(
+                "DELETE FROM agent_answers WHERE turn_id IN
+                 (SELECT id FROM agent_turns WHERE thread_id = ? AND id IN ({holes}))"
+            ),
+            params_from_iter(args.iter()),
+        )
+        .map_err(internal)?;
+        tx.execute(
+            &format!("DELETE FROM agent_turns WHERE thread_id = ? AND id IN ({holes})"),
+            params_from_iter(args.iter()),
+        )
+        .map_err(internal)?;
+        tx.commit().map_err(internal)?;
+        Ok(())
+    }
+
+    /// Point the thread at a fresh provider session. A cut writes a new uuid
+    /// here because a resumed `claude -p` session remembers the cut turns and
+    /// cannot be rewound.
+    pub fn agent_thread_session_set(&self, thread_id: &str, session_key: &str) -> Result<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE agent_threads SET session_key = ?2 WHERE id = ?1",
+                rusqlite::params![thread_id, session_key],
+            )
+            .map_err(internal)?;
+        Ok(())
+    }
+
+    /// Move a thread's tail up the index, so a pair can be inserted between
+    /// two exchanges that left it no room. The store allocates `idx` between
+    /// NEIGHBOURS (a Retry on an exchange whose run failed before it persisted
+    /// writes its rows after its own successors'), and when the next exchange
+    /// already sits on the slots the new pair needs, this frees them first.
+    ///
+    /// Shift, then insert: the two are separate calls, so a failure between
+    /// them leaves a gap in the thread's indices, which costs nothing, and
+    /// never a collision, which costs an answer its question.
+    pub fn agent_turns_shift(&self, thread_id: &str, from_idx: i64, by: i64) -> Result<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE agent_turns SET idx = idx + ?3 WHERE thread_id = ?1 AND idx >= ?2",
+                rusqlite::params![thread_id, from_idx, by],
+            )
+            .map_err(internal)?;
         Ok(())
     }
 
@@ -1053,7 +1163,42 @@ impl AppDb {
         Ok(conn.last_insert_rowid())
     }
 
-    /// a thread's turns in loop order
+    /// Rewrite a recorded assistant turn in place. A re-run that skipped this
+    /// left the old prose beside the new answer row, and a reload showed an
+    /// answer nobody was ever given.
+    pub fn agent_turn_update(&self, turn: &AgentTurnPatch) -> Result<()> {
+        let content = cap_text(&turn.content, AGENT_CONTENT_CAP);
+        self.0
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE agent_turns SET
+                     content = ?2, tool_calls_json = ?3, tool_results_json = ?4,
+                     usage_json = ?5, model = ?6, provider = ?7,
+                     prompt_version = ?8, ms = ?9
+                 WHERE id = ?1",
+                rusqlite::params![
+                    turn.id,
+                    content.as_ref(),
+                    turn.tool_calls_json,
+                    turn.tool_results_json,
+                    turn.usage_json,
+                    turn.model,
+                    turn.provider,
+                    turn.prompt_version,
+                    turn.ms,
+                ],
+            )
+            .map_err(internal)?;
+        Ok(())
+    }
+
+    /// A thread's turns in thread order, which is `idx`: the question's slot
+    /// and its answer's one above it, allocated between the pair's neighbours
+    /// (`agent_turns_shift`) and never from a position on screen. Write order
+    /// (`id`) is not thread order — a Retry on an older exchange appends its
+    /// rows after its own successors' — so a list read by `id` would show the
+    /// retried question last and pair it with somebody else's answer.
     pub fn agent_turns_list(&self, thread_id: &str) -> Result<Vec<AgentTurn>> {
         let conn = self.0.lock().unwrap();
         let mut stmt = conn
@@ -1671,5 +1816,195 @@ mod tests {
         };
         assert_eq!(orphans, 0, "deleting a thread leaves no orphan answer rows");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn agent_thread_truncate_cuts_turns_answers_and_remints_the_session() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+
+        let thread = db.agent_thread_create("th-1", "p1", "Jump back").unwrap();
+        // NULL reads as the thread id: no backfill runs over existing threads
+        assert_eq!(thread.session_key, "th-1");
+        db.agent_thread_create("th-2", "p1", "Untouched").unwrap();
+
+        let ids: Vec<i64> = (0..6).map(|idx| answered(&db, "th-1", idx)).collect();
+        let other = answered(&db, "th-2", 0);
+
+        // the cut names the four rows the last two exchanges own, and one row
+        // of another thread, which it must not touch
+        let mut cut = ids[2..].to_vec();
+        cut.push(other);
+        db.agent_thread_truncate("th-1", &cut).unwrap();
+        let kept = db.agent_turns_list("th-1").unwrap();
+        assert_eq!(kept.len(), 2, "the named turns are gone");
+        assert_eq!(kept.iter().map(|t| t.idx).collect::<Vec<_>>(), vec![0, 1]);
+        let answers = db.agent_answers_list("th-1").unwrap();
+        assert_eq!(answers.len(), 2, "the kept turns keep their answers");
+        // the cut is scoped to its thread, answer rows included
+        assert_eq!(db.agent_turns_list("th-2").unwrap().len(), 1);
+        assert_eq!(db.agent_answers_list("th-2").unwrap().len(), 1);
+        let orphans: i64 = {
+            let conn = db.0.lock().unwrap();
+            conn.query_row(
+                "SELECT COUNT(*) FROM agent_answers a
+                 LEFT JOIN agent_turns t ON t.id = a.turn_id WHERE t.id IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(orphans, 0, "a cut leaves no orphan answer rows");
+
+        db.agent_thread_session_set("th-1", "fresh-uuid").unwrap();
+        let listed = db.agent_threads_list("p1").unwrap();
+        let mine = listed.iter().find(|t| t.id == "th-1").unwrap();
+        assert_eq!(mine.session_key, "fresh-uuid");
+        // the re-mint is per thread; the other thread still resumes its own id
+        let other = listed.iter().find(|t| t.id == "th-2").unwrap();
+        assert_eq!(other.session_key, "th-2");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Write order is not thread order: a Retry on an older exchange that had
+    /// failed before the store persisted it writes its rows LAST, so the
+    /// newest ids belong to the second question of three. A cut that read a
+    /// boundary out of `id` (or a row count) would keep the exchange it was
+    /// asked to delete and delete the one before it.
+    #[test]
+    fn agent_thread_truncate_and_list_survive_rows_written_out_of_order() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+        db.agent_thread_create("th-late", "p1", "A late retry").unwrap();
+
+        let q1 = [answered(&db, "th-late", 0), answered(&db, "th-late", 1)];
+        // the second question's provider failed: no rows at all
+        let q3 = [answered(&db, "th-late", 4), answered(&db, "th-late", 5)];
+        // …then the user retried it, and it landed after its own successor
+        let q2 = [answered(&db, "th-late", 2), answered(&db, "th-late", 3)];
+        assert!(q2[0] > q3[1], "the retry owns the newest ids");
+
+        // a reload reads the three exchanges in the order they are on screen
+        let listed = db.agent_turns_list("th-late").unwrap();
+        assert_eq!(
+            listed.iter().map(|t| t.id).collect::<Vec<_>>(),
+            vec![q1[0], q1[1], q2[0], q2[1], q3[0], q3[1]],
+        );
+
+        // jumping back to the third question cuts THAT exchange, not the last
+        // two rows written
+        db.agent_thread_truncate("th-late", &q3).unwrap();
+
+        let kept = db.agent_turns_list("th-late").unwrap();
+        assert_eq!(
+            kept.iter().map(|t| t.id).collect::<Vec<_>>(),
+            vec![q1[0], q1[1], q2[0], q2[1]],
+            "the retried exchange survives its successor's cut"
+        );
+        assert_eq!(db.agent_answers_list("th-late").unwrap().len(), 4);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A pair is placed between its neighbours, so an exchange whose retry
+    /// lands between two that left it no room shifts the tail up first. The
+    /// rows keep their ids and their answers: only the slot moves.
+    #[test]
+    fn agent_turns_shift_frees_a_slot_and_leaves_other_threads_alone() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+        db.agent_thread_create("th-shift", "p1", "A retry").unwrap();
+        db.agent_thread_create("th-other", "p1", "Untouched").unwrap();
+
+        // the first exchange at 0,1 and the third at 4,5: the second failed
+        // before it persisted, and its Retry needs 4,5 for itself
+        let ids: Vec<i64> = [0i64, 1, 4, 5]
+            .into_iter()
+            .map(|idx| answered(&db, "th-shift", idx))
+            .collect();
+        let other = answered(&db, "th-other", 4);
+
+        db.agent_turns_shift("th-shift", 4, 2).unwrap();
+
+        let rows = db.agent_turns_list("th-shift").unwrap();
+        assert_eq!(
+            rows.iter().map(|t| t.idx).collect::<Vec<_>>(),
+            vec![0, 1, 6, 7],
+            "the tail moves up, the rows below it stand"
+        );
+        assert_eq!(
+            rows.iter().map(|t| t.id).collect::<Vec<_>>(),
+            ids,
+            "the same rows in the same order: a shift is not a rewrite"
+        );
+        assert_eq!(db.agent_answers_list("th-shift").unwrap().len(), 4);
+        // scoped to its thread, like every other write here
+        let untouched = db.agent_turns_list("th-other").unwrap();
+        assert_eq!(untouched.len(), 1);
+        assert_eq!(untouched[0].id, other);
+        assert_eq!(untouched[0].idx, 4);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// one turn with a verdict on it; returns the turn's row id
+    fn answered(db: &AppDb, thread_id: &str, idx: i64) -> i64 {
+        let id = db.agent_turn_add(&turn(thread_id, idx)).unwrap();
+        db.agent_answer_put(&AgentAnswer {
+            turn_id: id,
+            sql: Some("SELECT 1".into()),
+            row_count: Some(1),
+            assumptions_json: None,
+            sanity_json: None,
+            status: "answered".into(),
+        })
+        .unwrap();
+        id
+    }
+
+    #[test]
+    fn agent_turn_update_rewrites_what_the_rerun_said() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+        db.agent_thread_create("th-up", "p1", "Restart").unwrap();
+        let id = db.agent_turn_add(&turn("th-up", 1)).unwrap();
+
+        db.agent_turn_update(&AgentTurnPatch {
+            id,
+            content: "the second answer".into(),
+            tool_calls_json: Some("[]".into()),
+            tool_results_json: Some("[]".into()),
+            usage_json: Some("{\"input\":9}".into()),
+            model: "claude-sonnet-5".into(),
+            provider: "claude-code".into(),
+            prompt_version: "v2".into(),
+            ms: 42.0,
+        })
+        .unwrap();
+
+        let rows = db.agent_turns_list("th-up").unwrap();
+        assert_eq!(rows.len(), 1, "a rewrite is not a second turn");
+        assert_eq!(rows[0].content, "the second answer");
+        assert_eq!(rows[0].usage_json.as_deref(), Some("{\"input\":9}"));
+        assert_eq!(rows[0].model, "claude-sonnet-5");
+        assert_eq!(rows[0].prompt_version, "v2");
+        assert_eq!(rows[0].ms, 42.0);
+        // the row keeps its place in the thread
+        assert_eq!(rows[0].idx, 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn turn(thread_id: &str, idx: i64) -> AgentTurnInput {
+        AgentTurnInput {
+            thread_id: thread_id.into(),
+            idx,
+            role: if idx % 2 == 0 { "user" } else { "assistant" }.into(),
+            content: format!("turn {idx}"),
+            tool_calls_json: None,
+            tool_results_json: None,
+            usage_json: None,
+            model: "claude-haiku-4-5".into(),
+            provider: "claude-code".into(),
+            prompt_version: "v1".into(),
+            ms: 1.0,
+        }
     }
 }
