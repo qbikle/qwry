@@ -22,8 +22,8 @@ whether the risk classifier fired.
 | `pagila.json` | Pagila (public) | 33 | CI bench; tiers 1–5; `value` probes (uppercase names, `'Sci-Fi'`) |
 | `pagila-hard.json` | Pagila | 5+ | analyst-spec questions: cohorts, windows, funnels |
 | `pagila-insight.json` | Pagila | 8 | the presentation bench (section 3.x): insight-style questions, no gold |
-| `staging.json` | maintainer's staging (creds local only) | 23 | real 202-table schema with legacy twins; not run in CI |
-| `staging-hard.json` | staging | 5 | the dirty-data cohort trap and friends |
+| `staging.json` | maintainer's staging (creds local only) | 23 | real 203-table schema with legacy twins; not run in CI; results live outside the repo |
+| `staging-hard.json` | staging | 5 | the dirty-data cohort trap and friends; results live outside the repo |
 
 Gold rules: every gold query verified to run (`--gold-check`); every `LIMIT`
 question checked for ties at the boundary; questions pin what strict compare
@@ -38,6 +38,14 @@ stands out in rentals by month?" has no gold row set, and pinning one would
 score the analyst's judgment as arithmetic. Those questions land as `RAN`
 (the SQL ran) rather than `PASS`, which is not a failure; what is measured on
 them is section 3.x.
+
+The two staging benches run by hand and their artifacts never enter the repo:
+the shell that starts a run holds the credentials, the artifact holds the
+model's answers and predicted SQL over the maintainer's data, so `--out` and
+`--progress` point both at a directory outside the tree (the W3 runs used the
+session scratchpad's `w3-eval/`), and what comes back is the numbers, in
+section 4's table and in `ROADMAP_log.md`. `eval/baseline.json` carries no
+staging row yet (section 4).
 
 ## 3. Harness (`scripts/agent-eval.ts`)
 
@@ -68,6 +76,13 @@ through a tie is named. `--baseline` scores the finished run against the row for
 the same bench + model + provider + `PROMPT_VERSION`, exits non-zero on the
 section 4 rules, and treats a combination with no row as unmeasured, not green.
 `--ids` reruns one question, `--tier` one tier.
+
+A staging DSN needs `?uselibpqcompat=true&sslmode=require`: under a bare
+`sslmode=require`, `pg` 8.23 verifies the server certificate and refuses the
+staging server's self-signed chain with `SELF_SIGNED_CERT_IN_CHAIN`, which cost
+both W3 staging runs their first launch. The credentials stay local (sourced
+inside the subshell that starts the run, never echoed), and the run's `--out`
+and `--progress` go outside the repo (section 2).
 
 ### 3.x Presentation score
 
@@ -162,12 +177,14 @@ Accuracy against the v1 baseline row for the same bench, model and provider
 lost: t1-07, on the shipped prompt and on its first draft alike. That is within
 the section 4 tolerance of one question, and `t1-07` is the bench's oldest trap
 (the customer name is stored uppercase and the model skipped `peek_values`),
-not a shape the prompt change touches. `PROMPT_VERSION` is now `v3`, so
-`eval/baseline.json` has no row for it: the W3 re-baseline records these
-numbers, and until it does every gated run of v3 reads as unmeasured, which is
-correct. v3 was revised twice before any baseline row existed for it, which is
-why the version did not move with it; a revision after a row exists is a new
-version.
+not a shape the prompt change touches. `PROMPT_VERSION` is now `v3`; the W3
+re-baseline (`d30e28a`, 2026-09-06) recorded its rows, one per bench and model
+(section 4), and the W3 run of this same bench read 33/33, so the `t1-07` loss
+above was sampling noise. Until that commit every gated run of v3 read as
+unmeasured, which was correct. v3 was revised twice before any baseline row
+existed for it, which is why the version did not move with it; a revision
+after a row exists is a new version, and section 4's two recorded v3 losses
+are the first candidates for one.
 
 ## 4. Gates
 
@@ -177,12 +194,16 @@ version.
   `eval/baseline.json` for that model + `PROMPT_VERSION`, or if any question
   hits the turn cap, or if prefilter recall drops below the baseline.
 - **Release gate**: maintainer runs the staging benches locally; numbers go
-  into the release notes and `eval/baseline.json`.
+  into the release notes (the table below and `ROADMAP_log.md`) and, by a
+  deliberate baseline commit of their own, `eval/baseline.json`. The W3
+  numbers below are release-notes numbers: no staging row has been committed
+  yet, so `--baseline` still reads the staging benches as unmeasured
+  (DECISIONS, Agent A1 W3).
 - **Baseline updates** are deliberate commits with the measured table in the
   message. A baseline never moves in the same PR as the change it measures.
 - **Unmeasured is not green**: the gate fails when `eval/baseline.json` has no
   row for the run's bench + provider + model + `PROMPT_VERSION`. The rows
-  recorded on 2026-09-05 are all `claude-code` (the maintainer's subscription);
+  recorded on 2026-09-06 are all `claude-code` (the maintainer's subscription);
   configuring `EVAL_API_KEY` for a hosted provider in CI therefore starts with
   one deliberate local run of that provider and a baseline commit.
 - **Presentation never goes down**: on a bench with `insight` questions, a
@@ -196,10 +217,51 @@ version.
   belongs. A baseline row without the field does not arm the rule, which is how
   every row recorded before W5 reads.
 
-Reference numbers (2026-09-03, `claude -p` path, so absolute tokens are not
-comparable to API runs): Pagila one-shot Haiku 31–32/33, Sonnet 29–30/33;
-staging hybrid Haiku 23/23, Sonnet 22/23 at 202 tables; hard Sonnet 5/5,
-Haiku 3/5; LFM2.5-2.6B one-shot Pagila 22/33.
+**Reference numbers, 2026-09-06** (W3 close; provider `claude-code`, `--jobs 3`,
+`PROMPT_VERSION` v3, 0 turn-cap hits on every row; Pagila on the lab Postgres,
+artifacts under `eval/results/`; staging on auth_new at 203 tables, artifacts in
+the session scratchpad's `w3-eval/`, outside the repo. The `v1` column is the
+2026-09-04 baseline row the v3 row superseded; `ref.` is the 2026-09-03 lab
+number the previous version of this paragraph carried):
+
+| bench | model | v1 / ref. | v3, measured | recall | presentation |
+|---|---|---|---|---|---|
+| `pagila.json` | claude-haiku-4-5 | 33/33 | **33/33** | 0.94 | not scored |
+| `pagila.json` | claude-sonnet-5 | 32/33 | **28/33** | 0.94 | not scored |
+| `pagila-hard.json` | claude-haiku-4-5 | 5/5 | **3/5** | 1.00 | not scored |
+| `pagila-hard.json` | claude-sonnet-5 | 5/5 | **5/5** | 1.00 | not scored |
+| `pagila-insight.json` | claude-haiku-4-5 | no row | 8/8 ran | n/a | **0.850** over 8 |
+| `pagila-insight.json` | claude-sonnet-5 | no row | 8/8 ran | n/a | **0.825** over 8 |
+| `staging.json` | claude-haiku-4-5 | ref. 23/23 | **23/23** | 1.00 | no insight questions |
+| `staging.json` | claude-sonnet-5 | ref. 22/23 | **21/23** | 1.00 | no insight questions |
+| `staging-hard.json` | claude-haiku-4-5 | ref. 3/5 | **3/5** | 1.00 | no insight questions |
+| `staging-hard.json` | claude-sonnet-5 | ref. 5/5 | **5/5** | 1.00 | no insight questions |
+
+The two recorded Pagila losses are one shape each and are written down because
+they were measured, not because they are accepted: Sonnet's `t3-08`, `t4-04`,
+`t5-01` keep an extra column beside the ones the question asked for (`t1-07` is
+noise, `t4-02` failed at v1 too; Haiku passes all four on the same bytes, so the
+fix is the next `PROMPT_VERSION`), and Haiku's `ph-05` joins rental and payment
+to customer in one pass and multiplies the payment sum by the rental count in
+both v3 samples (`ph-03` passes the second sample, which read 4/5; a row is one
+artifact). Staging Sonnet's `s3-04` (a zero-filled calendar spine, 12 rows for
+3) and `s5-02` (`total_amount` kept beside `currency, order_id`) both PASS on a
+two-question re-sample, so the one-below against the 09-03 reference reads as
+sampling noise; the ROADMAP A1 gate line (`staging hybrid ≥ 22/23 on mid and
+large tiers`) is met on Haiku and missed by one on Sonnet. Staging-hard Haiku's
+`h-01` skips the cohort's lower bound and `h-05` reads `insta_users.follower_count`
+where the gold counts `follows`, both read from the predicted SQL and matching
+the 09-03 reference. The two presentation means are two models, not a before
+and an after; the first v3 re-run of either model is what tests the 0.05 slack.
+Tokens through `claude -p` include the harness's prefix and its caching
+(`avg_in_tokens` 5 against `cached` 10,056 on staging Sonnet is the cache, not
+the input), so compare turns, output tokens and wall (section 6). Detail per
+question: `ROADMAP_log.md`, the W3 note.
+
+Previous reference (2026-09-03, the lab harness, `claude -p` path, so absolute
+tokens are not comparable to API runs): Pagila one-shot Haiku 31–32/33, Sonnet
+29–30/33; staging hybrid Haiku 23/23, Sonnet 22/23 at 202 tables; hard Sonnet
+5/5, Haiku 3/5; LFM2.5-2.6B one-shot Pagila 22/33.
 
 ## 5. Bench database in CI
 

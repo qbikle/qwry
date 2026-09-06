@@ -292,7 +292,13 @@ parallel turn in ONE message). Bedrock/Vertex/Foundry are a research item.
    does not stop these). Both must pass. Policy table: DECISIONS 2026-09-05.
    Agent sessions are flagged at connect and the raw-SQL commands (`execute`,
    `execute_stream`) refuse them, so the gate has no side door.
-2. `statement_timeout` from the existing setting (default 10s); row caps §5.
+2. `statement_timeout` from the existing setting (default 10s). The setting's
+   0 means "no timeout" for a SESSION only (`agent_connect` passes it through
+   and Postgres reads 0 as disabled); a tool call has no such shape, so 0 falls
+   through to the §5 default (`RUN_SQL_TIMEOUT_MS`, 10s, the one number in
+   `tools.ts` and `agent_mcp.rs`, read by `tools.tauri.ts` and
+   `platform.tauri.ts`) rather than down to `run_readonly`'s one-second
+   floor. Row caps §5.
 3. Secrets never enter prompts, logs, appdb, or the trace (redaction is not a
    fallback; the values are simply never read into TS).
 4. Everything the model sends to a provider is visible in the trace panel
