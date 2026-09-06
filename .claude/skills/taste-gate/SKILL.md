@@ -18,9 +18,11 @@ The fixture harness is a vite route that renders `AskPanel` with a canned thread
 `scripts/ask-frames.ts` drives headless Chrome over it. Contract:
 
 - `bun scripts/ask-frames.ts --out <dir>` writes `<dir>/<state>-<width>-<theme>.png` for
-  state ∈ `answer` `empty` `busy` `picker` `failure` `disconnected` `small`, width ∈ `320`
-  `392` `560`, theme ∈ `dark` `light`: 42 frames, 2× device scale. `--states`, `--widths`,
-  `--themes` narrow the matrix (comma lists); the route path and fixture data are documented
+  state ∈ the full `ALL_STATES` list in `scripts/ask-frames.ts` (44 states as of W7), width ∈
+  `320` `392` `560`, theme ∈ `dark` `light`: 264 frames, 2× device scale. `--states`,
+  `--widths`, `--themes` narrow the matrix (comma lists); `--states
+  answer,empty,busy,picker,failure,disconnected,small` reaches just the seven gate-relevant
+  states below when a full run isn't needed. The route path and fixture data are documented
   at the top of the script. The `answer` fixture is a LIVE-shaped answer: a nine-row grid, a
   sixty-character question, three tool chips, three assumption chips (one five-word label),
   three follow-ups. `disconnected` and `small` are the composer's two exceptions (no session;
@@ -84,7 +86,7 @@ Also, per frame:
 
 ```
 TASTE GATE · <wave> · <date>
-frames: <n>/30 reviewed (<dir>)
+frames: <n>/264 reviewed (<dir>)
 FINDINGS
 S1 · rule <n> · <frame>.png · <what is wrong, one sentence> · <the fix, one sentence>
 S2 · …
