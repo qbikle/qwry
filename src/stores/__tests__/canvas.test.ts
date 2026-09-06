@@ -8,7 +8,7 @@
 // is recorded in order and the appdb writes can be read back exactly as the
 // database would hold them.
 
-import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 // canvas.ts pulls in tabs.ts and settings.ts, which paint the theme onto the
 // document at import and read localStorage; bun has neither (the agent store
@@ -42,6 +42,7 @@ const { clearMocks, mockIPC } = await import("@tauri-apps/api/mocks");
 const canvas = await import("../canvas");
 const {
   buildDiff,
+  cancelCanvasSaves,
   chartOf,
   compareTargets,
   columnKinds,
@@ -66,6 +67,11 @@ type Profile = import("../../ipc/types").Profile;
 
 /** one row over the chart's and the diff's shared cap */
 const OVER_CAP = 201;
+
+// a block landed in the last assertion leaves a 400ms write behind it; the
+// suite that runs after this one has torn the mock transport down by then, so
+// the pending write is dropped here rather than left to land on nothing
+afterEach(cancelCanvasSaves);
 
 afterAll(() => {
   clearMocks();

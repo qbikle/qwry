@@ -872,6 +872,15 @@ function persist(canvasId: string): void {
   );
 }
 
+/** drop every pending write instead of firing it. The window never wants
+ * this (a close flushes), but a harness that pulls the Tauri transport out
+ * from under a live debounce does: the timer would otherwise land on a
+ * backend that is gone, and the store would read a torn-down transport as a
+ * failed save and start retrying against it */
+export function cancelCanvasSaves(): void {
+  for (const id of [...timers.keys(), ...retries.keys()]) clearTimer(id);
+}
+
 /** fire every debounced write NOW: window blur / close must not lose the last
  * block a user added (the tabs store's own contract) */
 export function flushCanvases(): Promise<void> {
