@@ -267,6 +267,11 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
     // SchemaTree's persisted table pins die with the profile too
     localStorage.removeItem(`qwry.pins.${id}`);
     useSettings.getState().dropConnTheme(id);
+    // and its permission to be changed: an id the app hands out again must
+    // never inherit one (A4). Not in `dropAgentConn`, which also fires when
+    // the model row falls back to App default and would revoke edits for a
+    // choice about models
+    useSettings.getState().setAgentWrites(id, false);
     // its workspace dies with it (pinned tabs survive as orphans)
     void import("./tabs").then(({ useTabs }) => useTabs.getState().purgeProfileTabs(id));
   },

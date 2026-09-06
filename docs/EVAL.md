@@ -239,6 +239,14 @@ Haiku `pagila-hard.json` **5/5**; section 4's table has every row.
   raise presentation by failing more queries: that lands on accuracy, where it
   belongs. A baseline row without the field does not arm the rule, which is how
   every row recorded before W5 reads.
+- **Writes add no prompt surface (A4, 2026-09-06)**: `PROMPT_VERSION` stays
+  `v4`. A write-enabled connection appends a `WRITES:` block to the USER
+  message (`writesMessage()` in `prompt.ts`, AGENT-SPEC §8.7, AGENT-UX §13),
+  never to `SYSTEM_PROMPT`, which stays the byte-equal v4 string
+  `prompt.test.ts` already pins; the eval drives no connection with edits on,
+  so it sends no `WRITES:` block, and `loop.test.ts` pins the eval's message
+  byte-identical to today's. No bench row in this file moves for a change no
+  gated run ever sees.
 
 **Reference numbers, 2026-09-06** (W3b; provider `claude-code`, `--jobs 3`,
 `PROMPT_VERSION` v4, 0 turn-cap hits on every row except `pagila-insight.json`

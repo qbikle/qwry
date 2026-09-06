@@ -9,6 +9,16 @@
 // register and leaves the partial text in place. Errors explain and propose;
 // they do not apologise.
 //
+// `writesoff` (A4) is the model proposing a change on a connection whose
+// edits are off: the card says so, the field keeps the statement with Insert
+// on it (the manual route stays open, rule 8's inverse of a hidden way out),
+// and the row is `Settings… · Ask Differently`. `Fix It` is absent because it
+// has nothing to fix, and the ellipsis is earned (WRITING rule 2: the modal
+// needs a flip before anything happens, `Manage Models…` the precedent). On
+// production the row would open a Settings row that does not exist, so the
+// message names production and `Ask Differently` stands alone (LESSONS 9).
+// The words are edits and changes, never writes: `writes` is the code term.
+//
 // Insert replaces Open in Tab here as it does on the result block (W7): the
 // statement lands at the caret of the active query tab, and opens one only
 // when no editor is mounted. It rides the FIELD, not the button row, in the
@@ -55,6 +65,11 @@ export interface FailureBlockProps {
   onInsert: (sql: string) => void;
   /** Ask Differently: the question lands back in the composer, focused */
   onAskDifferently: () => void;
+  /** the connection is production: `writesoff` names production and offers no
+   * Settings row, because production has none */
+  prod?: boolean;
+  /** Settings…: Settings › Models, where the connection's own edits row is */
+  onSettings?: () => void;
   onRetry: () => void;
   /** Continue (turn cap only): the same session resumed with a fresh budget */
   onContinue: () => void;
@@ -214,6 +229,8 @@ export function FailureBlock({
   onAskDifferently,
   onRetry,
   onContinue,
+  prod = false,
+  onSettings,
 }: FailureBlockProps) {
   const [edited, setEdited] = useState<string>(sql ?? "");
   // a new last attempt (Fix It failed again) becomes the field's text
@@ -256,7 +273,8 @@ export function FailureBlock({
   // `stopped after N turns` is the turn cap's own sentence (AGENT-UX 7); a
   // statement that failed says so and never borrows it (LESSONS 9)
   const isCap = error.kind === "turncap";
-  const title = isCap ? error.message : "query failed";
+  const isOff = error.kind === "writesoff";
+  const title = isCap ? error.message : isOff ? "not run" : "query failed";
 
   return (
     <>
@@ -265,9 +283,14 @@ export function FailureBlock({
         <div className="ans-fail-msg">
           {isCap
             ? "the turn cap ended the run before the model settled on an answer"
-            : withIdentifiers(pg.main)}
+            : isOff
+              ? prod
+                ? "edits are off on production"
+                : "edits are off for this connection"
+              : withIdentifiers(pg.main)}
         </div>
         {!isCap &&
+          !isOff &&
           pg.extras.map((x) => (
             <div key={x.key} className="ans-fail-detail">
               <span className="ans-fail-detail-k">{x.key}</span>
@@ -297,7 +320,14 @@ export function FailureBlock({
       )}
 
       <div className="ans-acts">
-        {sql !== null && (
+        {/* the way forward, and the only one this card has: Fix It has nothing
+            to fix on a statement that was never wrong */}
+        {isOff && !prod && onSettings && (
+          <button className="btnish primary" disabled={busy} onClick={onSettings}>
+            Settings…
+          </button>
+        )}
+        {!isOff && sql !== null && (
           <button className="btnish primary" title={FIX_TIP} disabled={!canFix} onClick={fixIt}>
             Fix It
           </button>

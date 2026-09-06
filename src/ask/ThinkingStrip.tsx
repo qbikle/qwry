@@ -99,7 +99,9 @@ export function groupChips(chips: ToolChip[]): ChipGroup[] {
       count: 1,
       running: c.ms === null,
       isError: c.isError,
-      isRun: c.name === "run_sql",
+      // A4's dry run wears the run chip's accent: it is the one call in the
+      // strip that touches the rows the answer is about
+      isRun: c.name === "run_sql" || c.name === "preview",
     });
   }
   return out;

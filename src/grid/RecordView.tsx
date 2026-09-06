@@ -13,9 +13,22 @@
 // Esc layering: inline editors and the structured-value pop-out each push
 // their own overlay-stack entry, so Esc closes the editor first and the
 // record view underneath never moves.
+//
+// A4 item 7: the header trades its keys hint for `Ask to Edit`. The hint
+// explained a standard interaction and a chord the stepper's own tooltips
+// already carry (DESIGN rule 11), so it goes; the button takes its place
+// beside the stepper and the strip holds three things before and after (rule
+// 12: a title, a qualifier, two controls, the joined pair one species). It
+// wears Ask's own glyph, the titlebar's, so one mark stands for Ask app-wide
+// (the Bookmark / Save Query precedent), and it opens the pane in Ask with the
+// table as a pill in the composer and this row's values behind it as context,
+// so `set status to shipped` can come back as an UPDATE with a WHERE that
+// names the row. Absent when the connection's edits are off (a capability
+// that does not exist is absent, rule 2's matrix) and absent in Compare Rows,
+// where two rows are not a row. The pencils stay exactly as they are.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
-import { ChevronLeft, ChevronRight, Lock, Pencil } from "lucide-react";
+import { ChevronLeft, ChevronRight, Lock, MessageSquare, Pencil } from "lucide-react";
 import { popIn } from "../design/springs";
 import { Modal, useOverlayLayer } from "../app/overlay/Overlay";
 import type { StatementState } from "../stores/results";
@@ -23,6 +36,10 @@ import { editKey, useEdits, type PendingEdit } from "../stores/edits";
 import { useInspector } from "../stores/inspector";
 import { useConnections } from "../stores/connections";
 import { useSchema } from "../stores/schema";
+import { useSettings, writesAllowed } from "../stores/settings";
+import { useAsk } from "../stores/ask";
+import { useSidePane } from "../stores/sidePane";
+import { canonicalToken } from "../agent/mentions";
 import type { ColumnEditMeta } from "../ipc/types";
 import { isArrayType } from "../inspector/format";
 import { JsonField } from "../inspector/JsonField";
@@ -44,6 +61,13 @@ interface EditState {
 /** readOnly hosts never read the results tab's staged edits (keyed by a
  * statement index a standalone grid shares) */
 const NO_PENDING: Record<string, PendingEdit> = Object.freeze({});
+
+/** what Ask to Edit hands the model about the row: enough columns to write a
+ * WHERE and to read the record, never a whole wide table's worth of prose */
+const ASK_ROW_COLS = 40;
+const ASK_VALUE_CHARS = 200;
+const clipValue = (v: string) =>
+  v.length > ASK_VALUE_CHARS ? `${v.slice(0, ASK_VALUE_CHARS)}…` : v;
 
 export function RecordView({
   statement,
@@ -76,6 +100,18 @@ export function RecordView({
   onClose: () => void;
 }) {
   const pending = useEdits((s) => (readOnly ? NO_PENDING : s.pending));
+  // A4: the row's table and key, for Ask to Edit. A readOnly host (Ask's own
+  // grid) has no editability map and no table behind its rows, so the button
+  // is absent there too
+  const editMap = useEdits((s) => (readOnly ? undefined : s.maps[statement.index]));
+  const askProfileId = useConnections((s) => s.activeProfileId);
+  // production is not a switch that is off, it is a capability that does not
+  // exist (AGENT-UX 13.1): a stale `true` persisted before the connection was
+  // marked prod must not put the button back
+  const askProd = useConnections((s) =>
+    askProfileId ? s.profiles.find((p) => p.id === askProfileId)?.is_prod === true : false,
+  );
+  const askOn = useSettings((s) => (askProfileId ? writesAllowed(s.agentWrites, askProfileId, askProd) : false));
   const [edit, setEdit] = useState<EditState | null>(null);
   const [popCol, setPopCol] = useState<number | null>(null);
   const [reasonCol, setReasonCol] = useState<number | null>(null);
@@ -124,6 +160,48 @@ export function RecordView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rowGone]);
   if (rowGone) return null;
+
+  /** the table this record belongs to, and the result columns that key it.
+   * The first editable non-ctid column names the table; a ctid locator is a
+   * row address, not a key a WHERE can be written from, so the key line is
+   * omitted rather than invented (LESSONS 4) */
+  const askTable = (() => {
+    if (diff || readOnly || !askOn || !askProfileId) return null;
+    if (editMap === undefined || editMap === "loading" || editMap === "unavailable") return null;
+    const meta = editMap.columns.find((c) => c.editable && !c.is_ctid);
+    if (!meta) return null;
+    const ref = editMap.table_refs[meta.table_oid];
+    if (!ref) return null;
+    const pk = (editMap.pk_cols[meta.table_oid] ?? []).filter((i) => !editMap.columns[i]?.is_ctid);
+    return { ref, pk, profileId: askProfileId };
+  })();
+
+  /** Ask to Edit: the pane opens in Ask with the table as a pill in the
+   * composer and this row behind it as context, so the model can write a
+   * WHERE that names THIS row rather than the whole table */
+  const askToEdit = () => {
+    if (!askTable) return;
+    const { ref, pk, profileId } = askTable;
+    const qualified = `${ref.schema}.${ref.name}`;
+    const value = (i: number) => effVal(0, i) ?? "NULL";
+    const lines: string[] = [];
+    lines.push(
+      pk.length > 0
+        ? `row of ${qualified}, keyed ${pk.map((i) => `${statement.columns[i].name} = ${value(i)}`).join(" and ")}`
+        : `row of ${qualified}`,
+    );
+    const shown = Math.min(viewColLen, ASK_ROW_COLS);
+    for (let v = 0; v < shown; v++) {
+      const i = colAt(v);
+      lines.push(`${statement.columns[i].name} = ${clipValue(value(i))}`);
+    }
+    if (viewColLen > shown) lines.push(`(${viewColLen - shown} more columns not listed)`);
+    onClose();
+    useSidePane.getState().show("ask");
+    useAsk
+      .getState()
+      .prefillAsk(profileId, `${canonicalToken("table", { schema: ref.schema, table: ref.name })} `, lines.join("\n"));
+  };
 
   const openEdit = (i: number) => {
     if (readOnly) return;
@@ -256,10 +334,16 @@ export function RecordView({
               </span>
             ) : (
               <span className="rv-nav">
-                <span className="rv-keys">
-                  {readOnly ? null : "double-click value to edit · "}
-                  <Kbd chord="cmd+up" /> <Kbd chord="cmd+down" /> walk
-                </span>
+                {askTable && (
+                  <button
+                    className="iconbtn"
+                    title="Ask to Edit"
+                    aria-label="Ask to Edit"
+                    onClick={askToEdit}
+                  >
+                    <MessageSquare size={14} />
+                  </button>
+                )}
                 <span className="rv-step">
                   <button
                     className="rv-navbtn"

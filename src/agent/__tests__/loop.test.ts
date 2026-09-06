@@ -924,3 +924,132 @@ describe("the tags the user wrote", () => {
     expect(bare && "mentions" in bare).toBe(false);
   });
 });
+
+// ---- writes (A4) ------------------------------------------------------------
+// The loop never runs a change. With edits on, the statement the model settled
+// on ends the exchange as a PROPOSAL the user runs in a query tab; with them
+// off, it ends as the one failure whose way out is Settings. Everything the
+// gate does not read as exactly one INSERT / UPDATE / DELETE takes the path it
+// always took, and the message the eval sends does not move a byte either way.
+
+describe("a change the model proposed", () => {
+  const UPDATE =
+    "Marked them paid.\n\n```sql\nUPDATE order_v2 SET payment_status = 'paid' WHERE id = 1\n```\nAssumptions: none";
+
+  /** the write gate, scripted: `wrote` is what it read off the parse tree */
+  const gate = (on: boolean, wrote = true, prod = false) => {
+    const seen: string[] = [];
+    return {
+      seen,
+      mode: { on, prod, isWrite: async (sql: string) => (seen.push(sql), wrote) },
+    };
+  };
+
+  const askWith = async (
+    text: string,
+    mode: Parameters<typeof runAsk>[0]["writes"],
+  ) => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const { answer, events } = await ask(
+      scripted([[{ text }, done("stop")]], rec),
+      tools(rec),
+      mode ? { writes: mode } : {},
+    );
+    const first = rec.requests[0].messages[0];
+    return { answer, events, rec, message: "content" in first ? (first.content ?? "") : "" };
+  };
+
+  test("edits on: the exchange ends proposed, carrying the statement, and nothing ran", async () => {
+    const g = gate(true);
+    const { answer, events, rec } = await askWith(UPDATE, g.mode);
+    expect(answer.verdict).toEqual({
+      status: "proposed",
+      sql: "UPDATE order_v2 SET payment_status = 'paid' WHERE id = 1",
+    });
+    expect(answer.sql).toBe("UPDATE order_v2 SET payment_status = 'paid' WHERE id = 1");
+    expect(answer.run).toBeNull();
+    // the statement reached the gate and nothing else
+    expect(g.seen).toEqual([answer.sql!]);
+    expect(rec.calls.filter((c) => c.name === "runSql")).toHaveLength(0);
+    // a proposal is not a failure: no error event, and the prose stands
+    expect(events.filter((e) => e.type === "error")).toHaveLength(0);
+    expect(answer.text).toStartWith("Marked them paid.");
+  });
+
+  test("edits off: the Settings failure, the statement kept, and still no run", async () => {
+    const g = gate(false);
+    const { answer, events, rec } = await askWith(UPDATE, g.mode);
+    expect(answer.verdict).toMatchObject({ status: "failed", message: "edits are off for this connection" });
+    expect(answer.sql).toBe("UPDATE order_v2 SET payment_status = 'paid' WHERE id = 1");
+    expect(answer.run).toBeNull();
+    expect(rec.calls.filter((c) => c.name === "runSql")).toHaveLength(0);
+    // its own kind, because its own affordance: Settings, never Fix It
+    expect(events.filter((e) => e.type === "error")).toEqual([
+      { type: "error", kind: "writesoff", message: "edits are off for this connection" },
+    ]);
+  });
+
+  test("on production the copy names production, since there is no switch to offer", async () => {
+    const { answer } = await askWith(UPDATE, gate(false, true, true).mode);
+    expect(answer.verdict).toMatchObject({ status: "failed", message: "edits are off on production" });
+  });
+
+  test("a read is untouched: the gate reads no write and the statement runs as ever", async () => {
+    const g = gate(true, false);
+    const { answer, rec } = await askWith(answerText, g.mode);
+    expect(g.seen).toEqual(["SELECT count(*) FROM film"]);
+    expect(answer.verdict.status).toBe("answered");
+    expect(rec.calls.filter((c) => c.name === "runSql")).toHaveLength(1);
+  });
+
+  test("the WRITES block rides the user message only when edits are on, and rides last", async () => {
+    const on = await askWith(UPDATE, gate(true).mode);
+    expect(on.message).toContain("\nWRITES: the user has allowed changes to this database.");
+    expect(on.message.indexOf("CANDIDATE TABLES")).toBeLessThan(on.message.indexOf("WRITES:"));
+    expect(on.message.trimEnd()).toEndWith("Anything the question only asks about is read-only work as before.");
+  });
+
+  test("the risk block keeps its own place: the writes block follows it", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    await ask(scripted([[{ text: UPDATE }, done("stop")]], rec), tools(rec), {
+      question: "how many films were added within 30 days?",
+      writes: gate(true).mode,
+    });
+    const first = rec.requests[0].messages[0];
+    const message = "content" in first ? (first.content ?? "") : "";
+    expect(message.indexOf("RISK CHECK REQUIRED")).toBeLessThan(message.indexOf("WRITES:"));
+  });
+
+  test("edits off sends the eval's message byte for byte, and asks the gate anyway", async () => {
+    const g = gate(false, false);
+    const evaluation = await askWith(answerText, undefined);
+    const off = await askWith(answerText, g.mode);
+    expect(off.message).toBe(evaluation.message);
+    expect(off.message).not.toContain("WRITES:");
+    // the gate still reads every final statement with edits off: that is how a
+    // change gets the Settings failure instead of the read gate's own words
+    expect(g.seen).toHaveLength(1);
+  });
+
+  test("the eval path asks no gate at all", async () => {
+    const { answer } = await askWith(UPDATE, undefined);
+    // no writes mode, no write check: the statement goes to run_sql, where the
+    // READ gate is what refuses it, exactly as it did before this wave
+    expect(answer.verdict.status).toBe("answered");
+  });
+
+  test("the small tier proposes too: no tier is a reason to run a change", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const provider = scripted([[{ text: UPDATE }, done("stop")]], rec);
+    const { answer } = await ask(provider, tools(rec), {
+      tier: "small",
+      writes: gate(true).mode,
+    });
+    expect(answer.verdict.status).toBe("proposed");
+    expect(rec.calls.filter((c) => c.name === "runSql")).toHaveLength(0);
+    // and the small path's own message never carries the block: its system
+    // prompt asks for a SELECT, and two instructions would contradict
+    const first = rec.requests[0].messages[0];
+    expect("content" in first ? (first.content ?? "") : "").not.toContain("WRITES:");
+  });
+});

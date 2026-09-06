@@ -81,6 +81,12 @@ interface AskState {
    * own default, the table when a run left rows. A way of looking, not a
    * fact, so it lives with the chrome and is never persisted */
   face: Record<string, ResultFace>;
+  /** extra `TAGGED BY THE USER:` lines a surface OUTSIDE the pane handed the
+   * next question (A4 item 7: Record View's Ask to Edit names the row it was
+   * opened on, so `set status to shipped` can become a WHERE). Per connection,
+   * because context belongs to the connection it was gathered from (LESSONS
+   * 4); spent by the send that carries it */
+  askContext: Record<string, string>;
 
   openTrace: (exchangeId: string, stepId?: string | null) => void;
   closeTrace: () => void;
@@ -101,6 +107,14 @@ interface AskState {
   setDraft: (text: string) => void;
   requestFocus: () => void;
   setFace: (exchangeId: string, face: ResultFace) => void;
+  /** open Ask ON something: the composer's draft, the context lines the next
+   * question carries, and the focus request, in one commit. The pane itself is
+   * the caller's to show (useSidePane), the way ⌘J is */
+  prefillAsk: (profileId: string, draft: string, context: string) => void;
+  /** the context the next question carries, read and cleared at the send: a
+   * row's values are true of the question that was asked over them and of no
+   * later one (LESSONS 3) */
+  takeAskContext: (profileId: string) => string;
 }
 
 const showing = () => {
@@ -108,7 +122,7 @@ const showing = () => {
   return p.open && p.mode === "ask";
 };
 
-export const useAsk = create<AskState>()((set) => ({
+export const useAsk = create<AskState>()((set, get) => ({
   open: showing(),
   traceOpenFor: null,
   threadsOpen: false,
@@ -119,6 +133,7 @@ export const useAsk = create<AskState>()((set) => ({
   focusSeq: 0,
   edit: null,
   face: {},
+  askContext: {},
 
 
   openTrace: (exchangeId, stepId = null) =>
@@ -161,6 +176,26 @@ export const useAsk = create<AskState>()((set) => ({
   // the face already showing must not re-render every block of the thread
   setFace: (exchangeId, face) =>
     set((s) => (s.face[exchangeId] === face ? {} : { face: { ...s.face, [exchangeId]: face } })),
+  // the draft is written straight into the map rather than through setDraft,
+  // which needs a composer already on screen: the pane may be opening in the
+  // same commit and `draftFor` still points at nothing
+  prefillAsk: (profileId, draft, context) =>
+    set((s) => ({
+      drafts: { ...s.drafts, [profileId]: draft },
+      askContext: { ...s.askContext, [profileId]: context },
+      edit: null,
+      mentionQuery: null,
+      focusSeq: s.focusSeq + 1,
+    })),
+  takeAskContext: (profileId) => {
+    const context = get().askContext[profileId] ?? "";
+    if (context) {
+      const next = { ...get().askContext };
+      delete next[profileId];
+      set({ askContext: next });
+    }
+    return context;
+  },
 }));
 
 // leaving the screen (pane closed, or switched to the inspector) takes the

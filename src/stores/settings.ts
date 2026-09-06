@@ -45,8 +45,18 @@ interface SettingsState {
   agentByConn: Record<string, { provider: string; model: string }>;
   setAgentModel: (provider: string | null, model: string | null) => void;
   setAgentConnModel: (profileId: string, provider: string, model: string) => void;
-  /** a deleted profile's model choice dies with it */
+  /** a deleted profile's model choice dies with it. NOT its edits permission:
+   * this also fires when the user picks `App default` in the model row, and a
+   * model choice is not a permission (A4). `connections.deleteProfile` revokes
+   * the permission itself, where the connection actually dies */
   dropAgentConn: (profileId: string) => void;
+  /** A4: per-connection permission for Ask to PROPOSE a change (one INSERT /
+   * UPDATE / DELETE in the final fence, never a tool call). Sparse and off by
+   * default: an absent entry is off, so a connection that was never switched
+   * on cannot be switched on by a bad merge. A production connection has no
+   * row at all (ModelsSettings) and the dry run refuses before it connects */
+  agentWrites: Record<string, boolean>;
+  setAgentWrites: (profileId: string, on: boolean) => void;
   /** per-provider base URL overrides (local runtimes, gateways), sparse: an
    * absent entry means the preset default; the loop and the probes read the
    * same map so what Settings tested is what a run reaches */
@@ -184,6 +194,7 @@ function sanitizeSettings(persisted: unknown, current: SettingsState): SettingsS
     agentProvider: typeof p.agentProvider === "string" ? p.agentProvider : null,
     agentModel: typeof p.agentModel === "string" ? p.agentModel : null,
     agentByConn: sanitizeAgentConns(p.agentByConn),
+    agentWrites: sanitizeAgentWrites(p.agentWrites),
     agentBaseUrls: sanitizeBaseUrls(p.agentBaseUrls),
     formatPreset: typeof p.formatPreset === "string" ? p.formatPreset : current.formatPreset,
     formatKeywordCase: pick(
@@ -219,6 +230,34 @@ function sanitizeAgentConns(v: unknown): Record<string, { provider: string; mode
     if (e && typeof e.provider === "string" && typeof e.model === "string") {
       out[k] = { provider: e.provider, model: e.model };
     }
+  }
+  return out;
+}
+
+/** A4 (AGENT-UX 13.1): may Ask propose a change on this connection? The
+ * per-connection switch, and never on production, where the switch has no row
+ * to be on: the capability does not exist there this wave, so what depends on
+ * it is ABSENT rather than disabled (DESIGN rule 2's matrix). Pure and
+ * dependency-free, so a component can call it inside its own selector, the
+ * agent store can call it before its first await, and the grid can ask the
+ * question without pulling the Ask chunk in behind it.
+ */
+export function writesAllowed(
+  agentWrites: Record<string, boolean>,
+  profileId: string,
+  isProd: boolean,
+): boolean {
+  return !isProd && agentWrites[profileId] === true;
+}
+
+/** persisted write permissions, one per connection (A4). Only `true`
+ * survives: anything else is off, and off is what an absent entry means, so a
+ * corrupt map can never read as a granted permission. */
+function sanitizeAgentWrites(v: unknown): Record<string, boolean> {
+  if (typeof v !== "object" || v === null) return {};
+  const out: Record<string, boolean> = {};
+  for (const [k, raw] of Object.entries(v as Record<string, unknown>)) {
+    if (raw === true) out[k] = true;
   }
   return out;
 }
@@ -286,6 +325,16 @@ export const useSettings = create<SettingsState>()(
           const next = { ...s.agentByConn };
           delete next[profileId];
           return { agentByConn: next };
+        }),
+      agentWrites: {},
+      // off is the absent entry, so switching a connection off leaves nothing
+      // behind that a later merge could read as a permission
+      setAgentWrites: (profileId, on) =>
+        set((s) => {
+          const next = { ...s.agentWrites };
+          if (on) next[profileId] = true;
+          else delete next[profileId];
+          return { agentWrites: next };
         }),
       agentBaseUrls: {},
       setAgentBaseUrl: (providerId, url) =>
@@ -384,6 +433,7 @@ export const useSettings = create<SettingsState>()(
         agentProvider: s.agentProvider,
         agentModel: s.agentModel,
         agentByConn: s.agentByConn,
+        agentWrites: s.agentWrites,
         agentBaseUrls: s.agentBaseUrls,
         formatPreset: s.formatPreset,
         formatKeywordCase: s.formatKeywordCase,

@@ -15,6 +15,8 @@ import {
   agentAnswerPut,
   agentAnswersList,
   agentConnect,
+  agentGate,
+  agentWritePreview,
   agentThreadCreate,
   agentThreadDelete,
   agentThreadList,
@@ -27,15 +29,26 @@ import {
   cancel as cancelSession,
   disconnect,
 } from "../ipc/commands";
-import type { AgentAnswer, AgentTurn } from "../ipc/types";
+import type { AgentAnswer, AgentTurn, WritePreview, WriteVerb } from "../ipc/types";
+import { headToken } from "../editor/statements";
+import { useConnections } from "./connections";
+import { useAsk } from "./ask";
 import { useSchema } from "./schema";
 import { useSaved, visibleSaved } from "./saved";
-import { useSettings } from "./settings";
+import { useSettings, writesAllowed } from "./settings";
 import { createTauriTools } from "../agent/tools.tauri";
 import { tauriPlatform } from "../agent/platform.tauri";
 import { providerFor, tierOf } from "../agent/providers/index";
 import type { Provider, ProviderId } from "../agent/providers/types";
-import { runAsk, type AskAnswer, type AskErrorKind, type AskEvent, type AskPhase } from "../agent/loop";
+import {
+  runAsk,
+  type AskAnswer,
+  type AskErrorKind,
+  type AskEvent,
+  type AskPhase,
+  type WriteMode,
+} from "../agent/loop";
+import { RUN_SQL_TIMEOUT_MS } from "../agent/tools";
 import { suggestFollowUps } from "../agent/followups";
 import {
   MENTION_TEXT_CAP,
@@ -46,6 +59,7 @@ import {
 import { buildAssumptions, extractSql } from "../agent/extract";
 import { answerText } from "../agent/display";
 import type {
+  AnswerStatus,
   Assumption,
   SanityFragment,
   Thread,
@@ -60,7 +74,10 @@ import type {
  * trace drawer can open the chip before the answer lands. */
 export interface ToolChip {
   id: string;
-  name: ToolName;
+  /** one of the five tools, or A4's `preview`: the dry run is not a tool the
+   * model can call, but it is work the user waits on, so it wears the strip's
+   * own chip and the `run` chip's species (AGENT-UX 13.2) */
+  name: ToolName | "preview";
   label: string;
   ms: number | null;
   isError: boolean;
@@ -109,6 +126,21 @@ export interface Exchange {
    * for the Stop, but nothing of it is on screen, so the new run's text
    * streams instead of being held back behind an answer that is still there */
   forgot?: boolean;
+  /** A4: the exchange's final SQL is a change. `proposed` = it passed the
+   * write gate and nothing ran; `ran` = the user ran it in a query tab.
+   * Absent on every read answer, which is `answered` by omission */
+  status?: AnswerStatus;
+  /** A4: the dry run behind the block's preview face. Absent while it is in
+   * flight (the strip's `preview` chip is spinning), null when it failed */
+  preview?: WritePreview | null;
+  /** A4: what the TAB reported after Run, read from the tab's own outcome and
+   * never from the preview's count (LESSONS 13) */
+  ranRows?: number;
+  /** A4: the SESSION KEY of the query tab the statement ran in (connections'
+   * `skey(profileId, tabId)`, the key `txTabs` is indexed by): the headline
+   * reads `uncommitted` while that tab's transaction is open and drops the
+   * word the moment it commits, rolls back or closes. Never persisted */
+  ranTab?: string;
 }
 
 /** What a retry replaces: kept whole so restorePrior() is exact. */
@@ -118,7 +150,16 @@ export interface PriorAnswer {
   chips: ToolChip[];
   answer: AskAnswer | null;
   error: Exchange["error"];
+  /** A4: the write state that stood with it (a proposal's dry run, a run's
+   * rows and tab). Sparse, and absent on an exchange that had none, so a
+   * restore puts the exchange back exactly, which is what a cancelled retry
+   * is owed */
+  write?: WriteState;
 }
+
+/** A4: the four fields a change leaves on an exchange, kept together so a
+ * stash carries them and a new verdict clears them in one move. */
+type WriteState = Partial<Pick<Exchange, "status" | "preview" | "ranRows" | "ranTab">>;
 
 /** One assumption chip's wanted state, carried into a re-ask as a stated
  * constraint and reapplied to the landed chips (applyFlips). */
@@ -149,6 +190,11 @@ interface AgentState {
    * from one exchange. Cleared the moment a run starts, so the chips never
    * stand beside a question they did not come from */
   followUps: Record<string, string[]>;
+  /** A4: per EXCHANGE, its proposed statement is on its way to a query tab.
+   * Not `busy`, which is the THREAD's: the run belongs to the tab, and ⌘.
+   * cannot stop it, so claiming the thread is busy would offer a Stop that
+   * stops nothing (LESSONS 9). The band reads it to hold its own press */
+  writing: Record<string, boolean>;
 
   setActiveProfile: (profileId: string | null) => void;
   loadThreads: (profileId: string) => Promise<void>;
@@ -190,6 +236,12 @@ interface AgentState {
    * remembers what it said. `prior` keeps the old answer for the Stop. The
    * confirm belongs to the UI, which knows what the user is looking at */
   restartFrom: (exchangeId: string) => Promise<void>;
+  /** A4 item 6: run a proposed change in the connection's ACTIVE query tab,
+   * inside a transaction the tab already knows how to commit or roll back
+   * (AGENT-UX 13.6). Never automatic: only the block's own danger button
+   * calls it, only on a standing `proposed` exchange, and only once. What the
+   * TAB reports lands on the exchange and persists as `ran` */
+  runWrite: (exchangeId: string) => Promise<void>;
   /** thread closed or connection disconnected: the session goes with it */
   closeThread: (threadId: string) => Promise<void>;
   dropProfile: (profileId: string) => Promise<void>;
@@ -198,10 +250,40 @@ interface AgentState {
   deleteAllThreads: (profileId: string) => Promise<void>;
 }
 
-/** The two model calls this store makes. A seam, not a switch: the store's
- * own tests stand scripted ones in here (agent-pending.test.ts), because a
- * bun module mock is process-global and reached the loop's own tests. */
-export const runner = { runAsk, suggestFollowUps };
+/** A4: does the write gate read this statement as exactly one INSERT /
+ * UPDATE / DELETE (AGENT-SPEC 8.7)? A refusal is not an error here: a SELECT,
+ * two statements and a DDL all answer false and take the read path they
+ * always took, where the read gate answers them in its own words. A gate that
+ * cannot be reached answers false too, and false is the read path, which is
+ * the safe one. */
+const isWrite = async (sql: string): Promise<boolean> => {
+  try {
+    return (await agentGate(sql, "write")).allowed;
+  } catch (e) {
+    console.error("agent write gate failed", e);
+    return false;
+  }
+};
+
+/** A4: the tab's run path, reached by import so the Ask chunk never pulls the
+ * editor and grid modules in behind it (the lazy-bundle line W3 measured). */
+const runInTab = async (profileId: string, sql: string, tabName?: string) => {
+  const { runStatementInTab } = await import("./results");
+  return runStatementInTab(profileId, sql, tabName);
+};
+
+/** The calls this store makes out of itself: the two model ones, and A4's
+ * three (the write gate, the dry run, the tab's run). A seam, not a switch:
+ * the store's own tests stand scripted ones in here (agent-pending.test.ts),
+ * because a bun module mock is process-global and reached the loop's own
+ * tests. */
+export const runner = {
+  runAsk,
+  suggestFollowUps,
+  isWrite,
+  writePreview: agentWritePreview,
+  runInTab,
+};
 
 /** Not state: an AbortController is not serialisable and nothing renders it. */
 const controllers = new Map<string, AbortController>();
@@ -279,6 +361,12 @@ function verdictFromStatus(
   message: string,
 ): AskAnswer["verdict"] {
   switch (status) {
+    // A4: both are one verdict, a statement that cleared the write gate; what
+    // separates them is `Exchange.status` and the rows the tab reported. A row
+    // that kept no statement is not a proposal any more, whatever it says
+    case "proposed":
+    case "ran":
+      return sql !== null ? { status: "proposed", sql } : { status: "answered", sql, rowCount };
     case "failed":
       return { status: "failed", sql, message };
     case "turn_cap":
@@ -326,6 +414,7 @@ export const useAgent = create<AgentState>((set, get) => ({
   busy: {},
   pending: {},
   followUps: {},
+  writing: {},
 
   setActiveProfile: (profileId) => set({ activeProfileId: profileId }),
 
@@ -388,6 +477,14 @@ export const useAgent = create<AgentState>((set, get) => ({
       current.turnId = turn.id;
       current.text = turn.content;
       current.error = error;
+      // A4: a change and how far it got. The dry run is NOT persisted (it
+      // described a moment that has passed), so a reloaded proposal shows its
+      // statement with no band, and a reloaded `ran` reads the rows the tab
+      // reported and never `uncommitted`, which belongs to a live tab alone
+      if (sql !== null && (stored?.status === "proposed" || stored?.status === "ran")) {
+        current.status = stored.status;
+        if (stored.status === "ran") current.ranRows = stored.row_count ?? 0;
+      }
       current.answer = {
         verdict: verdictFromStatus(stored?.status, sql, stored?.row_count ?? null, error?.message ?? ""),
         sql,
@@ -471,6 +568,10 @@ export const useAgent = create<AgentState>((set, get) => ({
     // the `@` tags, resolved against what this connection has RIGHT NOW and
     // before the thread create below, like every other capture here
     const mentions = mentionsFor(get, profileId, get().activeThread[profileId], text);
+    // the row Record View attached, read and CLEARED in one call: a row's
+    // values are true of the question asked over them and of no later one
+    // (LESSONS 3). Before the first await, like everything else here
+    const rowContext = useAsk.getState().takeAskContext(profileId);
 
     let threadId = get().activeThread[profileId];
     // a question typed into a busy thread would abort the live run through
@@ -532,6 +633,7 @@ export const useAgent = create<AgentState>((set, get) => ({
       snapshot,
       choice,
       mentions,
+      ...(rowContext ? { rowContext } : {}),
     });
   },
 
@@ -787,6 +889,45 @@ export const useAgent = create<AgentState>((set, get) => ({
       choice,
       mentions,
     });
+  },
+
+  runWrite: async (exchangeId) => {
+    // everything the run depends on, read BEFORE the first await (LESSONS 3):
+    // the tab this lands in is chosen from the connection that is on screen
+    // NOW, and the statement is the one the user is looking at
+    const profileId = get().activeProfileId;
+    if (!profileId) return;
+    const threadId = get().activeThread[profileId];
+    if (!threadId || get().busy[threadId]) return;
+    const exchange = (get().exchanges[threadId] ?? []).find((e) => e.id === exchangeId);
+    // only a standing proposal runs, and only once: `ran` is the record that
+    // the statement already reached a tab, and a second press must not send
+    // it twice. Undoing one is the tab's transaction, not another run
+    if (!exchange || exchange.status !== "proposed" || get().writing[exchangeId]) return;
+    const sql = exchange.answer?.sql;
+    if (!sql) return;
+    set((s) => ({ writing: { ...s.writing, [exchangeId]: true } }));
+    let out: Awaited<ReturnType<typeof runInTab>> | null = null;
+    try {
+      out = await runner.runInTab(profileId, sql, title(exchange.question));
+    } catch (e) {
+      // the tab's own pane carries what went wrong; the proposal stands
+      console.error("agent write run failed", e);
+    }
+    set((s) => ({ writing: without(s.writing, exchangeId) }));
+    // a confirm said no, another query held the tab, or the statement errored
+    // there: the proposal stands exactly as it was, and the tab shows why,
+    // which is where the user was looking when it happened
+    if (!out || !out.ran || out.error !== null) return;
+    const landed = out;
+    const rows = landed.rows ?? 0;
+    patchExchange(set, threadId, exchangeId, (e) => ({
+      ...e,
+      status: "ran",
+      ranRows: rows,
+      ranTab: landed.tabKey,
+    }));
+    await persistRan(get, threadId, exchangeId, rows);
   },
 
   closeThread: async (threadId) => {
@@ -1059,17 +1200,26 @@ function rearm(set: Setter, threadId: string, exchangeId: string, forget = false
 export function stashPrior(e: Exchange, forget = false): Exchange {
   const stashed: Exchange = {
     ...e,
-    prior: { text: e.text, thinking: e.thinking, chips: e.chips, answer: e.answer, error: e.error },
+    prior: {
+      text: e.text,
+      thinking: e.thinking,
+      chips: e.chips,
+      answer: e.answer,
+      error: e.error,
+      write: writeState(e),
+    },
     streaming: true,
     chips: [],
     error: null,
     thinking: "",
   };
   // a Restart forgets this exchange's own answer (W7): the run has to look
-  // like a run, so the slot empties and the new text streams into it. The
-  // stash still holds the old answer, and a Stop puts it back exactly
+  // like a run, so the slot empties and the new text streams into it. A4: the
+  // proposal it forgets takes its dry run with it, or the block would stand
+  // over a preview of an answer that is no longer on screen. The stash still
+  // holds both, and a Stop puts them back exactly
   return forget
-    ? { ...stashed, forgot: true, text: "", textStale: false, answer: null }
+    ? { ...clearWrite(stashed), forgot: true, text: "", textStale: false, answer: null }
     : stashed;
 }
 
@@ -1078,7 +1228,8 @@ export function restorePrior(e: Exchange): Exchange {
   if (!e.prior) return { ...e, streaming: false };
   const { prior, forgot: _forgot, ...rest } = e;
   return {
-    ...rest,
+    ...clearWrite(rest),
+    ...(prior.write ?? {}),
     text: prior.text,
     thinking: prior.thinking,
     chips: prior.chips,
@@ -1086,6 +1237,56 @@ export function restorePrior(e: Exchange): Exchange {
     error: prior.error,
     streaming: false,
   };
+}
+
+/** the write state an exchange carries right now, sparse: a key it does not
+ * have is not written, so a stash and a restore are exact inverses */
+function writeState(e: Exchange): WriteState {
+  const out: WriteState = {};
+  if (e.status !== undefined) out.status = e.status;
+  if (e.preview !== undefined) out.preview = e.preview;
+  if (e.ranRows !== undefined) out.ranRows = e.ranRows;
+  if (e.ranTab !== undefined) out.ranTab = e.ranTab;
+  return out;
+}
+
+/** A4: a new verdict over an exchange takes whatever the last one left with
+ * it. A Restart over a proposal must not leave the old dry run, its row count
+ * or its tab standing under a new answer, which is the same rule as never
+ * repainting one connection's rows under another's chrome (LESSONS 4). */
+function clearWrite(e: Exchange): Exchange {
+  if (
+    e.status === undefined &&
+    e.preview === undefined &&
+    e.ranRows === undefined &&
+    e.ranTab === undefined
+  ) {
+    return e;
+  }
+  const { status: _s, preview: _p, ranRows: _r, ranTab: _t, ...rest } = e;
+  return rest;
+}
+
+/** the same question answered from the live stores for the run being sent,
+ * with the gate reached through the seam so a test can stand its own in. The
+ * prod flag is the PROFILE's, never the rail's (LESSONS 4). */
+function writeMode(profileId: string): WriteMode {
+  const prod =
+    useConnections.getState().profiles.find((p) => p.id === profileId)?.is_prod === true;
+  return {
+    on: writesAllowed(useSettings.getState().agentWrites, profileId, prod),
+    prod,
+    isWrite: (sql) => runner.isWrite(sql),
+  };
+}
+
+/** A4: the verb of a statement, for a `ran` exchange reloaded from appdb,
+ * whose dry run is long gone (it was a dry run of a moment that has passed
+ * and nothing persists it). The statement itself is what appdb kept, and its
+ * head is the honest source for the headline's verb. */
+export function writeVerbOf(sql: string | null): WriteVerb | null {
+  const head = (sql ? headToken(sql) : "").toUpperCase();
+  return head === "INSERT" || head === "UPDATE" || head === "DELETE" ? head : null;
 }
 
 /** a verdict landed: the prior has been replaced */
@@ -1189,6 +1390,12 @@ interface RunArgs {
   choice: ModelChoice;
   /** the question's `@` tags, resolved by the caller before its first await */
   mentions?: Mention[];
+  /** A4 item 7: the row Record View attached with `Ask to Edit`, already
+   * taken from the seam by the caller before its first await. Rides in the
+   * mention grammar's own `TAGGED BY THE USER:` block, under the table's
+   * line, so a sentence like `set status to shipped` can be answered with a
+   * WHERE that names THIS row */
+  rowContext?: string;
   /** chip states the user chose, reapplied to the landed chips whatever the
    * re-run's own Assumptions line said */
   flips?: Flip[];
@@ -1201,6 +1408,9 @@ interface RunArgs {
 async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
   const { threadId, exchangeId, profileId } = args;
   cancelRequested.delete(threadId);
+  // A4: the connection's edits permission, read before the first await like
+  // every other thing this run depends on (LESSONS 3)
+  const writes = writeMode(profileId);
   // the follow-up row leaves the instant a question is sent (W7): it belongs
   // to the thread as it stood, and a chip beside a running question suggests
   // what to ask next while the last thing asked has no answer. A cancelled
@@ -1331,7 +1541,12 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
       thread: replay
         ? { id: threadId, session: sessionKey, firstCall: !resumed.has(threadId), replay }
         : { id: threadId, session: sessionKey, firstCall: !resumed.has(threadId) },
+      // A4: what this connection lets the model propose, read at the run's
+      // entry rather than at its verdict minutes later, when the switch may
+      // have moved (LESSONS 3)
+      writes,
       ...(mentions.length > 0 ? { mentions } : {}),
+      ...(args.rowContext ? { rowContext: args.rowContext } : {}),
       onEvent,
     });
     resumed.add(threadId);
@@ -1357,7 +1572,6 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
     return;
   }
   const mine = authoritative();
-  if (mine) controllers.delete(threadId);
 
   const landed: AskAnswer = { ...answer, assumptions: applyFlips(answer.assumptions, args.flips ?? []) };
   // a cancelled retry is no verdict on the question: the prior answer comes
@@ -1367,21 +1581,33 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
   const cancelledRetry =
     answer.verdict.status === "cancelled" &&
     !!(get().exchanges[threadId] ?? []).find((e) => e.id === exchangeId)?.prior;
+  // A4: the loop finished, the exchange did not. A proposal's other half is
+  // its dry run (AGENT-UX 13.2), so the exchange keeps its streaming face
+  // (the strip's `preview` chip spins in it) and the thread stays busy until
+  // that lands. The controller stays registered with it, or ⌘. would reach
+  // nothing while the pane says work is happening
+  const proposal =
+    !cancelledRetry && mine && landed.verdict.status === "proposed" ? landed.verdict.sql : null;
+  if (mine && proposal === null) controllers.delete(threadId);
   if (cancelledRetry) {
     patchExchange(set, threadId, exchangeId, restorePrior);
     // a Stop costs nothing (AGENT-UX 7), the row of chips included
     if (keptFollowUps) set((s) => ({ followUps: { ...s.followUps, [threadId]: keptFollowUps } }));
   } else {
     patchExchange(set, threadId, exchangeId, (e) => ({
-      ...dropPrior(e),
-      streaming: false,
+      ...clearWrite(dropPrior(e)),
+      streaming: proposal !== null,
       text: answer.text || e.text,
       answer: landed,
+      ...(proposal !== null ? { status: "proposed" as const } : {}),
     }));
     set((s) => ({ pending: without(s.pending, exchangeId) }));
   }
   if (mine) {
-    set((s) => ({ busy: { ...s.busy, [threadId]: false }, phase: { ...s.phase, [threadId]: null } }));
+    set((s) => ({
+      busy: { ...s.busy, [threadId]: proposal !== null },
+      phase: { ...s.phase, [threadId]: proposal !== null ? "running" : null },
+    }));
   }
   // the verdict on screen is still the prior one, and so is appdb's row: a
   // cancelled retry must not write `cancelled` over an answered turn
@@ -1401,6 +1627,89 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
   }
 
   await persist(set, get, args, landed);
+
+  // the dry run comes after the answer is on screen and its row is written,
+  // so a preview that fails or is stopped costs the exchange nothing it
+  // already had: the statement stands, with Insert as its manual route
+  if (proposal !== null) {
+    await previewInto(set, { profileId, threadId, exchangeId, sql: proposal, controller });
+  }
+}
+
+/** A4 item 3: the dry run behind a proposal (AGENT-UX 13.2). It runs on its
+ * own short-lived session in Rust and always rolls back, so the only thing
+ * that can be lost here is the preview itself: a failure leaves the exchange
+ * a proposal with no band, and a Stop leaves it exactly the same with the
+ * chip wearing the hollow ring a stopped call wears (LESSONS 9). */
+async function previewInto(
+  set: Setter,
+  args: {
+    profileId: string;
+    threadId: string;
+    exchangeId: string;
+    sql: string;
+    controller: AbortController;
+  },
+) {
+  const { threadId, exchangeId, controller } = args;
+  const chipId = `preview-${exchangeId}`;
+  // the chip goes up BEFORE the call: a pane that sits still while work
+  // happens is a pane that reads as broken
+  patchExchange(set, threadId, exchangeId, (e) => ({
+    ...e,
+    chips: [
+      ...e.chips,
+      { id: chipId, name: "preview", label: "preview", ms: null, isError: false, args: "", result: null },
+    ],
+  }));
+  const started = Date.now();
+  const settle = () => {
+    patchExchange(set, threadId, exchangeId, (e) => ({ ...e, streaming: false }));
+    if (controllers.get(threadId) !== controller) return;
+    controllers.delete(threadId);
+    set((s) => ({ busy: { ...s.busy, [threadId]: false }, phase: { ...s.phase, [threadId]: null } }));
+  };
+  // a Stop lands the moment it is pressed, not when the round trip returns:
+  // the IPC cannot be recalled, and Rust rolls its transaction back either way
+  let stopped = false;
+  const onStop = () => {
+    stopped = true;
+    settle();
+  };
+  controller.signal.addEventListener("abort", onStop, { once: true });
+  let preview: WritePreview | null = null;
+  let failure = "";
+  try {
+    preview = await runner.writePreview(args.profileId, args.sql, previewTimeoutMs());
+  } catch (e) {
+    failure = firstLine(e);
+  }
+  controller.signal.removeEventListener("abort", onStop);
+  if (stopped) return;
+  patchExchange(set, threadId, exchangeId, (e) => ({
+    ...e,
+    preview,
+    chips: e.chips.map((c) =>
+      c.id === chipId
+        ? {
+            ...c,
+            ms: Math.round(Date.now() - started),
+            isError: preview === null,
+            result: preview === null ? failure : "",
+          }
+        : c,
+    ),
+  }));
+  settle();
+}
+
+/** The dry run's own timeout, read the way `run_sql`'s is (tools.tauri.ts):
+ * the statement_timeout setting, and the section 5 default when it is 0,
+ * which means "no timeout" for a SESSION and is not a shape one statement
+ * inside a rolled-back transaction has. */
+function previewTimeoutMs(): number {
+  const ms = useSettings.getState().statementTimeoutSecs * 1000;
+  return ms > 0 ? ms : RUN_SQL_TIMEOUT_MS;
 }
 
 /** The follow-up call (AGENT-SPEC 4.6) for a THREAD (W7). The chips stand
@@ -1582,6 +1891,35 @@ async function persist(set: Setter, get: () => AgentState, args: RunArgs, answer
     });
   } catch (e) {
     // history is a convenience; losing it must never cost the answer on screen
+    console.error("agent history write failed", e);
+  }
+}
+
+/** A4: the proposal ran, so its answer row moves from `proposed` to `ran` and
+ * carries the rows the TAB affected (AGENT-SPEC 9). One `agentAnswerPut`, the
+ * same one every verdict writes: no new table and no migration this wave, and
+ * whether that run was committed is the tab's transaction to say, never a
+ * column here. History is a convenience: losing it costs the record, never
+ * what is on screen. */
+async function persistRan(
+  get: () => AgentState,
+  threadId: string,
+  exchangeId: string,
+  rows: number,
+) {
+  const exchange = (get().exchanges[threadId] ?? []).find((e) => e.id === exchangeId);
+  const answer = exchange?.answer;
+  if (!exchange || !answer || exchange.turnId === null) return;
+  try {
+    await agentAnswerPut({
+      turn_id: exchange.turnId,
+      sql: answer.sql,
+      row_count: rows,
+      assumptions_json: JSON.stringify(answer.assumptions),
+      sanity_json: JSON.stringify(answer.sanity),
+      status: "ran",
+    });
+  } catch (e) {
     console.error("agent history write failed", e);
   }
 }

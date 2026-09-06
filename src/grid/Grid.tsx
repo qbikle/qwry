@@ -129,12 +129,18 @@ const Cell = memo(function Cell(p: {
   num: boolean;
   isDefault: boolean;
   title: string | undefined;
+  /** Ask's write preview (A4): this cell is one the statement moves, and `old`
+   * is the value it holds today. The pair reads `old -> new` in the ONE cell
+   * (DESIGN rule 14) and wears the staged-edit fill without its dashed
+   * outline, which is the editable affordance and this cell answers no click */
+  changed: boolean;
+  old: string | null;
 }) {
   return (
     <div
       data-r={p.r}
       data-c={p.c}
-      className={`vgrid-cell${p.v === null ? " null" : ""}${p.selected ? " active" : ""}${p.focused ? " focus" : ""}${p.dirty ? " dirty" : ""}${p.flash ? " flash" : ""}${p.warn ? " ctid-warn" : ""}${p.hit ? " find-hit" : ""}${p.curHit ? " find-cur" : ""}${p.num ? " num" : ""}`}
+      className={`vgrid-cell${p.v === null ? " null" : ""}${p.selected ? " active" : ""}${p.focused ? " focus" : ""}${p.dirty ? " dirty" : ""}${p.flash ? " flash" : ""}${p.warn ? " ctid-warn" : ""}${p.hit ? " find-hit" : ""}${p.curHit ? " find-cur" : ""}${p.num ? " num" : ""}${p.changed ? " chg" : ""}`}
       style={{
         transform: `translate(${p.x}px, ${p.y}px)`,
         width: p.width,
@@ -142,6 +148,18 @@ const Cell = memo(function Cell(p: {
       }}
       title={p.title}
     >
+      {/* a changed cell states both values, old first: the arrow and the old
+          value at tier 2, the new one at tier 1 */}
+      {p.changed && (
+        <>
+          <span className="vgrid-old">
+            {p.old === null ? <span className="vgrid-nullchip">NULL</span> : p.old}
+          </span>
+          <span className="vgrid-arrow" aria-hidden="true">
+            →
+          </span>
+        </>
+      )}
       {/* the grid must never lie: real NULL renders as a chip element, '' as a
           dim marker: the literal text "NULL" stays visually distinct */}
       {p.isDefault ? (
@@ -190,13 +208,22 @@ function saveStoredWidths(sig: string, widths: number[]) {
 }
 // ---------------------------------------------------------------------------
 
-function estimateWidths(st: StatementState): number[] {
+function estimateWidths(
+  st: StatementState,
+  changed?: ReadonlyMap<string, string | null>,
+): number[] {
   return st.columns.map((col, ci) => {
     let max = col.name.length;
     const sample = Math.min(st.rows.length, 100);
     for (let r = 0; r < sample; r++) {
       const v = st.rows[r][ci];
-      if (v) max = Math.max(max, Math.min(v.length, 64));
+      // a preview cell reads `old -> new` in the ONE cell (A4), so the column
+      // has to hold both: a width measured from the new value alone clips the
+      // arrow and the column reads as a lie
+      const k = `${r}:${ci}`;
+      let len = v ? v.length : 0;
+      if (changed?.has(k)) len += (changed.get(k) ?? "NULL").length + 3;
+      if (len) max = Math.max(max, Math.min(len, 64));
     }
     return Math.max(MIN_COL_W, Math.min(MAX_COL_W, Math.round(max * CHAR_W + 24)));
   });
@@ -485,6 +512,7 @@ export function Grid({
   colTypes,
   filterText: hostFilterText,
   maxRows,
+  changed,
 }: {
   statement: StatementState;
   insertable?: boolean;
@@ -512,6 +540,10 @@ export function Grid({
    * thickness (0 overlay, 15 classic), and a slot sized without it hid the
    * last promised row behind the bar (the Ask card's one-row grid). */
   maxRows?: number;
+  /** readOnly only (A4, Ask's write preview): the value a cell holds TODAY,
+   * keyed `row:col` the way `statement.truncated` is. A cell in this map reads
+   * `old -> new` in the one cell; every other cell is untouched */
+  changed?: ReadonlyMap<string, string | null>;
 }) {
   const insertable = insertableProp && !readOnly;
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -567,8 +599,13 @@ export function Grid({
   useEffect(() => {
     if (widthsInitialized.current) return;
     // hand-set widths for this column shape win over content estimation,
-    // and apply immediately, before any rows have streamed in
-    const stored = loadStoredWidths(colSig(statement.columns), statement.columns.length);
+    // and apply immediately, before any rows have streamed in. A preview's
+    // cells hold two values where every stored width holds one, so the stored
+    // pass is skipped there rather than handed a width that would clip
+    const stored =
+      changed && changed.size > 0
+        ? null
+        : loadStoredWidths(colSig(statement.columns), statement.columns.length);
     if (stored) {
       widthsInitialized.current = true;
       setWidths(stored);
@@ -576,9 +613,9 @@ export function Grid({
     }
     if (statement.rows.length > 0) {
       widthsInitialized.current = true;
-      setWidths(estimateWidths(statement));
+      setWidths(estimateWidths(statement, changed));
     }
-  }, [statement]);
+  }, [statement, changed]);
 
   const cols = statement.columns;
   const rows = statement.rows;
@@ -3007,6 +3044,8 @@ export function Grid({
                   num={isNumericCol(dataC)}
                   isDefault={isDefault}
                   title={(meta && !meta.editable ? meta.reason : warn) ?? undefined}
+                  changed={changed?.has(`${dataR}:${dataC}`) ?? false}
+                  old={changed?.get(`${dataR}:${dataC}`) ?? null}
                 />
               );
             }),

@@ -93,6 +93,7 @@ import type { MentionsEchoState } from "./fixtures.mentions-echo";
 import { RESULT_CHOICE, type ResultState } from "./fixtures.result";
 import { RICH_CHOICE, richSeed, type RichState } from "./fixtures.rich";
 import { stripSeed } from "./fixtures.strip";
+import { WRITES_CHOICE, type WritesState } from "./fixtures.writes";
 
 export type HarnessState =
   | "answer"
@@ -127,7 +128,8 @@ export type HarnessState =
   | MentionState
   | MentionsEchoState
   | ResultState
-  | RichState;
+  | RichState
+  | WritesState;
 export const HARNESS_STATES: readonly HarnessState[] = [
   "answer",
   "empty",
@@ -173,6 +175,12 @@ export const HARNESS_STATES: readonly HarnessState[] = [
   "failure-cap",
   "answer-actions",
   "followups-end",
+  "a4-preview",
+  "a4-preview-warn",
+  "a4-preview-sql",
+  "a4-ran",
+  "a4-preview-busy",
+  "a4-writes-off",
 ];
 export const HARNESS_WIDTHS = [320, 392, 560] as const;
 export type HarnessTheme = "dark" | "light";
@@ -618,6 +626,12 @@ export function exchangeFor(state: HarnessState): Exchange | null {
     case "failure-cap":
     case "answer-actions":
     case "followups-end":
+    case "a4-preview":
+    case "a4-preview-warn":
+    case "a4-preview-sql":
+    case "a4-ran":
+    case "a4-preview-busy":
+    case "a4-writes-off":
       return null;
     case "pending":
     case "retry":
@@ -671,6 +685,13 @@ export function choiceFor(state: HarnessState): { provider: string; model: strin
     case "result-scalar":
     case "failure-cap":
       return RESULT_CHOICE;
+    case "a4-preview":
+    case "a4-preview-warn":
+    case "a4-preview-sql":
+    case "a4-ran":
+    case "a4-preview-busy":
+    case "a4-writes-off":
+      return WRITES_CHOICE;
     case "insight":
     case "insight-prose":
     case "insight-steps":

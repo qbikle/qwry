@@ -7,12 +7,24 @@
 // Mounted by SettingsModal after the Query section, in the settings-section /
 // settings-row skin (one modal, one skin; the sketch's standalone modal is a
 // deviation the W2 plan records).
+//
+// A4 adds one row under the per-connection model row: the switch that lets
+// Ask PROPOSE a change to this connection, with the consequence stacked under
+// its own label in the same row (the slider row's hint precedent), because it
+// earns its pixels by naming the risk and the rollback plan in one sentence.
+// On a production connection the row is ABSENT, not disabled with a reason: a
+// disabled switch under a sentence would state a norm (production is
+// read-only; the pane wears no READ-ONLY badge for the same reason, DESIGN
+// rule 11), and rule 2's matrix binds a control that EXISTS and cannot act
+// now, where on production the capability does not exist at all (the dry run
+// refuses before it opens a connection). Nothing else in Settings moves.
 
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { PresetId, ProviderId } from "../agent/providers/types";
 import { agentKeyDelete, agentKeySet } from "../ipc/commands";
 import { useConnections } from "../stores/connections";
 import { useSettings } from "../stores/settings";
+import { Switch } from "../design/Switch";
 import {
   KEY_PLACEHOLDER,
   LOCAL,
@@ -80,9 +92,11 @@ export function ModelsSettings({ profileId, reveal = false }: ModelsSettingsProp
   const agentProvider = useSettings((s) => s.agentProvider);
   const agentModel = useSettings((s) => s.agentModel);
   const perConn = useSettings((s) => (profileId ? s.agentByConn[profileId] : undefined));
-  const connName = useConnections((s) =>
-    profileId ? s.profiles.find((p) => p.id === profileId)?.name ?? null : null,
+  const conn = useConnections((s) =>
+    profileId ? s.profiles.find((p) => p.id === profileId) ?? null : null,
   );
+  const connName = conn?.name ?? null;
+  const writes = useSettings((s) => (profileId ? s.agentWrites[profileId] === true : false));
 
   // one Keychain pass and one probe per local runtime on mount; each row
   // re-probes on its own when its URL is edited. The probes take no `live`
@@ -294,6 +308,24 @@ export function ModelsSettings({ profileId, reveal = false }: ModelsSettingsProp
             <option value="">App default</option>
             {options(perChoice)}
           </select>
+        </div>
+      )}
+      {profileId && conn && !conn.is_prod && (
+        <div className="settings-row">
+          <span className="settings-label ask-writes">
+            <span>
+              Edits in <span className="ask-id">{connName ?? profileId}</span>
+            </span>
+            <span className="settings-hint">
+              Ask can propose changes to this database; each runs only when you press its button,
+              in a query tab you commit or roll back.
+            </span>
+          </span>
+          <Switch
+            checked={writes}
+            ariaLabel="Edits in this connection"
+            onChange={(on) => useSettings.getState().setAgentWrites(profileId, on)}
+          />
         </div>
       )}
       <div className="settings-row">

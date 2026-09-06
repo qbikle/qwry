@@ -44,13 +44,26 @@ export interface TokenUsage {
 export type MentionKind = "table" | "column" | "saved" | "thread";
 
 /** How a thread's question ended. The tokens are persisted verbatim in
- * `agent_answers.status`, so they never drift between store and appdb. */
-export type AnswerStatus = "answered" | "failed" | "turn_cap" | "cancelled";
+ * `agent_answers.status`, so they never drift between store and appdb.
+ * `proposed` and `ran` are A4's: a change the model wrote and nothing ran,
+ * and the same change once the user ran it in a query tab (AGENT-SPEC 9). */
+export type AnswerStatus =
+  | "answered"
+  | "failed"
+  | "turn_cap"
+  | "cancelled"
+  | "proposed"
+  | "ran";
 
 /** The loop's own verdict on a question. Every failing shape carries what the
- * UI needs to offer Fix It rather than a dead end (AGENT-UX 7, LESSONS 9). */
+ * UI needs to offer Fix It rather than a dead end (AGENT-UX 7, LESSONS 9).
+ * `proposed` is not a failure and not an answer: the statement is real, it
+ * cleared the write gate, and it has not run (AGENT-UX 13.2). `ran` is never
+ * a verdict of the loop's, which never runs a write; the store writes that
+ * status when the TAB reports its outcome (AGENT-UX 13.6). */
 export type Verdict =
   | { status: "answered"; sql: string | null; rowCount: number | null }
+  | { status: "proposed"; sql: string }
   | { status: "failed"; sql: string | null; message: string }
   | { status: "turn_cap"; sql: string | null; turns: number }
   | { status: "cancelled"; sql: string | null };

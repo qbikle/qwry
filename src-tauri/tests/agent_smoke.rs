@@ -13,6 +13,7 @@
 //! enum with five labels.
 
 use qwry_lib::agent;
+use qwry_lib::agent_write;
 use qwry_lib::driver::postgres::edit::TableRef;
 use qwry_lib::driver::postgres::PgSession;
 use qwry_lib::driver::{postgres, DriverError, Profile};
@@ -254,4 +255,141 @@ async fn probe_runs_each_query_independently() {
         results[2].run.as_ref().expect("the last one still ran").rows[0][0].as_deref(),
         Some("1")
     );
+}
+
+// ---- A4 item 3: the write dry run -----------------------------------------
+
+/// what `agent_write_preview` opens for the dry run: an ordinary session, NOT
+/// read-only (the transaction's `ROLLBACK` is what makes it safe), never
+/// registered anywhere, dropped when the test ends
+async fn write_session() -> PgSession {
+    let password = std::env::var("QWRY_TEST_PASSWORD").unwrap_or_default();
+    postgres::connect(
+        &profile(),
+        &password,
+        None,
+        None,
+        Some(10_000),
+        false,
+        Box::new(|_, _| {}),
+        Box::new(|_| {}),
+    )
+    .await
+    .expect("write connect")
+}
+
+async fn one_value(session: &PgSession, sql: &str) -> String {
+    let out = session.execute_simple(sql).await.expect("read back");
+    out.statements
+        .first()
+        .and_then(|s| s.rows.first())
+        .and_then(|r| r.first().cloned().flatten())
+        .expect("one value")
+}
+
+/// the dry run measures by doing, and the doing does not survive it
+#[tokio::test]
+#[ignore]
+async fn write_preview_counts_an_update_and_rolls_it_back() {
+    let session = write_session().await;
+    let before_run =
+        one_value(&session, "SELECT rental_rate FROM film WHERE film_id = 1").await;
+
+    let preview = agent_write::preview_on(
+        &session,
+        "UPDATE film SET rental_rate = rental_rate + 1 WHERE film_id <= 3",
+        10_000,
+    )
+    .await
+    .expect("the preview runs");
+
+    assert_eq!(preview.verb, "UPDATE");
+    assert_eq!(preview.table, "film");
+    assert!(preview.has_where);
+    // the SERVER's count for the statement, not the sample's length (LESSONS 13)
+    assert_eq!(preview.exact_rows, 3);
+    assert!(preview.warnings.is_empty(), "{:?}", preview.warnings);
+    // both samples carry the same columns, so one grid can read old → new
+    assert_eq!(preview.before.columns, preview.after.columns);
+    assert_eq!(preview.before.rows.len(), 3);
+    assert_eq!(preview.after.rows.len(), 3);
+    let rate = preview
+        .before
+        .columns
+        .iter()
+        .position(|c| c == "rental_rate")
+        .expect("film has a rental_rate");
+    assert_eq!(preview.before.rows[0][rate].as_deref(), Some(before_run.as_str()));
+    assert_ne!(preview.after.rows[0][rate], preview.before.rows[0][rate]);
+
+    // …and the row is exactly as it was, on this session and on a fresh one
+    assert_eq!(
+        one_value(&session, "SELECT rental_rate FROM film WHERE film_id = 1").await,
+        before_run
+    );
+    let after = write_session().await;
+    assert_eq!(
+        one_value(&after, "SELECT rental_rate FROM film WHERE film_id = 1").await,
+        before_run
+    );
+}
+
+/// a DELETE with no WHERE: both warnings, the before-sample capped at five, and
+/// every row still there afterwards
+#[tokio::test]
+#[ignore]
+async fn write_preview_warns_on_a_delete_that_names_no_rows() {
+    let session = write_session().await;
+    let before_count = one_value(&session, "SELECT count(*) FROM film_actor").await;
+
+    let preview = agent_write::preview_on(&session, "DELETE FROM film_actor", 30_000)
+        .await
+        .expect("the preview runs");
+
+    assert_eq!(preview.verb, "DELETE");
+    assert!(!preview.has_where);
+    assert_eq!(preview.exact_rows.to_string(), before_count);
+    assert_eq!(preview.warnings, ["missing_where", "many_rows"]);
+    assert_eq!(preview.before.rows.len(), 5, "the sample is capped");
+    assert_eq!(preview.after.rows.len(), 5);
+
+    assert_eq!(
+        one_value(&session, "SELECT count(*) FROM film_actor").await,
+        before_count
+    );
+}
+
+/// an INSERT has no before-sample, and a refusal still leaves the session clean
+#[tokio::test]
+#[ignore]
+async fn write_preview_on_an_insert_and_on_a_statement_the_gate_refuses() {
+    let session = write_session().await;
+    let preview = agent_write::preview_on(
+        &session,
+        "INSERT INTO actor (first_name, last_name) VALUES ('QWRY', 'TEST')",
+        10_000,
+    )
+    .await
+    .expect("the preview runs");
+    assert_eq!(preview.verb, "INSERT");
+    assert_eq!(preview.exact_rows, 1);
+    assert!(preview.before.rows.is_empty(), "an INSERT has nothing before it");
+    assert!(preview.before.columns.is_empty());
+    assert_eq!(preview.after.rows.len(), 1);
+    assert_eq!(
+        one_value(
+            &session,
+            "SELECT count(*) FROM actor WHERE first_name = 'QWRY'"
+        )
+        .await,
+        "0",
+        "the inserted row was rolled back"
+    );
+
+    // the gate refuses before anything runs, and the session still answers
+    let err = agent_write::preview_on(&session, "TRUNCATE film", 10_000)
+        .await
+        .expect_err("TRUNCATE is not one of the three verbs");
+    assert!(err.to_string().contains("TruncateStmt not allowed"), "{err}");
+    assert_eq!(one_value(&session, "SELECT 1").await, "1");
 }

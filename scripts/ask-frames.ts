@@ -228,6 +228,12 @@ const ALL_STATES = [
   "failure-cap",
   "answer-actions",
   "followups-end",
+  "a4-preview",
+  "a4-preview-warn",
+  "a4-preview-sql",
+  "a4-ran",
+  "a4-preview-busy",
+  "a4-writes-off",
 ] as const;
 const ALL_WIDTHS = [320, 392, 560] as const;
 const ALL_THEMES = ["dark", "light"] as const;

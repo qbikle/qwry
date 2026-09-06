@@ -352,33 +352,7 @@ pub async fn test_connection(
         None => secrets::get_password(&profile.id)?.unwrap_or_default(),
     };
     let start = std::time::Instant::now();
-    let session = if crate::tunnel::tunnel_host(&profile).is_some() {
-        let tunnel = state.ensure_tunnel(&profile).await?;
-        // no control lane: the probe runs one SELECT and never cancels
-        driver::postgres::connect(
-            &profile,
-            &password,
-            Some(("127.0.0.1", tunnel.local_port)),
-            None,
-            None,
-            false,
-            Box::new(|_, _| {}),
-            Box::new(|_| {}),
-        )
-        .await?
-    } else {
-        driver::postgres::connect(
-            &profile,
-            &password,
-            None,
-            None,
-            None,
-            false,
-            Box::new(|_, _| {}),
-            Box::new(|_| {}),
-        )
-        .await?
-    };
+    let session = ephemeral_session(state.inner(), &profile, &password, None).await?;
     let tls = session.is_tls();
     let out = session.execute_simple("SELECT version()").await?;
     let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -896,4 +870,35 @@ pub async fn cancel(state: State<'_, AppState>, session_id: String) -> Result<()
         .session(&session_id)
         .ok_or(driver::DriverError::NoSession)?;
     session.cancel().await
+}
+
+/// One session on a profile that nothing else can reach: connected through the
+/// profile's tunnel when it has one, never registered in `state.sessions`, and
+/// dropped (which aborts its connection) by the caller. The connection editor's
+/// probe and the agent's write dry run are the same act, so they are the same
+/// code: a session with no id cannot be cancelled, so every caller bounds it
+/// with a statement timeout instead. No control lane for the same reason.
+pub(crate) async fn ephemeral_session(
+    state: &AppState,
+    profile: &Profile,
+    password: &str,
+    statement_timeout_ms: Option<u64>,
+) -> Result<driver::postgres::PgSession> {
+    let addr = if crate::tunnel::tunnel_host(profile).is_some() {
+        let tunnel = state.ensure_tunnel(profile).await?;
+        Some(("127.0.0.1", tunnel.local_port))
+    } else {
+        None
+    };
+    driver::postgres::connect(
+        profile,
+        password,
+        addr,
+        None,
+        statement_timeout_ms,
+        false,
+        Box::new(|_, _| {}),
+        Box::new(|_| {}),
+    )
+    .await
 }

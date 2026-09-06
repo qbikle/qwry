@@ -63,9 +63,10 @@ const PEEK_SCAN_ROWS: u64 = 20_000;
 const PEEK_SAMPLE_PCT: &str = "0.5";
 /// probe queries get `run_sql`'s default timeout; §5 gives probe no setting
 const PROBE_TIMEOUT_MS: u64 = 10_000;
-/// floor/ceiling for the caller's `run_sql` timeout setting
-const MIN_TIMEOUT_MS: u64 = 1_000;
-const MAX_TIMEOUT_MS: u64 = 600_000;
+/// floor/ceiling for the caller's `run_sql` timeout setting; the write dry run
+/// (`agent_write.rs`) clamps to the same pair
+pub(crate) const MIN_TIMEOUT_MS: u64 = 1_000;
+pub(crate) const MAX_TIMEOUT_MS: u64 = 600_000;
 
 /// One executed read-only statement. `rows` are wire text (what psql shows),
 /// `None` = SQL NULL, exactly like `driver::StatementResult`. `capped` means
@@ -101,11 +102,31 @@ pub struct ProbeResult {
 }
 
 /// AST-gate outcome (§8.1). `reason` is the refusal text, already phrased for
-/// the model and for the Fix It affordance; `None` when allowed.
+/// the model and for the Fix It affordance; `None` when allowed. `write`
+/// carries the shape of the one statement the WRITE gate allowed (A4 item 2):
+/// `None` in read mode, and on every refusal.
 #[derive(Debug, Clone, Serialize)]
 pub struct GateVerdict {
     pub allowed: bool,
     pub reason: Option<String>,
+    pub write: Option<WriteShape>,
+}
+
+/// What the write gate learned about the statement it allowed: enough for the
+/// headline (verb, table), for the dry run's derived before-sample
+/// (`has_where`) and for the `RETURNING *` decision (`has_returning`). The row
+/// COUNT is deliberately absent: only the dry run can know it, and the block
+/// prints the number the server reported (LESSONS 13).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WriteShape {
+    /// `INSERT` | `UPDATE` | `DELETE`
+    pub verb: String,
+    /// qualified exactly as the statement wrote it: `schema.table` when it
+    /// named a schema, the bare name when it did not. The gate holds no
+    /// connection, so it cannot resolve a `search_path` and never guesses one.
+    pub table: String,
+    pub has_where: bool,
+    pub has_returning: bool,
 }
 
 /// Low-cardinality values for one table, from `pg_stats` (free: no scan, only
@@ -306,6 +327,15 @@ fn variant_name(n: &NodeEnum) -> String {
     d.split('(').next().unwrap_or("?").to_string()
 }
 
+/// Which gate is judging. The tool path (`run_sql`, `probe`) is always `Read`
+/// and nothing in A4 changes that; `Write` is reached only by the final `sql`
+/// fence of an answer, on a connection whose edits switch is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GateMode {
+    Read,
+    Write,
+}
+
 /// Belt for the structural walk: a scalar subquery can sit in EVERY expression
 /// position (target list, WHERE, HAVING, GROUP BY, ORDER BY, CASE arms,
 /// function arguments, LIMIT, VALUES), and neither `check_select` nor
@@ -320,12 +350,21 @@ fn variant_name(n: &NodeEnum) -> String {
 fn sweep(pb: &pg_query::protobuf::ParseResult) -> std::result::Result<(), String> {
     let tree = serde_json::to_value(pb)
         .map_err(|e| format!("could not inspect the parsed statement: {e}"))?;
-    let mut stack = vec![&tree];
+    sweep_from(vec![&tree], GateMode::Read)
+}
+
+/// The data walk itself, from whatever roots the caller hands it: the read
+/// gate starts at the whole tree, the write gate one node lower (`sweep_write`).
+fn sweep_from(
+    roots: Vec<&serde_json::Value>,
+    mode: GateMode,
+) -> std::result::Result<(), String> {
+    let mut stack = roots;
     while let Some(v) = stack.pop() {
         match v {
             serde_json::Value::Object(map) => {
                 for (key, child) in map {
-                    check_tree_node(key, child)?;
+                    check_tree_node(key, child, mode)?;
                     stack.push(child);
                 }
             }
@@ -338,7 +377,11 @@ fn sweep(pb: &pg_query::protobuf::ParseResult) -> std::result::Result<(), String
 
 /// One node of the serialized parse tree. `key` is the node kind (prost
 /// renders a `Node` oneof as `{"SelectStmt": {…}}`), `node` its fields.
-fn check_tree_node(key: &str, node: &serde_json::Value) -> std::result::Result<(), String> {
+fn check_tree_node(
+    key: &str,
+    node: &serde_json::Value,
+    mode: GateMode,
+) -> std::result::Result<(), String> {
     match key {
         "SelectStmt" => {
             if node.get("into_clause").is_some_and(|c| !c.is_null()) {
@@ -348,7 +391,11 @@ fn check_tree_node(key: &str, node: &serde_json::Value) -> std::result::Result<(
                 .get("locking_clause")
                 .and_then(|c| c.as_array())
                 .is_some_and(|a| !a.is_empty());
-            if locked {
+            // a row lock is a write's own business: the allowed statement takes
+            // them by definition, so `FOR UPDATE` in ITS subquery is the
+            // concurrency-safe form, not a smuggled write. In read mode it
+            // stays a refusal (§8.1).
+            if locked && mode == GateMode::Read {
                 return Err(LOCK_REASON.into());
             }
         }
@@ -387,8 +434,8 @@ fn func_name(node: &serde_json::Value) -> Option<String> {
 /// §8.4 (everything the model sends is visible in the trace).
 pub fn classify(sql: &str) -> GateVerdict {
     match gate(sql) {
-        Ok(()) => GateVerdict { allowed: true, reason: None },
-        Err(reason) => GateVerdict { allowed: false, reason: Some(reason) },
+        Ok(()) => GateVerdict { allowed: true, reason: None, write: None },
+        Err(reason) => GateVerdict { allowed: false, reason: Some(reason), write: None },
     }
 }
 
@@ -432,18 +479,140 @@ fn gate(sql: &str) -> std::result::Result<(), String> {
             None => return Err("EXPLAIN with no inner query".into()),
         },
         other => {
-            return Err(format!(
+            let mut reason = format!(
                 "{} not allowed (only SELECT / WITH...SELECT / EXPLAIN)",
                 variant_name(other)
-            ))
+            );
+            // W7's PROSE_REASON lesson, applied to the other dead end: a
+            // refusal that only says no costs a turn per attempt. A write has
+            // somewhere to go now (A4 item 2), so the refusal names it. The
+            // verdict is unchanged: no write ever runs through a tool.
+            if is_write(other) {
+                reason.push_str(WRITE_FENCE_HINT);
+            }
+            return Err(reason);
         }
     }
     sweep(&parsed.protobuf)
 }
 
+fn is_write(n: &NodeEnum) -> bool {
+    matches!(
+        n,
+        NodeEnum::InsertStmt(_)
+            | NodeEnum::UpdateStmt(_)
+            | NodeEnum::DeleteStmt(_)
+            | NodeEnum::MergeStmt(_)
+    )
+}
+
+// ---- item 2: the gate's write mode ----------------------------------------
+
+/// The way out a model gets when it sends a write to a tool. Appended to the
+/// read gate's own sentence, which is otherwise unchanged.
+const WRITE_FENCE_HINT: &str =
+    "; to change data, put the statement in the final sql fence instead of running it";
+
+/// The write gate (A4 item 2). Allows exactly ONE `INSERT` / `UPDATE` /
+/// `DELETE` and returns its shape. Refused: a second statement, DDL, TRUNCATE,
+/// MERGE (one statement, three verbs: the preview draws one), a data-modifying
+/// CTE, `SELECT INTO`, a deny-listed function. It runs no SQL and opens no
+/// connection; the dry run (`agent_write.rs`) is what learns the row count.
+///
+/// This gate is never reachable from a tool: `run_sql` and `probe` call
+/// `classify` and only `classify`. The one caller is the final `sql` fence of
+/// an answer, on a connection whose edits switch is on.
+pub fn classify_write(sql: &str) -> GateVerdict {
+    match gate_write(sql) {
+        Ok(shape) => GateVerdict { allowed: true, reason: None, write: Some(shape) },
+        Err(reason) => GateVerdict { allowed: false, reason: Some(reason), write: None },
+    }
+}
+
+fn gate_write(sql: &str) -> std::result::Result<WriteShape, String> {
+    let parsed = pg_query::parse(sql).map_err(|e| {
+        if opens_like_sql(sql) {
+            format!("parse error: {e}")
+        } else {
+            PROSE_REASON.to_string()
+        }
+    })?;
+    let stmts = &parsed.protobuf.stmts;
+    if stmts.is_empty() {
+        return Err("empty statement".into());
+    }
+    if stmts.len() > 1 {
+        return Err(format!(
+            "{} statements in one fence; a change takes exactly one",
+            stmts.len()
+        ));
+    }
+    let node = match stmts[0].stmt.as_ref().and_then(|s| node_enum(s)) {
+        Some(n) => n,
+        None => return Err("empty statement".into()),
+    };
+    let shape = match node {
+        NodeEnum::InsertStmt(s) => WriteShape {
+            verb: "INSERT".into(),
+            table: rel_name(s.relation.as_ref())?,
+            // an INSERT names no rows to keep out: `has_where` is what the
+            // preview derives its before-sample from, and there is none
+            has_where: false,
+            has_returning: !s.returning_list.is_empty(),
+        },
+        NodeEnum::UpdateStmt(s) => WriteShape {
+            verb: "UPDATE".into(),
+            table: rel_name(s.relation.as_ref())?,
+            has_where: s.where_clause.is_some(),
+            has_returning: !s.returning_list.is_empty(),
+        },
+        NodeEnum::DeleteStmt(s) => WriteShape {
+            verb: "DELETE".into(),
+            table: rel_name(s.relation.as_ref())?,
+            has_where: s.where_clause.is_some(),
+            has_returning: !s.returning_list.is_empty(),
+        },
+        other => {
+            return Err(format!(
+                "{} not allowed (only INSERT / UPDATE / DELETE)",
+                variant_name(other)
+            ))
+        }
+    };
+    sweep_write(&parsed.protobuf)?;
+    Ok(shape)
+}
+
+/// The write sweep: `sweep`'s walk minus the top statement's own node, so the
+/// ONE write just allowed is not read as a nested one while every write below
+/// it still is (a data-modifying CTE, a write in a sublink), along with
+/// `SELECT INTO` and the deny-listed functions.
+fn sweep_write(pb: &pg_query::protobuf::ParseResult) -> std::result::Result<(), String> {
+    let tree = serde_json::to_value(pb)
+        .map_err(|e| format!("could not inspect the parsed statement: {e}"))?;
+    // {"stmts":[{"stmt":{"node":{"UpdateStmt":{…}}}}]}: start at the fields of
+    // that one node, never at the node itself
+    let top = tree
+        .pointer("/stmts/0/stmt/node")
+        .and_then(|n| n.as_object())
+        .and_then(|m| m.values().next())
+        .ok_or_else(|| "empty statement".to_string())?;
+    sweep_from(vec![top], GateMode::Write)
+}
+
+/// The table a write names, as the statement wrote it.
+fn rel_name(r: Option<&pg_query::protobuf::RangeVar>) -> std::result::Result<String, String> {
+    let r = r.ok_or_else(|| "the statement names no table".to_string())?;
+    Ok(if r.schemaname.is_empty() {
+        r.relname.clone()
+    } else {
+        format!("{}.{}", r.schemaname, r.relname)
+    })
+}
+
 /// A gate refusal reaches the loop in the shape a server error has, so the
 /// repair path needs no branch on where the refusal came from.
-fn gate_error(reason: &str) -> DriverError {
+pub(crate) fn gate_error(reason: &str) -> DriverError {
     DriverError::Db {
         message: reason.to_string(),
         position: None,
@@ -911,10 +1080,17 @@ pub async fn agent_probe(
 }
 
 /// Pure classification, no session and no server round trip: the UI pre-checks
-/// a Fix It edit with this before offering to run it.
+/// a Fix It edit with this before offering to run it, and the loop checks an
+/// answer's final `sql` fence with `mode: "write"` (A4 item 2). A missing mode
+/// reads as `"read"`: the strictly narrower gate is the only safe default, and
+/// an unknown one is an error rather than a silent widening.
 #[tauri::command]
-pub async fn agent_gate(sql: String) -> Result<GateVerdict> {
-    Ok(classify(&sql))
+pub async fn agent_gate(sql: String, mode: Option<String>) -> Result<GateVerdict> {
+    match mode.as_deref().unwrap_or("read") {
+        "read" => Ok(classify(&sql)),
+        "write" => Ok(classify_write(&sql)),
+        other => Err(gate_error(&format!("unknown gate mode: {other}"))),
+    }
 }
 
 /// Store a provider API key in the Keychain under `agent:<provider>` (§2.4,
@@ -1252,5 +1428,179 @@ mod gate_tests {
         let mut unknown = stat(1.0, 10.0, &["a"], &[]);
         unknown.n_distinct = None;
         assert!(low_cardinality(&unknown).is_none());
+    }
+}
+
+#[cfg(test)]
+mod write_gate_tests {
+    use super::{classify, classify_write, WriteShape, PROSE_REASON};
+
+    fn shape(sql: &str) -> WriteShape {
+        let verdict = classify_write(sql);
+        assert!(verdict.allowed, "refused: {:?}", verdict.reason);
+        verdict.write.expect("an allowed write carries its shape")
+    }
+
+    fn refusal(sql: &str) -> String {
+        let verdict = classify_write(sql);
+        assert!(!verdict.allowed, "allowed, and should not be: {sql}");
+        assert!(verdict.write.is_none(), "a refusal carries no shape");
+        verdict.reason.unwrap_or_default()
+    }
+
+    #[test]
+    fn the_three_verbs_and_their_shapes() {
+        assert_eq!(
+            shape("UPDATE order_v2 SET payment_status = 'paid' WHERE id = 218841"),
+            WriteShape {
+                verb: "UPDATE".into(),
+                table: "order_v2".into(),
+                has_where: true,
+                has_returning: false,
+            }
+        );
+        assert_eq!(
+            shape("DELETE FROM notification_history"),
+            WriteShape {
+                verb: "DELETE".into(),
+                table: "notification_history".into(),
+                has_where: false,
+                has_returning: false,
+            }
+        );
+        assert_eq!(
+            shape("INSERT INTO tag (name) VALUES ('new')"),
+            WriteShape {
+                verb: "INSERT".into(),
+                table: "tag".into(),
+                has_where: false,
+                has_returning: false,
+            }
+        );
+        // the table is qualified exactly as the statement wrote it, and an
+        // alias never stands in for the name
+        assert_eq!(shape("UPDATE public.order_v2 SET a = 1").table, "public.order_v2");
+        assert_eq!(shape("UPDATE order_v2 AS o SET a = 1 WHERE o.id = 1").table, "order_v2");
+        assert_eq!(shape("DELETE FROM ONLY t WHERE id = 1").table, "t");
+        // a RETURNING the model wrote is kept; the dry run appends none
+        assert!(shape("DELETE FROM t WHERE id = 1 RETURNING *").has_returning);
+        assert!(shape("UPDATE t SET a = 1 WHERE id = 2 RETURNING id").has_returning);
+        assert!(!shape("UPDATE t SET a = 1 WHERE id = 2").has_returning);
+        // the WHERE is the fact the warning reads, whatever else is in it
+        assert!(!shape("UPDATE t SET a = 1").has_where);
+        assert!(shape("UPDATE t SET a = 1 FROM u WHERE u.id = t.id").has_where);
+        assert!(shape("DELETE FROM t USING u WHERE u.id = t.id").has_where);
+        // ON CONFLICT is part of an INSERT, not a second statement
+        assert_eq!(
+            shape("INSERT INTO t (id, a) VALUES (1, 2) ON CONFLICT (id) DO UPDATE SET a = 2").verb,
+            "INSERT"
+        );
+    }
+
+    /// every refusal the write gate owns, one case each
+    #[test]
+    fn every_write_refusal() {
+        assert_eq!(
+            refusal("UPDATE t SET a = 1; DELETE FROM u"),
+            "2 statements in one fence; a change takes exactly one"
+        );
+        assert!(refusal("SELECT 1").contains("SelectStmt not allowed (only INSERT / UPDATE / DELETE)"));
+        assert!(refusal("TRUNCATE t").contains("TruncateStmt not allowed"));
+        assert!(refusal("DROP TABLE t").contains("DropStmt not allowed"));
+        assert!(refusal("ALTER TABLE t ADD COLUMN a int").contains("AlterTableStmt not allowed"));
+        assert!(refusal("CREATE TABLE t (a int)").contains("CreateStmt not allowed"));
+        assert!(refusal("CREATE TABLE x AS SELECT 1").contains("CreateTableAsStmt not allowed"));
+        assert!(refusal("GRANT SELECT ON t TO PUBLIC").contains("GrantStmt not allowed"));
+        assert!(refusal("COPY t FROM STDIN").contains("CopyStmt not allowed"));
+        assert!(refusal("VACUUM t").contains("VacuumStmt not allowed"));
+        assert!(refusal("BEGIN").contains("TransactionStmt not allowed"));
+        assert!(refusal("SET work_mem = '1MB'").contains("VariableSetStmt not allowed"));
+        assert!(refusal("CALL p()").contains("CallStmt not allowed"));
+        assert!(refusal("DO $$ BEGIN END $$").contains("DoStmt not allowed"));
+        // MERGE is three verbs in one statement; the preview draws one
+        assert!(refusal(
+            "MERGE INTO t USING u ON t.id = u.id WHEN MATCHED THEN UPDATE SET a = u.a"
+        )
+        .contains("MergeStmt not allowed"));
+        // a data-modifying CTE is a second write hiding inside the first
+        assert_eq!(
+            refusal("WITH d AS (DELETE FROM u RETURNING id) UPDATE t SET a = 1 FROM d WHERE t.id = d.id"),
+            "data-modifying CTE (DELETE)"
+        );
+        assert_eq!(
+            refusal("WITH i AS (INSERT INTO u VALUES (1) RETURNING *) DELETE FROM t WHERE id IN (SELECT id FROM i)"),
+            "data-modifying CTE (INSERT)"
+        );
+        assert_eq!(
+            refusal("UPDATE t SET a = (WITH u AS (UPDATE v SET b = 1 RETURNING b) SELECT b FROM u)"),
+            "data-modifying CTE (UPDATE)"
+        );
+        // SELECT INTO materializes a table
+        assert_eq!(
+            refusal("UPDATE t SET a = 1 WHERE id IN (SELECT id INTO newt FROM u)"),
+            "SELECT INTO / CTAS materializes a new table (write)"
+        );
+        // the deny list rides the write sweep too
+        assert_eq!(
+            refusal("UPDATE t SET a = 1 WHERE pg_sleep(10) IS NULL"),
+            "denied function call: pg_sleep()"
+        );
+        assert_eq!(
+            refusal("INSERT INTO t (a) VALUES (pg_read_file('/etc/passwd'))"),
+            "denied function call: pg_read_file()"
+        );
+        assert_eq!(
+            refusal("DELETE FROM t WHERE id = pg_terminate_backend(1)"),
+            "denied function call: pg_terminate_backend()"
+        );
+        // and prose is prose in either mode
+        assert_eq!(refusal("I will update the twelve pending orders."), PROSE_REASON);
+        assert_eq!(refusal(""), "empty statement");
+        assert!(refusal("UPDATE t SET").starts_with("parse error:"));
+    }
+
+    /// the write gate judges the ONE statement it allowed, not itself: the top
+    /// node must not read as a nested write, and a row lock inside it is the
+    /// concurrency-safe form, not a smuggled write
+    #[test]
+    fn the_allowed_write_is_not_its_own_nested_write() {
+        assert_eq!(shape("DELETE FROM t WHERE id = 1").verb, "DELETE");
+        assert_eq!(
+            shape("UPDATE t SET a = 1 WHERE id IN (SELECT id FROM u FOR UPDATE)").verb,
+            "UPDATE"
+        );
+        assert_eq!(
+            shape("INSERT INTO t (id) SELECT id FROM u WHERE u.n > 0").verb,
+            "INSERT"
+        );
+        assert_eq!(
+            shape("WITH picked AS (SELECT id FROM u WHERE n > 0) UPDATE t SET a = 1 FROM picked WHERE t.id = picked.id").verb,
+            "UPDATE"
+        );
+        // …while the read gate still refuses every one of them
+        for sql in [
+            "DELETE FROM t WHERE id = 1",
+            "UPDATE t SET a = 1 WHERE id IN (SELECT id FROM u FOR UPDATE)",
+            "INSERT INTO t (id) SELECT id FROM u WHERE u.n > 0",
+        ] {
+            assert!(!classify(sql).allowed, "the read gate must still refuse: {sql}");
+        }
+    }
+
+    /// the tool path is unchanged in verdict and names where a write belongs
+    /// (the W7 prose lesson): a refusal that only says no costs a turn a try
+    #[test]
+    fn the_read_gate_sends_a_write_to_the_fence() {
+        let reason = classify("UPDATE order_v2 SET payment_status = 'paid'")
+            .reason
+            .unwrap_or_default();
+        assert!(reason.starts_with("UpdateStmt not allowed (only SELECT / WITH...SELECT / EXPLAIN)"));
+        assert!(reason.ends_with("put the statement in the final sql fence instead of running it"));
+        assert!(classify("DELETE FROM t").reason.unwrap_or_default().contains("final sql fence"));
+        assert!(classify("INSERT INTO t VALUES (1)").reason.unwrap_or_default().contains("final sql fence"));
+        // a read refusal that is not a write keeps its own sentence, unchanged
+        let show = classify("SHOW work_mem").reason.unwrap_or_default();
+        assert!(show.contains("VariableShowStmt not allowed"));
+        assert!(!show.contains("fence"));
     }
 }

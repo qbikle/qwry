@@ -121,7 +121,10 @@ name differs from another only by a `_v\d+` suffix get the note
 
 When the question carries `@` tags (W6), a `TAGGED BY THE USER:` block
 follows the candidate block and precedes the RISK CHECK block (which stays
-last: it is the instruction for the next turn), one line per tag in the order
+last, with one exception: it is the instruction for the next turn, while A4's
+`WRITES:` block, present only when the connection's edits are on, follows it
+because it instructs the FINAL fence rather than the next turn), one line per
+tag in the order
 typed, the same thing tagged twice one line: `table public.users`, `column
 users.email` (the owner qualified only outside `public`), `saved query
 "Monthly revenue":` followed by the query's SQL verbatim, `thread "<title>":`
@@ -129,7 +132,11 @@ followed by a compact replay of that thread (Q / SQL / A per exchange, the
 store's own replay helper, oldest dropped first). SQL and replay are each
 capped at 1,500 characters and a cut says `… (truncated)` (LESSONS 9). The
 question text itself is sent with its `@` tokens exactly as typed;
-`SYSTEM_PROMPT` and `PROMPT_VERSION` do not move. The trace's context step
+`SYSTEM_PROMPT` and `PROMPT_VERSION` do not move. Record View's `Ask to Edit`
+(A4 item 7, AGENT-UX §13.8) writes into this same block, under the tags: a
+line naming the table and the row's primary key, then the row's own
+`column = value` lines. One block, because both are the same fact, that the
+user pointed at this. The trace's context step
 carries the tags as `{ kind, token }` beside the exact text.
 
 ### 4.3 Turn 1 (model, parallel tools)
@@ -201,6 +208,13 @@ renders them in its wire format. Names and behaviours are law:
 Never truncate `run_sql` rows below 50 to save tokens: the lean variant did
 and looped to the turn cap re-querying what it could not see. Save tokens by
 pruning history, never by blinding tools.
+
+`run_sql` never writes, on a write-enabled connection or off one (A4,
+2026-09-06): its schema takes no `mode` argument, and the AST gate behind it
+(§8.1) still allows only `SELECT`/`WITH … SELECT`/`EXPLAIN`, so an
+`INSERT`/`UPDATE`/`DELETE` can reach the database only through the model's
+final answer, gated by `agent_gate(sql, "write")` (§8.7), never through a
+tool call (§8.9).
 
 ## 6. Prompt rules (frozen text lives in `prompt.ts`)
 
@@ -331,6 +345,15 @@ parallel turn in ONE message). Bedrock/Vertex/Foundry are a research item.
    does not stop these). Both must pass. Policy table: DECISIONS 2026-09-05.
    Agent sessions are flagged at connect and the raw-SQL commands (`execute`,
    `execute_stream`) refuse them, so the gate has no side door.
+   This item is the TOOL path, and A4 leaves every byte of it standing: no
+   tool gained a write, the §5 table did not move, and a write sent to
+   `run_sql` is refused exactly as it was. What A4 adds is a SECOND entry
+   point beside it, reachable only from an answer's final `sql` fence and
+   never from a tool call (items 7-9): its own gate (`gate_write`), its own
+   dry run on an ephemeral session inside a transaction that always rolls
+   back, and its own refusal on production, taken before any connection is
+   opened. Every statement that runs still ran because a person pressed
+   something.
 2. `statement_timeout` from the existing setting (default 10s). The setting's
    0 means "no timeout" for a SESSION only (`agent_connect` passes it through
    and Postgres reads 0 as disabled); a tool call has no such shape, so 0 falls
@@ -345,6 +368,58 @@ parallel turn in ONE message). Bedrock/Vertex/Foundry are a research item.
 5. No telemetry (ARCHITECTURE ideology 7). Agent history is local appdb.
 6. Provenance: an answer carries its connection identity; the chrome speaks
    for the data's origin (LESSONS 4).
+7. Write mode (A4, 2026-09-06). Edits are OFF by default per connection
+   (`useSettings.agentWrites: Record<profileId, boolean>`, AGENT-UX §13.1)
+   and, even on, never reach the database through a tool: item 1's gate is
+   unchanged, so a write attempted through `run_sql` is refused exactly as
+   before, and the refusal names the way out, "this is prose, not SQL" for a
+   non-statement and, for a real write, a sentence pointing at the final
+   `sql` fence instead (the same redirect shape as the prose-loop breaker,
+   §4.5, applied to a new case). The only path a write can take is the
+   model's final answer: when it parses as a write, `agent_gate(sql, mode)`
+   grows a `"write"` mode beside `"read"`, and `gate_write(sql)` (`agent.rs`)
+   is the check it runs, through the same `pg_query` crate as the read gate,
+   accepting exactly ONE `INSERT`/`UPDATE`/`DELETE` statement: no second
+   statement, no DDL, no `TRUNCATE`, no data-modifying CTE, no `SELECT INTO`,
+   no deny-listed function (item 1's own list). A pass returns
+   `{ verb, table (qualified), has_where, has_returning }`, the shape both
+   the dry run (item 8) and the UI (AGENT-UX §13) read. Unit tests cover
+   every refusal: no statement kind slips past the AST walk uncaught.
+8. The dry run (A4, 2026-09-06). `agent_write_preview(profile_id, sql,
+   timeout_ms)` (new `agent_write.rs`) returns `WritePreview { verb, table,
+   has_where, exact_rows, before: { columns, rows ≤ 6 },
+   after: { columns, rows ≤ 6 }, warnings: string[] }` (six, one constant
+   `WRITE_SAMPLE_ROWS`: the block's grid window is a header and six rows, and
+   a sample one row shorter than its own frame would read as the whole
+   result) from a SHORT-LIVED
+   session on the profile (the connection editor's ephemeral-connect
+   precedent, never the thread's own agent session): `BEGIN`, `SET LOCAL
+   statement_timeout`, a before-sample `SELECT` derived by `pg_query` from
+   the write's own target and its WHERE (none for `INSERT`), the statement
+   itself with `RETURNING *` appended when it carries none (so `exact_rows`
+   is the true affected-row count and the returned rows are the
+   after-sample), then `ROLLBACK` unconditionally in a `finally` — a failure
+   anywhere is reported and still rolls back, so a dry run can never leave a
+   transaction open on the profile's connection. Refused before any
+   connection is opened when the profile is `is_prod` (its own error kind;
+   the copy names production, AGENT-UX §13.7). Warnings are code facts, one
+   token each: `missing_where` (an `UPDATE`/`DELETE` with no WHERE) and
+   `many_rows` (`exact_rows` > 1000). The exact count comes from the dry run
+   itself, never an `EXPLAIN` estimate (LESSONS 13: a status reports the
+   number the user saw work, and the only number this preview ever saw is
+   the one the rollback-wrapped statement actually touched).
+9. The three refusals (A4, 2026-09-06). Three distinct places refuse a
+   write, each with its own copy and none of them a dead end (AGENT-UX
+   §13.7): the AST gate refuses a write attempted through any tool, in read
+   mode or write, always (item 7); `agent_write_preview` refuses before
+   opening any connection when the profile is prod (item 8); and the loop
+   refuses to EXECUTE a write it did extract when the connection's
+   `agentWrites` flag is off, ending the exchange as a failure with `sql`
+   set and `run` null rather than silently downgrading to a proposal the
+   user never asked to see disabled. None of the three is a dead end: the
+   tool refusal redirects to the fence, the prod refusal is a fixed fact
+   with no settings row to offer, and the writes-off refusal offers
+   `Settings` (opens Settings › Models) beside `Ask Differently`.
 
 ## 9. Data model (appdb, rusqlite)
 
@@ -395,6 +470,19 @@ run fails or is cancelled. The eval passes no thread, so its prompt bytes and
 `PROMPT_VERSION` do not move (loop.test pins the no-thread and no-replay
 messages byte-identical). Provider/model choice and per-connection defaults
 live in `useSettings` (persisted). Keys: Keychain only (§2.4).
+
+`agent_answers.status` gains two values this wave (A4, 2026-09-06):
+`proposed`, once the final SQL is a write that clears `gate_write` (§8.7)
+and ends the exchange without executing it (`sql` set, `run` null); and
+`ran`, once Run (AGENT-UX §13.6) has executed that statement in the active
+query tab. `row_count` on a `ran` row is the rows affected the TAB reported,
+never the dry run's `exact_rows` (§8.8): the two can differ (a concurrent
+writer between preview and Run), and only the tab's own number is what the
+user watched happen (LESSONS 13). No new table and no migration exist to
+track commit state itself this wave: the tab's own transaction is the only
+record of whether a `ran` row is committed, rolled back or still open
+(AGENT-UX §13.6's `uncommitted`), so a reload mid-transaction reads `ran`
+with no way to ask the tab what it later decided.
 
 ## 10. Budgets
 

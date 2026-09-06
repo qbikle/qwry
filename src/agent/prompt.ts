@@ -139,3 +139,25 @@ export const FOLLOWUP_SYSTEM_PROMPT =
 export function followUpMessage(args: { thread: string }): string {
   return `The thread so far:\n\n${args.thread.trim() || "(nothing yet)"}`;
 }
+
+/** A4 (2026-09-06): appended to the USER message when the connection's edits
+ * switch is on (`useSettings.agentWrites`, AGENT-UX section 13.1), and to
+ * nothing else. `SYSTEM_PROMPT` and `PROMPT_VERSION` do not move for it: the
+ * eval drives no connection with edits on, so its bytes are the measured ones
+ * and every baseline row in EVAL.md still names the run that produced it
+ * (EVAL section 4, the A4 bullet; a loop test pins the untagged, edits-off
+ * message byte for byte).
+ *
+ * It rides last, after the RISK CHECK block when both fire: the risk block
+ * instructs the probes of the NEXT turn, this one instructs the final fence,
+ * which is the last thing the model writes.
+ *
+ * The statement is proposed, never run: `run_sql` is read-only on every
+ * connection (AGENT-SPEC section 8.7), so a model that tries one there is
+ * refused and has spent a turn. Saying so here is what keeps it out. */
+export function writesMessage(): string {
+  return `
+WRITES: the user has allowed changes to this database. If the question asks to change data, finish with exactly ONE INSERT, UPDATE or DELETE
+statement in the final \`\`\`sql block, with a WHERE clause that names the rows it touches. Do NOT call run_sql with it: run_sql runs reads only,
+and the statement in your final block is shown to the user, who runs it. Anything the question only asks about is read-only work as before.`;
+}

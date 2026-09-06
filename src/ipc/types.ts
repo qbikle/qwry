@@ -411,6 +411,9 @@ export interface ProbeResult {
 export interface GateVerdict {
   allowed: boolean;
   reason: string | null;
+  /** the shape of the one statement the WRITE gate allowed (A4 item 2); null
+   * in read mode and on every refusal */
+  write: WriteShape | null;
 }
 
 /** low-cardinality values for one column, from pg_stats (cap 20), plus the
@@ -556,4 +559,54 @@ export interface AgentAnswer {
   assumptions_json?: string | null;
   sanity_json?: string | null;
   status: string;
+}
+
+/** which gate judges a statement (agent.rs GateMode). The tool path is always
+ * "read"; "write" is reached only by an answer's final sql fence */
+export type GateMode = "read" | "write";
+
+/** the three verbs the write gate allows; the block's headline and its Run
+ * label are both written from one of them */
+export type WriteVerb = "INSERT" | "UPDATE" | "DELETE";
+
+/** what the write gate learned about the statement it allowed (agent.rs
+ * WriteShape): enough for the headline, for the dry run's derived before
+ * sample and for the RETURNING decision. The row COUNT is deliberately absent:
+ * only the dry run can know it, and the block prints the number the server
+ * reported (LESSONS 13) */
+export interface WriteShape {
+  verb: WriteVerb;
+  /** qualified exactly as the statement wrote it: schema.table when it named a
+   * schema, the bare name when it did not. The gate holds no connection, so it
+   * cannot resolve a search_path and never guesses one */
+  table: string;
+  has_where: boolean;
+  has_returning: boolean;
+}
+
+/** one sampled grid of a dry run (agent_write.rs SampleRows). Cell values are
+ * wire text; null = SQL NULL. `before` and `after` carry the same columns in
+ * the same order, unless the model wrote its own RETURNING: that clause is
+ * kept as written, and then `after` names only what it named */
+export interface SampleRows {
+  columns: string[];
+  rows: (string | null)[][];
+}
+
+/** what one proposed statement would do, learned by doing it inside a
+ * transaction that always rolls back (agent_write.rs WritePreview).
+ * `exact_rows` is the server's own count for the statement, never an EXPLAIN
+ * estimate and never `rows.length`; the samples hold at most six rows each,
+ * the result block's own grid window (`WRITE_SAMPLE_ROWS`) */
+export interface WritePreview {
+  verb: WriteVerb;
+  table: string;
+  has_where: boolean;
+  exact_rows: number;
+  /** the rows as they stand; empty for an INSERT, which has none */
+  before: SampleRows;
+  /** the rows the statement returned; empty for a DELETE, which leaves none */
+  after: SampleRows;
+  /** code facts, one token each: "missing_where", "many_rows" */
+  warnings: string[];
 }

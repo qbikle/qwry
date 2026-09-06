@@ -27,6 +27,7 @@ import type {
   AgentTurnInput,
   AgentTurnPatch,
   ClaudeExit,
+  GateMode,
   GateVerdict,
   HttpChunk,
   HttpDone,
@@ -36,6 +37,7 @@ import type {
   ProbeResult,
   TableRef,
   TableValues,
+  WritePreview,
 } from "./types";
 
 /** (result-column index, text value) pairs locating one row by PK or ctid */
@@ -363,8 +365,12 @@ export const agentRunReadonly = (
 export const agentProbe = (sessionId: string, sqls: string[]) =>
   invoke<ProbeResult[]>("agent_probe", { sessionId, sqls });
 
-/** pure AST classification, no session and no round trip: the Fix It pre-check */
-export const agentGate = (sql: string) => invoke<GateVerdict>("agent_gate", { sql });
+/** pure AST classification, no session and no round trip: the Fix It pre-check,
+ * and the loop's check of an answer's final sql fence in "write" mode (A4
+ * item 2). The default is the narrower gate: a caller that forgets the mode
+ * can only get a stricter answer, never a wider one */
+export const agentGate = (sql: string, mode: GateMode = "read") =>
+  invoke<GateVerdict>("agent_gate", { sql, mode });
 
 /** store a provider key in the Keychain under `agent:<provider>` */
 export const agentKeySet = (provider: string, key: string) =>
@@ -492,3 +498,15 @@ export const agentAnswerPut = (answer: AgentAnswer) =>
  * sanity line and row count from these */
 export const agentAnswersList = (threadId: string) =>
   invoke<AgentAnswer[]>("agent_answers_list", { threadId });
+
+/** the dry run's own error kind, on `DriverError.code`: the profile is a
+ * production connection and the preview refused before it connected. Not a
+ * server error, and the pane says it in its own words */
+export const PROD_WRITE_CODE = "QWRY_WRITE_ON_PROD";
+
+/** what one proposed INSERT / UPDATE / DELETE would do, learned inside a
+ * transaction that always rolls back (A4 item 3): the exact row count, the
+ * rows before and after, the warnings. It runs on a session opened for it and
+ * thrown away after; nothing it does survives the call */
+export const agentWritePreview = (profileId: string, sql: string, timeoutMs: number) =>
+  invoke<WritePreview>("agent_write_preview", { profileId, sql, timeoutMs });

@@ -1785,6 +1785,98 @@
 }
 /* ---- end AnswerBlock anatomy ---- */
 
+/* ---- A4 writes (the preview face, its headline and its band) --------------
+   Fenced: owned by the writes builder.
+   A change the model proposed and nothing has run. The result block wears its
+   THIRD face over the dry run's sampled rows rather than standing a block of
+   its own beside it (DESIGN rule 15's second question): 0 new species, one new
+   band. Nothing here explains a preview (rule 11): the headline names the
+   verb, the table and the count, the grid shows the rows, the button says what
+   it will do. */
+
+/* the headline: the block's own status line, standing ABOVE it, because a
+   proposal announces before it shows and a preview has no `rows · ms` under it.
+   The thinking chip's two tones (the verb muted, the table lit in mono, the
+   count muted); a true warning lifts its fragments to tier 1 under ONE glyph,
+   the sanity line's own rule (AGENT-UX 4). Each `·` rides INSIDE the fragment
+   it precedes, so a wrap at the 320 floor never ends a line on a hanging
+   separator: the wrap is the status line's own behaviour, never a cut */
+.rb-head code {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg);
+}
+.rb-head > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+.rb-head .sep {
+  color: var(--fg-muted);
+}
+.rb-head .warn,
+.rb-head .lit {
+  color: var(--fg);
+}
+.rb-head .warn svg {
+  color: var(--warn);
+  flex-shrink: 0;
+}
+
+/* the faces and the band as ONE measured box: the block's height springs to
+   this node, so a band leaving on the Run springs the box shut over it */
+.rb-inner {
+  position: relative;
+}
+/* the cluster stands on the grid's raised header on this face too, so it
+   dissolves into the surface it actually covers (the table face's rule) */
+.rb.preview:has(.vgrid) {
+  --acts-surface: var(--bg-raised);
+}
+/* the block's own bottom band: one danger button at the right, the confirm's
+   place (.danger-actions), on the panel. The button acts on the statement, so
+   it stands on the block (rule 15's first question) and never hides: rule 8
+   lets a control hide only when the surface works without finding it, and a
+   danger action nobody can see is a hidden affordance */
+.rb-act {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--sp-2);
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+/* a changed cell states both values inside the ONE cell (rule 14: never a
+   before grid beside an after grid): the old value and the arrow at tier 2,
+   the new one at tier 1, over the grid's own staged-edit fill, because this IS
+   an uncommitted edit. It never takes that costume's dashed outline, which is
+   the editable affordance, and this cell answers no click (rule 8's inverse).
+   NULL keeps the grid's chip on the old side, so the two surfaces never
+   disagree about a value */
+.rb .vgrid-cell.chg {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+.rb .vgrid-old {
+  color: var(--fg-muted);
+}
+.rb .vgrid-arrow {
+  color: var(--fg-muted);
+  margin: 0 var(--sp-1);
+}
+
+/* Settings › Models, the edits row (item 1): ONE row, the switch at the right
+   and the consequence stacked under the label in the same row (the slider
+   row's hint precedent), never a note under the row. The sentence earns its
+   pixels by naming the risk and the rollback plan; a production connection has
+   no row at all, so nothing here states a norm */
+.ask-writes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+/* ---- end A4 writes ---- */
+
 @media (prefers-reduced-motion: reduce) {
   .ans-body > *,
   .ans-tail > *,

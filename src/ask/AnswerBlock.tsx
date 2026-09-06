@@ -30,6 +30,15 @@
 // replaces is gone, and with it two always-visible strips (DESIGN rule 15);
 // the status line under it stays here, because the rows and the ms are the
 // run's whichever face is up.
+//
+// A4: an exchange that ends `proposed` carries a change nothing has run. The
+// block wears its third face over the dry run's sampled rows, and the status
+// line ABOVE it becomes the headline (`UPDATE order_v2 · 12 rows`), because a
+// proposal announces before it shows and there is no run to print `rows · ms`
+// for. After the Run the headline reads the TAB's outcome (`Updated 12 rows ·
+// uncommitted`) from the tab's own count, never the preview's (LESSONS 13),
+// and the band is gone. Neither adds a strip: the headline stands in the
+// status line's own slot.
 
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { AnimatePresence, motion, usePresence } from "motion/react";
@@ -39,7 +48,9 @@ import type { ProviderId } from "../agent/providers/types";
 import { prefersReducedMotion, spring } from "../design/springs";
 import { msText } from "../lib/duration";
 import { avatarColor } from "../sidebar/avatar";
-import { useAgent, type Exchange } from "../stores/agent";
+import { useAgent, writeVerbOf, type Exchange } from "../stores/agent";
+import { useConnections } from "../stores/connections";
+import { useSettings } from "../stores/settings";
 import { useAsk } from "../stores/ask";
 import { useSaved, visibleSaved } from "../stores/saved";
 import { useSchema } from "../stores/schema";
@@ -53,7 +64,7 @@ import { FailureBlock } from "./FailureBlock";
 import { FollowUps, questionLayoutId } from "./FollowUps";
 import { MentionText } from "./Mention";
 import { modelLabel } from "./modelSources";
-import { insertSql, ResultBlock } from "./ResultBlock";
+import { insertSql, RanHeadline, ResultBlock, WriteHeadline } from "./ResultBlock";
 import { SanityLine } from "./SanityLine";
 import { sanityStep } from "./sanityStep";
 import { ThinkingStrip } from "./ThinkingStrip";
@@ -258,6 +269,22 @@ export const AnswerBlock = memo(function AnswerBlock({
   };
   const model = modelLabel({ providerId: exchange.provider as ProviderId, model: exchange.model });
 
+  // A4: the exchange proposed a change. `proposed` = nothing has run and the
+  // band stands; `ran` = the tab took it, the band is gone and the headline
+  // reads the TAB's rows. `uncommitted` is bound to that tab's LIVE
+  // transaction, so the word leaves the moment the tab commits, rolls back or
+  // closes and can never stand over a committed change (LESSONS 9)
+  const preview = exchange.preview ?? null;
+  const proposed = exchange.status === "proposed";
+  const ranWrite = exchange.status === "ran";
+  // the verb of a run, from the dry run while it stands and from the STATEMENT
+  // after a reload, which is the only one of the two appdb keeps: a preview
+  // described a moment that has passed and is not persisted, and the fact that
+  // this exchange ran must survive reopening the thread (LESSONS 9)
+  const ranVerb = preview?.verb ?? writeVerbOf(exchange.answer?.sql ?? null);
+  const uncommitted = useConnections((s) => (exchange.ranTab ? s.txTabs[exchange.ranTab] === true : false));
+  const writing = useAgent((s) => s.writing[exchange.id] === true);
+
   // the chips in the echo (W6): resolved once per exchange against what the
   // connection has now, never against what it had when the question was sent
   const snapshot = useSchema((s) => s.snapshots[profileId]);
@@ -383,12 +410,26 @@ export const AnswerBlock = memo(function AnswerBlock({
                   {answerActs && <AnswerActions question={exchange.question} prose={prose} sql={sql} />}
                 </div>
 
-                {(run !== null || blockSql !== null) && (
+                {/* the proposal's headline: the block's own status line,
+                    standing above it (0 new strips), and a warning riding in
+                    it as one fragment rather than as a line of its own */}
+                {proposed && preview && <WriteHeadline preview={preview} />}
+                {ranWrite && ranVerb && (
+                  <RanHeadline verb={ranVerb} rows={exchange.ranRows ?? 0} uncommitted={uncommitted} />
+                )}
+
+                {(run !== null || blockSql !== null || preview !== null) && (
                   <ResultBlock
                     exchangeId={exchange.id}
                     run={run}
                     sql={blockSql}
                     tabTitle={tabTitle(exchange.question)}
+                    preview={preview}
+                    // the Run belongs to the query tab, not to the block: the
+                    // store hands the statement to the tab's own run path, and
+                    // the tab's Commit / Rollback take it from there
+                    onRun={proposed ? () => void useAgent.getState().runWrite(exchange.id) : undefined}
+                    runBusy={writing || busy}
                   />
                 )}
                 {run && (
@@ -428,6 +469,11 @@ export const AnswerBlock = memo(function AnswerBlock({
                       a.setDraft(exchange.question);
                       a.requestFocus();
                     }}
+                    // A4: on production the same block would offer Settings for
+                    // a row that does not exist (a dead end, LESSONS 9), so the
+                    // copy names production and the row is Ask Differently alone
+                    prod={profile.is_prod}
+                    onSettings={() => useSettings.getState().setSettingsOpen(true, "models")}
                     onRetry={() => void useAgent.getState().retry(exchange.id)}
                     onContinue={() => void useAgent.getState().continueFrom(exchange.id)}
                   />

@@ -2,6 +2,7 @@ pub mod agent;
 pub mod agent_claude;
 pub mod agent_http;
 pub mod agent_mcp;
+pub mod agent_write;
 mod appdb;
 mod commands;
 pub mod driver;
@@ -368,6 +369,7 @@ pub fn run() {
             agent_mcp::agent_mcp_serve,
             agent_mcp::agent_mcp_stop,
             agent_mcp::agent_mcp_log,
+            agent_write::agent_write_preview,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

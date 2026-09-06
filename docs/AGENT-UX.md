@@ -271,6 +271,13 @@ apply are omitted, never left as dead space (DESIGN rule 2 scope note):
    status register through the results pane's own formatter: `9 rows ·
    1861.9 ms`, `1 row · 47.8 ms`.
 
+   A4 gives the block a THIRD face, `preview` (§13.2), and the anatomy one
+   slot with it: on a proposed change the block's status line stands ABOVE
+   the block as the headline (§13.3), between the answer text and the block,
+   because a proposal announces before it shows; and the `rows · ms` line
+   below the block is absent there, because nothing ran. After the Run that
+   same line reads the TAB's outcome (§13.6). No other slot moves.
+
    A floating cluster of three actions sits at the block's own top-right,
    over the header row: absolute, no layout, 30px tall (the grid's own
    `HEADER_H`, not the sketch's 24px mock header), `--acts-surface` fading
@@ -460,6 +467,18 @@ of the connection (§1).
   the newest exchange) is no verdict on the
   question: the previous answer comes back untouched, text, result block,
   status, chips and footer exactly as they were, and nothing is lost.
+- Edits off for the connection and the model proposes a write anyway (A4,
+  2026-09-06): the failure block, title `not run`, message `edits are off
+  for this connection`; the field keeps the statement with `Insert` on it
+  (the manual route stays, DESIGN rule 8's inverse of a hidden way out); the
+  button row is `Settings… · Ask Differently` (`Fix It` has nothing to fix,
+  and the ellipsis on `Settings…` is WRITING rule 2, since it opens Settings
+  › Models and needs a flip before anything happens, `Manage Models…`'s
+  precedent). On a production connection the write is refused before any
+  connection is made (AGENT-SPEC §8.8); the same block's message names
+  production instead, `edits are off on production`, and the row is `Ask
+  Differently` alone: a `Settings…` row would offer a control that does not
+  exist there (LESSONS 9, no dead ends). Detail: §13.7.
 
 Errors explain and propose; they do not apologise (WRITING errors register).
 
@@ -495,11 +514,16 @@ auth_new…`), and the connection's 8px dot leading every answer's footer,
 which is THE provenance mark for the block and stays with the rows when the
 header has scrolled away (LESSONS 4). The header carries no avatar, name or
 database. A prod connection is announced where prod is always announced, the
-titlebar chip (`PROD`); the pane wears no READ-ONLY badge, because the agent
-is read-only everywhere in v1 and rule 11 keeps the norm silent. The
-read-only sentence appears exactly once: when the user asks for a write, the
-answer is the refusal, `Ask can read; edits happen in the grid`, and it names
-where the edit does happen (the grid, a query tab). Nowhere else.
+titlebar chip (`PROD`); the pane wears no READ-ONLY badge, because reading is
+what the agent does everywhere it is not told otherwise and rule 11 keeps the
+norm silent. On a connection whose edits are OFF (the default, and every
+production connection: §13.1) the read-only sentence appears exactly once:
+when the user asks for a write, the answer is the refusal, `Ask can read;
+edits happen in the grid`, and it names where the edit does happen (the grid,
+a query tab). Nowhere else. On a connection whose edits are ON that sentence
+is false and never appears: the same question is answered with a proposal and
+its preview (§13.2), and the only refusal left is the one the model earns by
+proposing a change after the switch went off (§13.7).
 
 ## 10. Motion
 
@@ -630,3 +654,203 @@ restores it: there is nothing to restore, the caret never left. The draft's
 pills are a backdrop marked `aria-hidden`; the textarea's own text is what a
 screen reader reads. A mention in a bubble is a `<span class="mention">` with
 no role: text wearing a costume, not a control (DESIGN rule 8's inverse).
+
+## 13. Writes (A4)
+
+Picture: the "A4 · writes" section of
+`~/projects/qwry-agent-lab/docs/ask-sketch-a4.html`; where it and this
+section disagree, this section wins and the sketch gets redrawn. Edits are a
+per-connection setting, off until §13.1's switch says otherwise; the UI says
+edits and changes, never writes (WRITING's terminology table already bans
+`write` as a synonym for stage/commit): `writes` stays a code term
+(`agentWrites`, `gate_write`, `agent_write_preview`, AGENT-SPEC §8.7–§8.9).
+On, a question that asks to change data comes back as a PROPOSAL, one
+`INSERT`/`UPDATE`/`DELETE` that has not run, never an executed statement;
+nothing acts on the database until the user presses the one button that
+does (§13.5–§13.6). This section is the whole of what changes elsewhere in
+the anatomy: §2's result block gains a third face and nothing else in it
+moves, §7 gains the one failure form, and the rest of the pane (§1, §3–§6,
+§8–§12) is unchanged by this wave.
+
+### 13.1 The switch
+
+Settings › Models, one row per connection, directly under that connection's
+model row (the same section, the form of `Model for auth_new`): label
+`Edits in <db>`, the Switch species at the right, and the consequence
+sentence stacked under the label in the same row (the slider row's hint
+precedent, not a note under the row): "Ask can propose changes to this
+database; each runs only when you press its button, in a query tab you
+commit or roll back." It names the risk (Ask can propose changes) and the
+rollback plan (a query tab you commit or roll back) in one sentence; nothing
+else stands in Settings for this feature. Off by default, persisted in
+`useSettings.agentWrites: Record<profileId, boolean>`. A production
+connection (`is_prod`) never shows the row at all: absent, not
+disabled-with-reason. A disabled switch with a sentence under it would state
+a norm (production is read-only, the same reason AGENT-UX §9 wears no
+READ-ONLY badge, DESIGN rule 11); DESIGN rule 2's matrix binds a control
+that EXISTS and cannot act now, and on production the capability does not
+exist this wave at all (§13.7's dry-run refusal is what makes that true).
+Nothing else changes in Settings.
+
+### 13.2 The proposal
+
+When edits are on for the connection and the model's final SQL is a write,
+the exchange ends `proposed` (AGENT-SPEC §9): `sql` is set, `run` stays
+null, and the store fetches the dry run (AGENT-SPEC §8.8) into
+`exchange.preview`. The strip's `preview` chip, the `run` chip's own species
+(§2 item 2, accent), spins while the fetch runs and its ring fills once it
+lands; Run itself adds no chip, being the tab's act and not a tool's. While
+that fetch runs the block already STANDS, on its SQL face: the statement is
+known the instant the proposal is, that face is the one a block with no rows
+has always stood on, and holding a known statement off screen for a
+synchronised entrance would hide the one fact the user can already read and
+act on (`Copy` and `Insert` are live on it, the manual route, DESIGN rule 8's
+inverse). Nothing the dry run owns stands before the dry run lands: no
+headline, no count, no grid, no button, and `Flip` arrives WITH the second
+face, having nothing to flip to before it (LESSONS 13, a number only once
+the number exists). A dry run that FAILS holds the block in that same
+resting shape, its `preview` chip carrying the error the way any tool chip
+does: the SQL face is where a proposal with no number stands, whether the
+number is still coming or never came. The result block (§2 item 4) gains a
+third face, `preview`, the DEFAULT face once the dry run has landed and the
+exchange is still `proposed` (the SQL face stays reachable behind Flip,
+exactly as it always has been); the block's own `Copy` · `Flip` · `Insert`
+cluster is unchanged. Content, top to bottom: the headline (§13.3), standing
+above the block; one grid of the sampled rows, a changed cell reading old →
+new (§13.4); and one action band at the block's own bottom (§13.5). No
+Cancel and no sentence about previews: the block already IS the not-run
+state, and `Ask Differently` in the composer is the way out (DESIGN rule
+11).
+
+### 13.3 The headline
+
+A status-register line standing ABOVE the block, the sanity line's own
+species, because a proposal announces before it shows and a preview has no
+run yet for a `rows · ms` line to follow beneath the block: `UPDATE
+order_v2 · 12 rows`, the thinking chip's two tones (verb muted, table lit in
+mono, count muted). A true warning lifts its fragment(s) into this SAME
+line under ONE glyph, the sanity line's own grammar for a warning fragment
+(carries the glyph and tier 1, the rest at tier 2): `DELETE
+notification_history · ⚠ no WHERE · 48,213 rows` when both `missing_where`
+and `many_rows` are true; `many_rows` alone lifts only the row-count
+fragment. Never a second line: this is one status line whether or not a
+warning is true, folding the two strips a separate warning sentence would
+cost into the one DESIGN rule 14 already grants the sanity line. Each `·`
+rides inside the fragment it precedes, never as a trailing character of the
+one before it, so a wrap forced by a long table name at the 320 floor breaks
+between fragments and never leaves a `·` hanging at a line's end (a wrap,
+never a cut, DESIGN rule 13's own behaviour for chrome that outgrows its
+line). After Run the headline's text swaps to the tab's outcome (§13.6);
+before Run it names only the proposal.
+
+### 13.4 The grid
+
+One grid, the app's one species, inside the block's existing six-row
+window (DESIGN rule 14: never a second grid for one preview). A changed
+cell reads `old → new` INSIDE the cell: old and the arrow at tier 2, new at
+tier 1, the cell painted in the grid's own dirty fill (`--warn` at 12%, the
+staged-edit costume — this IS an uncommitted edit) and never the dashed
+outline, which is the editable affordance; a preview cell answers no click
+(DESIGN rule 8's inverse). NULL wears the grid's own chip on the old side.
+An `INSERT` shows the after rows plain, every cell new (a wash over all of
+them would be noise, not signal); a `DELETE` shows the before rows plain.
+Sample cap: up to 6 rows before and up to 6 after, from the dry run
+(AGENT-SPEC §8.8, one constant `WRITE_SAMPLE_ROWS`): the sample IS the
+block's window, so a preview fills it rather than stopping one row short of
+its own frame. How the two samples are PAIRED is the grid's own problem and
+not the server's: neither sample is ordered, so the block pairs on a key
+column when the two carry one (values present, unique on each side, the same
+set on both, which is what a primary key the statement did not touch looks
+like) and falls back to position when they do not. A pair whose shapes
+disagree marks no cell at all, because a wrong `old →` is worse than none
+(LESSONS 9).
+
+### 13.5 The action band
+
+One `.btnish.danger` at the block's own bottom-right (`.rb-act`, the app's
+confirm-row place), on the panel, never inside the hover cluster: DESIGN
+rule 8 lets a control hide only when the surface works without finding it,
+and a danger action nobody can see is a hidden affordance, where `Copy` ·
+`Flip` · `Insert` earn the hover because the block still reads without them.
+Label grammar: `<Verb> <n> Rows`, Title Case, thousands through
+`toLocaleString`, singular at 1 (`Update 1 Row`), 0 kept and enabled
+(`Update 0 Rows`, the grid absent — the statement is legal and the tab's
+outcome is the truth, not the preview's row count). Never the table on the
+button; the headline carries it. The row count stands in both the headline
+and the button on purpose, one number in two slots: the house's own danger
+grammar (`confirmDanger`, `DangerModal`'s `Delete 2 Questions` under a
+detail that also says 2) outranks DESIGN rule 14 here, and both slots read
+the dry run's one `exact_rows` (LESSONS 13). No Cancel: the block already is
+the not-run state.
+
+### 13.6 Run
+
+Pressing the button executes the statement in the ACTIVE query tab through
+`src/stores/results.ts`'s existing run path (its `dangerousStatements` +
+`confirmDanger` grammar and the prod safe-mode ceremony untouched); that
+ceremony opens over the WINDOW, never the pane. Wrapped in `BEGIN` when the
+tab holds no open transaction, so the tab's own Commit/Rollback take over
+from there, the rollback plan made real (DESIGN rule 15). No query tab
+active → one is created and the cue names it, `Ran in a new tab` (the W7
+Insert precedent, §2 item 4). The band leaves on `spring.layout` (the
+block's height springing shut over it, the same spring the Flip crossfade
+rides) while the headline's text swaps on `swapIn` to the TAB's outcome,
+`Updated 12 rows · uncommitted`, from the tab's OWN rows-affected, never the
+preview's number, which is stale the instant a real transaction has run.
+`uncommitted` is the one word lit as the exception speaking (the norm stays
+silent, DESIGN rule 11) and is bound to the tab's LIVE transaction: shown
+while it stays open, gone the moment it commits, rolls back or closes,
+never persisted; the line goes false the day the user commits in the tab
+(LESSONS 9). Persisted `agent_answers.status` is `proposed` | `ran` with
+`row_count` (AGENT-SPEC §9); a reload after a commit reads `Updated 12
+rows`, no `uncommitted`.
+
+### 13.7 Off, and on production
+
+Edits off for the connection and the model proposes a write anyway: §7's
+new bullet is the law (the failure block, title `not run`, message `edits
+are off for this connection`, the field keeping `Insert` on the statement,
+the row `Settings… · Ask Differently`). On a production connection the
+write is refused before any connection is made (AGENT-SPEC §8.8); the same
+failure block's message names production instead, `edits are off on
+production`, and the row is `Ask Differently` alone, since a `Settings…`
+row would offer a control that does not exist there (LESSONS 9, no dead
+ends; §13.1's switch is simply absent on that connection).
+
+### 13.8 Record View
+
+One Icon-button-species action on the record header, `Ask to Edit` (Ask's
+own glyph, lucide `MessageSquare`, the titlebar's — one mark stands for Ask
+app-wide, the `Bookmark`/Save Query precedent), tooltip `Ask to Edit`,
+standing beside the stepper pair where the header's `double-click value to
+edit · ⌘↑ ⌘↓ walk` hint stood: the hint explained a standard interaction and
+a chord the stepper's own tooltips already carry, so it goes (DESIGN rule
+11). The header holds 3 things before this wave and 3 after (title ·
+qualifier · two controls, DESIGN rule 12, the joined stepper pair counting
+as the one species it already was). `Ask to Edit` opens the pane in Ask with
+the composer focused and the row as context: a `TAGGED BY THE USER:` line
+naming the table and the primary key, through the mention grammar's
+existing block (AGENT-SPEC §4.2), plus the row's current values as `column =
+value` lines, capped, so a sentence like `set status to shipped` yields one
+`UPDATE … WHERE pk = …` and the preview of §13.2. Absent when edits are off
+for the connection (a capability that does not exist is absent, DESIGN rule
+2's matrix) and absent in Compare Rows (two rows are not a row). The pencil
+edits stay exactly as they are. RecordView carries no density setting of its
+own (`DENSITY_ROW_H` is the grid's), so this header is the header at every
+density.
+
+### 13.9 Motion
+
+The strip's `preview` chip is the `run` chip's species (accent), spinning
+while the dry run runs, its ring filled after; Run adds no chip, being the
+tab's act and not a tool's. The block enters with the section's `--dur-slow`
+opacity when the PROPOSAL lands, wearing its SQL face (§13.2); the headline
+enters on that same `--dur-slow` opacity when the DRY RUN lands, the block's
+face crossfading sql to preview on `swapIn` beneath it. Flip is W7's
+unchanged crossfade (`swapIn` + `spring.layout`, the action band riding the
+block's bottom edge throughout the spring). On Run: the band leaves on
+`spring.layout` (the block's height springing shut over it) while the
+headline swaps its text on `swapIn`; the tab's own ceremony (danger
+confirm, prod safe mode) opens over the window, never the pane. Reduced
+motion: the chip appears, the faces swap, the band is gone, with no
+crossfade or spring of its own.

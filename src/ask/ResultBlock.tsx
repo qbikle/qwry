@@ -28,14 +28,46 @@
 // ride the spring instead of jumping; reduced motion is the other face at
 // once. The chosen face is remembered per exchange for the session
 // (useAsk.face), never persisted: it is a way of looking, not a fact.
+//
+// A4 adds the THIRD face, `preview`: the dry run of a change the model
+// proposed and nothing has run. It is a face and not a block of its own,
+// because a block would re-author the SQL face, the Flip and the cluster this
+// one already has (DESIGN rule 15's second question); it costs 0 new species
+// and one new band. It is the default while the exchange is `proposed`, the
+// SQL face stays behind Flip, and the cluster is unchanged. Its grid is the
+// same readOnly Grid the table face mounts, with one hook: a cell the
+// statement changes reads `old -> new` inside the ONE cell (rule 14: never
+// two grids), wearing the staged-edit fill and never its dashed outline,
+// which is the editable affordance and this cell answers no click (rule 8's
+// inverse). INSERT shows the after rows plain and DELETE the before rows
+// plain: every cell of an inserted row is new, and a wash over all of them is
+// noise, so the one red thing in the block stays the button. While the dry
+// run is still in flight the block stands on its SQL face, the face it has
+// always fallen to with no rows to show: the statement is known the instant
+// the proposal is, and Copy and Insert are live on it, so the manual route
+// exists before the round trip does. Nothing the dry run owns is drawn
+// early: no headline, no band, and no Flip, which arrives with the second
+// face (AGENT-UX 13.2, 13.9).
+//
+// The band under the faces is the block's own bottom: one `.btnish.danger` at
+// the right, the confirm's place. The button acts on the statement, so it
+// stands on the block (rule 15's first question) and cannot be a hover (rule
+// 8 lets a control hide only when the surface works without finding it, and a
+// danger action nobody can see is a hidden affordance). No Cancel: the block
+// already IS the not-run state. Running is the TAB's act, so the band only
+// calls back (`onRun`, which AnswerBlock hands to `useAgent.runWrite`: the
+// store cannot import this tree without pulling the lazy Ask bundle into its
+// own chunk), and the block's height springs shut over the band the way the
+// flip springs between the faces.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Code, Copy, Import, Table } from "lucide-react";
+import { Code, Copy, Import, Table, TriangleAlert } from "lucide-react";
 import { EditorState, Prec } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { PostgreSQL, sql as sqlLang } from "@codemirror/lang-sql";
 import type { AgentRun } from "../agent/types";
+import type { WritePreview } from "../ipc/types";
 import { spring, swapIn } from "../design/springs";
 import { formatSqlText } from "../editor/format";
 import { qwryHighlight, qwryTheme } from "../editor/theme";
@@ -48,8 +80,9 @@ import { useTabs } from "../stores/tabs";
 import { copiedRowsCue, finished, resultTsv } from "./resultCopy";
 import { isScalarRun, ScalarResult } from "./ScalarResult";
 
-/** which face of the block is up */
-export type ResultFace = "table" | "sql";
+/** which face of the block is up. `preview` is A4's: the sampled rows of a
+ * change that has not run, standing where the table face stands */
+export type ResultFace = "table" | "sql" | "preview";
 
 /** rows the grid shows before it scrolls inside the block */
 const GRID_ROWS_SHOWN = 6;
@@ -98,6 +131,193 @@ export interface ResultBlockProps {
   sql: string | null;
   /** the query tab's name when Insert has to open one */
   tabTitle: string;
+  /** A4: the dry run behind the preview face; absent on every read answer */
+  preview?: WritePreview | null;
+  /** A4: the band's danger action, which runs the statement in a query tab
+   * (useAgent.runWrite). Absent = no band: the exchange has already run */
+  onRun?: () => void;
+  /** A4: the run is in flight, or the thread is. The button is disabled, never
+   * hidden: state never resizes chrome (DESIGN rule 2) */
+  runBusy?: boolean;
+}
+
+/** the sample as the grid's statement shape (statementFromRun's sibling): the
+ * dry run carries no types and no timing, and neither has a slot here */
+export function statementFromSample(columns: string[], rows: (string | null)[][]): StatementState {
+  return {
+    index: 0,
+    sql: "",
+    rows,
+    columns: columns.map((name, i) => ({ name, type_oid: 0, table_oid: 0, attnum: i + 1 })),
+    truncated: new Set(),
+    affected: null,
+    ms: 0,
+    rowCount: rows.length,
+    capped: false,
+    done: true,
+    error: null,
+  };
+}
+
+/** the ONE grid a preview shows, and which of its cells changed (DESIGN rule
+ * 14: never a before grid beside an after grid). UPDATE shows the after rows
+ * with every cell the statement moved carrying its old value; INSERT the
+ * after rows plain, DELETE the before rows plain.
+ *
+ * Pairing the two samples is the whole difficulty: neither is ordered (the
+ * before sample is a derived SELECT with a LIMIT, the after rows arrive in
+ * the statement's own update order), so position is a guess and a wrong guess
+ * prints an old value that was never in that row. So the pair is made on a
+ * KEY column when the samples carry one (`keyColumn`: values present, unique
+ * on each side and the same set on both, which is what a primary key the
+ * statement did not touch looks like) and falls back to position otherwise.
+ * A pair whose shapes disagree is read as no change at all rather than as the
+ * wrong one. */
+export function previewGrid(preview: WritePreview): {
+  columns: string[];
+  rows: (string | null)[][];
+  /** `row:col` -> the value that cell holds today */
+  changed: ReadonlyMap<string, string | null>;
+} {
+  const side = preview.verb === "DELETE" ? preview.before : preview.after;
+  const changed = new Map<string, string | null>();
+  const { before, after } = preview;
+  const pairs =
+    preview.verb === "UPDATE" &&
+    before.rows.length === after.rows.length &&
+    before.columns.length === after.columns.length &&
+    before.columns.every((c, i) => c === after.columns[i]);
+  if (pairs) {
+    const key = keyColumn(before.rows, after.rows, after.columns.length);
+    // the before row each after row is the same row as: by key where there is
+    // one, else the row that stood in the same place
+    const rowBefore = (r: number): (string | null)[] =>
+      key === null ? before.rows[r] : before.rows[key.get(after.rows[r][key.col] as string) ?? r];
+    for (let r = 0; r < after.rows.length; r++) {
+      const was = rowBefore(r);
+      for (let c = 0; c < after.columns.length; c++) {
+        if (was[c] !== after.rows[r][c]) changed.set(`${r}:${c}`, was[c]);
+      }
+    }
+  }
+  return { columns: side.columns, rows: side.rows, changed };
+}
+
+/** the column the two samples can be paired on, and where each of its values
+ * sits in the BEFORE sample: the first column whose values are present and
+ * unique on both sides and identical as a set, which is what a key the
+ * statement did not touch looks like. None (a keyless sample, or a statement
+ * that moved the key itself) leaves the caller on position. */
+function keyColumn(
+  before: (string | null)[][],
+  after: (string | null)[][],
+  cols: number,
+): { col: number; get: (v: string) => number | undefined } | null {
+  for (let c = 0; c < cols; c++) {
+    const at = new Map<string, number>();
+    let ok = true;
+    for (let r = 0; r < before.length && ok; r++) {
+      const v = before[r][c];
+      if (v === null || at.has(v)) ok = false;
+      else at.set(v, r);
+    }
+    if (!ok) continue;
+    const seen = new Set<string>();
+    for (let r = 0; r < after.length && ok; r++) {
+      const v = after[r][c];
+      if (v === null || seen.has(v) || !at.has(v)) ok = false;
+      else seen.add(v);
+    }
+    if (ok) return { col: c, get: (v) => at.get(v) };
+  }
+  return null;
+}
+
+/** the count in the status register, singular at 1 (WRITING) */
+export const rowsText = (n: number) => `${n.toLocaleString()} ${n === 1 ? "row" : "rows"}`;
+
+/** the gate's verb in the two registers the wave needs: the control's Title
+ * Case and the status line's past tense. The gate allows exactly three verbs,
+ * so an unknown one is impossible; it renders as itself rather than as a
+ * guess if one ever arrives. */
+const VERB_TITLE: Record<string, string> = { INSERT: "Insert", UPDATE: "Update", DELETE: "Delete" };
+const VERB_PAST: Record<string, string> = { INSERT: "Inserted", UPDATE: "Updated", DELETE: "Deleted" };
+
+/** the danger button's label: the verb and the count, Title Case, never the
+ * table (the headline has it). The house's danger grammar, where a
+ * destructive label names its object (confirmDanger's `Delete 2 Questions`),
+ * outranks rule 14's one-slot reading here, and both slots read the dry run's
+ * one `exact_rows` (LESSONS 13). 0 is kept and enabled: the statement is
+ * legal and the tab's outcome is the truth. */
+export function runLabel(verb: string, rows: number): string {
+  const word = VERB_TITLE[verb] ?? verb;
+  return `${word} ${rows.toLocaleString()} ${rows === 1 ? "Row" : "Rows"}`;
+}
+
+/** what the tab did, in the status register: `Updated 12 rows` */
+export function ranText(verb: string, rows: number): string {
+  return `${VERB_PAST[verb] ?? verb} ${rowsText(rows)}`;
+}
+
+/** A4: the block's own status line, standing ABOVE it, because a proposal
+ * announces before it shows and a preview has no `rows · ms` line under it
+ * (nothing ran). `UPDATE order_v2 · 12 rows` in the thinking chip's two tones,
+ * the verb muted, the table lit in mono, the count muted. A true warning is a
+ * FRAGMENT of this same line in the sanity line's grammar (AGENT-UX 4: a
+ * warning fragment carries the glyph and tier 1, the rest sits at tier 2),
+ * the lifted fragments under ONE glyph: `DELETE notification_history · no
+ * WHERE · 48,213 rows`. `many_rows` alone lifts the count. Each separator
+ * rides INSIDE the fragment it precedes, so a wrap at the 320 floor never
+ * ends a line on a hanging `·`. */
+export function WriteHeadline({ preview }: { preview: WritePreview }) {
+  const warn = preview.warnings.length > 0;
+  const frags = preview.warnings.includes("missing_where")
+    ? ["no WHERE", rowsText(preview.exact_rows)]
+    : [rowsText(preview.exact_rows)];
+  return (
+    <div className="ans-status rb-head">
+      <span>{preview.verb}</span>
+      <code>{preview.table}</code>
+      {frags.map((f, i) => (
+        <span key={f} className={i === 0 && warn ? "warn" : warn ? "lit" : undefined}>
+          <span className="sep" aria-hidden="true">
+            ·
+          </span>
+          {i === 0 && warn && <TriangleAlert size={12} />}
+          {f}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** A4: the same line after Run, reading the TAB's outcome and never the
+ * preview's number (LESSONS 13). `uncommitted` is lit as the one exception
+ * speaking (DESIGN rule 11) and is bound to the tab's LIVE transaction: it
+ * goes the moment the tab commits, rolls back or closes, or the line would be
+ * false the day the user commits (LESSONS 9). */
+export function RanHeadline({
+  verb,
+  rows,
+  uncommitted,
+}: {
+  verb: string;
+  rows: number;
+  uncommitted: boolean;
+}) {
+  return (
+    <div className="ans-status rb-head">
+      <span>{ranText(verb, rows)}</span>
+      {uncommitted && (
+        <span className="lit">
+          <span className="sep" aria-hidden="true">
+            ·
+          </span>
+          uncommitted
+        </span>
+      )}
+    </div>
+  );
 }
 
 // the SQL face over the editor theme: auto height, the answer's data size,
@@ -139,7 +359,15 @@ function SqlFace({ text }: { text: string }) {
   return <div ref={hostRef} className="rb-sql" />;
 }
 
-export function ResultBlock({ exchangeId, run, sql, tabTitle }: ResultBlockProps) {
+export function ResultBlock({
+  exchangeId,
+  run,
+  sql,
+  tabTitle,
+  preview = null,
+  onRun,
+  runBusy = false,
+}: ResultBlockProps) {
   // the table face: a one-row run is values, not a grid (a table of one cell
   // is chrome around nothing); an empty result has no table face at all, so
   // the block stands on its SQL rather than on a header over nothing
@@ -149,6 +377,17 @@ export function ResultBlock({ exchangeId, run, sql, tabTitle }: ResultBlockProps
     [run, sql],
   );
   const hasTable = scalar || stmt !== null;
+
+  // A4's face, in the table face's slot: the sampled rows of a change that has
+  // not run. A sample with no rows (a statement whose count is 0, legal and
+  // still worth running) shows no grid at all, so the block stands on its SQL,
+  // the same law the table face has always followed
+  const pv = useMemo(() => (preview ? previewGrid(preview) : null), [preview]);
+  const pvStmt = useMemo(
+    () => (pv && pv.rows.length > 0 ? statementFromSample(pv.columns, pv.rows) : null),
+    [pv],
+  );
+  const hasPreview = pvStmt !== null;
 
   // the finished text: formatted once the (lazy) formatter lands, bare + `;`
   // until then, so Copy and Insert never wait on the import
@@ -168,15 +407,18 @@ export function ResultBlock({ exchangeId, run, sql, tabTitle }: ResultBlockProps
 
   const remembered = useAsk((s) => s.face[exchangeId]);
   const setFace = useAsk((s) => s.setFace);
-  // the default is the table when a run left rows, the SQL when it did not
-  // (a failed run, or an answer that never ran one); a face the exchange
-  // cannot show is never the face
-  const face: ResultFace = !hasTable ? "sql" : sql === null ? "table" : (remembered ?? "table");
-  const canFlip = hasTable && sql !== null;
+  // the default is the preview when a proposal has rows to sample, the table
+  // when a run left rows, the SQL when neither; a face the exchange cannot
+  // show is never the face, remembered or not
+  const rowsFace: ResultFace = hasPreview ? "preview" : "table";
+  const face: ResultFace =
+    !hasPreview && !hasTable ? "sql" : sql === null ? rowsFace : remembered === "sql" ? "sql" : rowsFace;
+  const canFlip = (hasPreview || hasTable) && sql !== null;
 
-  // the block's own height, sprung between the faces. popLayout parks the
-  // leaving face out of the flow, so this wrapper measures the arriving one
-  // the frame it lands and the box springs to it under `overflow: hidden`
+  // the block's own height, sprung between the faces AND over the band as it
+  // leaves. popLayout parks the leaving face (and the leaving band) out of the
+  // flow, so this wrapper measures what is arriving the frame it lands and the
+  // box springs to it under `overflow: hidden`
   const facesRef = useRef<HTMLDivElement>(null);
   const [h, setH] = useState<number | null>(null);
   useLayoutEffect(() => {
@@ -188,8 +430,16 @@ export function ResultBlock({ exchangeId, run, sql, tabTitle }: ResultBlockProps
     return () => ro.disconnect();
   }, []);
 
+  // Copy is the face you are looking at: the run's rows, the sample's rows, or
+  // the statement. A sample is what the block HOLDS, so its cue counts what it
+  // copied and never the statement's own `exact_rows`
   const copy = () => {
     if (face === "table" && run) void copyCue(resultTsv(run), copiedRowsCue(run.rows.length));
+    else if (face === "preview" && pv)
+      void copyCue(
+        resultTsv({ columns: pv.columns, rows: pv.rows, rowCount: pv.rows.length, capped: false, ms: 0 }),
+        copiedRowsCue(pv.rows.length),
+      );
     else void copyCue(text, "Copied SQL");
   };
 
@@ -200,26 +450,55 @@ export function ResultBlock({ exchangeId, run, sql, tabTitle }: ResultBlockProps
       initial={false}
       transition={spring.layout}
     >
-      <div className="rb-faces" ref={facesRef}>
+      <div className="rb-inner" ref={facesRef}>
+        <div className="rb-faces">
+          <AnimatePresence mode="popLayout" initial={false}>
+            <motion.div
+              key={face}
+              className="rb-face"
+              initial={swapIn.initial}
+              animate={swapIn.animate}
+              exit={{ opacity: 0 }}
+              transition={swapIn.transition}
+            >
+              {face === "sql" ? (
+                <SqlFace text={text} />
+              ) : face === "preview" && pvStmt && pv ? (
+                <Grid
+                  key={`${exchangeId}-preview`}
+                  statement={pvStmt}
+                  readOnly
+                  maxRows={GRID_ROWS_SHOWN}
+                  changed={pv.changed}
+                />
+              ) : scalar && run ? (
+                <div className="rb-scalar">
+                  <ScalarResult run={run} />
+                </div>
+              ) : stmt ? (
+                <Grid key={exchangeId} statement={stmt} readOnly maxRows={GRID_ROWS_SHOWN} />
+              ) : null}
+            </motion.div>
+          </AnimatePresence>
+        </div>
+
+        {/* the band: the block's own bottom, one danger button at the right.
+            It leaves on the Run, parked out of the flow while the block's
+            height springs shut over it (DESIGN rule 2's scope note: a mode
+            transition may reflow its own controls) */}
         <AnimatePresence mode="popLayout" initial={false}>
-          <motion.div
-            key={face}
-            className="rb-face"
-            initial={swapIn.initial}
-            animate={swapIn.animate}
-            exit={{ opacity: 0 }}
-            transition={swapIn.transition}
-          >
-            {face === "sql" ? (
-              <SqlFace text={text} />
-            ) : scalar && run ? (
-              <div className="rb-scalar">
-                <ScalarResult run={run} />
-              </div>
-            ) : stmt ? (
-              <Grid key={exchangeId} statement={stmt} readOnly maxRows={GRID_ROWS_SHOWN} />
-            ) : null}
-          </motion.div>
+          {preview !== null && onRun && (
+            <motion.div
+              key="band"
+              className="rb-act"
+              exit={{ opacity: 0 }}
+              transition={spring.layout}
+            >
+              <button type="button" className="btnish danger" disabled={runBusy} onClick={onRun}>
+                {runLabel(preview.verb, preview.exact_rows)}
+              </button>
+            </motion.div>
+          )}
         </AnimatePresence>
       </div>
 
@@ -231,11 +510,11 @@ export function ResultBlock({ exchangeId, run, sql, tabTitle }: ResultBlockProps
           <button
             type="button"
             className="iconbtn iconbtn-sm"
-            title={face === "table" ? "Show SQL" : "Show Table"}
-            aria-label={face === "table" ? "Show SQL" : "Show Table"}
-            onClick={() => setFace(exchangeId, face === "table" ? "sql" : "table")}
+            title={face === "sql" ? "Show Table" : "Show SQL"}
+            aria-label={face === "sql" ? "Show Table" : "Show SQL"}
+            onClick={() => setFace(exchangeId, face === "sql" ? rowsFace : "sql")}
           >
-            {face === "table" ? <Code size={12} /> : <Table size={12} />}
+            {face === "sql" ? <Table size={12} /> : <Code size={12} />}
           </button>
         )}
         {sql !== null && (

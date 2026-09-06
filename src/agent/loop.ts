@@ -47,6 +47,7 @@ import {
   askMessage,
   repairMessage,
   smallAskMessage,
+  writesMessage,
 } from "./prompt";
 import { buildAssumptions, extractSql } from "./extract";
 import { answerText } from "./display";
@@ -67,11 +68,20 @@ export const SMALL_REPAIRS = 2;
 export const turnCapMessage = (turns: number): string =>
   `stopped after ${turns} ${turns === 1 ? "turn" : "turns"}`;
 
+/** The two sentences a refused change gets (A4, AGENT-UX 7 and 13.7). Error
+ * register: lowercase lead, no period. They differ because the ways out
+ * differ: a connection with edits off has a switch to offer, production has
+ * none, and offering one there would be a dead end (LESSONS 9). */
+export const WRITES_OFF = "edits are off for this connection";
+export const WRITES_OFF_PROD = "edits are off on production";
+
 export type AskPhase = "context" | "thinking" | "tools" | "running" | "post" | "done";
 
-/** The four ways an Ask ends badly. Each maps to an affordance in AGENT-UX 7,
- * so a new kind means a new affordance, not a new message. */
-export type AskErrorKind = "provider" | "sql" | "turncap" | "cancelled";
+/** The five ways an Ask ends badly. Each maps to an affordance in AGENT-UX 7,
+ * so a new kind means a new affordance, not a new message: `writesoff` (A4)
+ * is the model proposing a change on a connection whose edits are off, where
+ * nothing ran and the way out is Settings, never Fix It. */
+export type AskErrorKind = "provider" | "sql" | "turncap" | "cancelled" | "writesoff";
 
 export type AskEvent =
   | { type: "status"; phase: AskPhase }
@@ -151,11 +161,39 @@ export interface AskRequest {
    * with its `@` tokens exactly as typed. Absent on the eval path, where the
    * message must stay byte-identical to the measured one. */
   mentions?: Mention[];
+  /** A4 item 7: the row `Ask to Edit` attached, as `column = value` lines
+   * under a line naming the table and the primary key. It rides in the SAME
+   * `TAGGED BY THE USER:` block the `@` tags use, under them: it is one more
+   * thing the user pointed at, and a second header would be a second grammar
+   * for one idea (DESIGN rule 15). Absent on the eval path. */
+  rowContext?: string;
+  /** what the connection allows the model to propose (A4). Absent on the
+   * eval path and nowhere else: the app passes it for every run, edits on or
+   * off, because the loop's job when they are off is to REFUSE a write the
+   * model wrote rather than hand it to a tool that would refuse it in the
+   * gate's words (AGENT-SPEC 8.9). */
+  writes?: WriteMode;
   /** injectable clock so the harness can be deterministic */
   now?: () => number;
   maxTurns?: number;
   /** bench only: gold SQL, so the answer can carry prefilter recall */
   goldSql?: string | null;
+}
+
+/** A4: the connection's edits permission, resolved by the caller before its
+ * first await (LESSONS 3), and the gate that reads the statement. */
+export interface WriteMode {
+  /** the connection's switch, already resolved against production, where the
+   * switch has no row at all (AGENT-UX 13.1) */
+  on: boolean;
+  /** the connection is production: the refusal names it and offers no
+   * Settings, because there is none to offer there */
+  prod?: boolean;
+  /** the write gate (Rust, a pure AST call with no session): is this exactly
+   * ONE INSERT / UPDATE / DELETE (AGENT-SPEC 8.7)? Anything else, a SELECT
+   * and a pair of statements alike, is false and takes the read path it
+   * always took, where the read gate answers it in its own words. */
+  isWrite: (sql: string) => Promise<boolean>;
 }
 
 class Cancelled extends Error {
@@ -187,6 +225,17 @@ const firstLine = (e: unknown): string => {
   const msg = e instanceof Error ? e.message : String(e);
   return msg.split("\n")[0].trim() || "unknown error";
 };
+
+/** A4: which sentence a refused change gets. Production has no switch to
+ * point at, so it never offers one (AGENT-UX 13.7, LESSONS 9). */
+const writeRefusal = (w: WriteMode): string => (w.prod ? WRITES_OFF_PROD : WRITES_OFF);
+
+/** The `TAGGED BY THE USER:` block's lines: what the `@` tags resolved to,
+ * and then the row Record View attached (A4 item 7). One block, because both
+ * are the same fact (the user pointed at this), and an empty result keeps the
+ * header off the message entirely. */
+const taggedContext = (mentions: readonly Mention[], row?: string): string =>
+  [mentionContext(mentions), (row ?? "").trim()].filter(Boolean).join("\n");
 
 /** Whitespace-insensitive statement identity. Case is preserved on purpose:
  * `'Paid'` and `'paid'` are different queries. */
@@ -323,8 +372,13 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
       index: indexFor(meta, picked),
       totalTables: meta.tables.length,
       risky,
-      context: mentionContext(mentions),
-    }),
+      context: taggedContext(mentions, req.rowContext),
+    }) +
+      // A4: last, after the risk block when both fire (the risk block
+      // instructs the next turn's probes, this one the final fence). Absent
+      // whenever edits are off, which is what keeps the eval's bytes and
+      // every baseline row exactly where v4 left them (EVAL 4)
+      (req.writes?.on ? writesMessage() : ""),
   );
   trace.push({
     step: "context",
@@ -357,6 +411,10 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
       sanity?: SanityFragment[];
       /** the wait a rate-limited provider stated, forwarded to the UI */
       retryAfterMs?: number;
+      /** the affordance this failure gets when the verdict alone does not
+       * name it: a refused change is a `failed` verdict carrying SQL, which
+       * would otherwise read as the repair loop's own (A4, AGENT-UX 7) */
+      errorKind?: AskErrorKind;
     },
   ): AskAnswer => {
     trace.push({ step: "verdict", ms: Math.round(now() - started), verdict });
@@ -371,19 +429,22 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
       sanity: extra.sanity ?? [],
       ms: Math.round(now() - started),
     };
-    if (verdict.status !== "answered") {
+    // `proposed` is neither: a statement that cleared the write gate and has
+    // not run is the answer to the question asked (A4, AGENT-UX 13.2)
+    if (verdict.status !== "answered" && verdict.status !== "proposed") {
       // the ONE error emit per verdict: a failed verdict that carries SQL is
       // a SQL failure (Fix It over the last statement), one without SQL is
       // the provider's (Retry). The store keeps the last error it sees, so a
       // second emit here would relabel every SQL failure as a provider one.
       const kind: AskErrorKind =
-        verdict.status === "cancelled"
+        extra.errorKind ??
+        (verdict.status === "cancelled"
           ? "cancelled"
           : verdict.status === "turn_cap"
             ? "turncap"
             : verdict.sql !== null
               ? "sql"
-              : "provider";
+              : "provider");
       emit({
         type: "error",
         kind,
@@ -702,6 +763,30 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
         });
       }
 
+      // A4: the statement the model settled on is a CHANGE, so it is never
+      // executed here. Edits on, it ends the exchange as a proposal the user
+      // runs in a query tab (AGENT-UX 13.2); edits off, it ends as the one
+      // failure whose way out is Settings, never a run_sql the read gate
+      // would refuse in gate words the question cannot act on (AGENT-SPEC
+      // 8.9). Everything the gate does not read as exactly one INSERT /
+      // UPDATE / DELETE falls through to the path it always took.
+      if (req.writes && (await raceAbort(req.writes.isWrite(sql), req.signal))) {
+        const shared = {
+          sql,
+          run: null,
+          text: answer,
+          turns,
+          assumptions: buildAssumptions({ text: answer, sql, question: req.question }),
+          sanity: sanityLine(peeked, sanity),
+        };
+        return req.writes.on
+          ? finish({ status: "proposed", sql }, shared)
+          : finish(
+              { status: "failed", sql, message: writeRefusal(req.writes) },
+              { ...shared, errorKind: "writesoff" },
+            );
+      }
+
       const prior = runs.last;
       let run = prior && sameSql(prior.sql, sql) ? prior.run : null;
       if (!run) {
@@ -810,6 +895,7 @@ interface SmallCtx {
       assumptions?: Assumption[];
       sanity?: SanityFragment[];
       retryAfterMs?: number;
+      errorKind?: AskErrorKind;
     },
   ) => AskAnswer;
 }
@@ -888,6 +974,19 @@ async function runSmall(req: AskRequest, ctx: SmallCtx): Promise<AskAnswer> {
       }
 
       sql = extractSql(text).sql;
+      // A4: this tier is told to write a SELECT and gets no WRITES block, so
+      // a change here is the model going off script. It is still never run:
+      // the same gate, the same two endings as the hybrid path (AGENT-SPEC
+      // 8.9), because which tier answered is not a reason to run a write
+      if (sql && req.writes && (await raceAbort(req.writes.isWrite(sql), req.signal))) {
+        const shared = { sql, run: null, text, turns: attempt + 1 };
+        return req.writes.on
+          ? finish({ status: "proposed", sql }, shared)
+          : finish(
+              { status: "failed", sql, message: writeRefusal(req.writes) },
+              { ...shared, errorKind: "writesoff" },
+            );
+      }
       if (sql) {
         emit({ type: "status", phase: "running" });
         const t1 = now();

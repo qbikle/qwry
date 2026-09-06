@@ -31,6 +31,17 @@
 //                                           chunk, so the other local runtimes read
 //                                           as not running (probeLocal yields [])
 //   agent_http_abort                        no-op
+//   agent_gate                              the AST gate, answered from the head
+//                                           token alone: in `write` mode one
+//                                           INSERT / UPDATE / DELETE is allowed
+//                                           and carries its shape, in `read`
+//                                           mode it is refused the way the real
+//                                           gate refuses it. No pg_query in a
+//                                           browser tab, and no probe needs one
+//   agent_write_preview                     the canned dry run below: the same
+//                                           twelve-row UPDATE the a4- fixtures
+//                                           hold, so a probe that proposes one
+//                                           lands the block the frames show
 //   agent_thread_truncate / _session_set    nothing: a cut in the harness moves
 //   / agent_turns_shift                     the fixture thread on screen and has
 //                                           no appdb behind it, so the store's
@@ -52,7 +63,7 @@
 
 import type { Channel, InvokeArgs } from "@tauri-apps/api/core";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
-import type { HttpChunk, HttpDone } from "../ipc/types";
+import type { GateVerdict, HttpChunk, HttpDone, WritePreview, WriteVerb } from "../ipc/types";
 import { FIXTURE, LOCAL_MODELS_JSON, LOCAL_MODELS_URL } from "./fixtures";
 import { MENTION_STATES, mentionThreadRows } from "./fixtures.mentions";
 import { SHELL_THREAD_ROWS } from "./fixtures.shell";
@@ -88,6 +99,67 @@ function httpStream(payload: InvokeArgs | undefined): HttpDone {
   return { request_id: requestId, status: 0, ms: 1, bytes: 0 };
 }
 
+/** the three verbs the write gate allows, read off the statement's head token:
+ * the real gate parses, and a browser tab has no parser, but every probe here
+ * hands it a statement whose first word is the whole question */
+const headVerb = (sql: string): WriteVerb | null => {
+  const head = sql.trim().replace(/^(--[^\n]*\n|\s)+/, "").split(/\s|\(/)[0]?.toUpperCase();
+  return head === "INSERT" || head === "UPDATE" || head === "DELETE" ? head : null;
+};
+
+/** the gate, in whichever mode was asked for. A write in read mode is refused
+ * in the read gate's own words, hint included, because that refusal is what
+ * sends the model to the final fence (AGENT-SPEC 8.7) */
+function gate(sql: string, mode: unknown): GateVerdict {
+  const verb = headVerb(sql);
+  if (mode !== "write") {
+    return verb === null
+      ? { allowed: true, reason: null, write: null }
+      : {
+          allowed: false,
+          reason: `${verb[0]}${verb.slice(1).toLowerCase()}Stmt not allowed (only SELECT / WITH...SELECT / EXPLAIN); to change data, put the statement in the final sql fence instead of running it`,
+          write: null,
+        };
+  }
+  if (verb === null) {
+    return { allowed: false, reason: "only INSERT / UPDATE / DELETE change data", write: null };
+  }
+  return {
+    allowed: true,
+    reason: null,
+    write: {
+      verb,
+      table: /\b(?:UPDATE|INTO|FROM)\s+([A-Za-z_][\w.]*)/i.exec(sql)?.[1] ?? "order_v2",
+      has_where: /\bWHERE\b/i.test(sql),
+      has_returning: /\bRETURNING\b/i.test(sql),
+    },
+  };
+}
+
+/** the canned dry run: the twelve-row UPDATE the a4- fixtures hold, sampled
+ * six rows deep (`WRITE_SAMPLE_ROWS`) with two columns moving on every row */
+function writePreview(sql: string): WritePreview {
+  const shape = gate(sql, "write").write;
+  const ids = ["218841", "218903", "218977", "219012", "219054", "219118"];
+  const amounts = ["4725.00", "2564.00", "1899.00", "3210.00", "6480.00", "1150.00"];
+  const columns = ["id", "payment_status", "paid_at", "total_amount", "currency"];
+  const verb = shape?.verb ?? "UPDATE";
+  const before = { columns, rows: ids.map((id, i) => [id, "pending", null, amounts[i], "INR"]) };
+  const after = {
+    columns,
+    rows: ids.map((id, i) => [id, "paid", "2026-09-06 16:52", amounts[i], "INR"]),
+  };
+  return {
+    verb,
+    table: shape?.table ?? "order_v2",
+    has_where: shape?.has_where ?? true,
+    exact_rows: 12,
+    before: verb === "INSERT" ? { columns: [], rows: [] } : before,
+    after: verb === "DELETE" ? { columns: [], rows: [] } : after,
+    warnings: shape && !shape.has_where && verb !== "INSERT" ? ["missing_where"] : [],
+  };
+}
+
 export function installTauriShim(): void {
   mockWindows("main");
   mockIPC(
@@ -103,6 +175,14 @@ export function installTauriShim(): void {
           return false;
         case "agent_http_stream":
           return httpStream(payload);
+        case "agent_gate": {
+          const args = record(payload);
+          return gate(typeof args.sql === "string" ? args.sql : "", args.mode);
+        }
+        case "agent_write_preview": {
+          const args = record(payload);
+          return writePreview(typeof args.sql === "string" ? args.sql : "");
+        }
         case "plugin:clipboard-manager|write_text": {
           const text = record(payload).text;
           clipboardWrites.push(typeof text === "string" ? text : "");

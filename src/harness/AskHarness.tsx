@@ -14,7 +14,9 @@
 //                       |insight-code|insight-stream|mention-popover
 //                       |mention-draft|mention-first|mention-echo|mention-trace
 //                       |result-table|result-sql|result-scalar|failure-cap
-//                       |answer-actions|followups-end>
+//                       |answer-actions|followups-end
+//                       |a4-preview|a4-preview-warn|a4-preview-sql|a4-ran
+//                       |a4-preview-busy|a4-writes-off>
 //             &w=<320|392|560>&theme=<dark|light>[&scroll=top|bottom]
 //
 // `scroll=top` parks the thread scroller at the question echo instead of the
@@ -69,6 +71,13 @@
 // (fixtures.ts `followUpsFor`), so a state that showed suggestions before W7
 // shows them under its last answer alone.
 //
+// A4: the `a4-` states (fixtures.writes.ts) are one proposed change each,
+// parked at the top like the `result` states, since the block and the headline
+// standing over it are the subject. `a4-ran` seeds the query tab's own live
+// transaction (useConnections.txTabs) so `uncommitted` reads what a live tab
+// would say, and every other state clears it; `a4-preview-busy` is the dry
+// run in flight, its `preview` chip spinning in the strip.
+//
 // scripts/ask-frames.ts drives headless Chrome over this route and writes
 // one PNG per state × width × theme. The dev build remains the final eyeball;
 // these frames are the evidence.
@@ -117,6 +126,7 @@ import { RICH_STATES, richSeed, type RichState } from "./fixtures.rich";
 import { SHELL_THREADS, shellAfterMount } from "./fixtures.shell";
 import { STARTER_STATES, startersSeed, type StarterState } from "./fixtures.starters";
 import { STRIP_STATES, stripSeed, type StripState } from "./fixtures.strip";
+import { WRITES_STATES, writesAfterMount, writesSeed, type WritesState } from "./fixtures.writes";
 import "../app/v2.css";
 import "./harness.css";
 
@@ -148,7 +158,8 @@ function paramsFrom(search: string): Params {
         (state === "strip" ||
           state === "kv-wide" ||
           state.startsWith("insight") ||
-          (RESULT_STATES as readonly string[]).includes(state)))
+          (RESULT_STATES as readonly string[]).includes(state) ||
+          (WRITES_STATES as readonly string[]).includes(state)))
         ? "top"
         : "bottom",
   };
@@ -190,13 +201,22 @@ function seed({ state, w, theme }: Params) {
   // actions shape), the answer states carry the thread's follow-up row
   const result = (RESULT_STATES as readonly string[]).includes(state) ? resultSeed(state as ResultState) : null;
   const ans = (ANSWER_STATES as readonly string[]).includes(state) ? answerSeed(state as AnswerState) : null;
+  // A4: one proposed change, with its own busy / phase (the result shape); the
+  // seed also opens or clears the query tab's transaction `uncommitted` reads
+  const writes = (WRITES_STATES as readonly string[]).includes(state) ? writesSeed(state as WritesState) : null;
   // the thread a state shows, oldest first: one seed wins, and the same list
   // is the active thread, the exchanges and what the follow-up row reads
   const list =
-    w6?.exchanges ?? w4?.exchanges ?? result?.exchanges ?? ans?.exchanges ?? echo ?? (exchange ? [exchange] : null);
+    w6?.exchanges ??
+    w4?.exchanges ??
+    result?.exchanges ??
+    ans?.exchanges ??
+    writes?.exchanges ??
+    echo ??
+    (exchange ? [exchange] : null);
   // the seed that carries this state's own busy and phase (a state matches at
   // most one of them); `busy` is the one state that runs without a seed
-  const live = w4 ?? result ?? interact ?? strip ?? rich;
+  const live = w4 ?? result ?? writes ?? interact ?? strip ?? rich;
   const choice = choiceFor(state);
 
   useSettings.setState({
@@ -293,6 +313,7 @@ function Harness({ state, w, scroll }: Params) {
       actionsAfterMount(state);
       answerAfterMount(state);
       resultAfterMount(state);
+      writesAfterMount(state);
       editAfterMount(state);
       mentionsAfterMount(state);
       mentionsEchoAfterMount(state);
