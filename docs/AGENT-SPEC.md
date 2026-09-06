@@ -210,19 +210,37 @@ The system prompt states, verbatim in spirit:
    Pagila noun). What renders is AGENT-UX §2 item 3; what scores it is EVAL
    §3.x.
 
-The prompt is versioned (`PROMPT_VERSION`, now `v3`); EVAL.md ties baselines
+The prompt is versioned (`PROMPT_VERSION`, now `v4`); EVAL.md ties baselines
 to it. v3 changed the finish line of the base prompt and step 3 of the work
 plan and nothing else: rule 1, the column rule, LEGACY, the two-turn work
 plan, the Assumptions line and both fence phrasings are byte-equal across v1,
 v2 and v3, and `src/agent/__tests__/prompt.test.ts` pins each as a literal so
-the measured rules cannot drift under a formatting edit. The re-baseline the
-bump owes is W3's; until it records the v3 rows, every gated v3 run reads as
-unmeasured (EVAL §4). A cut thread's replay (§9) is a prefix of the user
+the measured rules cannot drift under a formatting edit. v4 (W3b, 2026-09-06)
+adds three sentences to `HYBRID_RULES`'s "Rules that override your instincts"
+list, beside the existing column rule, and changes nothing else: columns (the
+final SQL names exactly the columns the question asks for and no other, not
+the column it orders by, not the count it ranked with, not an id; a figure
+the prose wants that the result will not carry comes from a query already run
+or one more `run_sql`, never a column added to the final SQL), joins (two
+one-to-many relations joined to the same parent in one pass multiply each
+other's rows and inflate every SUM and COUNT, so aggregate each in its own
+CTE first and join the aggregates), and rows and numbers (return the rows the
+data has, never padded with periods that have no rows, and cast integer
+counts to numeric before dividing). Every rule measured through v3 stays
+byte-equal into v4, and `prompt.test.ts` pins the three new sentences beside
+them. The re-baseline the v3 bump owed was W3's (`d30e28a`); it recorded two
+losses (claude-sonnet-5 `pagila.json` 32/33 → 28/33, claude-haiku-4-5
+`pagila-hard.json` 5/5 → 3/5) that v4's three rules were written to close, and
+the v4 re-baseline (`c6494b6`, the same day) shows both recovered with no cost
+to the other model. It also shows one row EVAL §4's gate does not meet:
+`pagila-insight.json` + claude-haiku-4-5's presentation mean moved down,
+0.850 → 0.714, past the gate's 0.05 slack (EVAL §4, ROADMAP_log's W3b note).
+A cut thread's replay (§9) is a prefix of the user
 message, not prompt text: it never moves `PROMPT_VERSION`. Neither does the
 `TAGGED BY THE USER:` block of §4.2 (W6, 2026-09-06): the header is a string
 `askMessage` appends to the user message only when a tag exists, the eval
-sends none, and a loop test pins the untagged message byte for byte, so v3's
-rows measure the same bytes before and after W6.
+sends none, and a loop test pins the untagged message byte for byte, so every
+version's rows measure the same bytes before and after W6.
 
 ## 7. Providers
 

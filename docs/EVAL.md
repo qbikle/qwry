@@ -141,6 +141,8 @@ summary someone has to trust.
 | prompt v3, first draft | `pagila-insight.json` | 7/8 ran | **0.771** over 7 |
 | prompt v3, as shipped | `pagila-insight.json` | 8/8 ran | **0.850** over 8 |
 | prompt v3, as shipped | `pagila.json` | **32/33** | not scored (no insight questions) |
+| prompt v4 | `pagila-insight.json` | 7/8 ran | **0.714** over 7 |
+| prompt v4 | `pagila.json` | **33/33** | not scored (no insight questions) |
 
 ```sh
 bun scripts/agent-eval.ts --bench eval/bench/pagila-insight.json \
@@ -186,6 +188,31 @@ existed for it, which is why the version did not move with it; a revision
 after a row exists is a new version, and section 4's two recorded v3 losses
 are the first candidates for one.
 
+**v4** (W3b, 2026-09-06) is that new version: three sentences added to the
+same rules list, nothing else moved (AGENT-SPEC §6). Measured on Haiku, over
+the seven `pagila-insight.json` answers both v3's shipped run and v4 scored:
+**0.886** (v3c) to **0.714** (v4), every one of the five checks moving down
+or holding, none up; over the bench's own denominator the row reads 7/8 ran
+and **0.714** against the v3 baseline row's 8/8 and **0.850**, 0.136 down
+where section 4's slack is 0.05. That is measured against the maintainer's
+own bar, not accepted by it: section 4's gate on this row is **NOT MET**.
+The unscored question is `ins-05`, which EXEC-FAILed twice in a row at v4
+(12 model turns, ~225 s each, 19–21 `run_sql` calls where 8–11 were served)
+after running in one turn at v3c; the run also got heavier throughout
+(avg_out_tokens 2302.8 → 3438.5, avg_tool_calls 5.5 → 7.1, avg_wall 28.8 s →
+57.7 s, avg_turns 1 → 2.5). Two readings, neither measured: sampling variance
+(this is the first repeat of any kind on this bench, so the 0.05 slack had
+never been tested before this run) or the three new SQL rules crowding the
+answer shape. Sonnet's insight row moved the other way over the same eight
+questions, **0.825 → 0.900** (`bullets_in_range` and `figure_per_finding`
+both 6/8 → 8/8), though `no_grid_restatement` went 6/8 → 5/8 there, so DESIGN
+rule 14 is still the one check that has not landed on either model. On SQL,
+v4 recovers both v3 losses at no cost to the other model: Sonnet
+`pagila.json` **33/33** (the three extra-column ids plus `t4-02` and `t1-07`
+all pass) and Haiku `pagila-hard.json` **5/5** (`ph-05`'s join pre-aggregates,
+`ph-03`'s cast). Detail, and the staging numbers: section 4's table below and
+`ROADMAP_log.md`'s W3b note.
+
 ## 4. Gates
 
 - **PR gate** (CI, any change under `src/agent/**`, `src-tauri/src/agent.rs`,
@@ -217,46 +244,84 @@ are the first candidates for one.
   belongs. A baseline row without the field does not arm the rule, which is how
   every row recorded before W5 reads.
 
-**Reference numbers, 2026-09-06** (W3 close; provider `claude-code`, `--jobs 3`,
-`PROMPT_VERSION` v3, 0 turn-cap hits on every row; Pagila on the lab Postgres,
-artifacts under `eval/results/`; staging on auth_new at 203 tables, artifacts in
-the session scratchpad's `w3-eval/`, outside the repo. The `v1` column is the
-2026-09-04 baseline row the v3 row superseded; `ref.` is the 2026-09-03 lab
-number the previous version of this paragraph carried):
+**Reference numbers, 2026-09-06** (W3b; provider `claude-code`, `--jobs 3`,
+`PROMPT_VERSION` v4, 0 turn-cap hits on every row except `pagila-insight.json`
++ claude-haiku-4-5, whose `ins-05` EXEC-FAILed twice and pushed `avg_turns` to
+2.5; Pagila and insight artifacts under `eval/results/`; staging artifacts in
+the session scratchpad's `w3b-eval/`, outside the repo. `v1 / ref.` and `v3`
+are kept as history, transcribed from the W3 close's table below; `v3` is the
+row `d30e28a` committed and `c6494b6` superseded):
 
-| bench | model | v1 / ref. | v3, measured | recall | presentation |
-|---|---|---|---|---|---|
-| `pagila.json` | claude-haiku-4-5 | 33/33 | **33/33** | 0.94 | not scored |
-| `pagila.json` | claude-sonnet-5 | 32/33 | **28/33** | 0.94 | not scored |
-| `pagila-hard.json` | claude-haiku-4-5 | 5/5 | **3/5** | 1.00 | not scored |
-| `pagila-hard.json` | claude-sonnet-5 | 5/5 | **5/5** | 1.00 | not scored |
-| `pagila-insight.json` | claude-haiku-4-5 | no row | 8/8 ran | n/a | **0.850** over 8 |
-| `pagila-insight.json` | claude-sonnet-5 | no row | 8/8 ran | n/a | **0.825** over 8 |
-| `staging.json` | claude-haiku-4-5 | ref. 23/23 | **23/23** | 1.00 | no insight questions |
-| `staging.json` | claude-sonnet-5 | ref. 22/23 | **21/23** | 1.00 | no insight questions |
-| `staging-hard.json` | claude-haiku-4-5 | ref. 3/5 | **3/5** | 1.00 | no insight questions |
-| `staging-hard.json` | claude-sonnet-5 | ref. 5/5 | **5/5** | 1.00 | no insight questions |
+| bench | model | v1 / ref. | v3 | v4, measured | recall | presentation |
+|---|---|---|---|---|---|---|
+| `pagila.json` | claude-haiku-4-5 | 33/33 | 33/33 | **33/33** | 0.94 | not scored |
+| `pagila.json` | claude-sonnet-5 | 32/33 | 28/33 | **33/33** | 0.94 | not scored |
+| `pagila-hard.json` | claude-haiku-4-5 | 5/5 | 3/5 | **5/5** | 1.00 | not scored |
+| `pagila-hard.json` | claude-sonnet-5 | 5/5 | 5/5 | **5/5** | 1.00 | not scored |
+| `pagila-insight.json` | claude-haiku-4-5 | no row | 8/8 ran, 0.850 | **7/8 ran** | n/a | **0.714** over 7 |
+| `pagila-insight.json` | claude-sonnet-5 | no row | 8/8 ran, 0.825 | **8/8 ran** | n/a | **0.900** over 8 |
+| `staging.json` | claude-haiku-4-5 | ref. 23/23 | 23/23 | **23/23** | 1.00 | no insight questions |
+| `staging.json` | claude-sonnet-5 | ref. 22/23 | 21/23 | **23/23** | 1.00 | no insight questions |
+| `staging-hard.json` | claude-haiku-4-5 | ref. 3/5 | 3/5 | **4/5** | 1.00 | no insight questions |
+| `staging-hard.json` | claude-sonnet-5 | ref. 5/5 | 5/5 | **5/5** | 1.00 | no insight questions |
 
-The two recorded Pagila losses are one shape each and are written down because
-they were measured, not because they are accepted: Sonnet's `t3-08`, `t4-04`,
-`t5-01` keep an extra column beside the ones the question asked for (`t1-07` is
-noise, `t4-02` failed at v1 too; Haiku passes all four on the same bytes, so the
-fix is the next `PROMPT_VERSION`), and Haiku's `ph-05` joins rental and payment
-to customer in one pass and multiplies the payment sum by the rental count in
-both v3 samples (`ph-03` passes the second sample, which read 4/5; a row is one
-artifact). Staging Sonnet's `s3-04` (a zero-filled calendar spine, 12 rows for
-3) and `s5-02` (`total_amount` kept beside `currency, order_id`) both PASS on a
-two-question re-sample, so the one-below against the 09-03 reference reads as
-sampling noise; the ROADMAP A1 gate line (`staging hybrid ≥ 22/23 on mid and
-large tiers`) is met on Haiku and missed by one on Sonnet. Staging-hard Haiku's
-`h-01` skips the cohort's lower bound and `h-05` reads `insta_users.follower_count`
-where the gold counts `follows`, both read from the predicted SQL and matching
-the 09-03 reference. The two presentation means are two models, not a before
-and an after; the first v3 re-run of either model is what tests the 0.05 slack.
-Tokens through `claude -p` include the harness's prefix and its caching
-(`avg_in_tokens` 5 against `cached` 10,056 on staging Sonnet is the cache, not
-the input), so compare turns, output tokens and wall (section 6). Detail per
-question: `ROADMAP_log.md`, the W3 note.
+Both v3 losses are recovered at v4, at no cost to the other model: Sonnet
+`pagila.json` is **33/33** (`t3-08`, `t4-04`, `t5-01` lose the extra column;
+`t1-07` and `t4-02` pass too, all four repeated 3/3 on a second draw) while
+Haiku holds its own `pagila.json` 33/33 unchanged; Haiku `pagila-hard.json` is
+**5/5** (`ph-05` pre-aggregates rental and payment in their own CTEs, `ph-03`
+casts before dividing, both twice) while Sonnet holds its own 5/5 unchanged.
+`t4-02`'s recall stays 0.00 on its row (the prefilter's candidate set misses a
+table the gold SQL uses; the model still answers it right) at v1, v3 and v4
+alike, capping both `pagila.json` rows at 0.94 for any prompt version —
+prefilter work, not prompt work. Staging is new: no row existed at any prompt
+version before this wave. `staging.json` is 23/23 on both models (Sonnet +2
+over v3, +1 over the 09-03 reference: `s3-04`'s zero-filled calendar spine and
+`s5-02`'s extra `total_amount` are both gone, each fixed by the rule written
+for it). `staging-hard.json` is 5/5 on Sonnet (unchanged) and **4/5** on Haiku
+(+1 over v3 and the 09-03 reference: `h-05` flips to a pass); `h-01` remains
+lost (the predicted cohort test has no lower bound), matching the 09-03
+reference, and no v4 rule addresses it, so it is not a v4 regression. Arming
+`staging-hard.json` + claude-haiku-4-5 at 4/5 accepts 3 on a later run, the
+same judgment call the pagila-hard Haiku row carried at v3.
+
+One row is worse at v4 than at v3, and it is written down because it was
+measured, not because the maintainer's bar (presentation never goes down) is
+met: `pagila-insight.json` + claude-haiku-4-5 reads 7/8 ran and **0.714** over
+7 against the v3 row's 8/8 and **0.850** over 8, 0.136 down where the gate's
+slack is 0.05; like for like over the seven questions both runs scored, v3c
+reads 0.886 and v4 reads 0.714, and every one of the five checks moved down or
+held. `ins-05` EXEC-FAILed twice in a row at v4 (12 model turns, ~225 s each,
+19–21 `run_sql` calls against 8–11 served by the tool server, the model's own
+final text claiming the database is unresponsive while the lab Postgres
+answered a count immediately afterward) where it ran in one turn at v3c. Two
+readings, neither measured: sampling variance (the bench's first repeat of any
+kind, so the 0.05 slack has never been tested until now) or the three new SQL
+rules crowding the answer shape (avg_out_tokens 2302.8 → 3438.5, avg_tool_calls
+5.5 → 7.1, avg_wall 28.8 s → 57.7 s, avg_turns 1 → 2.5); telling them apart
+needs a full v4 re-sample and a v3 control, neither run. Sonnet's insight row
+moved the other way over the same eight answers, 0.825 → **0.900**
+(`bullets_in_range` and `figure_per_finding` both 6/8 → 8/8), though
+`no_grid_restatement` went 6/8 → 5/8 there, so DESIGN rule 14 is still the one
+check that has not landed on either model. Tokens through `claude -p` include
+the harness's prefix and its caching, so compare turns, output tokens and wall
+(section 6). Detail per question: `ROADMAP_log.md`, the W3b note.
+
+Previous reference, 2026-09-06 (W3 close; `PROMPT_VERSION` v3, superseded by
+v4 above): the same ten rows at `d30e28a` / `521e841`, before the v4 rules —
+Sonnet `pagila.json` 28/33 (`t3-08`, `t4-04`, `t5-01` keep an extra column
+beside the ones the question asked for, the column the prose wants a figure
+from; `t1-07` is noise, `t4-02` failed at v1 too; Haiku passes all four on the
+same bytes), Haiku `pagila-hard.json` 3/5 (`ph-05` joins rental and payment to
+customer in one pass and multiplies the payment sum by the rental count in
+both samples; `ph-03` passes the second sample, which read 4/5; a row is one
+artifact), staging Sonnet `s3-04` (a zero-filled calendar spine, 12 rows for
+3) and `s5-02` (`total_amount` kept beside `currency, order_id`), both passing
+on a two-question re-sample so the one-below against the 09-03 reference read
+as sampling noise, and staging-hard Haiku's `h-01` (the cohort's lower bound)
+and `h-05` (`insta_users.follower_count` for `follows`), both read from the
+predicted SQL and matching the 09-03 reference. Detail: `ROADMAP_log.md`, the
+W3 note.
 
 Previous reference (2026-09-03, the lab harness, `claude -p` path, so absolute
 tokens are not comparable to API runs): Pagila one-shot Haiku 31–32/33, Sonnet
