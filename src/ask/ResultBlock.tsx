@@ -59,10 +59,24 @@
 // store cannot import this tree without pulling the lazy Ask bundle into its
 // own chunk), and the block's height springs shut over the band the way the
 // flip springs between the faces.
+//
+// A3 grows the block by PROPS, never by a fork: the canvas hands it the
+// faces it may show (a third, the chart, and the diff wearing the table's
+// place), the exchange's question as its `headline`, the model's sentence,
+// the status line under the faces and the two cluster actions the canvas
+// adds (Ask, More). Ask passes none of them, so the pane's block is the W7
+// block unchanged, DOM for DOM. Two rules follow the growth: the flip is a
+// CYCLE over the faces that are actually available, its glyph naming the
+// face you will GET (table, then chart, then SQL, and with two faces exactly
+// W7's pair), and a `headline` moves the block into the canvas's layout,
+// where the cluster belongs to the BLOCK (question line, prose, faces,
+// status) rather than to the bordered box (canvas.css .blk). The preview is
+// the one face the canvas never offers: a proposed change is the pane's
+// ceremony and a canvas block is a read someone kept.
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Code, Copy, Import, Table, TriangleAlert } from "lucide-react";
+import { BarChart3, Code, Copy, Import, Table, TriangleAlert } from "lucide-react";
 import { EditorState, Prec } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { PostgreSQL, sql as sqlLang } from "@codemirror/lang-sql";
@@ -77,12 +91,23 @@ import { useAsk } from "../stores/ask";
 import type { StatementState } from "../stores/results";
 import { useSettings } from "../stores/settings";
 import { useTabs } from "../stores/tabs";
+import { Chart } from "../canvas/Chart";
+import { DiffFace } from "../canvas/DiffFace";
+import type { BlockFace, ChartSpec, Diff } from "../stores/canvas";
+import { AnswerText } from "./AnswerText";
 import { copiedRowsCue, finished, resultTsv } from "./resultCopy";
 import { isScalarRun, ScalarResult } from "./ScalarResult";
 
-/** which face of the block is up. `preview` is A4's: the sampled rows of a
- * change that has not run, standing where the table face stands */
-export type ResultFace = "table" | "sql" | "preview";
+/** which face of the block is up. The canvas document names them (its `diff`
+ * stands in the table's place while a comparison holds); `preview` is A4's,
+ * the sampled rows of a change that has not run, standing in that same place
+ * and never offered by the canvas */
+export type ResultFace = BlockFace | "preview";
+
+/** the faces the PANE's block may stand on, in cycle order: the preview leads
+ * because a proposal that has sampled rows opens on them, and every read
+ * answer filters it straight back out (`shows`) */
+const ASK_FACES: readonly ResultFace[] = ["preview", "table", "sql"];
 
 /** rows the grid shows before it scrolls inside the block */
 const GRID_ROWS_SHOWN = 6;
@@ -139,6 +164,28 @@ export interface ResultBlockProps {
   /** A4: the run is in flight, or the thread is. The button is disabled, never
    * hidden: state never resizes chrome (DESIGN rule 2) */
   runBusy?: boolean;
+  /** the faces this block may show, in cycle order; Ask's two by default */
+  faces?: readonly ResultFace[];
+  /** the face the DOCUMENT stands on (the canvas persists it); absent, the
+   * face is the session's own memory of this exchange */
+  face?: ResultFace;
+  onFace?: (face: ResultFace) => void;
+  /** the exchange's question as the block's one-line title: the canvas's
+   * layout, where the cluster belongs to the block and not to the box */
+  headline?: string;
+  /** the model's sentence, read-only, above the faces (one exchange is one
+   * block: dropping it loses the reading the block was added for) */
+  prose?: string;
+  /** the status line under the faces; the canvas composes its own, with the
+   * assumptions folded in after `assumed` */
+  status?: ReactNode;
+  /** what the chart face draws, when the canvas offers one (the document
+   * store decides whether a chart exists at all: `chartOf`) */
+  chart?: ChartSpec | null;
+  /** the comparison standing on this block: the diff face's own rows */
+  diff?: Diff | null;
+  /** cluster actions the surface adds after Insert (the canvas: Ask, More) */
+  actions?: ReactNode;
 }
 
 /** the sample as the grid's statement shape (statementFromRun's sibling): the
@@ -367,10 +414,20 @@ export function ResultBlock({
   preview = null,
   onRun,
   runBusy = false,
+  faces = ASK_FACES,
+  face: docFace,
+  onFace,
+  headline,
+  prose,
+  status,
+  chart = null,
+  diff = null,
+  actions,
 }: ResultBlockProps) {
   // the table face: a one-row run is values, not a grid (a table of one cell
   // is chrome around nothing); an empty result has no table face at all, so
-  // the block stands on its SQL rather than on a header over nothing
+  // the block stands on its SQL rather than on a header over nothing. A
+  // comparison standing on the block IS the table face (DESIGN rule 14)
   const scalar = run !== null && isScalarRun(run);
   const stmt = useMemo(
     () => (run && run.rows.length > 0 && !isScalarRun(run) ? statementFromRun(run, sql) : null),
@@ -407,13 +464,31 @@ export function ResultBlock({
 
   const remembered = useAsk((s) => s.face[exchangeId]);
   const setFace = useAsk((s) => s.setFace);
-  // the default is the preview when a proposal has rows to sample, the table
-  // when a run left rows, the SQL when neither; a face the exchange cannot
-  // show is never the face, remembered or not
-  const rowsFace: ResultFace = hasPreview ? "preview" : "table";
-  const face: ResultFace =
-    !hasPreview && !hasTable ? "sql" : sql === null ? rowsFace : remembered === "sql" ? "sql" : rowsFace;
-  const canFlip = (hasPreview || hasTable) && sql !== null;
+  // the faces this block can actually stand on, in cycle order. The default
+  // is the first one it can show: the preview while a proposal has rows to
+  // sample, then the table when a run left rows, the SQL when neither (a
+  // failed run, an answer that never ran one, or a dry run still in flight);
+  // a face the exchange cannot show is never the face, remembered or not, and
+  // the flip is the next one along the cycle
+  const shows = (f: ResultFace) =>
+    f === "table"
+      ? hasTable
+      : f === "preview"
+        ? hasPreview
+        : f === "chart"
+          ? chart !== null
+          : f === "diff"
+            ? diff !== null
+            : sql !== null;
+  const available = faces.filter(shows);
+  const chosen = docFace ?? remembered;
+  const face: ResultFace = chosen && available.includes(chosen) ? chosen : (available[0] ?? "sql");
+  const canFlip = available.length > 1;
+  const next = available[(available.indexOf(face) + 1) % Math.max(1, available.length)] ?? face;
+  const flipTo = () => (onFace ? onFace(next) : setFace(exchangeId, next));
+  // the glyph names the face you will GET (W7's rule, over more faces now):
+  // the diff and the preview wear the table's, since both stand in its place
+  const nextLabel = next === "chart" ? "Show Chart" : next === "sql" ? "Show SQL" : "Show Table";
 
   // the block's own height, sprung between the faces AND over the band as it
   // leaves. popLayout parks the leaving face (and the leaving band) out of the
@@ -430,20 +505,82 @@ export function ResultBlock({
     return () => ro.disconnect();
   }, []);
 
-  // Copy is the face you are looking at: the run's rows, the sample's rows, or
-  // the statement. A sample is what the block HOLDS, so its cue counts what it
-  // copied and never the statement's own `exact_rows`
+  // Copy is the face you are looking at: the rows in the grid's own TSV on
+  // every face that shows them (the chart and the diff are those same rows),
+  // the sample's rows on the preview, the finished statement on the SQL face.
+  // A sample is what the block HOLDS, so its cue counts what it copied and
+  // never the statement's own `exact_rows`
   const copy = () => {
-    if (face === "table" && run) void copyCue(resultTsv(run), copiedRowsCue(run.rows.length));
-    else if (face === "preview" && pv)
+    if (face === "preview" && pv)
       void copyCue(
         resultTsv({ columns: pv.columns, rows: pv.rows, rowCount: pv.rows.length, capped: false, ms: 0 }),
         copiedRowsCue(pv.rows.length),
       );
+    else if (face !== "sql" && run) void copyCue(resultTsv(run), copiedRowsCue(run.rows.length));
     else void copyCue(text, "Copied SQL");
   };
 
-  return (
+  // the cluster is VS Code's floating toolbar: at the BOX's top-right in the
+  // pane, at the BLOCK's in the canvas, where the question line is the row it
+  // centres on and the actions act on the whole block (canvas.css .blk)
+  const cluster = (
+    <div className="acts-float">
+      <button type="button" className="iconbtn iconbtn-sm" title="Copy" aria-label="Copy" onClick={copy}>
+        <Copy size={12} />
+      </button>
+      {canFlip && (
+        <button
+          type="button"
+          className="iconbtn iconbtn-sm"
+          title={nextLabel}
+          aria-label={nextLabel}
+          onClick={flipTo}
+        >
+          {next === "chart" ? <BarChart3 size={12} /> : next === "sql" ? <Code size={12} /> : <Table size={12} />}
+        </button>
+      )}
+      {sql !== null && (
+        <button
+          type="button"
+          className="iconbtn iconbtn-sm"
+          title="Insert SQL"
+          aria-label="Insert SQL"
+          onClick={() => insertSql(text, tabTitle)}
+        >
+          <Import size={12} />
+        </button>
+      )}
+      {actions}
+    </div>
+  );
+
+  // what the chosen face actually draws. Null only on the canvas, where a
+  // comparison over the cap IS its status line and nothing else: the block
+  // then stands without a box rather than around an empty one
+  const content =
+    face === "sql" ? (
+      <SqlFace text={text} />
+    ) : face === "preview" && pvStmt && pv ? (
+      <Grid
+        key={`${exchangeId}-preview`}
+        statement={pvStmt}
+        readOnly
+        maxRows={GRID_ROWS_SHOWN}
+        changed={pv.changed}
+      />
+    ) : face === "chart" && chart ? (
+      <Chart spec={chart} />
+    ) : face === "diff" && diff ? (
+      diff.capped ? null : <DiffFace diff={diff} />
+    ) : scalar && run ? (
+      <div className="rb-scalar">
+        <ScalarResult run={run} />
+      </div>
+    ) : stmt ? (
+      <Grid key={exchangeId} statement={stmt} readOnly maxRows={GRID_ROWS_SHOWN} />
+    ) : null;
+
+  const box = (
     <motion.div
       className={`rb ${face}`}
       animate={{ height: h ?? "auto" }}
@@ -461,23 +598,7 @@ export function ResultBlock({
               exit={{ opacity: 0 }}
               transition={swapIn.transition}
             >
-              {face === "sql" ? (
-                <SqlFace text={text} />
-              ) : face === "preview" && pvStmt && pv ? (
-                <Grid
-                  key={`${exchangeId}-preview`}
-                  statement={pvStmt}
-                  readOnly
-                  maxRows={GRID_ROWS_SHOWN}
-                  changed={pv.changed}
-                />
-              ) : scalar && run ? (
-                <div className="rb-scalar">
-                  <ScalarResult run={run} />
-                </div>
-              ) : stmt ? (
-                <Grid key={exchangeId} statement={stmt} readOnly maxRows={GRID_ROWS_SHOWN} />
-              ) : null}
+              {content}
             </motion.div>
           </AnimatePresence>
         </div>
@@ -488,12 +609,7 @@ export function ResultBlock({
             transition may reflow its own controls) */}
         <AnimatePresence mode="popLayout" initial={false}>
           {preview !== null && onRun && (
-            <motion.div
-              key="band"
-              className="rb-act"
-              exit={{ opacity: 0 }}
-              transition={spring.layout}
-            >
+            <motion.div key="band" className="rb-act" exit={{ opacity: 0 }} transition={spring.layout}>
               <button type="button" className="btnish danger" disabled={runBusy} onClick={onRun}>
                 {runLabel(preview.verb, preview.exact_rows)}
               </button>
@@ -501,34 +617,24 @@ export function ResultBlock({
           )}
         </AnimatePresence>
       </div>
-
-      <div className="acts-float">
-        <button type="button" className="iconbtn iconbtn-sm" title="Copy" aria-label="Copy" onClick={copy}>
-          <Copy size={12} />
-        </button>
-        {canFlip && (
-          <button
-            type="button"
-            className="iconbtn iconbtn-sm"
-            title={face === "sql" ? "Show Table" : "Show SQL"}
-            aria-label={face === "sql" ? "Show Table" : "Show SQL"}
-            onClick={() => setFace(exchangeId, face === "sql" ? rowsFace : "sql")}
-          >
-            {face === "sql" ? <Table size={12} /> : <Code size={12} />}
-          </button>
-        )}
-        {sql !== null && (
-          <button
-            type="button"
-            className="iconbtn iconbtn-sm"
-            title="Insert SQL"
-            aria-label="Insert SQL"
-            onClick={() => insertSql(text, tabTitle)}
-          >
-            <Import size={12} />
-          </button>
-        )}
-      </div>
+      {headline === undefined && cluster}
     </motion.div>
+  );
+
+  if (headline === undefined) return box;
+
+  // the canvas's block: the question line as its title, the model's sentence
+  // read-only above the faces, the status line under them with the
+  // assumptions folded in, and one cluster over the question line
+  return (
+    <>
+      <div className="blk-q" title={headline}>
+        {headline}
+      </div>
+      {prose ? <AnswerText raw={prose} hasRun={run !== null} live={false} /> : null}
+      {content !== null && box}
+      {status !== undefined && <div className="ans-status">{status}</div>}
+      {cluster}
+    </>
   );
 }

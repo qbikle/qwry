@@ -436,6 +436,7 @@ describe("the statement's way into a query tab", () => {
           saved_id: null,
           kind: "query",
           table: null,
+          canvas_id: null,
           profile_id: PID,
         },
       ],

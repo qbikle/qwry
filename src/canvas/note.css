@@ -1,0 +1,60 @@
+/* The note block's own pixels (A3 item 2). Only what is a NOTE's: the block
+   shell it stands in (.blk, .blk-q, the cluster's reveal) is the canvas's and
+   is written once, in canvas.css; everything here is scoped to .blk-note so
+   the two files can never disagree about a shared rule. The registers a note
+   wears are the pane's: ask.css draws .ans-text, .acts-float and the
+   composer's box, and NoteBlock imports it, because a note is prose in the
+   answer slot's own voice standing somewhere else. */
+
+/* the positioning box and the surface the cluster dissolves into, so a note
+   renders whole even before the canvas shell is on the page (a fixture, a
+   test): identical to .blk's values, never in conflict with them */
+.blk-note {
+  position: relative;
+  --acts-surface: var(--bg-panel);
+}
+.blk-note:hover > .acts-float,
+.blk-note[data-hot] > .acts-float {
+  opacity: 1;
+  transform: none;
+}
+
+/* Read and edit are ONE geometry. The read view already carries the
+   composer's padding under a border that is merely transparent, and pays
+   both back in margin, so the box grows OUTWARD when it appears and the
+   first glyph's origin holds: entering edit fades a border in, it does not
+   shift that glyph (AGENT-UX section 16). Below the first line the claim
+   narrows — a rendered lead or list has its own line boxes, which the
+   textarea's source lines are not, so later lines shift by their own
+   spacing (2 to 6 CSS px, measured) even though the boundary itself moves
+   nothing. The outdent is the `.mention` pill's own device (ask.css), one
+   step larger because this box has padding as well as a border. */
+.blk-note .note-body,
+.blk-note .note-box {
+  max-width: 680px;
+  padding: var(--sp-2) var(--sp-3);
+  margin: -9px -13px; /* optical */ /* the border and the padding, paid back: the first glyph's origin holds */
+  border-radius: var(--radius-lg);
+}
+.blk-note .note-body {
+  border: 1px solid transparent;
+  cursor: text;
+}
+/* under a question line the block's own 8px gap has to survive the outset:
+   the parts stand 8px apart and the box reaches 9px above its first glyph */
+.blk-note > .blk-q + .note-body,
+.blk-note > .blk-q + .note-box {
+  margin-top: -1px; /* optical */ /* the 8px gap, less the box's 9px outset */
+}
+/* the composer's box, minus its control row: a note has no send button, and
+   ⌘↩ and Esc are standard and say so nowhere (DESIGN rule 11) */
+.blk-note .note-box {
+  transition: border-color var(--dur-quick) var(--ease-std);
+}
+/* the note's textarea grows with its words (NoteBlock measures it); the
+   composer's 96px ceiling belongs to the composer, where a long draft must
+   not eat the thread */
+.blk-note .note-box .ask-ta {
+  max-height: none;
+  overflow: hidden;
+}

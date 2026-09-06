@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Pin, Plus, SquareTerminal, Table, X } from "lucide-react";
+import { LayoutGrid, Pin, Plus, SquareTerminal, Table, X } from "lucide-react";
 import { useSaved } from "../stores/saved";
 import { copyCue } from "../lib/copyCue";
 import { useTabs, visibleTabs } from "../stores/tabs";
@@ -261,8 +261,17 @@ export function TabBar() {
                   <Pin size={12} className="tab-pin" />
                 </span>
               )}
-              <span className="tab-icon" title={t.kind === "table" ? "Table" : "Query"}>
-                {t.kind === "table" ? <Table size={12} /> : <SquareTerminal size={12} />}
+              <span
+                className="tab-icon"
+                title={t.kind === "table" ? "Table" : t.kind === "canvas" ? "Canvas" : "Query"}
+              >
+                {t.kind === "table" ? (
+                  <Table size={12} />
+                ) : t.kind === "canvas" ? (
+                  <LayoutGrid size={12} />
+                ) : (
+                  <SquareTerminal size={12} />
+                )}
               </span>
               {tabHasTx(t.id) && (
                 <span className="tab-tx" title="Open transaction on this tab" />

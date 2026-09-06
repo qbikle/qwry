@@ -43,8 +43,10 @@ export interface TokenUsage {
  * trace's context step carries it. `tab` is the one kind the resolver never
  * mints: it is resolved once, when `Explain with Ask` fires, and carried on
  * the exchange, so a tab closed since cannot un-pill a bubble that already
- * reported what it sent (AGENT-UX 15). */
-export type MentionKind = "table" | "column" | "saved" | "thread" | "tab";
+ * reported what it sent (AGENT-UX 15). `block` is a canvas block (A3): the one
+ * kind that names something the user built rather than something the
+ * connection has, which is why it is the ladder's last rung. */
+export type MentionKind = "table" | "column" | "saved" | "thread" | "tab" | "block";
 
 /** How a thread's question ended. The tokens are persisted verbatim in
  * `agent_answers.status`, so they never drift between store and appdb.

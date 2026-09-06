@@ -297,12 +297,14 @@ export const AnswerBlock = memo(function AnswerBlock({
   const saved = useSaved((s) => s.queries);
   const threads = useAgent((s) => s.threads[profileId]);
   const tabName = exchange.tabName;
+  const blocks = useAsk((s) => s.blocks);
   const mentions = useMemo(() => {
     const resolved = mentionsIn(question, {
       snapshot,
       saved: visibleSaved(saved, profileId),
       threads: threads ?? [],
       currentThreadId: threadId,
+      blocks: Object.values(blocks),
     });
     if (!tabName) return resolved;
     const token = canonicalToken("tab", { name: tabName }).slice(1);
@@ -310,7 +312,7 @@ export const AnswerBlock = memo(function AnswerBlock({
     if (!raw) return resolved;
     const tab: Mention = { span: raw.span, token, kind: "tab", ref: { name: tabName } };
     return [...resolved.filter((m) => m.token !== token), tab];
-  }, [question, snapshot, saved, threads, profileId, threadId, tabName]);
+  }, [question, snapshot, saved, threads, blocks, profileId, threadId, tabName]);
 
   // the question echo: the user's words in a bubble at the right edge, the
   // anatomy below staying left (ask.css .ans-echo-row). The newest echo is
@@ -418,7 +420,14 @@ export const AnswerBlock = memo(function AnswerBlock({
                     a table of it for the length of the stream otherwise */}
                 <div className="ans-prose">
                   <AnswerText raw={exchange.text} hasRun={hasRun} live={isLatest} />
-                  {answerActs && <AnswerActions question={exchange.question} prose={prose} sql={sql} />}
+                  {answerActs && (
+                    <AnswerActions
+                      exchangeId={exchange.id}
+                      question={exchange.question}
+                      prose={prose}
+                      sql={sql}
+                    />
+                  )}
                 </div>
 
                 {/* the proposal's headline: the block's own status line,

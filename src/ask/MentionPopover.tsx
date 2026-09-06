@@ -60,7 +60,7 @@ import {
 import { createPortal } from "react-dom";
 import { Command } from "cmdk";
 import { motion } from "motion/react";
-import { Bookmark, Columns3, MessageSquare, Table2, type LucideIcon } from "lucide-react";
+import { Bookmark, Columns3, LayoutGrid, MessageSquare, Table2, type LucideIcon } from "lucide-react";
 import { menuIn } from "../design/springs";
 import type { MentionKind } from "../agent/types";
 import type { MentionQuery } from "../stores/ask";
@@ -107,14 +107,18 @@ interface Hot {
 
 /** the mark each OFFERED kind wears, the sidebar's and the titlebar's own
  * glyphs: a saved query is the Bookmark it is saved under, a thread the chat
- * bubble Ask opens with. `tab` is not here and never will be: it is minted by
- * `Explain with Ask`, never typed, so the popover has no row for it
- * (AGENT-UX 15) */
+ * bubble Ask opens with, a canvas block the LayoutGrid its tab wears. `tab` is
+ * not here and never will be: it is minted by `Explain with Ask`, never typed,
+ * so the popover has no row for it (AGENT-UX 15). A block row is not offered
+ * yet either (mentionRows lists four kinds; A3 leaves the fifth to a later
+ * wave, AGENT-UX section 16d), but its glyph stands here so the map cannot
+ * fall behind the kind it draws */
 const KIND_ICON: Record<Exclude<MentionKind, "tab">, LucideIcon> = {
   table: Table2,
   column: Columns3,
   saved: Bookmark,
   thread: MessageSquare,
+  block: LayoutGrid,
 };
 
 /** one row; cmdk's own pointer-move selects it (onValueChange, below) and its

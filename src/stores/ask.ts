@@ -2,8 +2,9 @@
 // whether the Threads sheet or the picker is up, the composer drafts, one per
 // connection, which exchange the composer is editing (W4 jump back: the
 // mode, not the truncation, which is the agent store's), and the `@` the
-// caret is inside (W6: the mention popover's query, not its rows), and which
-// face each answer's result block is showing (W7).
+// caret is inside (W6: the mention popover's query, not its rows), which
+// face each answer's result block is showing (W7), and the canvas blocks a
+// question may name (A3: what `@"a block's name"` resolves to).
 // Whether Ask is on screen and how wide it is belong to the one right pane
 // (src/stores/sidePane.ts: Ask is a MODE of it, not a card of its own); this
 // store mirrors `open` for its readers and clears its transient chrome when
@@ -17,6 +18,7 @@
 // the request lands.
 
 import { create } from "zustand";
+import type { BlockRef } from "../agent/mentions";
 import type { ResultFace } from "../ask/ResultBlock";
 import { useSidePane } from "./sidePane";
 
@@ -49,6 +51,18 @@ export interface MentionQuery {
   at: number;
   filter: string;
 }
+
+/** The canvas blocks a question in this session may name (A3 item 4). A block
+ * is the `@` ladder's fifth rung (`agent/mentions.ts`, `BlockRef`), named in
+ * the draft the way a saved query and a thread are, `@"its name"`, so the
+ * pill in the bubble is the `.mention` face the ladder already paints and the
+ * trace's `tagged` line lists it with the rest. They live HERE, with the
+ * pane's other chrome, because the resolver is runtime-free by law (AGENT-SPEC
+ * section 2 rule 2) and every caller hands it what it already has. Registered
+ * by `useAgent.askAbout` at the moment the token is written into the draft,
+ * and dropped by the canvas when the block is deleted: a name that stops
+ * resolving becomes plain text and the question still runs (LESSONS 5). */
+export type AskBlock = BlockRef;
 
 interface AskState {
   /** mirror: the side pane is open AND showing Ask. Read-only here; the
@@ -87,6 +101,9 @@ interface AskState {
    * because context belongs to the connection it was gathered from (LESSONS
    * 4); spent by the send that carries it */
   askContext: Record<string, string>;
+  /** by block id. Session-lived like everything else here: the canvas itself
+   * is the persisted document */
+  blocks: Record<string, AskBlock>;
 
   openTrace: (exchangeId: string, stepId?: string | null) => void;
   closeTrace: () => void;
@@ -115,6 +132,18 @@ interface AskState {
    * row's values are true of the question that was asked over them and of no
    * later one (LESSONS 3) */
   takeAskContext: (profileId: string) => string;
+  /** put text at the end of a connection's draft and ask for focus, by
+   * PROFILE rather than by whatever composer is on screen: `Ask` on a canvas
+   * block writes the token before AskPanel is necessarily mounted, and a
+   * draft that waited for a mount would be a draft the user watched vanish.
+   * A space joins it to whatever the draft already held, so the token can
+   * never fuse with the word before it (the `@` grammar reads `a@b` as one
+   * word and never a tag) */
+  prefill: (profileId: string, text: string) => void;
+  /** the canvas naming a block the pane may be asked about */
+  rememberBlock: (block: AskBlock) => void;
+  /** the canvas dropping a deleted block: its name goes back to plain text */
+  forgetBlock: (id: string) => void;
 }
 
 const showing = () => {
@@ -134,7 +163,7 @@ export const useAsk = create<AskState>()((set, get) => ({
   edit: null,
   face: {},
   askContext: {},
-
+  blocks: {},
 
   openTrace: (exchangeId, stepId = null) =>
     set({ traceOpenFor: { exchangeId, stepId }, threadsOpen: false, pickerOpen: false, mentionQuery: null }),
@@ -196,6 +225,20 @@ export const useAsk = create<AskState>()((set, get) => ({
     }
     return context;
   },
+  prefill: (profileId, text) =>
+    set((s) => {
+      const held = s.drafts[profileId] ?? "";
+      const joined = held && !/\s$/.test(held) ? `${held} ${text}` : `${held}${text}`;
+      return { drafts: { ...s.drafts, [profileId]: joined }, focusSeq: s.focusSeq + 1 };
+    }),
+  rememberBlock: (block) => set((s) => ({ blocks: { ...s.blocks, [block.id]: block } })),
+  forgetBlock: (id) =>
+    set((s) => {
+      if (!(id in s.blocks)) return {};
+      const blocks = { ...s.blocks };
+      delete blocks[id];
+      return { blocks };
+    }),
 }));
 
 // leaving the screen (pane closed, or switched to the inspector) takes the

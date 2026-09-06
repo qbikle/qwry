@@ -941,3 +941,26 @@ pub async fn agent_history_pairs(
 ) -> Result<Vec<crate::appdb::AgentHistoryPair>> {
     state.appdb.agent_history_pairs(&profile_id, limit)
 }
+
+// ---- canvases (A3) --------------------------------------------------------
+
+#[tauri::command]
+pub async fn canvas_list(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> Result<Vec<crate::appdb::CanvasRow>> {
+    state.appdb.canvas_list(&profile_id)
+}
+
+#[tauri::command]
+pub async fn canvas_upsert(
+    state: State<'_, AppState>,
+    row: crate::appdb::CanvasRow,
+) -> Result<()> {
+    state.appdb.canvas_upsert(&row)
+}
+
+#[tauri::command]
+pub async fn canvas_delete(state: State<'_, AppState>, id: String) -> Result<()> {
+    state.appdb.canvas_delete(&id)
+}

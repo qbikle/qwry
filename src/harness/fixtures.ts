@@ -83,6 +83,17 @@
 // seed `useTabs`), and `choiceFor` gives them the discussion thread's Haiku
 // 4.5, as every state over that schema reads.
 //
+// The A3 states are what the CANVAS changes about the pane, framed in the
+// pane (fixtures.canvas-ask.ts: `a3-add`, `a3-ask-block`): the answer's
+// cluster grown to three with `Add to Canvas`, and a question asked FROM a
+// block, whose bubble wears the block's own `.mention` pill. Their thread is
+// read whole from that file, so `exchangeFor` returns null for them, and the
+// blocks a question may name are the PANE's session state (useAsk.blocks),
+// handed to AskHarness separately: a frame that forgot them would draw plain
+// text, which is the deleted-block face (LESSONS 5). The canvas ITSELF is a
+// main-area face and is framed through the harness's second root
+// (`?harness=canvas`, fixtures.canvas.ts), not from this list.
+//
 // Follow-ups now live on the THREAD (useAgent.followUps), not on an answer, so
 // no fixture's exchange carries one: `followUpsFor` reads the row back out of
 // the last exchange's own `followups` trace step, which is where the loop
@@ -101,6 +112,7 @@ import { interactSeed } from "./fixtures.interact";
 import type { KnowledgeState } from "./fixtures.knowledge";
 import type { MentionState } from "./fixtures.mentions";
 import type { MentionsEchoState } from "./fixtures.mentions-echo";
+import { CANVAS_ASK_CHOICE, type CanvasAskState } from "./fixtures.canvas-ask";
 import { RESULT_CHOICE, type ResultState } from "./fixtures.result";
 import { RICH_CHOICE, richSeed, type RichState } from "./fixtures.rich";
 import { stripSeed } from "./fixtures.strip";
@@ -141,7 +153,8 @@ export type HarnessState =
   | MentionsEchoState
   | ResultState
   | RichState
-  | WritesState;
+  | WritesState
+  | CanvasAskState;
 export const HARNESS_STATES: readonly HarnessState[] = [
   "answer",
   "empty",
@@ -196,6 +209,8 @@ export const HARNESS_STATES: readonly HarnessState[] = [
   "a2-explain",
   "a2-knowledge-trace",
   "a2-ask-why",
+  "a3-add",
+  "a3-ask-block",
 ];
 export const HARNESS_WIDTHS = [320, 392, 560] as const;
 export type HarnessTheme = "dark" | "light";
@@ -603,8 +618,8 @@ export const FIXTURE = {
 } as const;
 
 /** the exchange a state shows; null for the configured empty states (the
- * starters states among them) and for the echo, actions, edit, mention, result
- * and answer states, whose whole thread AskHarness reads from their own files.
+ * starters states among them) and for the echo, actions, edit, mention, result,
+ * answer and A3 states, whose whole thread AskHarness reads from their own files.
  * The Threads sheet sits over the sketch's answer; the round-2 and round-3
  * builders' states come from their own files */
 export function exchangeFor(state: HarnessState): Exchange | null {
@@ -650,6 +665,8 @@ export function exchangeFor(state: HarnessState): Exchange | null {
     case "a2-explain":
     case "a2-knowledge-trace":
     case "a2-ask-why":
+    case "a3-add":
+    case "a3-ask-block":
       return null;
     case "pending":
     case "retry":
@@ -719,6 +736,9 @@ export function choiceFor(state: HarnessState): { provider: string; model: strin
     case "insight-code":
     case "insight-stream":
       return RICH_CHOICE;
+    case "a3-add":
+    case "a3-ask-block":
+      return CANVAS_ASK_CHOICE;
     default:
       return { provider: PROVIDER, model: MODEL };
   }

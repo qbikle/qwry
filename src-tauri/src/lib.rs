@@ -374,6 +374,9 @@ pub fn run() {
             commands::agent_knowledge_upsert,
             commands::agent_knowledge_delete,
             commands::agent_history_pairs,
+            commands::canvas_list,
+            commands::canvas_upsert,
+            commands::canvas_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

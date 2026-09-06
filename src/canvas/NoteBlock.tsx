@@ -1,0 +1,241 @@
+// The note block (A3 item 2): the second of the canvas's two kinds, and the
+// only one the user writes. Prose, the model's or their own, rendered by the
+// pane's own AnswerText so a paragraph, a lead-in, a list, a quote or a
+// figure reads on the canvas exactly as it reads in an answer (one renderer,
+// one register), and edited where it stands.
+//
+// Nothing frames it (DECISIONS, A3: a hairline box per block is one chrome
+// frame times n, and Freeform frames nothing). Its cluster is the block's
+// only chrome and rests invisible: **Copy · Ask · More**, 3 hot and 0 at
+// rest, the icon-button species in its 18px tier revealed the way every
+// cluster in the app is revealed (ask.css .acts-float). `More` is the
+// block's menu and the one a right-click opens, so the actions that move the
+// block or destroy it live where place actions live and never in the cluster
+// (DECISIONS, A3: the count settled at 3).
+//
+// Edit is a mode of the same box, not a second box: the read view already
+// carries the composer's padding under a transparent border, outdented over
+// its own margin the way a `.mention` pill outdents (ask.css), so entering
+// edit fades a border in AROUND the words and moves no glyph (AGENT-UX
+// section 16, the motion note). ⌘↩ commits, Esc cancels, and a note emptied
+// in edit deletes itself on commit with no dialog: the preview IS the commit,
+// the fold's own contract (DECISIONS, W4). The menu's `Delete…` is the other
+// direction of the same ellipsis contract (WRITING rule 2) and goes through
+// the app's danger confirm, because a note is words with no way back.
+
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Copy, Ellipsis, MessageSquare } from "lucide-react";
+import { AnswerText } from "../ask/AnswerText";
+import { Kbd } from "../design/Kbd";
+import { copyCue } from "../lib/copyCue";
+import { ContextMenu, type MenuNode } from "../app/overlay/ContextMenu";
+import type { NoteBlock as CanvasNoteBlock } from "../stores/canvas";
+import "../ask/ask.css";
+import "./note.css";
+
+/** the name a note answers to: its first line, markdown markers off, capped
+ * where a saved query's name and a thread's title are capped. It is the
+ * pill's text when the note is asked about and the detail of its delete
+ * confirm, so one derivation serves both (LESSONS 4) */
+const NAME_CAP = 80;
+const MARKER = /^(#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s+)/;
+
+export function noteName(text: string): string {
+  const first = text.split("\n").find((l) => l.trim().length > 0) ?? "";
+  const bare = first.trim().replace(MARKER, "").replace(/[*_`]/g, "").trim();
+  return bare.length > NAME_CAP ? `${bare.slice(0, NAME_CAP)}…` : bare;
+}
+
+export interface NoteBlockProps {
+  block: CanvasNoteBlock;
+  /** the canvas owns which block is being edited: one caret on the document */
+  editing: boolean;
+  /** the first block: Move Up is disabled, never hidden (DESIGN rule 2) */
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  /** a click on the words, and the palette's New Note on a fresh one */
+  onEdit: () => void;
+  /** ⌘↩ with words left: the source as the textarea holds it */
+  onCommit: (text: string) => void;
+  /** Esc: the words go back to what they were. A note that never had any
+   * deletes instead, so the palette's `New Note` leaves nothing behind */
+  onCancel: () => void;
+  /** the confirm, when there was one, has already been answered */
+  onDelete: () => void;
+  onMove: (dir: -1 | 1) => void;
+}
+
+export function NoteBlock({
+  block,
+  editing,
+  canMoveUp,
+  canMoveDown,
+  onEdit,
+  onCommit,
+  onCancel,
+  onDelete,
+  onMove,
+}: NoteBlockProps) {
+  const [draft, setDraft] = useState(block.text);
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
+  const ta = useRef<HTMLTextAreaElement | null>(null);
+
+  // the words the box opens with are the words on screen; a note the canvas
+  // rewrote under a live edit (an Ask reply landing) is not silently adopted
+  useEffect(() => {
+    if (editing) setDraft(block.text);
+  }, [editing, block.text]);
+
+  // the caret takes the end and the box takes the text's own height: a note
+  // in edit is the same shape it was reading (no scrollbar, no jump)
+  useLayoutEffect(() => {
+    const el = ta.current;
+    if (!editing || !el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [editing, draft]);
+
+  useEffect(() => {
+    const el = ta.current;
+    if (!editing || !el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [editing]);
+
+  /** an emptied note deletes itself: the preview is the commit */
+  const commit = () => {
+    const next = draft.trim();
+    if (next) onCommit(next);
+    else onDelete();
+  };
+
+  /** Esc puts the words back, and a note that never had any leaves with the
+   * box: the palette's `New Note` opens an empty one, and cancelling it must
+   * not leave a blank block standing in the document */
+  const cancel = () => {
+    if (block.text.trim()) onCancel();
+    else onDelete();
+  };
+
+  /** words with no way back go through the app's danger confirm; the note's
+   * first line names the object in data's clothes (WRITING, identifiers
+   * inside chrome, form 3) */
+  const remove = async () => {
+    const name = noteName(block.text);
+    if (!name) {
+      onDelete();
+      return;
+    }
+    const { confirmDanger } = await import("../stores/danger");
+    if (await confirmDanger("Delete Note?", `“${name}”`, "Delete Note")) onDelete();
+  };
+
+  const ask = () => {
+    void import("../stores/agent").then(({ useAgent }) =>
+      useAgent.getState().askAbout({ id: block.id, name: noteName(block.text), text: block.text }),
+    );
+  };
+
+  const menu: MenuNode[] = [
+    { kind: "item", label: "Move Up", disabled: !canMoveUp, onSelect: () => onMove(-1) },
+    { kind: "item", label: "Move Down", disabled: !canMoveDown, onSelect: () => onMove(1) },
+    { kind: "sep" },
+    {
+      kind: "item",
+      label: "Delete…",
+      hint: <Kbd chord="delete" />,
+      danger: true,
+      onSelect: () => void remove(),
+    },
+  ];
+
+  const openMenu = (e: { clientX: number; clientY: number; preventDefault: () => void }) => {
+    e.preventDefault();
+    setMenuAt({ x: e.clientX, y: e.clientY });
+  };
+
+  if (editing) {
+    return (
+      <div className={`blk blk-note${block.question ? "" : " noq"} edit`} data-block={block.id}>
+        {block.question && <div className="blk-q">{block.question}</div>}
+        <div className="ask-box note-box" onKeyDown={(e) => e.stopPropagation()}>
+          <textarea
+            ref={ta}
+            className="ask-ta"
+            aria-label="Note"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                commit();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                cancel();
+              }
+            }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`blk blk-note${block.question ? "" : " noq"}`}
+      data-block={block.id}
+      // the block takes focus so backspace can reach it, the result block's
+      // own reason for a tabIndex (CanvasTab's .blk)
+      tabIndex={0}
+      onContextMenu={openMenu}
+      onKeyDown={(e) => {
+        if (e.key !== "Backspace" && e.key !== "Delete") return;
+        e.preventDefault();
+        void remove();
+      }}
+    >
+      {block.question && <div className="blk-q">{block.question}</div>}
+      <div
+        className="note-body"
+        onClick={() => {
+          // a drag that selected text is a select, never an edit (the
+          // question bubble's own rule, AGENT-UX section 2 item 1)
+          const sel = window.getSelection();
+          if (sel && !sel.isCollapsed) return;
+          onEdit();
+        }}
+      >
+        <AnswerText raw={block.text} hasRun={false} live={false} />
+      </div>
+      <div className="acts-float">
+        <button
+          type="button"
+          className="iconbtn iconbtn-sm"
+          title="Copy"
+          aria-label="Copy"
+          onClick={() => void copyCue(block.text, "Copied note")}
+        >
+          <Copy size={12} />
+        </button>
+        <button type="button" className="iconbtn iconbtn-sm" title="Ask" aria-label="Ask" onClick={ask}>
+          <MessageSquare size={12} />
+        </button>
+        <button
+          type="button"
+          className={`iconbtn iconbtn-sm${menuAt ? " active" : ""}`}
+          title="More"
+          aria-label="More"
+          aria-haspopup="menu"
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            setMenuAt({ x: r.right, y: r.bottom + 4 });
+          }}
+        >
+          <Ellipsis size={12} />
+        </button>
+      </div>
+      {menuAt && <ContextMenu point={menuAt} items={menu} onClose={() => setMenuAt(null)} />}
+    </div>
+  );
+}

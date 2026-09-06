@@ -86,6 +86,19 @@
 // `a2-knowledge-trace` opens the drawer at its `knowledge` step (the anatomy
 // precedent) and the two answered states park at the question.
 //
+// A3: the canvas is a MAIN-AREA face, not a pane, so it gets the harness's
+// SECOND root, `mountCanvasHarness`, on its own route and its own widths:
+//
+//   /?harness=canvas&state=<a3-canvas|a3-chart|a3-chart-line|a3-diff|
+//             a3-empty|a3-menu|a3-note-edit>&w=<640|960|1280>&theme=<dark|light>
+//
+// It seeds useCanvas from fixtures.canvas.ts (a canned document, its diff
+// built by the store's own `buildDiff`, and the caret when a state has one),
+// three connections so `Compare With ▸` has the sketch's two rows to offer,
+// and mounts <CanvasTab/> inside the same .card at 760 tall. The Ask route keeps the two states the canvas changes ABOUT the
+// pane (fixtures.canvas-ask.ts: `a3-add`, `a3-ask-block`), since their
+// subject is the pane's own cluster and bubble.
+//
 // scripts/ask-frames.ts drives headless Chrome over this route and writes
 // one PNG per state × width × theme. The dev build remains the final eyeball;
 // these frames are the evidence.
@@ -97,9 +110,13 @@ import "./tauriShim";
 import { useEffect } from "react";
 import ReactDOM from "react-dom/client";
 import { AskPanel } from "../ask/AskPanel";
+import { CanvasTab } from "../canvas/CanvasTab";
 import { DEFAULT_PALETTE } from "../design/theme";
+import type { Profile } from "../ipc/types";
 import { useAgent } from "../stores/agent";
 import { useAsk } from "../stores/ask";
+import { useCanvas } from "../stores/canvas";
+import { useConnections } from "../stores/connections";
 import { useSaved } from "../stores/saved";
 import { useSchema } from "../stores/schema";
 import { useSettings } from "../stores/settings";
@@ -119,6 +136,20 @@ import {
 import { ACTIONS_STATES, actionsAfterMount, actionsSeed, type ActionsState } from "./fixtures.actions";
 import { ANATOMY_STATES, anatomyTraceFor, type AnatomyState } from "./fixtures.anatomy";
 import { ANSWER_STATES, answerAfterMount, answerSeed, type AnswerState } from "./fixtures.answer";
+import {
+  CANVAS_PROFILE_ID,
+  CANVAS_STATES,
+  CANVAS_WIDTHS,
+  canvasAfterMount,
+  canvasSeed,
+  type CanvasState,
+} from "./fixtures.canvas";
+import {
+  CANVAS_ASK_STATES,
+  canvasAskAfterMount,
+  canvasAskSeed,
+  type CanvasAskState,
+} from "./fixtures.canvas-ask";
 import { ECHO_STATES, echoExchangesFor, type EchoState } from "./fixtures.echo";
 import { EDIT_STATES, editAfterMount, editSeed, type EditState } from "./fixtures.edit";
 import { MENTION_STATES, mentionsAfterMount, mentionsSeed, type MentionState } from "./fixtures.mentions";
@@ -181,6 +212,24 @@ function paramsFrom(search: string): Params {
   };
 }
 
+/** the app settings every frame runs under, whichever root drew it: the
+ * fixture palette, normal density, no zoom, and the theme the URL asked for */
+function applySettings(choice: { provider: string; model: string }, theme: HarnessTheme): void {
+  useSettings.setState({
+    agentProvider: choice.provider,
+    agentModel: choice.model,
+    agentByConn: {},
+    agentBaseUrls: {},
+    gridDensity: "normal",
+    uiZoom: 100,
+    paletteId: DEFAULT_PALETTE,
+    matchConnection: false,
+    themeEverywhere: true,
+  });
+  useSettings.getState().setMode(theme);
+  document.documentElement.dataset.theme = theme;
+}
+
 /** the interaction builder's seed for a state, null for the rest */
 function interactFor(state: HarnessState): InteractSeed | null {
   return (INTERACT_STATES as readonly string[]).includes(state) ? interactSeed(state as InteractState) : null;
@@ -220,6 +269,11 @@ function seed({ state, w, theme }: Params) {
   // A4: one proposed change, with its own busy / phase (the result shape); the
   // seed also opens or clears the query tab's transaction `uncommitted` reads
   const writes = (WRITES_STATES as readonly string[]).includes(state) ? writesSeed(state as WritesState) : null;
+  // the A3 thread: the pane's own two canvas states, whose follow-up row and
+  // whose named blocks are the fixture's, not the trace's (fixtures.canvas-ask.ts)
+  const a3 = (CANVAS_ASK_STATES as readonly string[]).includes(state)
+    ? canvasAskSeed(state as CanvasAskState)
+    : null;
   // the A2 thread: the W6 schema and bookmarks again, plus the workspace's
   // own tabs, which the `Explain with Ask` exchange was asked from
   const know = (KNOWLEDGE_STATES as readonly string[]).includes(state)
@@ -234,6 +288,7 @@ function seed({ state, w, theme }: Params) {
     result?.exchanges ??
     ans?.exchanges ??
     writes?.exchanges ??
+    a3?.exchanges ??
     echo ??
     (exchange ? [exchange] : null);
   // the seed that carries this state's own busy and phase (a state matches at
@@ -241,19 +296,7 @@ function seed({ state, w, theme }: Params) {
   const live = w4 ?? result ?? writes ?? interact ?? strip ?? rich;
   const choice = choiceFor(state);
 
-  useSettings.setState({
-    agentProvider: choice.provider,
-    agentModel: choice.model,
-    agentByConn: {},
-    agentBaseUrls: {},
-    gridDensity: "normal",
-    uiZoom: 100,
-    paletteId: DEFAULT_PALETTE,
-    matchConnection: false,
-    themeEverywhere: true,
-  });
-  useSettings.getState().setMode(theme);
-  document.documentElement.dataset.theme = theme;
+  applySettings(choice, theme);
 
   useSchema.setState({
     snapshots: { [pid]: know?.snapshot ?? w6?.snapshot ?? FIXTURE.snapshot },
@@ -271,7 +314,7 @@ function seed({ state, w, theme }: Params) {
     pending: interact?.pending ?? {},
     // the row is the THREAD's now (W7 item 3): the answer states hand theirs
     // over, every other state's is the one its last exchange recorded
-    followUps: list ? { [tid]: ans ? ans.followUps : followUpsFor(list) } : {},
+    followUps: list ? { [tid]: (ans ?? a3)?.followUps ?? followUpsFor(list) } : {},
     phase: { [tid]: live ? live.phase : state === "busy" ? "tools" : null },
     busy: { [tid]: live ? live.busy : state === "busy" },
   });
@@ -300,6 +343,10 @@ function seed({ state, w, theme }: Params) {
     drafts: {},
     draftFor: null,
     edit: null,
+    // the blocks a question may name are the PANE's session state, not the
+    // exchange's: without them the pill in the bubble is plain text, which is
+    // the face a DELETED block gives back (LESSONS 5)
+    blocks: a3?.blocks ?? {},
   });
 }
 
@@ -341,6 +388,7 @@ function Harness({ state, w, scroll }: Params) {
       shellAfterMount(state);
       actionsAfterMount(state);
       answerAfterMount(state);
+      canvasAskAfterMount(state);
       resultAfterMount(state);
       writesAfterMount(state);
       editAfterMount(state);
@@ -373,4 +421,97 @@ export function mountAskHarness(root: HTMLElement): void {
   document.title = `Ask harness · ${params.state} · ${params.w} · ${params.theme}`;
   seed(params);
   ReactDOM.createRoot(root).render(<Harness {...params} />);
+}
+
+// ---- the canvas root (A3) --------------------------------------------------
+//
+// The canvas is a tab of the MAIN card, not a pane, so it is framed at the
+// main card's own widths and with more height than the pane needs: three
+// blocks, one of them a chart, do not fit in 640. Everything else is the Ask
+// root's recipe — the real component, the real tokens, canned stores, a
+// post-mount hook for what a still cannot hold (a hover), and one ready mark
+// after it.
+
+/** the canvas card in every frame: tall enough for the sketch's three blocks
+ * with the chart among them, so nothing that stands in the document is cut */
+export const CANVAS_CARD_H = 760;
+
+/** the canvas's own connection and two siblings, so `Compare With ▸` opens on
+ * the picture's own two rows and the diff fixture's B side is a connection
+ * that exists. The A side IS the pane's fixture connection, so a page that
+ * seeds both agrees with itself (fixtures.canvas.ts CANVAS_PROFILE_ID) */
+const CANVAS_PROFILES: Profile[] = [
+  FIXTURE.profile,
+  { ...FIXTURE.profile, id: "harness-prod", name: "prod", host: "prod-db.internal", is_prod: true },
+  { ...FIXTURE.profile, id: "harness-analytics", name: "analytics", host: "analytics-db.internal" },
+];
+
+interface CanvasParams {
+  state: CanvasState;
+  w: number;
+  theme: HarnessTheme;
+}
+
+function canvasParamsFrom(search: string): CanvasParams {
+  const q = new URLSearchParams(search);
+  const raw = q.get("state");
+  const w = Number(q.get("w"));
+  return {
+    state: (CANVAS_STATES as readonly string[]).includes(raw ?? "") ? (raw as CanvasState) : "a3-canvas",
+    w: (CANVAS_WIDTHS as readonly number[]).includes(w) ? w : 960,
+    theme: q.get("theme") === "light" ? "light" : "dark",
+  };
+}
+
+/** every store the canvas reads, filled before the first render. `loaded` is
+ * seeded true with the document, so CanvasTab's own mount effect finds the
+ * list already read and never asks the shim for one */
+function seedCanvas({ state, theme }: CanvasParams) {
+  const seed = canvasSeed(state);
+  applySettings({ provider: FIXTURE.provider, model: FIXTURE.model }, theme);
+  useConnections.setState({ profiles: CANVAS_PROFILES, activeProfileId: CANVAS_PROFILE_ID });
+  useCanvas.setState({
+    canvases: seed.canvases,
+    docs: seed.docs,
+    loaded: { [seed.profileId]: true },
+    recent: { [seed.profileId]: seed.canvasId },
+    comparing: {},
+    saveError: false,
+    editing: seed.editing,
+    askedFrom: {},
+  });
+  return seed;
+}
+
+function CanvasHarness({ state, w, canvasId }: CanvasParams & { canvasId: string }) {
+  // the block the sketch draws hot is stamped one frame after mount, the
+  // `result` states' own precedent, and the ready mark follows the hook so a
+  // frame never lands between: the hook is async, since a state whose subject
+  // is a menu has to press it open and wait for the panel
+  useEffect(() => {
+    let live = true;
+    const id = requestAnimationFrame(() => {
+      void canvasAfterMount(state).then(() => {
+        if (live) document.documentElement.dataset.harnessReady = "1";
+      });
+    });
+    return () => {
+      live = false;
+      cancelAnimationFrame(id);
+    };
+  }, [state]);
+  return (
+    <div className="harness">
+      <main className="card harness-card" style={{ width: w, height: CANVAS_CARD_H }}>
+        <CanvasTab canvasId={canvasId} />
+      </main>
+    </div>
+  );
+}
+
+export function mountCanvasHarness(root: HTMLElement): void {
+  const params = canvasParamsFrom(location.search);
+  document.title = `Canvas harness · ${params.state} · ${params.w} · ${params.theme}`;
+  const seed = seedCanvas(params);
+  ReactDOM.createRoot(root).render(<CanvasHarness {...params} canvasId={seed.canvasId} />);
 }

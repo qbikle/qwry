@@ -39,10 +39,11 @@ import type {
 } from "../ipc/types";
 import { headToken } from "../editor/statements";
 import { useConnections } from "./connections";
-import { useAsk } from "./ask";
+import { useAsk, type AskBlock } from "./ask";
 import { useSchema } from "./schema";
 import { useSaved, visibleSaved, type SavedQuery } from "./saved";
 import { useSettings, writesAllowed } from "./settings";
+import { useSidePane } from "./sidePane";
 import { useKnowledge } from "./knowledge";
 import { driftLabel } from "./checks";
 import { createTauriTools } from "../agent/tools.tauri";
@@ -60,8 +61,8 @@ import {
 import { RUN_SQL_TIMEOUT_MS } from "../agent/tools";
 import { suggestFollowUps } from "../agent/followups";
 import {
-  MENTION_TEXT_CAP,
   canonicalToken,
+  MENTION_TEXT_CAP,
   clip,
   type Mention,
   parseMentions,
@@ -163,6 +164,17 @@ export interface Exchange {
    * with it again (a Retry that dropped it would ask about a query nobody
    * sent) */
   context?: string;
+  /** the canvas block this question was asked ABOUT (A3 item 4): the first
+   * block its `@` tags named. Add to Canvas on the answer reads it and lands
+   * the new block directly under that one, so a comment stands where the
+   * thing it comments on stands (LESSONS 4: provenance is structural). It
+   * lives on the EXCHANGE and not beside the canvas's own blocks because
+   * `Ask` on a block runs before there is any exchange to key a pairing by;
+   * the tag in the question is the only record that exists at that moment,
+   * and it is also the record when the user types the token by hand.
+   * Session-lived like the block registry it points into: a reloaded thread
+   * has no answer to "where did this come from" and says so by having none */
+  askedFrom?: string;
 }
 
 /** What a retry replaces: kept whole so restorePrior() is exact. */
@@ -224,6 +236,12 @@ interface AgentState {
   openThread: (profileId: string, threadId: string) => Promise<void>;
   deleteThread: (profileId: string, threadId: string) => Promise<void>;
   ask: (question: string, opts?: AskOpts) => Promise<void>;
+  /** `Ask` on a canvas block (A3 item 4): there is no comment composer on the
+   * canvas, because a comment on a result IS a question about it. The pane
+   * opens in Ask with the block's name at the end of the draft as one `@`
+   * token and the composer focused; the user types the rest, and the answer
+   * is a normal exchange that remembers where it was asked from */
+  askAbout: (block: AskBlock) => void;
   cancel: () => void;
   /** the W2 immediate re-run of one chip; kept for callers, no longer wired
    * to a chip click (a click toggles the pending set instead) */
@@ -611,6 +629,10 @@ export const useAgent = create<AgentState>((set, get) => ({
     const mentions = mentionsFor(get, profileId, get().activeThread[profileId], text).filter(
       (m) => m.token !== tabToken,
     );
+    // the first canvas block the question named (the ladder's fifth rung): the
+    // exchange remembers where it was asked from, so Add to Canvas on the
+    // reply lands under that block instead of at the document's end
+    const askedFrom = mentions.find((m) => m.kind === "block")?.ref.id;
     // the row Record View attached, read and CLEARED in one call: a row's
     // values are true of the question asked over them and of no later one
     // (LESSONS 3). Before the first await, like everything else here
@@ -655,6 +677,7 @@ export const useAgent = create<AgentState>((set, get) => ({
       model: choice?.model ?? "",
       ...(opts?.tabName ? { tabName: opts.tabName } : {}),
       ...(opts?.context ? { context: opts.context } : {}),
+      ...(askedFrom ? { askedFrom } : {}),
     };
     set((s) => ({
       exchanges: { ...s.exchanges, [tid]: [...(s.exchanges[tid] ?? []), exchange] },
@@ -680,6 +703,22 @@ export const useAgent = create<AgentState>((set, get) => ({
       mentions,
       ...(rowContext ? { rowContext } : {}),
     });
+  },
+
+  askAbout: (block) => {
+    const profileId = get().activeProfileId;
+    if (!profileId) return;
+    useAsk.getState().rememberBlock(block);
+    // the pane opens in Ask and never closes: `Ask` on a block is a request
+    // to write, not a radio press (AGENT-UX section 1)
+    useSidePane.getState().show("ask");
+    // the token, then a space: the caret parks after it exactly as a pick
+    // from the `@` popover leaves it (AGENT-UX 1a). A block with no name to
+    // quote (an empty note) gets the composer and no token: `@""` names
+    // nothing and would sit in the draft as a tag that never resolves
+    const name = block.name.trim();
+    if (name) useAsk.getState().prefill(profileId, `${canonicalToken("block", block)} `);
+    else useAsk.getState().requestFocus();
   },
 
   cancel: () => {
@@ -1077,6 +1116,7 @@ function mentionsFor(
     saved: visibleSaved(useSaved.getState().queries, profileId),
     threads: get().threads[profileId] ?? [],
     currentThreadId: threadId,
+    blocks: Object.values(useAsk.getState().blocks),
   });
 }
 

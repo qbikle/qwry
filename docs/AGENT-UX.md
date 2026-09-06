@@ -1058,3 +1058,306 @@ drift explained in bullets, an `Assumed` chip wherever the model had to
 read a state to explain it, follow-ups at the thread's end — no new
 species anywhere in it, and the Ask pane's always-visible count is
 unmoved by any of it.
+
+## 16. Canvas
+
+A canvas is a second main-area surface (AGENT-SPEC §2), not a mode of the
+Ask pane's one right-hand card: it is a tab of the main card, `Tab.kind`
+`"canvas"`, shown in the tab strip with lucide `LayoutGrid` (the tab bar's
+own species, unchanged) and the title `Canvas`. One canvas is the default per
+connection; the palette's `New Canvas` makes another. A canvas tab persists
+across restart the way a query tab does (appdb, not session-only,
+AGENT-SPEC §9); its document is an ordered list of blocks of two kinds, not
+five: `result` and `note`. The locked picture is the "A3 · canvas" section of
+`~/projects/qwry-agent-lab/docs/ask-sketch-a3.html` (floor 640, default 960,
+wide 1280); where it and this file disagree, this file wins and the sketch
+gets redrawn.
+
+### 16a. Anatomy of a block
+
+Every block stacks the same four parts top to bottom, 8px apart, parts that
+do not apply omitted rather than left as dead space (DESIGN rule 2 scope
+note): a question line, prose, a face, a status line. This is one fewer than
+an earlier draft carried (5 non-row lines → 4): the assumption chips fold
+into the status line rather than standing as their own row (item 4, below).
+
+1. **Question line**: the exchange's question, one line in the trace-kind
+   register (the lead-in's own face, §3 item 3: `text-2xs`, weight 700,
+   uppercase, tier 2), ellipsized, never wrapping. Present only on a block an
+   exchange produced; a note the user wrote from nothing carries none, and
+   its cluster rides 2px up onto the prose's own first line instead (the
+   answer cluster's own number, §2 item 3).
+2. **Prose**: the model's or the user's words, rendered by `AnswerText` (§2
+   item 3's parser, reused whole), read-only on a result block and the whole
+   of a note block. It rides ABOVE the face, inside the block, never beside
+   it in a second block: an exchange's sentence and its result are one
+   block, because a note-plus-result pair would carry the question line
+   twice (rule 14) and stand two clusters for one exchange. The model's
+   words are provenance (LESSONS 4); the user's own annotation is a note
+   underneath, or an `Ask` (§16d). Prose measures at most 680px regardless
+   of the column's width (growth feeds content, and a line past that width
+   is worse content, DESIGN rule 13); the block's own box, and the face
+   beneath it, spans the column.
+3. **Face**: present on a result block only. Table, chart and, while a
+   comparison stands, diff share one flip cycle with the SQL face (Faces,
+   below); a note has no face, its prose being the whole of it.
+4. **Status line**: the run's own facts followed by its assumptions as
+   fragments, one lowercase lead (`assumed`) then each label, `·`-separated:
+   `4 rows · 311.8 ms · assumed Last Month = August 2026 · Revenue = Paid
+   Orders`. The row count, the timing and the lead word sit at tier 2; each
+   assumption's own label sits at tier 1, the fact carrying the meaning.
+   This is the canvas's own costume for the fact the pane shows as chips
+   (§3): a chip answers a click there (it toggles a wanted state and can
+   fire a retry), and nothing on the canvas retries anything, so a
+   `.chip.active` that answers no click would be a control costume on a
+   non-control (DESIGN rule 8's inverse); the trace's own `tagged order_v2 ·
+   "Monthly revenue"` line (§5) is the record form of the same fact already,
+   and is this line's precedent. Folding the status onto the question
+   line's right end was weighed and refused: two registers on one line, and
+   the question line is the block's title (DESIGN rule 12).
+
+**Faces.** The result block is W7's `ResultBlock` reused whole (its table
+and SQL faces, its status-line formatter), gaining a third and, while a
+comparison stands, a fourth:
+
+- **Table**, unchanged from Ask.
+- **Chart**: available whenever the rows carry exactly one label column and
+  one to three numeric columns, at most 200 rows (aggregates only); over any
+  of those caps the face is simply absent, never a message (DESIGN rule 11).
+  Hand-rolled SVG, no dependency. Bars lie DOWN: a label axis draws
+  horizontal bars, the labels right-aligned to meet them in the status
+  register (UI font, tier 2), the value at every bar's end in the data
+  register (mono, tabular numerals, tier 1); there is no value axis; nine
+  thirteen-character labels under standing bars would collide at the 640
+  floor and force a rotate-or-drop no one asked for (DESIGN rule 13), and as
+  horizontal rows they read like the grid's own. One series per numeric
+  column, one shared scale across every series (two scales on one plot
+  lie), in the accent ladder at three fixed steps (100% · 45% · 22% of the
+  accent over the panel); a legend appears only from two or more series, as
+  one status-register line inside the face's own top-left corner, and none
+  for a single series. A label that parses as a date draws a line instead
+  of bars: the points at the dates, three y ticks at the left and sparse x
+  ticks along the bottom, both axes in the status register, no vertical
+  labels anywhere (`a3-chart-line`, the canvas root's own fixture).
+- **SQL**, unchanged from Ask.
+- **Diff** (§16e), while a comparison stands, taking the table face's place
+  in the cycle.
+
+The flip glyph is the one control that reaches every face, in a cycle whose
+glyph always names the face you will get NEXT, never the one you are on
+(W7's own rule, unmoved): table → chart → SQL → table, or, while a
+comparison stands, diff → chart → SQL → diff (`BarChart3` from the table or
+the diff, `Code` from the chart, `Table` from the SQL). A second toggle
+dedicated to the chart was considered and refused: two toggles over three
+faces leaves no rule for where Flip goes FROM the chart, where the cycle
+keeps W7's one rule at the cost of one extra press from table to SQL, and a
+chartable result is added here for its chart, so standing second in the
+cycle is the cheap seat, not the hidden one. On the canvas the chosen face
+is a fact of the document and rides `doc_json` (it survives a reload); in
+Ask a face stays a way of looking, never persisted (W7 unchanged).
+
+### 16b. The cluster
+
+Nothing frames a block: no hairline box, no header strip, the floating
+cluster at its own top-right corner is its only chrome, at rest and always
+(3 hairline boxes per block → 0 at rest; the exemplar is Freeform, which
+frames nothing, and DESIGN rule 15's `.rb` keeps its own edge only because a
+grid needs one). The cluster is the `.acts-float` species unchanged (W7, §2
+item 4): absolute, no layout, opacity 0 with a 4px slide out of the block's
+top edge on `--dur-quick` / `--ease-std`, revealed by the block's own
+`:hover`, `:focus-within`, and the harness's `[data-hot]`; never
+`visibility`, so the buttons stay in the tab order and are the block's
+keyboard route (DESIGN rule 8's forward half: the surface works without the
+hover ever being discovered).
+
+A result block's cluster is five actions, `Copy` · `Flip` · `Insert` · `Ask`
+· `More` (5 hot, 0 at rest). A note's is three, `Copy` · `Ask` · `More` (3
+hot, 0 at rest). `Copy` copies the face you see (table: TSV of the rows the
+block holds, cue `Copied 9 rows`; chart: the same rows that drew it, cue
+`Copied 6 rows`; SQL: the formatted statement, cue `Copied SQL`; a note: its
+rendered text as markdown) through the app's one copy path, cue included
+(LESSONS 9). `Flip` and `Insert` are the result block's own (Faces, above;
+§2 item 4 unchanged for `Insert`, tooltips `Show Chart` / `Show SQL` / `Show
+Table`, `Insert SQL`). `Ask` (lucide `MessageSquare`) is §16d. `More`
+(lucide `Ellipsis`) opens the block's own menu, the same one a right-click
+on the block opens: on a result block, `Compare With ▸` (§16e), `Move Up`,
+`Move Down`, a hairline separator, `Delete`; on a note, whose SQL does not
+exist, the menu opens directly on `Move Up`, then `Move Down`, the
+separator, `Delete…` (the ellipsis earned, §16f). `⌫` on a focused block is
+`Delete` too, the Threads sheet's own precedent (§1). `Move Up` and `Move
+Down` act on the block's position in the document, not on anything it
+holds, so they live in the menu rather than the cluster (DESIGN rule 15's
+first question: a place action is not a face of the block it moves); `Move
+Up` is disabled, never hidden, on the first block, `Move Down` on the last
+(DESIGN rule 2's matrix). Drag-reorder is not this wave (ROADMAP › A3, third
+clause); the menu pair stands in for it, and neither carries a chord in the
+picture (Open, below).
+
+A `GitCompare` glyph was considered for `Compare` as a sixth cluster button
+and refused: a sixth icon over five already-drawn actions in the Ask pane's
+own composer width would run 104px past a 296px grid header at the 320
+floor and clip a column name under the fade, and on the canvas a picker is
+a menu exactly as `More` already is, so the submenu costs nothing the
+cluster does not already spend. The app's own menu rows carry a label, a
+hint and an arrow, never an icon (`contextmenu.css`), so `Compare With`
+draws no glyph of its own either.
+
+### 16c. Entry from Ask: Add to Canvas
+
+`AnswerActions` (§2 item 3) grows from two actions to three: `Copy` · `Save
+Query` · `Add to Canvas` (lucide `LayoutGrid`, the tab's own glyph; 2 → 3
+hot, 0 at rest). It appends the exchange to the connection's current
+canvas: the most recent canvas tab if one exists, else a new one, cued
+`Added to Canvas` or `Added to a new canvas`; the pane stays on Ask, it
+never switches tabs. An exchange that ran SQL becomes a result block
+(question line, the model's sentence, the run's rows on their final face,
+the status line with its assumptions folded in); an exchange with no run,
+prose only, becomes a note carrying the question line, since there is no
+result to be the block's face. `Save Query` and `Add to Canvas` do not
+merge into one menu: a saved query is the editor's own artefact and a
+canvas block is the document's, two different homes for what looks like the
+same click, and a `Save ▾` menu for two rows would cost more than the plain
+third button it replaces. The palette gains `New Canvas`.
+
+### 16d. Comments are Ask turns
+
+The canvas carries no comment composer of its own; a block's `Ask` action
+is how a person talks back to it. It is not a new argument to `askMessage`:
+`ask(question)` still takes a plain string, and a block is a fifth kind on
+the `@` mention ladder already built for tables, columns, saved queries and
+threads (`src/agent/mentions.ts`, `mentionsFor` / `resolveMentions`, §1a),
+named by its own question in the quoted form saved queries and threads
+already use (`@"can you check the revenue in last month"`), resolving to
+that question, its final SQL and its result's shape. Pressing `Ask` on a
+block puts that token and a trailing space at the composer's caret and
+focuses it; typing continues the sentence (`@"can you check the revenue in
+last month" is the USD share growing?`). The token becomes the same
+`.mention` pill (§1a) once resolved, wrapping with the surrounding words at
+every width the way any pill does (the clone rule), and the reply that
+follows is a normal exchange in every other respect. `Add to Canvas` on
+that reply appends the new block directly beneath the block it answered,
+not at the document's end: the store remembers `askedFrom: blockId` on the
+exchange for the session (never persisted; a reload forgets the pairing,
+the block itself does not). A note added this way still carries the
+question line (item 1, above), since it is still an exchange's record even
+though its home is a note and not a result. The `@` popover MAY grow a
+fifth row kind for canvas blocks under `LayoutGrid`, as a fallout of the
+same resolver; this wave draws only the pill landing in the bubble, and
+offering blocks from the popover is optional (Open).
+
+### 16e. Compare and the diff face
+
+`Compare With ▸` (canvas only, §16b) opens a submenu of the connection's
+siblings, a check on the one currently compared; picking the checked row
+again clears the comparison. Choosing a sibling runs the block's own stored
+SQL against it, READ-ONLY, through the same `agent_connect` +
+`agent_run_readonly` path any other agent read takes (AGENT-SPEC §8.1): the
+AST gate is what allows a prod sibling to be chosen at all, since nothing
+the gate would refuse can reach either connection regardless of which one
+runs it.
+
+While a comparison stands, the diff face takes the table face's own place
+in the flip cycle (`diff → chart → SQL → diff`): the table's own cells
+become the diff's `A` cells, so nothing renders twice (DESIGN rule 14).
+Rows key on the label column(s), in the first side's order, with any row
+the second side alone produced appended after; every numeric cell reads `A
+· B · Δ`, its separators a decoration at tier 3, `A` and `B` printed
+exactly as their own database returned them (never reformatted to agree),
+`Δ` the signed RELATIVE change at one decimal (`+2.3%`): an absolute
+difference was considered and refused, since it would restate two numbers
+the cell already carries. A row present on one side only wears the warn
+glyph on its own label and `∅` in the side it lacks, no `Δ`. The status
+line names both connections once, each a tier-1 label the way an
+assumption's is: `6 rows · staging 412.6 ms · prod 388.1 ms · assumed Last
+Month = August 2026` (LESSONS 4: the chrome speaks for the data's origin,
+once per side, and never again). Both sides are capped at 200 rows,
+aggregates only, the run's own cap (Faces, §16a); over the cap on EITHER
+side the face is that one status line and nothing else, no partial grid.
+
+`now vs then` (the same connection, a later run standing as `B`) was named
+as a shape this face could grow into but is not built this wave: nothing in
+the cluster offers a re-run (Restart lives on the Ask pane's bubble, not
+here), so there is no second run for it to fall out of; it is open for
+whichever wave gives a block its own refresh.
+
+### 16f. Chrome and the empty canvas
+
+The canvas itself carries zero always-visible controls and zero strips of
+its own: the tab is the strip, and a three-block canvas answers to the same
+count. The empty canvas is empty: no sentence, no button, nothing but a
+text cursor over the card; a click anywhere writes the first note, and the
+palette's `New Note` is the keyboard route to the same thing (DESIGN rule
+8: the surface works without the mouse). A starter sentence (`Add an answer
+from Ask, or write a note.`) was drawn once and dropped: it was one string
+against zero, dead on its own deletion test (DESIGN rule 11), `Add to
+Canvas` already announces itself in every answer's cluster (§16c), and the
+Ask empty state already stands with no sentence of its own (§1).
+
+Blocks stack in one column at the main card's own width (floor 640): page
+padding 20px, blocks 16px apart, a block's own parts 8px apart (§16a). The
+space under the last block is a tail of at least 64px that takes the same
+click the empty canvas does. A note in edit shows its raw markdown source
+in the composer's own textarea species, caret at the end, nothing else
+standing (no cluster, no border until it fades in, §16g): click to enter,
+`⌘↩` commits, `Esc` cancels, and a note whose edit is committed empty
+deletes itself on that same commit (the fold's own precedent, §2a: the
+preview is the commit). A note that is NOT empty deletes through the app's
+danger confirm instead, the Threads sheet's own grammar: `Delete Note?`,
+the note's own first line as the detail (the object named in data's
+clothes, WRITING form 2), the button `Delete Note` (`⌘⌫`); its menu row
+reads `Delete…`, the ellipsis earned because a confirm follows (WRITING
+rule 2). A result block's `Delete` acts at once, no confirm: the exchange
+it came from still stands in its own thread, and `Add to Canvas` rebuilds
+the block from there if it is wanted back.
+
+### 16g. Motion
+
+No new preset (`springs.ts` is unchanged): a block arrives on `panelIn`,
+the main card's own entrance, while the blocks under it make room on
+`spring.layout`; nothing on the canvas counts up and nothing else moves. A
+face flips exactly as W7's block flips (§10): the faces crossfade on
+`swapIn`, the block's real height springing between them on
+`spring.layout`, the status line and every block below riding the same
+spring. A removed block fades where it stands while the gap it leaves closes
+on `spring.layout`, the fold's own two registers (§10); the fade rides
+`panelIn`'s own spring, so a block leaves the way it arrived and this wave
+still adds no preset. (The picture asked for `--dur-slow` here. Honouring it
+would have meant either a raw duration in a component, which the motion law
+forbids, or a new `springs.ts` preset, which this section's own first
+sentence forbids; an opacity-only leave is indistinguishable between the two,
+so the rule that kept its meaning won. DECISIONS, A3.) A
+note entering edit moves no glyph at its first line: its box's border fades
+in around the words on `--dur-quick`, the caret takes the end, and the box
+grows outward rather than in. Below that first line a rendered lead or list
+has its own line boxes, which the textarea's source lines are not, so a
+multi-line note's later lines shift by their own spacing (2 to 6 CSS px,
+measured) even though the boundary itself moves nothing. The cluster reveals the way
+every `.acts-float` cluster does, opacity and a 4px slide on `--dur-quick`
+/ `--ease-std` (§16b). Reduced motion: a block stands at once, a flipped
+face is its settled one at once, a removed block is simply gone.
+
+### 16h. Open
+
+- `now vs then` (§16e): no Re-run action stands in the cluster this wave,
+  so the same-connection diff has nothing to fall out of; a later wave that
+  gives a block its own refresh gets the face for free.
+- ~~The line chart (a date label, §16a) is specified here and not yet drawn
+  in a fixture~~: closed. `a3-chart-line` is drawn and framed at all three
+  widths, both themes (`a3-frames/a3-chart-line-*`).
+- The `@` popover offering canvas blocks as rows (`LayoutGrid` kind icon,
+  §16d) is optional fallout of the resolver, not required this wave.
+- The over-cap diff (one status line, no grid, §16e) and a result block
+  standing on its SQL face on the canvas are drawn nowhere new here; both
+  are W7's own faces, unchanged.
+- Move Up / Move Down (§16b) carry no chord; if a later wave assigns one it
+  goes through `<Kbd>` on the menu row and into the Keyboard Shortcuts
+  sheet.
+- The assumed fold (§16a item 4) changes the same fact's costume between
+  the pane (a chip) and the canvas (a status fragment); the trace's own
+  `tagged` line is the precedent cited for it, but a reviewer may prefer
+  chips for one-face fidelity across both surfaces, in which case the
+  block's line count reverts to 5 and DESIGN rule 8's inverse needs an
+  answer for what a click on a canvas chip would do.
+- Multi-DB analysis through an in-app join layer (ROADMAP › A3, third
+  clause) is untouched by any of this: `Compare` is a two-connection read,
+  never a join.

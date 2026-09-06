@@ -57,6 +57,23 @@
 //                                           asks the opener plugin for the
 //                                           browser, and a frame or a probe that
 //                                           clicks one never rejects
+//   canvas_list                             nothing: the canvas root seeds the
+//                                           document AND `loaded`, so the store
+//                                           never asks; an empty list is the
+//                                           honest answer to a page that has no
+//                                           appdb behind it
+//   canvas_upsert                           recorded on `canvasUpserts` and
+//                                           nothing else: every canvas edit is
+//                                           written debounced, and a probe reads
+//                                           back what the last one saved
+//   canvas_delete                           nothing, for the same reason
+//   agent_connect / agent_run_readonly /    the `Compare With` path: a session
+//   disconnect                              id, then the canned B side of the
+//                                           revenue block (one row on B alone,
+//                                           so the warn tier has a row), so a
+//                                           comparison in the harness builds a
+//                                           real diff through the store's own
+//                                           buildDiff
 //   plugin:clipboard-manager|write_text     recorded on `clipboardWrites` and
 //                                           nothing else: every Copy in the pane
 //                                           goes through copyCue, whose cue is
@@ -82,7 +99,23 @@ const harnessState = () => new URLSearchParams(location.search).get("state");
  * clipboard, read by a probe through this module (the frames never look) */
 export const clipboardWrites: string[] = [];
 
-const record = (payload: InvokeArgs | undefined): Record<string, unknown> =>
+/** every canvas the store has written, oldest first: the harness's appdb, read
+ * by a probe through this module. A canvas edit is saved debounced, so a probe
+ * that adds a block waits for a row here rather than for a repaint */
+export const canvasUpserts: { id: string; doc_json: string }[] = [];
+
+/** the sibling connection's answer to the revenue block's statement: the same
+ * three columns, a currency each, with one row (GBP) on this side alone, so a
+ * comparison run in the harness draws both the Δ cells and the warn tier */
+const COMPARE_ROWS: (string | null)[][] = [
+  ["2401880.00", "505", "INR"],
+  ["1740.25", "6", "USD"],
+  ["398.00", "2", "AUD"],
+  ["312.00", "1", "EUR"],
+  ["188.40", "1", "GBP"],
+];
+
+const record = (payload: unknown): Record<string, unknown> =>
   payload !== null && typeof payload === "object" && !Array.isArray(payload)
     ? (payload as Record<string, unknown>)
     : {};
@@ -199,12 +232,34 @@ export function installTauriShim(): void {
           const args = record(payload);
           return writePreview(typeof args.sql === "string" ? args.sql : "");
         }
+        case "canvas_list":
+          return [];
+        case "canvas_upsert": {
+          const row = record(record(payload).row);
+          canvasUpserts.push({
+            id: typeof row.id === "string" ? row.id : "",
+            doc_json: typeof row.doc_json === "string" ? row.doc_json : "",
+          });
+          return undefined;
+        }
+        case "agent_connect":
+          return "harness-session";
+        case "agent_run_readonly":
+          return {
+            columns: ["revenue", "order_count", "currency"],
+            rows: COMPARE_ROWS.map((r) => [...r]),
+            row_count: COMPARE_ROWS.length,
+            capped: false,
+            ms: 388.1,
+          };
         case "plugin:clipboard-manager|write_text": {
           const text = record(payload).text;
           clipboardWrites.push(typeof text === "string" ? text : "");
           return undefined;
         }
         case "agent_http_abort":
+        case "canvas_delete":
+        case "disconnect":
         case "agent_thread_truncate":
         case "agent_thread_session_set":
         case "agent_turns_shift":

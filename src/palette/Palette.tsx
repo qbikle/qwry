@@ -9,6 +9,7 @@ import {
   Check,
   Clock,
   Database,
+  LayoutGrid,
   ListChecks,
   MessageSquare,
   Monitor,
@@ -25,6 +26,7 @@ import {
   Wand2,
   X,
 } from "lucide-react";
+import { loadCanvasPort } from "../canvas/port";
 import { editorFormat, editorTimeTraveling } from "../editor/editorBus";
 import { copyCueError, copyCueShow } from "../lib/copyCue";
 import { checkOf, driftLabel, lastCheckOf, runChecks } from "../stores/checks";
@@ -506,6 +508,27 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
               onSelect={() => setDefine({ from: null, line: "" })}
             >
               <Plus size={12} /> Define…
+            </Command.Item>
+            <Command.Item
+              value="new canvas board"
+              onSelect={() => {
+                void loadCanvasPort().then((port) => port?.newCanvas());
+                close();
+              }}
+            >
+              <LayoutGrid size={12} /> New Canvas
+            </Command.Item>
+            <Command.Item
+              value="new note canvas write"
+              onSelect={() => {
+                // the empty canvas carries no control of its own: a click on
+                // the card writes the first note and this is that click's
+                // keyboard route (DESIGN rule 8, DECISIONS A3)
+                void loadCanvasPort().then((port) => port?.newNote());
+                close();
+              }}
+            >
+              <LayoutGrid size={12} /> New Note
             </Command.Item>
           </Command.Group>
 

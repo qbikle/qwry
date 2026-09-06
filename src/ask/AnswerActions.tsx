@@ -1,5 +1,6 @@
-// The answer's own two actions (W7 item 2): Copy · Save Query, the icon-button
-// species in its 18px tier, floating at the prose's top-right and revealed the
+// The answer's own actions (W7 item 2, A3 item 3): Copy · Save Query · Add
+// to Canvas, the icon-button species in its 18px tier, floating at the
+// prose's top-right and revealed the
 // way every cluster in the pane is (ask.css .acts-float, the block's and the
 // bubble's). They act on the EXCHANGE, and the prose is the exchange's voice,
 // so they ride it; on the thinking strip they would cover the newest chip and
@@ -21,8 +22,24 @@
 // quick-ask; nothing new stands here for it (the button, its glyph and its cue
 // are unchanged), because a second save action for a second kind of row is the
 // second block DESIGN rule 15 refuses.
+//
+// Add to Canvas (A3 item 3) is the third, 2 hot to 3, still 0 at rest. It
+// does not merge with Save Query: a saved query is the editor's artefact and
+// a block is the document's, and a `Save ▾` would be a menu holding two rows
+// (DECISIONS, A3). It wears lucide LayoutGrid, the canvas tab's own glyph, so
+// the action and the place it lands carry one mark, and it does NOT switch
+// tabs: the answer is added while the reader keeps reading. The cue says
+// which canvas took it (`Added to Canvas` / `Added to a new canvas`), through
+// the app's one cue path, because an action with no visible result is an
+// action the user must go and check (LESSONS 9). The canvas document store
+// owns WHERE the block lands (`addExchange` opens a canvas when the
+// connection has none and drops a reply under the block it was asked from)
+// and is reached through canvas/port.ts, so the pane never imports it; this
+// file owns the button and what the cue says, and an add that lands nothing
+// says the store's own sentence rather than a cheerful lie.
 
-import { Bookmark, Copy } from "lucide-react";
+import { Bookmark, Copy, LayoutGrid } from "lucide-react";
+import { loadCanvasPort } from "../canvas/port";
 import { copyCue, copyCueShow } from "../lib/copyCue";
 import { useSaved } from "../stores/saved";
 
@@ -64,6 +81,9 @@ async function saveQuery(question: string, sql: string): Promise<void> {
 }
 
 export interface AnswerActionsProps {
+  /** the exchange Add to Canvas appends: the block is built from it, and the
+   * canvas it lands on is that exchange's own connection's (LESSONS 4) */
+  exchangeId: string;
   /** the exchange's question: the saved query's name */
   question: string;
   /** the prose exactly as the slot says it (agent/display answerText) */
@@ -73,7 +93,7 @@ export interface AnswerActionsProps {
   sql: string | null;
 }
 
-export function AnswerActions({ question, prose, sql }: AnswerActionsProps) {
+export function AnswerActions({ exchangeId, question, prose, sql }: AnswerActionsProps) {
   return (
     <div className="acts-float">
       <button
@@ -96,6 +116,22 @@ export function AnswerActions({ question, prose, sql }: AnswerActionsProps) {
         }}
       >
         <Bookmark size={12} />
+      </button>
+      <button
+        type="button"
+        className="iconbtn iconbtn-sm"
+        title="Add to Canvas"
+        aria-label="Add to Canvas"
+        onClick={() => {
+          void loadCanvasPort().then((port) => {
+            if (!port) return;
+            const landing = port.addExchange(exchangeId);
+            if (!landing.ok) copyCueShow(landing.message ?? "nothing to add");
+            else copyCueShow(landing.created ? "Added to a new canvas" : "Added to Canvas");
+          });
+        }}
+      >
+        <LayoutGrid size={12} />
       </button>
     </div>
   );

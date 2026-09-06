@@ -1,0 +1,196 @@
+/* The canvas (A3 items 2, 5 and 6): a tab of the main card holding an
+   ordered column of blocks. Two kinds, not five (DESIGN rule 15): a result
+   (the W7 block reused whole, its question the title, the model's sentence
+   above the faces, the assumptions folded into the status line) and a note.
+
+   Nothing frames a block. Freeform frames nothing, a hairline box per block
+   is one chrome frame times n, and the hover cluster is the block's only
+   chrome: 3 boxes at rest become 0, and the .rb keeps its own edge because a
+   grid needs one. Page padding 20, blocks 16 apart, the parts of a block 8
+   apart; a note's measure stops at 680 while its box spans the column
+   (growth feeds content, and a 1250px line is worse content, rule 13). */
+
+/* the whole surface is a place to write: the tail under the last block is at
+   least 64px and takes the same click that the empty canvas does */
+.cv-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--sp-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  cursor: text;
+}
+.cv-scroll::after {
+  content: "";
+  flex: 1;
+  min-height: 64px;
+}
+
+/* a note draws its own .blk (NoteBlock, note.css), so what the column lays
+   out is the entrance wrapper around it: it is the flex child, and it never
+   shrinks under the blocks above it */
+.cv-item {
+  flex-shrink: 0;
+}
+
+/* a block: its own positioning box, so the cluster floats at ITS top-right
+   (the VS Code exemplar) and the surface the buttons stand on is the panel */
+.blk {
+  position: relative;
+  flex-shrink: 0;
+  cursor: default;
+  --acts-surface: var(--bg-panel);
+}
+.blk > * + * {
+  margin-top: var(--sp-2);
+}
+/* the cluster has no place in the flow: it floats over the question line */
+.blk > .acts-float {
+  margin-top: 0;
+  top: 0;
+  height: 24px;
+}
+/* a note with no question line: the cluster takes the answer cluster's own
+   2px above the first line of prose (ask.css .ans-prose > .acts-float) */
+.blk.noq > .acts-float {
+  top: -2px; /* optical */
+}
+.blk:hover > .acts-float,
+.blk:focus-within > .acts-float,
+.blk[data-hot] > .acts-float {
+  opacity: 1;
+  transform: none;
+}
+/* the question line: the trace-kind face (.ans-lead's register), one line,
+   ellipsized, 24px tall so the cluster centres on it */
+.blk-q {
+  height: 24px;
+  line-height: 24px;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.blk .ans-text {
+  max-width: 680px;
+}
+/* the status line reads as one sentence of fragments here, never a flex row
+   of them: the run's facts, then the assumptions after one lowercase lead,
+   their labels at tier 1 and the lead and the numbers at tier 2 (a chip on
+   the canvas toggles nothing, and a chip that answers no click is a control
+   costume on a non-control: DESIGN rule 8's inverse) */
+.blk .ans-status {
+  display: block;
+  line-height: 16px;
+}
+.blk .ans-status .asm {
+  color: var(--fg);
+}
+
+/* ---- the chart face (Chart.tsx) ------------------------------------------
+   The face's own 12px, an SVG sized to it after layout. Labels ride in the
+   status register (UI font, tier 2) right-aligned to meet their bars; the
+   value at every bar's end is data (mono, tabular, tier 1), which is what
+   retires the value axis (rule 14). */
+.cv-chart {
+  display: block;
+  padding: var(--sp-3);
+}
+.cv-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.cv-chart text {
+  font-size: var(--text-xs);
+}
+.cv-chart .lbl {
+  fill: var(--fg-muted);
+  font-family: var(--font-ui);
+}
+.cv-chart .val {
+  fill: var(--fg);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- the diff face (DiffFace.tsx) ----------------------------------------
+   The results grid's register, drawn statically (200 rows is the cap, so
+   there is nothing here for the virtualizer): the raised header, a 52px
+   row-number gutter (the grid's ROWNUM_W), 26px rows, mono cells. Each
+   numeric cell is A · B · Δ with the separators as decoration. */
+.cv-diff {
+  display: grid;
+  align-content: start;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--grid-fs, var(--text-sm));
+  font-variant-numeric: tabular-nums;
+}
+/* the rows are the grid's own: a row that were its own grid would size its
+   columns to its own content, and columns that move from row to row are not
+   a grid */
+.cv-diff .dg-r {
+  display: contents;
+}
+.cv-diff .dg-n,
+.cv-diff .dg-c {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid var(--border);
+}
+.cv-diff .dg-r:last-child > * {
+  border-bottom: none;
+}
+.cv-diff .dg-h {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 30px;
+  background: var(--bg-raised);
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-strong);
+}
+.cv-diff .dg-n {
+  justify-content: flex-end;
+  padding-right: var(--sp-2);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border-strong);
+}
+.cv-diff .dg-c {
+  padding: 0 10px; /* optical */ /* the grid cell's own inset */
+}
+.cv-diff .dg-tri i {
+  font-style: normal;
+  color: var(--fg-faint);
+  margin: 0 5px; /* optical */
+}
+/* a row only one side has: the label wears the warn glyph and the tier, and
+   the side that lacks it reads ∅ (the grid's own empty marker) */
+.cv-diff .dg-r.warn .dg-key {
+  gap: 5px; /* optical */
+  color: var(--warn);
+}
+.cv-diff .dg-r.warn svg {
+  flex-shrink: 0;
+  color: var(--warn);
+}
+.cv-diff .dg-none {
+  color: var(--warn);
+  font-weight: 400;
+}

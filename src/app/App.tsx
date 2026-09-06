@@ -45,6 +45,7 @@ const ExplainView = lazy(() => import("../explain/ExplainView").then((m) => ({ d
 const HistoryPanel = lazy(() => import("./HistoryPanel").then((m) => ({ default: m.HistoryPanel })));
 const ShortcutsModal = lazy(() => import("./ShortcutsModal").then((m) => ({ default: m.ShortcutsModal })));
 const AskPanel = lazy(() => import("../ask/AskPanel").then((m) => ({ default: m.AskPanel })));
+const CanvasTab = lazy(() => import("../canvas/CanvasTab").then((m) => ({ default: m.CanvasTab })));
 
 /** the sidebar card: DB header → tables → saved queries (shown when connected) */
 function SidebarCard({ profileId, dbname, name }: { profileId: string; dbname: string; name: string }) {
@@ -158,6 +159,12 @@ export function App() {
     return t?.kind === "table" ? t.table : null;
   });
   const isTableTab = activeTabKind === "table";
+  // a canvas tab shows its document where the editor and the grid would be
+  // (A3 item 1): the canvas is a face of the main card, not a pane
+  const canvasId = useTabs((s) => {
+    const t = s.tabs.find((tb) => tb.id === s.activeId);
+    return t?.kind === "canvas" ? t.canvas_id : null;
+  });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [keysOpen, setKeysOpen] = useState(false);
@@ -938,6 +945,10 @@ export function App() {
                   ) : isTableTab ? (
                     <Suspense fallback={null}>
                       <TableBrowser />
+                    </Suspense>
+                  ) : canvasId ? (
+                    <Suspense fallback={null}>
+                      <CanvasTab canvasId={canvasId} />
                     </Suspense>
                   ) : (
                     <Suspense fallback={null}>

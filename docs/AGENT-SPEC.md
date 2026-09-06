@@ -76,6 +76,23 @@ Rules:
    hosts (DECISIONS 2026-09-05). Only Rust talks to the network.
 5. IPC types once in Rust, mirrored in `src/ipc/types.ts` (CLAUDE.md rule).
 
+The A3 canvas (ROADMAP › Next: Agent) is a second main-area surface, not a
+mode of the Ask pane's one right-hand card: `Tab.kind` gains `"canvas"` and
+`App` renders it the way it renders a query or table tab today, by
+`Tab.kind` (one more dispatch arm; nothing about the Inspector/Ask pane's
+own wiring moves). Its components live in `src/canvas/` (CanvasTab, CanvasResult wrapping
+the W7 `ResultBlock` reused whole from `src/ask/`, NoteBlock), backed by
+`src/stores/canvas.ts`. A canvas block's `Ask` action opens no second entry
+point into the agent: it is the SAME Ask pane and the same
+`askMessage(question: string)` seam as §1, with the block itself riding as
+a fifth kind on the `@` mention ladder (`mentionsFor` / `resolveMentions`)
+rather than a new argument threaded through the loop, so the system prompt,
+the loop and `PROMPT_VERSION` are exactly as untouched by where a question
+was typed from as they already are by a tag (§4.1, §4.2, W6).
+`askedFrom: blockId` rides the resulting exchange in the store only, for
+the session, so `Add to Canvas` on the reply can find the block it answers
+(AGENT-UX §16d).
+
 ## 3. Tier gating (measured)
 
 | tier | examples | what it gets | why |
@@ -489,6 +506,13 @@ parallel turn in ONE message). Bedrock/Vertex/Foundry are a research item.
    tool refusal redirects to the fence, the prod refusal is a fixed fact
    with no settings row to offer, and the writes-off refusal offers
    `Settings` (opens Settings › Models) beside `Ask Differently`.
+10. **Compare (A3, canvas only, AGENT-UX §16e)** runs a result block's own
+    stored SQL against a sibling connection through the same `agent_connect`
+    + `agent_run_readonly` path as any other agent read, never a second code
+    path: the AST gate (§8.1, above) is what allows a PROD sibling to be
+    picked at all, since nothing the gate would refuse can pass it on either
+    connection. The comparison session is opened for the one run and
+    dropped, never left resident.
 
 ## 9. Data model (appdb, rusqlite)
 
@@ -610,6 +634,27 @@ question a quick-ask kept or the check on it. Reading either blob is
 `src/stores/checks.ts`'s `checkOf` / `lastCheckOf`, paired with
 `writeExpect` / `writeResult` (LESSONS 1); a blob this build cannot read
 leaves an ordinary bookmark rather than a check nobody can explain.
+
+A3 (canvas, AGENT-UX §16) adds one appdb table, migration v9 (written as
+v8 in the A3 worktree and renumbered on merge, A2's `knowledge_v8` having
+taken v8; it is its own match arm, `9 => canvases_v9(&tx)?`, and the number
+lives nowhere else inline, so a later merge only has to move the arm and
+never edit its body):
+```
+canvases(id, profile_id, title, doc_json, created_at, updated_at)
+```
+A canvas tab surviving a restart is the smaller of the two shapes the wave
+allowed: not a second persisted `kind` of its own, but one nullable
+`tabs.canvas_id` (`add_column_if_missing`) that IS the tab's kind on disk —
+a restored row carrying one is a canvas tab, every other row a query tab,
+the same non-NULL-is-the-kind trick the table tabs' own session-only kind
+never needed a column for. `doc_json` is the ordered block list
+`src/stores/canvas.ts` owns end to end, written back debounced on every
+change rather than field by field; `canvas_list(profile_id)`,
+`canvas_upsert(row)` and `canvas_delete(id)` are its three commands
+(`lib.rs`). A block never earns its own row: the whole document is one
+write, so a reorder, a face flip that persists (AGENT-UX §16a) and a note's
+edited text all move together or not at all.
 
 ## 10. Budgets
 

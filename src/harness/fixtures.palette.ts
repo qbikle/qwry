@@ -62,6 +62,7 @@ const tab = (id: string, name: string, kind: Tab["kind"], sql: string, position:
   // the table a browser tab shows, as the snapshot spells it: the palette
   // reads only its kind and its name, so the row is the snapshot's own
   table: kind === "table" ? (MENTION_SNAPSHOT.tables.find((t) => t.name === name) ?? null) : null,
+  canvas_id: null,
   profile_id: PROFILE,
 });
 

@@ -117,6 +117,7 @@ const tab = (id: string, name: string, sql: string, position: number): Tab => ({
   saved_id: null,
   kind: "query",
   table: null,
+  canvas_id: null,
   profile_id: PROFILE,
 });
 

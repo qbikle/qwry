@@ -39,7 +39,7 @@ driver/postgres/introspect.rs  pg_catalog → SchemaSnapshot
 driver/postgres/edit.rs    table_oid/attnum → editability map, UPDATE gen
 tunnel.rs                  ssh -L subprocess lifecycle
 secrets.rs                 keyring per-profile
-appdb.rs                   rusqlite: history, tabs, profiles, agent threads/turns/answers (v6)
+appdb.rs                   rusqlite: history, tabs, profiles, agent threads/turns/answers, canvases
 commands.rs                #[tauri::command] handlers (thin); open_session(force_read_only)
 agent.rs                   Ask: gated agent session, pg_query AST gate + function deny-list,
                            describe/peek/run_readonly/probe, Keychain keys (AGENT-SPEC)
@@ -102,6 +102,7 @@ design/      tokens.css, theme.ts (palette engine), springs.ts, icons (lucide)
 agent/       agent core: prompt/tools/providers, mention+context resolution — no UI (AGENT-SPEC)
 ask/         AskPanel + parts (composer, thread, trace drawer, model picker), ask.css (AGENT-UX)
 harness/     AskHarness.tsx + fixtures: named states for design-lint pixel evidence
+canvas/      canvas tab: CanvasTab (dispatches the doc's blocks) + CanvasResult wrapping ResultBlock (reused from ask/) + NoteBlock, stores/canvas.ts the store (AGENT-SPEC §2, AGENT-UX §16)
 ```
 
 ### v0.2 frontend designs

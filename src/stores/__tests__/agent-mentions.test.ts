@@ -353,3 +353,40 @@ describe("the replay a tagged thread sends", () => {
     expect(out.startsWith("Q: ")).toBe(true);
   });
 });
+
+// ---- the canvas block rung (A3 item 4) -------------------------------------
+
+describe("a question asked about a canvas block", () => {
+  beforeEach(seed);
+
+  test("the block reaches the loop as a tag and the exchange remembers it", async () => {
+    const { useAsk } = await import("../ask");
+    const block = {
+      id: "b1",
+      name: "can you check the revenue in last month",
+      sql: "SELECT SUM(total_amount) FROM order_v2",
+      columns: ["revenue", "currency"],
+      rowCount: 4,
+    };
+    useAsk.setState({ blocks: { [block.id]: block } });
+    const text = `@"${block.name}" is the USD share growing?`;
+    await useAgent.getState().ask(text);
+    expect(kindsOf(seen[0])).toEqual(["block"]);
+    expect(seen[0].mentions?.[0].ref).toEqual(block);
+    // the question is persisted as typed and the ask text is the question:
+    // the block's record rides the tag block, never a rewrite of the words
+    expect(seen[0].question).toBe(text);
+    expect(mentionContext(seen[0].mentions ?? [])).toBe(
+      `canvas block "${block.name}":\nSELECT SUM(total_amount) FROM order_v2\n4 rows: revenue, currency`,
+    );
+    const exchanges = useAgent.getState().exchanges[TID] as Exchange[];
+    expect(exchanges[0].askedFrom).toBe("b1");
+    useAsk.setState({ blocks: {} });
+  });
+
+  test("a question naming no block carries no askedFrom", async () => {
+    await useAgent.getState().ask("how many films");
+    const exchanges = useAgent.getState().exchanges[TID] as Exchange[];
+    expect(exchanges[0].askedFrom).toBeUndefined();
+  });
+});

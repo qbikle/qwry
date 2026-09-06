@@ -11,6 +11,11 @@
 // what parseMentions() reads back, quotes doubled the way Postgres doubles
 // them, and mentions.test.ts walks names through both.
 //
+// The ladder has five rungs: table, column, saved query, thread, canvas block
+// (A3). The block is last and is the only one naming something the user built
+// rather than something the connection has, so a saved query and a block of
+// one name still send the saved query.
+//
 // Two words that look alike and are not: `token` is what the user tagged
 // WITHOUT the leading `@` (`order_v2`, `users.email`, `"Monthly revenue"`),
 // which is what the trace's tagged line prints; canonicalToken() returns what
@@ -42,6 +47,24 @@ export interface SavedRef {
   sql: string;
 }
 
+/** A canvas block, as its document holds it (A3 item 4). The one kind that
+ * names something the USER built: a block is not a thing the connection has,
+ * so it never comes off the snapshot and the caller hands the visible ones
+ * over like everything else here. `name` is what the token quotes (a result
+ * block's question line, a note's first line); the rest is what the model is
+ * given about it. */
+export interface BlockRef {
+  id: string;
+  name: string;
+  /** the statement the block ran; absent on a note */
+  sql?: string | null;
+  /** the run's columns, the shape half of what the model is told */
+  columns?: readonly string[];
+  rowCount?: number | null;
+  /** a note's own words: what a note carries instead of a run */
+  text?: string | null;
+}
+
 export interface ThreadRef {
   id: string;
   title: string;
@@ -66,7 +89,8 @@ export type Mention =
   | { span: Span; token: string; kind: "column"; ref: ColumnRef }
   | { span: Span; token: string; kind: "saved"; ref: SavedRef }
   | { span: Span; token: string; kind: "thread"; ref: ThreadRef }
-  | { span: Span; token: string; kind: "tab"; ref: TabRef };
+  | { span: Span; token: string; kind: "tab"; ref: TabRef }
+  | { span: Span; token: string; kind: "block"; ref: BlockRef };
 
 /** One `@…` span the grammar found, before anything is known about what it
  * names. An unresolved one is plain text: no chip, no context. */
@@ -90,6 +114,9 @@ export interface MentionCtx {
   threads: readonly Thread[];
   /** the thread being asked in: never its own context */
   currentThreadId?: string | null;
+  /** the canvas blocks a question may name (A3). Optional: a caller with no
+   * canvas open passes none, and the rung simply has nothing on it */
+  blocks?: readonly BlockRef[];
 }
 
 /** One segment of the question: a run of plain text, or a mention's own
@@ -174,8 +201,11 @@ const columnOf = (t: TableInfo | undefined, name: string): string | null =>
   t?.columns.find((c) => c.name.toLowerCase() === name.toLowerCase())?.name ?? null;
 
 /** Resolve each span in one order and stop at the first hit: table, column,
- * saved query, thread. An unresolved span is dropped, which is what leaves it
- * plain text on screen and out of the context block. */
+ * saved query, thread, canvas block. An unresolved span is dropped, which is
+ * what leaves it plain text on screen and out of the context block. The block
+ * is last because it is the only rung naming something outside the database:
+ * a saved query and a block of the same name send the saved query, exactly as
+ * they did before the canvas existed. */
 export function resolveMentions(raw: readonly RawMention[], ctx: MentionCtx): Mention[] {
   if (raw.length === 0) return [];
   const tables = indexTables(ctx.snapshot);
@@ -189,6 +219,11 @@ export function resolveMentions(raw: readonly RawMention[], ctx: MentionCtx): Me
     if (t.id === ctx.currentThreadId) continue;
     const key = t.title.toLowerCase();
     if (!threads.has(key)) threads.set(key, t);
+  }
+  const blocks = new Map<string, BlockRef>();
+  for (const b of ctx.blocks ?? []) {
+    const key = b.name.toLowerCase();
+    if (!blocks.has(key)) blocks.set(key, b);
   }
 
   const out: Mention[] = [];
@@ -250,7 +285,10 @@ export function resolveMentions(raw: readonly RawMention[], ctx: MentionCtx): Me
         kind: "thread",
         ref: { id: thread.id, title: thread.title },
       });
+      continue;
     }
+    const block = blocks.get(text.toLowerCase());
+    if (block) out.push({ span: one.span, token: one.token, kind: "block", ref: block });
   }
   return out;
 }
@@ -295,6 +333,7 @@ export function canonicalToken(kind: "column", ref: ColumnRef): string;
 export function canonicalToken(kind: "saved", ref: SavedRef): string;
 export function canonicalToken(kind: "thread", ref: ThreadRef): string;
 export function canonicalToken(kind: "tab", ref: TabRef): string;
+export function canonicalToken(kind: "block", ref: BlockRef): string;
 export function canonicalToken(kind: MentionKind, ref: Mention["ref"]): string {
   // one cast per branch: the overloads above are the contract callers see
   switch (kind) {
@@ -318,6 +357,8 @@ export function canonicalToken(kind: MentionKind, ref: Mention["ref"]): string {
     // write it, and the echo reads it back off the exchange (AGENT-UX 15)
     case "tab":
       return `@${quoted((ref as TabRef).name)}`;
+    case "block":
+      return `@${quoted((ref as BlockRef).name)}`;
   }
 }
 
@@ -336,6 +377,8 @@ function refKey(m: Mention): string {
       return `thread:${m.ref.id}`;
     case "tab":
       return `tab:${m.ref.name}`;
+    case "block":
+      return `block:${m.ref.id}`;
   }
 }
 
@@ -384,6 +427,23 @@ export function mentionContext(mentions: readonly Mention[]): string {
       case "tab":
         lines.push(`query tab "${m.ref.name}"`);
         break;
+      case "block": {
+        // the block's own record: what it asked, what it ran, and the SHAPE
+        // of what came back. Never the rows: the block stands on the canvas
+        // beside the answer, and a paste of its table would be the same data
+        // in a second slot (DESIGN rule 14)
+        const parts = [`canvas block "${m.ref.name}"`];
+        const sql = m.ref.sql?.trim();
+        if (sql) parts.push(clip(sql));
+        const columns = m.ref.columns ?? [];
+        const rows = m.ref.rowCount == null ? null : `${m.ref.rowCount} row${m.ref.rowCount === 1 ? "" : "s"}`;
+        const shape = columns.length > 0 ? `${rows ? `${rows}: ` : ""}${columns.join(", ")}` : rows;
+        if (shape) parts.push(shape);
+        const note = m.ref.text?.trim();
+        if (note) parts.push(clip(note));
+        lines.push(parts.length === 1 ? parts[0] : `${parts[0]}:\n${parts.slice(1).join("\n")}`);
+        break;
+      }
     }
   }
   return lines.join("\n");

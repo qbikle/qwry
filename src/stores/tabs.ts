@@ -17,10 +17,15 @@ export interface Tab {
   position: number;
   /** link to a saved query; keeps names/sql in sync */
   saved_id: string | null;
-  /** "query" = SQL editor tab; "table" = data-browser tab (session-only) */
-  kind: "query" | "table";
+  /** "query" = SQL editor tab; "table" = data-browser tab (session-only);
+   * "canvas" = a canvas document (A3), persisted like a query tab */
+  kind: "query" | "table" | "canvas";
   /** the browsed table when kind === "table" */
   table: TableInfo | null;
+  /** the canvas document when kind === "canvas". This IS the kind on disk:
+   * the appdb row carries `canvas_id` and nothing else new, so a restored row
+   * with one is a canvas tab and every other one a query tab */
+  canvas_id: string | null;
   /** owning connection. null = legacy tab from before per-connection
    * workspaces: visible under every connection until first edited under one
    * (adopt-on-touch), so no pre-existing tab ever silently disappears. */
@@ -42,6 +47,7 @@ interface ClosedTab {
   saved_id: string | null;
   kind: Tab["kind"];
   table: TableInfo | null;
+  canvas_id: string | null;
   profile_id: string | null;
   file_path?: string;
   file_saved_sql?: string;
@@ -61,6 +67,10 @@ interface TabsState {
   newTab: (sql?: string, name?: string, savedId?: string | null) => void;
   /** open (or focus) a data-browser tab for a table; returns the tab id */
   openTableTab: (table: TableInfo) => string;
+  /** open (or focus) the tab showing a canvas; returns the tab id. `focus`
+   * false leaves the strip where it is, which is what Add to Canvas needs:
+   * the block lands, the pane keeps the conversation (A3 item 3) */
+  openCanvasTab: (canvasId: string, title: string, focus?: boolean) => string;
   /** open (or focus) a query tab backed by a .sql file on disk; mtimeMs
    * stamps the save-conflict baseline (undefined = stat unavailable) */
   openFileTab: (path: string, contents: string, mtimeMs?: number) => string;
@@ -134,19 +144,20 @@ function doSave(): Promise<void> {
   // NEVER persist before load succeeded: tabs_save is replace-all, so a
   // failed startup load followed by a save would WIPE every saved tab
   if (!loaded) return Promise.resolve();
-  // table tabs are session-only; persist query tabs only, stripped to the
-  // appdb fields. Dedupe by id as insurance: one duplicated tab must never
+  // table tabs are session-only; query and canvas tabs persist, stripped to
+  // the appdb fields. Dedupe by id as insurance: one duplicated tab must never
   // wedge saving forever (tabs.id is a PRIMARY KEY in a replace-all write)
   const seen = new Set<string>();
   const rows = tabs
-    .filter((t) => t.kind === "query" && !seen.has(t.id) && (seen.add(t.id), true))
-    .map(({ id, name, sql, saved_id, profile_id }, i) => ({
+    .filter((t) => t.kind !== "table" && !seen.has(t.id) && (seen.add(t.id), true))
+    .map(({ id, name, sql, saved_id, profile_id, canvas_id }, i) => ({
       id,
       name,
       sql,
       position: i,
       saved_id,
       profile_id,
+      canvas_id,
     }));
   return invoke<void>("tabs_save", { tabs: rows })
     .then(() => {
@@ -200,6 +211,7 @@ const blank = (n: number, pid: string | null): Tab => ({
   saved_id: null,
   kind: "query",
   table: null,
+  canvas_id: null,
   profile_id: pid,
 });
 
@@ -209,6 +221,7 @@ const asClosed = (t: Tab): ClosedTab => ({
   saved_id: t.saved_id,
   kind: t.kind,
   table: t.table,
+  canvas_id: t.canvas_id,
   profile_id: t.profile_id,
   file_path: t.file_path,
   file_saved_sql: t.file_saved_sql,
@@ -274,12 +287,14 @@ export const useTabs = create<TabsState>((set, get) => ({
     // (PRIMARY KEY violation → permanent "not saving")
     if (get().loaded) return;
     try {
-      // appdb only stores query tabs (no kind/table); normalize on the way in
+      // appdb stores query and canvas tabs (no kind/table column); the kind is
+      // read back off canvas_id, which only a canvas tab carries
       const rows = await invoke<Omit<Tab, "kind" | "table">[]>("tabs_list");
       const restored: Tab[] = rows.map((r) => ({
         ...r,
-        kind: "query",
+        kind: r.canvas_id ? "canvas" : "query",
         table: null,
+        canvas_id: r.canvas_id ?? null,
         profile_id: r.profile_id ?? null,
       }));
       // a failed first load may have left the user typing into a scratch tab;
@@ -406,11 +421,39 @@ export const useTabs = create<TabsState>((set, get) => ({
       saved_id: null,
       kind: "table",
       table,
+      canvas_id: null,
       profile_id: activePid(),
     };
     set({ tabs: [...tabs, t], activeId: id });
     rememberActive(activePid(), id);
     persist(); // no-op for the table tab itself; keeps query-tab order in sync
+    return id;
+  },
+
+  openCanvasTab: (canvasId, title, focus = true) => {
+    // one tab per document: a second Add to Canvas must not stack a second
+    // strip entry on the canvas it just wrote to
+    const { tabs } = get();
+    const existing = tabs.find((t) => t.kind === "canvas" && t.canvas_id === canvasId);
+    if (existing) {
+      if (focus) get().select(existing.id);
+      return existing.id;
+    }
+    const id = crypto.randomUUID();
+    const t: Tab = {
+      id,
+      name: title,
+      sql: "",
+      position: tabs.length,
+      saved_id: null,
+      kind: "canvas",
+      table: null,
+      canvas_id: canvasId,
+      profile_id: activePid(),
+    };
+    set({ tabs: [...tabs, t], ...(focus ? { activeId: id } : null) });
+    if (focus) rememberActive(activePid(), id);
+    persist();
     return id;
   },
 
@@ -422,7 +465,7 @@ export const useTabs = create<TabsState>((set, get) => ({
     void bufferSnapshotsClear(id).catch(() => {});
     const closing = tabs.find((t) => t.id === id);
     const remember =
-      closing && (closing.sql.trim() !== "" || closing.kind === "table")
+      closing && (closing.sql.trim() !== "" || closing.kind !== "query")
         ? [asClosed(closing), ...closedStack].slice(0, 20)
         : closedStack;
     // an X-closed pin is gone; a dangling id would resurrect on nothing
@@ -535,7 +578,7 @@ export const useTabs = create<TabsState>((set, get) => ({
       });
       const closingIds = new Set(closing.map((t) => t.id));
       const remember = [
-        ...closing.filter((t) => t.sql.trim() !== "" || t.kind === "table").map(asClosed),
+        ...closing.filter((t) => t.sql.trim() !== "" || t.kind !== "query").map(asClosed),
         ...get().closedStack,
       ].slice(0, 20);
       // other connections' tabs are untouched; pinned survive here too
@@ -622,6 +665,9 @@ export const useTabs = create<TabsState>((set, get) => ({
     if (top.kind === "table" && top.table) {
       // reopen as a real table tab (re-runs the browse; adopts current conn)
       void import("./browser").then(({ useBrowser }) => useBrowser.getState().openTable(top.table!));
+    } else if (top.kind === "canvas" && top.canvas_id) {
+      // the document outlived the tab (closing a canvas tab never deletes it)
+      get().openCanvasTab(top.canvas_id, top.name);
     } else {
       // ⇧⌘T means "bring it back HERE": newTab stamps the current profile;
       // the saved-query link survives so the restored tab still syncs

@@ -267,9 +267,16 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
   // must not re-bind on every keystroke
   const savedAll = useSaved((s) => s.queries);
   const saved = useMemo(() => visibleSaved(savedAll, profileId), [savedAll, profileId]);
+  const blocks = useAsk((s) => s.blocks);
   const mentionCtx = useMemo<MentionCtx>(
-    () => ({ snapshot, saved, threads: threads ?? NO_THREADS, currentThreadId: threadId }),
-    [snapshot, saved, threads, threadId],
+    () => ({
+      snapshot,
+      saved,
+      threads: threads ?? NO_THREADS,
+      currentThreadId: threadId,
+      blocks: Object.values(blocks),
+    }),
+    [snapshot, saved, threads, blocks, threadId],
   );
   const mentionCtxRef = useRef(mentionCtx);
   mentionCtxRef.current = mentionCtx;

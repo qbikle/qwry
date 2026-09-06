@@ -13,7 +13,12 @@ use serde::{Deserialize, Serialize};
 use crate::driver::{DriverError, Profile, Result};
 
 /// bump when appending a migration in `migrate`
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
+/// The version the two newest arms land on. Named, not inline, because each
+/// one's test rolls a db back to just before its OWN migration, and a merge
+/// that renumbers an arm must move exactly one number to keep both true.
+const V_KNOWLEDGE: i64 = 8;
+const V_CANVASES: i64 = 9;
 /// per-row stored SQL cap (bytes, cut at a char boundary): a pasted multi-MB
 /// INSERT must not bloat the appdb forever
 const HISTORY_SQL_CAP: usize = 20_000;
@@ -53,6 +58,11 @@ pub struct TabRow {
     /// first edit under a profile)
     #[serde(default)]
     pub profile_id: Option<String>,
+    /// the canvas this tab shows (A3). Non-NULL IS the tab's kind: a row with
+    /// a canvas id is a canvas tab, every other persisted row a query tab, so
+    /// the kind needs no column of its own.
+    #[serde(default)]
+    pub canvas_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -239,7 +249,8 @@ fn migrate(conn: &mut Connection) -> Result<()> {
             5 => buffer_snapshots_v5(&tx)?,
             6 => agent_threads_v6(&tx)?,
             7 => agent_thread_session_v7(&tx)?,
-            8 => knowledge_v8(&tx)?,
+            V_KNOWLEDGE => knowledge_v8(&tx)?,
+            V_CANVASES => canvases_v9(&tx)?,
             n => return Err(DriverError::Internal(format!("appdb: no migration to v{n}"))),
         }
         tx.pragma_update(None, "user_version", next).map_err(internal)?;
@@ -424,6 +435,30 @@ fn knowledge_v8(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Canvases (A3): one document per row, its ordered block list stored as the
+/// JSON the frontend wrote. appdb never parses `doc_json` — the block shape is
+/// the canvas store's, and a schema that had to follow it would migrate on
+/// every block field. `tabs.canvas_id` is how a canvas tab survives a restart:
+/// the tabs table holds query tabs today, and one nullable column carries the
+/// new kind without a second table or a kind column that every existing row
+/// would have to be backfilled with.
+fn canvases_v9(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS canvases (
+             id         TEXT PRIMARY KEY,
+             profile_id TEXT NOT NULL,
+             title      TEXT NOT NULL,
+             doc_json   TEXT NOT NULL,
+             created_at TEXT NOT NULL DEFAULT (datetime('now')),
+             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+         );
+         CREATE INDEX IF NOT EXISTS canvases_profile
+             ON canvases (profile_id, updated_at DESC);",
+    )
+    .map_err(internal)?;
+    add_column_if_missing(conn, "tabs", "canvas_id", "TEXT")
+}
+
 fn has_column(conn: &Connection, table: &str, col: &str) -> Result<bool> {
     let n: i64 = conn
         .query_row(
@@ -564,7 +599,10 @@ impl AppDb {
     pub fn tabs_list(&self) -> Result<Vec<TabRow>> {
         let conn = self.0.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, name, sql, position, saved_id, profile_id FROM tabs ORDER BY position")
+            .prepare(
+                "SELECT id, name, sql, position, saved_id, profile_id, canvas_id
+                 FROM tabs ORDER BY position",
+            )
             .map_err(internal)?;
         let rows = stmt
             .query_map([], |r| {
@@ -575,6 +613,7 @@ impl AppDb {
                     position: r.get(3)?,
                     saved_id: r.get(4)?,
                     profile_id: r.get(5)?,
+                    canvas_id: r.get(6)?,
                 })
             })
             .map_err(internal)?;
@@ -592,8 +631,17 @@ impl AppDb {
         tx.execute("DELETE FROM tabs", []).map_err(internal)?;
         for t in tabs {
             tx.execute(
-                "INSERT INTO tabs (id, name, sql, position, saved_id, profile_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                rusqlite::params![t.id, t.name, t.sql, t.position, t.saved_id, t.profile_id],
+                "INSERT INTO tabs (id, name, sql, position, saved_id, profile_id, canvas_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    t.id,
+                    t.name,
+                    t.sql,
+                    t.position,
+                    t.saved_id,
+                    t.profile_id,
+                    t.canvas_id
+                ],
             )
             .map_err(internal)?;
         }
@@ -1483,6 +1531,87 @@ impl AppDb {
     }
 }
 
+/// One canvas (A3). `doc_json` is the ordered block list the canvas store
+/// wrote, handed back verbatim: appdb stores the document, the frontend owns
+/// its shape. The timestamps are SQLite's on every write, so an upsert may
+/// send them empty (`serde(default)`) and never backdate a row.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CanvasRow {
+    pub id: String,
+    pub profile_id: String,
+    pub title: String,
+    pub doc_json: String,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
+}
+
+/// Canvases (A3). Local only, like every other agent artifact. A canvas
+/// outlives its tab: closing the tab is not deleting the document, so
+/// `canvas_delete` is the only thing that drops one.
+impl AppDb {
+    /// this connection's canvases, most recently written first; a corrupt row
+    /// costs one canvas, never the list
+    pub fn canvas_list(&self, profile_id: &str) -> Result<Vec<CanvasRow>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, profile_id, title, doc_json, created_at, updated_at
+                 FROM canvases
+                 WHERE profile_id = ?1 ORDER BY updated_at DESC, rowid DESC",
+            )
+            .map_err(internal)?;
+        let rows = stmt
+            .query_map([profile_id], |r| {
+                Ok(CanvasRow {
+                    id: r.get(0)?,
+                    profile_id: r.get(1)?,
+                    title: r.get(2)?,
+                    doc_json: r.get(3)?,
+                    created_at: r.get(4)?,
+                    updated_at: r.get(5)?,
+                })
+            })
+            .map_err(internal)?;
+        Ok(collect_ok(rows, "canvas").0)
+    }
+
+    /// insert or replace one canvas. `created_at` survives an update (the
+    /// document is edited, not re-made) and `updated_at` is stamped here, so
+    /// the list's own order can never be written by a caller.
+    pub fn canvas_upsert(&self, c: &CanvasRow) -> Result<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO canvases (id, profile_id, title, doc_json)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(id) DO UPDATE SET
+                     profile_id = excluded.profile_id,
+                     title      = excluded.title,
+                     doc_json   = excluded.doc_json,
+                     updated_at = datetime('now')",
+                rusqlite::params![c.id, c.profile_id, c.title, c.doc_json],
+            )
+            .map_err(internal)?;
+        Ok(())
+    }
+
+    /// drop the document and unbind any tab row still pointing at it, so a
+    /// restart never restores a tab whose canvas is gone
+    pub fn canvas_delete(&self, id: &str) -> Result<()> {
+        let mut conn = self.0.lock().unwrap();
+        let tx = conn.transaction().map_err(internal)?;
+        tx.execute("DELETE FROM tabs WHERE canvas_id = ?1", [id])
+            .map_err(internal)?;
+        tx.execute("DELETE FROM canvases WHERE id = ?1", [id])
+            .map_err(internal)?;
+        tx.commit().map_err(internal)?;
+        Ok(())
+    }
+}
+
 fn internal(e: rusqlite::Error) -> DriverError {
     DriverError::Internal(format!("appdb: {e}"))
 }
@@ -1709,6 +1838,7 @@ mod tests {
             position: 0,
             saved_id: None,
             profile_id: None,
+            canvas_id: None,
         }])
         .unwrap();
         db.history_add("p", "select 1", 1.0, 1, HistoryStatus::Ok).unwrap();
@@ -2298,7 +2428,7 @@ mod tests {
                  ALTER TABLE saved_queries DROP COLUMN last_check_json;",
             )
             .unwrap();
-            conn.pragma_update(None, "user_version", SCHEMA_VERSION - 1).unwrap();
+            conn.pragma_update(None, "user_version", V_KNOWLEDGE - 1).unwrap();
         }
 
         let db = AppDb::open(&dir).unwrap();
@@ -2397,6 +2527,146 @@ mod tests {
 
         let other = db.agent_history_pairs("p2", 10).unwrap();
         assert_eq!(other.len(), 1, "history belongs to its connection");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- canvases (A3) ----------------------------------------------------
+
+    fn canvas(id: &str, profile: &str, doc: &str) -> CanvasRow {
+        CanvasRow {
+            id: id.into(),
+            profile_id: profile.into(),
+            title: "Canvas".into(),
+            doc_json: doc.into(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn fresh_db_holds_canvases_and_canvas_tabs() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+        db.canvas_upsert(&canvas("c1", "p1", r#"{"blocks":[]}"#)).unwrap();
+        db.canvas_upsert(&canvas("c2", "p2", r#"{"blocks":[]}"#)).unwrap();
+
+        let mine = db.canvas_list("p1").unwrap();
+        assert_eq!(mine.len(), 1, "canvases are scoped to their connection");
+        assert_eq!(mine[0].id, "c1");
+        assert!(!mine[0].created_at.is_empty(), "SQLite stamps the timestamps");
+
+        // a canvas tab persists through the tabs table's one new column
+        db.tabs_save(&[TabRow {
+            id: "t-canvas".into(),
+            name: "Canvas".into(),
+            sql: String::new(),
+            position: 0,
+            saved_id: None,
+            profile_id: Some("p1".into()),
+            canvas_id: Some("c1".into()),
+        }])
+        .unwrap();
+        let tabs = db.tabs_list().unwrap();
+        assert_eq!(tabs[0].canvas_id.as_deref(), Some("c1"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn canvas_upsert_replaces_the_document_and_keeps_created_at() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+        db.canvas_upsert(&canvas("c1", "p1", r#"{"blocks":[1]}"#)).unwrap();
+        let first = db.canvas_list("p1").unwrap().remove(0);
+
+        let mut edited = canvas("c1", "p1", r#"{"blocks":[1,2]}"#);
+        edited.title = "Finance".into();
+        // a caller's timestamps are never written: the row's own are the truth
+        edited.created_at = "1999-01-01".into();
+        edited.updated_at = "1999-01-01".into();
+        db.canvas_upsert(&edited).unwrap();
+
+        let rows = db.canvas_list("p1").unwrap();
+        assert_eq!(rows.len(), 1, "an upsert is not a second canvas");
+        assert_eq!(rows[0].doc_json, r#"{"blocks":[1,2]}"#);
+        assert_eq!(rows[0].title, "Finance");
+        assert_eq!(rows[0].created_at, first.created_at, "the document is edited, not re-made");
+        assert_ne!(rows[0].created_at, "1999-01-01");
+
+        db.canvas_delete("c1").unwrap();
+        assert!(db.canvas_list("p1").unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn deleting_a_canvas_unbinds_its_tab() {
+        // otherwise a restart restores a tab whose document is gone
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+        db.canvas_upsert(&canvas("c1", "p1", "{}")).unwrap();
+        db.tabs_save(&[
+            TabRow {
+                id: "t-q".into(),
+                name: "q".into(),
+                sql: "select 1".into(),
+                position: 0,
+                saved_id: None,
+                profile_id: Some("p1".into()),
+                canvas_id: None,
+            },
+            TabRow {
+                id: "t-c".into(),
+                name: "Canvas".into(),
+                sql: String::new(),
+                position: 1,
+                saved_id: None,
+                profile_id: Some("p1".into()),
+                canvas_id: Some("c1".into()),
+            },
+        ])
+        .unwrap();
+
+        db.canvas_delete("c1").unwrap();
+        let tabs = db.tabs_list().unwrap();
+        assert_eq!(tabs.len(), 1, "the canvas tab goes with its document");
+        assert_eq!(tabs[0].id, "t-q", "the query tab is untouched");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn upgrade_from_the_previous_version_adds_canvases_and_keeps_tabs() {
+        // the db as the last shipped build left it: every earlier migration
+        // applied, the canvas one not. Written by rolling a real appdb back
+        // one version rather than by hand, so the arms stay the source of
+        // truth and no test carries the version number as a literal.
+        let dir = tmp_dir();
+        {
+            let db = AppDb::open(&dir).unwrap();
+            db.tabs_save(&[TabRow {
+                id: "t1".into(),
+                name: "orders".into(),
+                sql: "select 1".into(),
+                position: 0,
+                saved_id: None,
+                profile_id: Some("p1".into()),
+                canvas_id: None,
+            }])
+            .unwrap();
+            let conn = db.0.lock().unwrap();
+            conn.execute_batch("DROP TABLE canvases; ALTER TABLE tabs DROP COLUMN canvas_id;")
+                .unwrap();
+            conn.pragma_update(None, "user_version", V_CANVASES - 1).unwrap();
+        }
+
+        let db = AppDb::open(&dir).unwrap();
+        assert_eq!(user_version(&db), SCHEMA_VERSION);
+        let tabs = db.tabs_list().unwrap();
+        assert_eq!(tabs.len(), 1, "the upgrade keeps every tab");
+        assert_eq!(tabs[0].sql, "select 1");
+        assert_eq!(tabs[0].canvas_id, None, "an existing tab is a query tab");
+
+        db.canvas_upsert(&canvas("c1", "p1", "{}")).unwrap();
+        assert_eq!(db.canvas_list("p1").unwrap().len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

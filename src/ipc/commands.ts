@@ -27,6 +27,8 @@ import type {
   AgentTurn,
   AgentTurnInput,
   AgentTurnPatch,
+  CanvasInput,
+  CanvasRow,
   ClaudeExit,
   GateMode,
   GateVerdict,
@@ -530,3 +532,16 @@ export const agentKnowledgeDelete = (id: string) =>
  * newest first */
 export const agentHistoryPairs = (profileId: string, limit: number) =>
   invoke<AgentHistoryPair[]>("agent_history_pairs", { profileId, limit });
+
+// ---- canvases (A3) --------------------------------------------------------
+
+/** this connection's canvases, most recently written first */
+export const canvasList = (profileId: string) =>
+  invoke<CanvasRow[]>("canvas_list", { profileId });
+
+/** insert or replace one canvas; `updated_at` is stamped by the database */
+export const canvasUpsert = (row: CanvasInput) => invoke<void>("canvas_upsert", { row });
+
+/** drop the document and unbind any tab row pointing at it: a restart must
+ * never restore a tab whose canvas is gone */
+export const canvasDelete = (id: string) => invoke<void>("canvas_delete", { id });

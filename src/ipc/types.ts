@@ -638,3 +638,19 @@ export interface AgentHistoryPair {
   sql: string;
   created_at: string;
 }
+
+/** One canvas document (appdb `canvases`, A3). `doc_json` is the block list
+ * the canvas store wrote; Rust stores it and hands it back verbatim, so the
+ * block shape lives in `src/stores/canvas.ts` alone. The timestamps are
+ * SQLite's: an upsert may leave them out and never backdates a row. */
+export interface CanvasRow {
+  id: string;
+  profile_id: string;
+  title: string;
+  doc_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** what a write sends: the row's own timestamps are the database's */
+export type CanvasInput = Omit<CanvasRow, "created_at" | "updated_at">;

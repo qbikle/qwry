@@ -2,15 +2,21 @@
 // taste-gate skill). Renders the fixture harness route of the vite dev server
 // in headless Chrome and writes one PNG per state × width × theme.
 //
-//   bun scripts/ask-frames.ts [--out <dir>] [--states a,b] [--widths 320,560]
-//                             [--themes dark,light] [--scroll top] [--port 1420]
-//                             [--jobs 6]
+//   bun scripts/ask-frames.ts [--harness ask|palette|structure|canvas]
+//                             [--out <dir>] [--states a,b]
+//                             [--widths 320,560] [--themes dark,light]
+//                             [--scroll top] [--port 1420] [--jobs 6]
 //
-//   --harness  ask (default), palette or structure: which root to drive. The
-//              palette is a modal over the window, so it has one width (620)
-//              and its own taller frame (states a2-palette,a2-define,
-//              a2-checks); the Structure view is a tab's surface at 560,780,
-//              1040 (states a2-hint,a2-hint-edit,a2-hint-rest,a2-hint-aka)
+//   --harness  which root to drive. ask (default): the Ask pane, 320 · 392 ·
+//              560 in a 640-tall card. palette: a modal over the window, so one
+//              width (620) and its own taller frame (states a2-palette,
+//              a2-define, a2-checks). structure: the Structure view, a tab's
+//              surface at 560 · 780 · 1040 (states a2-hint, a2-hint-edit,
+//              a2-hint-rest, a2-hint-aka). canvas: the A3 canvas, a face of the
+//              MAIN card, so its own states (a3-canvas, a3-chart, a3-chart-line,
+//              a3-diff, a3-empty, a3-menu, a3-note-edit), its own widths
+//              (640 · 960 · 1280) and a 760-tall card. `--scroll` means nothing
+//              outside the Ask pane: the canvas is a document, read from its top
 //   --out      where the PNGs land; default
 //              ~/projects/qwry-agent-lab/docs/research/w2d-frames
 //   --states   subset of answer,empty,busy,picker,failure,disconnected,small,
@@ -20,10 +26,14 @@
 //              insight,insight-prose,insight-steps,insight-code,insight-stream,
 //              mention-popover,mention-draft,mention-first,mention-echo,
 //              mention-trace,result-table,result-sql,result-scalar,failure-cap,
-//              answer-actions,followups-end,a2-explain,a2-knowledge-trace,
-//              a2-ask-why
-//              (default: all forty-seven)
-//   --widths   subset of 320,392,560 (default: all three)
+//              answer-actions,followups-end,a4-preview,a4-preview-warn,
+//              a4-preview-sql,a4-ran,a4-preview-busy,a4-writes-off,a2-explain,
+//              a2-knowledge-trace,a2-ask-why,a3-add,a3-ask-block
+//              (default: all fifty-five; each other harness has its own list,
+//              above)
+//   --widths   subset of 320,392,560 (default: all three; 620 under `--harness
+//              palette`, 560,780,1040 under `structure`, 640,960,1280 under
+//              `canvas`)
 //   --themes   subset of dark,light (default: both)
 //   --scroll   bottom (default): the pane as it mounts, pinned to the newest content,
 //              the footer and composer in view; top: the scroller at the question
@@ -39,7 +49,8 @@
 //   --jobs     Chrome processes in flight at once (default 6)
 //
 // Output: <out>/<state>-<width>-<theme>[-top].png, 2× device scale, a viewport
-// of (width + 48) × 688 so the 640px card sits in one gutter of app background.
+// of (width + 48) × (card + 48) so the card sits in one gutter of app
+// background (688 for the pane's 640, 808 for the canvas's 760).
 // Prints the list, exits 1 if any frame is missing or empty.
 //
 // Each frame is one headless Chrome driven over CDP (--remote-debugging-port=0,
@@ -178,6 +189,19 @@
 // mention-first = `@pipeline_products` as the draft's first token, the frame
 // that catches the pill's left edge against the box's.
 //
+// A3 (the sketch's "A3 · canvas" rows; fixtures.canvas.ts on the canvas root,
+// fixtures.canvas-ask.ts on the Ask one): a3-canvas = the sketch's three
+// blocks, a result hot over its question line with Copy · Flip · Insert · Ask ·
+// More, a note, and a result already on its chart face; a3-chart = one result
+// on the chart face with two series on one scale, the legend inside the face
+// and every value at its bar's end; a3-chart-line = a date label, so the same
+// face draws a line; a3-diff = a comparison standing at rest, staging vs prod
+// named in the status line, one row on prod alone in the warn tier; a3-empty =
+// nothing at all, 0 strings and 0 controls (DESIGN rule 11's deletion test).
+// On the ASK root: a3-add = the answer's cluster grown to three with `Add to
+// Canvas`; a3-ask-block = a question asked FROM a block, the bubble wearing the
+// block's own `.mention` pill.
+//
 // The first frame runs alone so vite compiles the module graph once; the rest
 // run in parallel. Whole run: ~60 s warm for the full matrix.
 
@@ -243,6 +267,8 @@ const ALL_STATES = [
   "a2-explain",
   "a2-knowledge-trace",
   "a2-ask-why",
+  "a3-add",
+  "a3-ask-block",
 ] as const;
 /** the second root (A2): the palette is a modal over the window, not a pane in
  * a card, so it has one width, its own (`src/harness/PaletteHarness.tsx`) */
@@ -257,21 +283,40 @@ const STRUCTURE_WIDTHS = [560, 780, 1040] as const;
  * their windows are taller */
 const PALETTE_H = 900;
 const STRUCTURE_H = 900;
+/** the canvas root's own seven states and three widths (fixtures.canvas.ts):
+ * it is a face of the MAIN card, so it is neither the pane's list nor the
+ * pane's widths */
+const CANVAS_STATES = [
+  "a3-canvas",
+  "a3-chart",
+  "a3-chart-line",
+  "a3-diff",
+  "a3-empty",
+  "a3-menu",
+  "a3-note-edit",
+] as const;
+const CANVAS_WIDTHS = [640, 960, 1280] as const;
 const ALL_THEMES = ["dark", "light"] as const;
+const HARNESSES = ["ask", "palette", "structure", "canvas"] as const;
 const SCROLLS = ["bottom", "top"] as const;
 type Scroll = (typeof SCROLLS)[number];
+type Harness = (typeof HARNESSES)[number];
 type State =
   | (typeof ALL_STATES)[number]
   | (typeof PALETTE_STATES)[number]
-  | (typeof STRUCTURE_STATES)[number];
+  | (typeof STRUCTURE_STATES)[number]
+  | (typeof CANVAS_STATES)[number];
 type Width =
   | (typeof ALL_WIDTHS)[number]
   | (typeof PALETTE_WIDTHS)[number]
-  | (typeof STRUCTURE_WIDTHS)[number];
+  | (typeof STRUCTURE_WIDTHS)[number]
+  | (typeof CANVAS_WIDTHS)[number];
 type Theme = (typeof ALL_THEMES)[number];
 
-/** the harness card is 640 tall inside one --sp-6 gutter on every side */
+/** the pane's card is 640 tall inside one --sp-6 gutter on every side; the
+ * canvas needs more, since three blocks with a chart among them do not fit */
 const CARD_H = 640;
+const CANVAS_CARD_H = 760;
 const MARGIN = 24;
 
 // ---- args -------------------------------------------------------------------
@@ -297,16 +342,26 @@ function subset<T extends string | number>(raw: string | undefined, all: readonl
 }
 
 const OUT = resolve(flag("out") ?? DEFAULT_OUT);
-/** which root to drive: the Ask pane, or the palette's own (A2) */
-const HARNESS = flag("harness") ?? "ask";
-if (HARNESS !== "ask" && HARNESS !== "palette" && HARNESS !== "structure") {
-  console.error(`ask-frames: unknown harness "${HARNESS}" (choose from ask, palette, structure)`);
-  process.exit(2);
-}
+/** which root to drive: the Ask pane, the palette's own (A2), the Structure
+ * view's (A2) or the canvas's (A3) */
+const HARNESS = subset<Harness>(flag("harness"), HARNESSES, "harness")[0] ?? "ask";
 const PALETTE = HARNESS === "palette";
 const STRUCTURE = HARNESS === "structure";
-const ROOT_STATES = PALETTE ? PALETTE_STATES : STRUCTURE ? STRUCTURE_STATES : ALL_STATES;
-const ROOT_WIDTHS = PALETTE ? PALETTE_WIDTHS : STRUCTURE ? STRUCTURE_WIDTHS : ALL_WIDTHS;
+const CANVAS = HARNESS === "canvas";
+const ROOT_STATES = PALETTE
+  ? PALETTE_STATES
+  : STRUCTURE
+    ? STRUCTURE_STATES
+    : CANVAS
+      ? CANVAS_STATES
+      : ALL_STATES;
+const ROOT_WIDTHS = PALETTE
+  ? PALETTE_WIDTHS
+  : STRUCTURE
+    ? STRUCTURE_WIDTHS
+    : CANVAS
+      ? CANVAS_WIDTHS
+      : ALL_WIDTHS;
 const STATES = subset<State>(flag("states"), ROOT_STATES, "state");
 const WIDTHS = subset<Width>(flag("widths"), ROOT_WIDTHS, "width");
 const THEMES = subset<Theme>(flag("themes"), ALL_THEMES, "theme");
@@ -320,7 +375,7 @@ const FRAME_CAP_MS = 45_000;
 /** real time between the harness's ready mark and the shot: fonts, the
  * portaled popover's layer and the grid's ResizeObserver pass land inside it */
 const SETTLE_MS = 700;
-/** AskHarness stamps this in its post-mount effect */
+/** either root stamps this in its post-mount effect */
 const READY = 'document.documentElement.dataset.harnessReady === "1"';
 
 // ---- the dev server -----------------------------------------------------------
@@ -402,7 +457,7 @@ for (const state of STATES)
         state,
         w,
         theme,
-        file: join(OUT, `${state}-${w}-${theme}${SCROLL === "top" ? "-top" : ""}.png`),
+        file: join(OUT, `${state}-${w}-${theme}${!CANVAS && SCROLL === "top" ? "-top" : ""}.png`),
       });
 
 interface Cdp {
@@ -461,14 +516,15 @@ async function connect(profile: string, deadline: number): Promise<Cdp> {
 }
 
 async function shoot(base: string, f: Frame): Promise<boolean> {
+  // the palette is one width, its own; the canvas is a document read from its
+  // top, so `scroll` is the Ask pane's alone
   const url = PALETTE
     ? `${base}/?harness=palette&state=${f.state}&theme=${f.theme}`
-    : STRUCTURE
-      ? `${base}/?harness=structure&state=${f.state}&w=${f.w}&theme=${f.theme}`
-      : `${base}/?harness=ask&state=${f.state}&w=${f.w}&theme=${f.theme}` +
-        (SCROLL === "top" || SCROLL_EXPLICIT ? `&scroll=${SCROLL}` : "");
+    : `${base}/?harness=${HARNESS}&state=${f.state}&w=${f.w}&theme=${f.theme}` +
+      (HARNESS === "ask" && (SCROLL === "top" || SCROLL_EXPLICIT) ? `&scroll=${SCROLL}` : "");
   const width = f.w + 2 * MARGIN;
-  const height = (PALETTE ? PALETTE_H : STRUCTURE ? STRUCTURE_H : CARD_H) + 2 * MARGIN;
+  const height =
+    (PALETTE ? PALETTE_H : STRUCTURE ? STRUCTURE_H : CANVAS ? CANVAS_CARD_H : CARD_H) + 2 * MARGIN;
   const profile = mkdtempSync(join(tmpdir(), "ask-frames-"));
   const proc = Bun.spawn(
     [
