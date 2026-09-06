@@ -19,6 +19,7 @@
 // a thread it just wrote and read back exactly what appdb would hold.
 
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { baseAgentSettings, minimalSnapshot } from "./fixtures";
 
 // agent.ts pulls in settings.ts, which paints the theme onto the document at
 // import, and sidePane.ts, which reads localStorage; bun has neither. An
@@ -282,27 +283,8 @@ function seed(exchanges: Exchange[] = [exchange(0), exchange(1), exchange(2)]) {
   followUpCalls = [];
   runner.runAsk = answeredRun;
   runner.suggestFollowUps = scriptedFollowUps;
-  useSettings.setState({
-    agentProvider: "claude-code",
-    agentModel: "claude-sonnet-5",
-    agentByConn: {},
-    agentBaseUrls: {},
-  });
-  useSchema.setState({
-    snapshots: {
-      [PID]: {
-        tables: [],
-        foreign_keys: [],
-        functions: [],
-        schemas: ["public"],
-        indexes: [],
-        enums: [],
-        sequences: [],
-        extensions: [],
-        server_version_num: 160004,
-      },
-    },
-  });
+  useSettings.setState(baseAgentSettings());
+  useSchema.setState({ snapshots: { [PID]: minimalSnapshot() } });
   useAgent.setState({
     activeProfileId: PID,
     threads: { [PID]: [{ id: TID, profileId: PID, title: "Jump back", createdAt: "2026-09-06" }] },

@@ -10,6 +10,7 @@
 // would be with a dead backend.
 
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { baseAgentSettings, minimalSnapshot } from "./fixtures";
 
 // agent.ts pulls in settings.ts, which paints the theme onto the document at
 // import, and sidePane.ts, which reads localStorage; bun has neither. An
@@ -133,23 +134,9 @@ function answered(): Exchange {
 
 function seed(exchanges: Exchange[] = [answered()]) {
   runner.runAsk = cancelledRun;
-  useSettings.setState({ agentProvider: "claude-code", agentModel: "claude-sonnet-5", agentByConn: {}, agentBaseUrls: {} });
+  useSettings.setState(baseAgentSettings());
   // an empty but well-formed snapshot: the real tools factory indexes it
-  useSchema.setState({
-    snapshots: {
-      [PID]: {
-        tables: [],
-        foreign_keys: [],
-        functions: [],
-        schemas: ["public"],
-        indexes: [],
-        enums: [],
-        sequences: [],
-        extensions: [],
-        server_version_num: 160004,
-      },
-    },
-  });
+  useSchema.setState({ snapshots: { [PID]: minimalSnapshot() } });
   useAgent.setState({
     activeProfileId: PID,
     activeThread: { [PID]: TID },

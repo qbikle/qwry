@@ -9,6 +9,7 @@
 
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import type { AgentAnswer, AgentTurn } from "../../ipc/types";
+import { baseAgentSettings, minimalSnapshot } from "./fixtures";
 
 // agent.ts pulls in settings.ts, which paints the theme onto the document at
 // import, and saved.ts, which persists through localStorage; bun has neither
@@ -176,17 +177,7 @@ const table = (name: string, cols: string[]) => ({
   pk: [],
 });
 
-const SNAPSHOT = {
-  tables: [table("film", ["film_id", "title"]), table("customer", ["customer_id", "email"])],
-  foreign_keys: [],
-  functions: [],
-  schemas: ["public"],
-  indexes: [],
-  enums: [],
-  sequences: [],
-  extensions: [],
-  server_version_num: 160004,
-};
+const SNAPSHOT = minimalSnapshot([table("film", ["film_id", "title"]), table("customer", ["customer_id", "email"])]);
 
 function seed() {
   shim();
@@ -194,12 +185,7 @@ function seed() {
   runner.runAsk = answering;
   seen.length = 0;
   invoked.length = 0;
-  useSettings.setState({
-    agentProvider: "claude-code",
-    agentModel: "claude-sonnet-5",
-    agentByConn: {},
-    agentBaseUrls: {},
-  });
+  useSettings.setState(baseAgentSettings());
   useSchema.setState({ snapshots: { [PID]: SNAPSHOT } });
   useSaved.setState({
     queries: [{ id: "s1", name: "Monthly revenue", sql: "SELECT 1 AS revenue;", profile_id: PID }],
