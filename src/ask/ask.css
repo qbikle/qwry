@@ -1912,3 +1912,38 @@
     animation: none;
   }
 }
+
+/* ---- qbot's slot (B4) --------------------------------------------------- */
+/* The empty state is qbot and the three starters, nothing else (rule 11;
+   AGENT-UX section 1 amended). qbot stands in the free space above the row,
+   in the PANEL's flow: the slot is a flex sibling of .ask-starters and not a
+   child of it, because it outlives the empty state. The row unmounts with the
+   first exchange (a picked chip carries the echo's layoutId, and two nodes
+   cannot share one), while the slot leaves on its own inside AskPanel's
+   AnimatePresence, parked where it stood while the thread takes the flow.
+   The box is the sketch's: the slot pays the sp-3 above the row and
+   .ask-starters pays the rest, so a slot inside .ask-starters and this one
+   centre qbot on the same line. The row's own margin-top:auto becomes a
+   no-op, the slot having taken the free space. Both container axes are
+   contained: qbot's height reads 100cqw here, and nothing inside the slot
+   decides the slot's size (qbot.css) */
+.qbot-slot {
+  flex: 1 1 0;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--sp-3) var(--sp-3) 0;
+  pointer-events: none; /* not a control, and rule 8's inverse gives it no affordance */
+  container-type: size;
+}
+.qbot-slot ~ .ask-starters {
+  flex: 0 1 auto;
+  padding-top: 0;
+}
+/* a window too short for him: qbot goes rather than showing half of himself,
+   and the starters never move for him (the slot keeps its zero height) */
+@container (max-height: 119px) {
+  svg.qbot {
+    visibility: hidden;
+  }
+}

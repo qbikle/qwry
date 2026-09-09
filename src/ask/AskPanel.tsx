@@ -97,7 +97,7 @@ import { useShallow } from "zustand/react/shallow";
 import { mentionsIn, type Mention, type MentionCtx } from "../agent/mentions";
 import type { Thread } from "../agent/types";
 import { chordGlyphs } from "../design/Kbd";
-import { prefersReducedMotion, spring, swapIn } from "../design/springs";
+import { popIn, prefersReducedMotion, spring, swapIn } from "../design/springs";
 import type { Profile } from "../ipc/types";
 import { modelChoice, pendingTarget, retryLabel, useAgent, type Exchange } from "../stores/agent";
 import { useAsk, type MentionQuery } from "../stores/ask";
@@ -111,6 +111,7 @@ import { MentionText } from "./Mention";
 import { MentionPopover, type MentionPopoverHandle } from "./MentionPopover";
 import { mentionQueryAt, mentionTokenEnd } from "./mentionRows";
 import { ModelPicker } from "./ModelPicker";
+import { Qbot } from "./Qbot";
 import { RetryPill } from "./RetryPill";
 import { SetupCard } from "./SetupCard";
 import { ThreadsSheet } from "./ThreadsSheet";
@@ -167,8 +168,10 @@ interface EditTravel {
  * without its arming frame would otherwise leave the words unpainted */
 const EDIT_TRAVEL_NET_MS = 600;
 
-/** the empty state (section 1): three starters docked above the composer and
- * nothing else. Its own component so useStarters mounts with the empty state
+/** the starters row of the empty state (section 1): three questions docked
+ * above the composer, and above them qbot, who is the only other thing there
+ * (B4 amends section 1; his slot is the panel's own child, not this box's, so
+ * that he can outlive the row). Its own component so useStarters mounts with it
  * (each show advances the connection's cursor by three) and unmounts with it.
  * The row re-keys when the three change (a generated pool landing mid-view, a
  * deleted thread freeing a title) and the two triples CROSSFADE: popLayout
@@ -646,6 +649,11 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
   // words and their pills exist once
   const ghosted = (lift !== null && !landed) || travel !== null;
 
+  // the empty state (section 1, amended by B4: qbot over the three starters).
+  // The cut out of edit mode keeps the thread's scroller, so the starters
+  // never flash between the cut and the landing, and neither does qbot
+  const noThread = exchanges.length === 0 && cutFrom === null;
+
   return (
     <div
       ref={rootRef}
@@ -684,13 +692,38 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
         </button>
       </header>
 
+      {/* qbot stands above the starters and leaves on his own (B4): the row
+          unmounts with the first exchange, since a picked chip carries the
+          echo's layoutId and two nodes cannot share one, so the slot is the
+          PANEL's child and this presence outlives the empty state, parking
+          the slot where it stood while the thread takes the flow (ask.css).
+          He enters with the empty state on popIn beside the starters' swapIn
+          and leaves on SWAP, the starters' own leave, which settles before
+          the bubble's layout lift lands. The loops are CSS on the svg and the
+          travel is motion's here: a CSS animation outranks the inline style
+          motion writes, so one element carrying both would lose its exit */}
+      <AnimatePresence mode="popLayout">
+        {choice !== null && noThread && (
+          <motion.div
+            key="qbot"
+            className="qbot-slot"
+            initial={popIn.initial}
+            animate={popIn.animate}
+            exit={{ opacity: 0, scale: 0.96, transition: swapIn.transition }}
+            transition={popIn.transition}
+          >
+            <Qbot />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {choice === null ? (
         <SetupCard
           profileId={profileId}
           onConfigured={() => useAsk.getState().requestFocus()}
           onManage={openSettings}
         />
-      ) : exchanges.length === 0 && cutFrom === null ? (
+      ) : noThread ? (
         <Starters profileId={profileId} snapshot={snapshot} asked={asked} connected={connected} />
       ) : (
         // a pending set reserves the pill's footprint at the scroller's end

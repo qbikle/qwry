@@ -204,6 +204,11 @@
 // Canvas`; a3-ask-block = a question asked FROM a block, the bubble wearing the
 // block's own `.mention` pill.
 //
+// B4 (the sketch's "B4 · qbot" rows): b4-empty = the empty state with the
+// composer focused, qbot's two eye marks 2px lower than at rest; `empty` is
+// the same state at rest and now shows qbot, so the two are the gaze's pair,
+// not two copies of one fact.
+//
 // The first frame runs alone so vite compiles the module graph once; the rest
 // run in parallel. Whole run: ~60 s warm for the full matrix.
 
@@ -276,6 +281,7 @@ const ALL_STATES = [
   "b1-ran-insert",
   "b1-committed",
   "b1-rolled-back",
+  "b4-empty",
 ] as const;
 /** the second root (A2): the palette is a modal over the window, not a pane in
  * a card, so it has one width, its own (`src/harness/PaletteHarness.tsx`) */

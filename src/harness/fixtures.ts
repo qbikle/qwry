@@ -100,6 +100,10 @@
 // recorded it, and every state that had a row before W7 keeps it under its
 // last answer alone.
 
+// B4: `b4-empty` (fixtures.b4.ts) is the empty state again, with the composer
+// focused so qbot's gaze has a frame; `empty` stays the regression pair and
+// now shows qbot too, since he ships in the product's empty state.
+
 import type { AskAnswer } from "../agent/loop";
 import type { AgentRun, Assumption, Thread, TraceStep } from "../agent/types";
 import type { AgentThread, Profile } from "../ipc/types";
@@ -108,6 +112,7 @@ import type { Exchange, ToolChip } from "../stores/agent";
 import { ACTIONS_CHOICE } from "./fixtures.actions";
 import { anatomyExchangeFor } from "./fixtures.anatomy";
 import { ANSWER_CHOICE, type AnswerState } from "./fixtures.answer";
+import type { B4State } from "./fixtures.b4";
 import { interactSeed } from "./fixtures.interact";
 import type { KnowledgeState } from "./fixtures.knowledge";
 import type { MentionState } from "./fixtures.mentions";
@@ -149,6 +154,7 @@ export type HarnessState =
   | "edit-latest"
   | "edit-stack"
   | AnswerState
+  | B4State
   | KnowledgeState
   | MentionState
   | MentionsEchoState
@@ -218,6 +224,7 @@ export const HARNESS_STATES: readonly HarnessState[] = [
   "b1-ran-insert",
   "b1-committed",
   "b1-rolled-back",
+  "b4-empty",
 ];
 export const HARNESS_WIDTHS = [320, 392, 560] as const;
 export type HarnessTheme = "dark" | "light";
@@ -679,6 +686,7 @@ export function exchangeFor(state: HarnessState): Exchange | null {
     case "b1-ran-insert":
     case "b1-committed":
     case "b1-rolled-back":
+    case "b4-empty":
       return null;
     case "pending":
     case "retry":

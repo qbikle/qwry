@@ -17,7 +17,8 @@
 //                       |answer-actions|followups-end
 //                       |a4-preview|a4-preview-warn|a4-preview-sql|a4-ran
 //                       |a4-preview-busy|a4-writes-off
-//                       |a2-explain|a2-knowledge-trace|a2-ask-why>
+//                       |a2-explain|a2-knowledge-trace|a2-ask-why
+//                       |b4-empty>
 //             &w=<320|392|560>&theme=<dark|light>[&scroll=top|bottom]
 //
 // `scroll=top` parks the thread scroller at the question echo instead of the
@@ -106,6 +107,10 @@
 // Never calls IPC: tauriShim.ts (imported first) answers the commands the
 // pane fires on mount and on a picker open, and refuses the rest by name.
 
+// B4: `b4-empty` is the empty state with the composer focused, so qbot's gaze
+// stands in a still (fixtures.b4.ts asks the store for the focus, the mention
+// states' precedent); `empty` is the same state at rest and shows qbot too.
+
 import "./tauriShim";
 import { useEffect } from "react";
 import ReactDOM from "react-dom/client";
@@ -150,6 +155,7 @@ import {
   canvasAskSeed,
   type CanvasAskState,
 } from "./fixtures.canvas-ask";
+import { b4AfterMount } from "./fixtures.b4";
 import { ECHO_STATES, echoExchangesFor, type EchoState } from "./fixtures.echo";
 import { EDIT_STATES, editAfterMount, editSeed, type EditState } from "./fixtures.edit";
 import { MENTION_STATES, mentionsAfterMount, mentionsSeed, type MentionState } from "./fixtures.mentions";
@@ -402,6 +408,7 @@ function Harness({ state, w, scroll }: Params) {
       mentionsAfterMount(state);
       mentionsEchoAfterMount(state);
       knowledgeAfterMount(state);
+      b4AfterMount(state);
       if (scroll === "top") {
         const el = document.querySelector<HTMLElement>(".ask-scroll");
         if (el) el.scrollTop = 0;
