@@ -7,6 +7,7 @@
 import { describe, expect, test } from "bun:test";
 import { runAsk, turnCapMessage, type AskEvent } from "../loop";
 import { mentionsIn } from "../mentions";
+import { writesMessage } from "../prompt";
 import type {
   AgentEvent,
   ChatRequest,
@@ -1006,7 +1007,23 @@ describe("a change the model proposed", () => {
     const on = await askWith(UPDATE, gate(true).mode);
     expect(on.message).toContain("\nWRITES: the user has allowed changes to this database.");
     expect(on.message.indexOf("CANDIDATE TABLES")).toBeLessThan(on.message.indexOf("WRITES:"));
-    expect(on.message.trimEnd()).toEndWith("Anything the question only asks about is read-only work as before.");
+    expect(on.message.trimEnd()).toEndWith("the question only asks about is read-only work as before.");
+  });
+
+  // B1: the block is pinned byte for byte, the way the edits-off message is
+  // (below). It is the only place the model is told what the app does with the
+  // statement, and the app's whole ceremony rests on it: a fence the user
+  // presses Run on, never one they are told to copy somewhere else. A reword
+  // that drops a clause changes what the model writes above the fence, so it
+  // has to change this line too and be seen doing it
+  test("and it says what the app does with the statement, byte for byte", () => {
+    expect(writesMessage()).toBe(
+      "\nWRITES: the user has allowed changes to this database. If the question asks to change data, finish with exactly ONE INSERT, UPDATE or DELETE\n" +
+        "statement in the final ```sql block, with a WHERE clause that names the rows it touches. Do NOT call run_sql with it: run_sql runs reads only.\n" +
+        "qwry renders that statement as a preview of the rows it affects, under a Run button the user presses, so never tell anyone to run, copy or paste\n" +
+        "it anywhere, never announce the statement, and never open with filler: write one sentence of what will change and why, then the fence. Anything\n" +
+        "the question only asks about is read-only work as before.",
+    );
   });
 
   test("the risk block keeps its own place: the writes block follows it", async () => {

@@ -49,16 +49,25 @@
 // early: no headline, no band, and no Flip, which arrives with the second
 // face (AGENT-UX 13.2, 13.9).
 //
-// The band under the faces is the block's own bottom: one `.btnish.danger` at
-// the right, the confirm's place. The button acts on the statement, so it
-// stands on the block (rule 15's first question) and cannot be a hover (rule
-// 8 lets a control hide only when the surface works without finding it, and a
-// danger action nobody can see is a hidden affordance). No Cancel: the block
-// already IS the not-run state. Running is the TAB's act, so the band only
-// calls back (`onRun`, which AnswerBlock hands to `useAgent.runWrite`: the
-// store cannot import this tree without pulling the lazy Ask bundle into its
-// own chunk), and the block's height springs shut over the band the way the
-// flip springs between the faces.
+// The band under the faces is the block's own bottom, the confirm's place.
+// Its buttons act on the statement, so they stand on the block (rule 15's
+// first question) and cannot be a hover (rule 8 lets a control hide only when
+// the surface works without finding it, and a destructive action nobody can
+// see is a hidden affordance). No Cancel: the block already IS the not-run
+// state. The band is one fixture across the whole life of a change and wears
+// two faces: the Run before anything happens, and after it the TAB's own
+// `Rollback` · `Commit`, because the run opened a transaction and ending it
+// is the only thing left to do (B1). It leaves, the block's height springing
+// shut over it, when that transaction closes from either side. Every act in
+// it is the TAB's, so the band only calls back (`onRun`, `onCommit`,
+// `onRollback`, which AnswerBlock hands to the store: the store cannot import
+// this tree without pulling the lazy Ask bundle into its own chunk).
+//
+// The filled button's species follows the VERB, not the fact that a change is
+// happening: red states loss (rule 3), so UPDATE and DELETE wear danger and
+// an INSERT wears the app's accent, the editor's own `Run ⌘↩`. Commit is the
+// irreversible moment of whichever verb ran, so it wears that verb's species
+// too; Rollback is the ghost, the button that takes nothing away.
 //
 // A3 grows the block by PROPS, never by a fork: the canvas hands it the
 // faces it may show (a third, the chart, and the diff wearing the table's
@@ -82,6 +91,7 @@ import { EditorView } from "@codemirror/view";
 import { PostgreSQL, sql as sqlLang } from "@codemirror/lang-sql";
 import type { AgentRun } from "../agent/types";
 import type { WritePreview } from "../ipc/types";
+import type { TxOutcome } from "../stores/agent";
 import { spring, swapIn } from "../design/springs";
 import { formatSqlText } from "../editor/format";
 import { qwryHighlight, qwryTheme } from "../editor/theme";
@@ -158,11 +168,17 @@ export interface ResultBlockProps {
   tabTitle: string;
   /** A4: the dry run behind the preview face; absent on every read answer */
   preview?: WritePreview | null;
-  /** A4: the band's danger action, which runs the statement in a query tab
-   * (useAgent.runWrite). Absent = no band: the exchange has already run */
+  /** A4: the band's action before anything has run, which runs the statement
+   * in a query tab (useAgent.runWrite). Absent with no `onCommit` = no band */
   onRun?: () => void;
-  /** A4: the run is in flight, or the thread is. The button is disabled, never
-   * hidden: state never resizes chrome (DESIGN rule 2) */
+  /** B1: the tab's own two, once the statement has run and that tab's
+   * transaction is still open (useAgent.commitWrite / rollbackWrite). Present
+   * together or not at all: they are one band, and they leave with the
+   * transaction, whichever side closes it */
+  onCommit?: () => void;
+  onRollback?: () => void;
+  /** A4: the run is in flight, or the thread is. The buttons are disabled,
+   * never hidden: state never resizes chrome (DESIGN rule 2) */
   runBusy?: boolean;
   /** the faces this block may show, in cycle order; Ask's two by default */
   faces?: readonly ResultFace[];
@@ -306,6 +322,26 @@ export function ranText(verb: string, rows: number): string {
   return `${VERB_PAST[verb] ?? verb} ${rowsText(rows)}`;
 }
 
+/** B1: which face the band wears, and whether it stands at all. One place, so
+ * the block and its tests cannot disagree about it: the TAB's two while the
+ * transaction the run opened is still open (the surface hands them over only
+ * then), the Run while a dry run stands and nothing has happened yet, and no
+ * band once the change is settled or a reload has lost the transaction. */
+export function bandFace(
+  p: Pick<ResultBlockProps, "preview" | "onRun" | "onCommit" | "onRollback">,
+): "run" | "tx" | null {
+  if (p.onCommit && p.onRollback) return "tx";
+  return p.preview && p.onRun ? "run" : null;
+}
+
+/** B1: the filled button's species, by the VERB of the change. Red states
+ * loss (DESIGN rule 3), so UPDATE and DELETE wear danger and an INSERT wears
+ * the app's accent, the editor's own `Run ⌘↩`; Commit is the irreversible
+ * moment of whichever verb ran and wears what that verb wears. A change
+ * nobody can name wears danger, which is the safe read of it. */
+export const bandSpecies = (verb: string | null | undefined): "primary" | "danger" =>
+  verb === "INSERT" ? "primary" : "danger";
+
 /** A4: the block's own status line, standing ABOVE it, because a proposal
  * announces before it shows and a preview has no `rows · ms` line under it
  * (nothing ran). `UPDATE order_v2 · 12 rows` in the thinking chip's two tones,
@@ -338,31 +374,43 @@ export function WriteHeadline({ preview }: { preview: WritePreview }) {
   );
 }
 
+/** B1: what the tab's transaction is doing to a run that has happened.
+ * `open` is the live transaction, the two ended states are what the app
+ * itself sent, and null is everything it cannot see: a reload, a typed
+ * COMMIT, a session that died. */
+export type RanTx = "open" | TxOutcome | null;
+
 /** A4: the same line after Run, reading the TAB's outcome and never the
- * preview's number (LESSONS 13). `uncommitted` is lit as the one exception
- * speaking (DESIGN rule 11) and is bound to the tab's LIVE transaction: it
- * goes the moment the tab commits, rolls back or closes, or the line would be
- * false the day the user commits (LESSONS 9). */
-export function RanHeadline({
-  verb,
-  rows,
-  uncommitted,
-}: {
-  verb: string;
-  rows: number;
-  uncommitted: boolean;
-}) {
+ * preview's number (LESSONS 13). It follows that tab for the whole of the
+ * transaction's life, in three readings and never a fourth. All three lit as
+ * the exception speaking (DESIGN rule 11): a state the user caused by
+ * pressing a button a second ago is not yet the silent norm, and the norm is
+ * the plain `Deleted 1 row` a reload comes back to. A rollback takes the
+ * count with it and replaces the whole line, because nothing was changed for
+ * a count to report (LESSONS 9: the line the user is left with has to be
+ * true). */
+export function RanHeadline({ verb, rows, tx }: { verb: string; rows: number; tx: RanTx }) {
+  const sep = (
+    <span className="sep" aria-hidden="true">
+      ·
+    </span>
+  );
+  // a rollback is the whole line, not a fragment on the end of one: `Deleted
+  // 1 row` is false the instant the transaction is gone, so both halves of the
+  // reading are the exception speaking and both stand at tier 1
+  if (tx === "rolledback") {
+    return (
+      <div className="ans-status rb-head">
+        <span className="lit">Rolled back</span>
+        <span className="lit">{sep}nothing changed</span>
+      </div>
+    );
+  }
   return (
     <div className="ans-status rb-head">
       <span>{ranText(verb, rows)}</span>
-      {uncommitted && (
-        <span className="lit">
-          <span className="sep" aria-hidden="true">
-            ·
-          </span>
-          uncommitted
-        </span>
-      )}
+      {tx === "open" && <span className="lit">{sep}uncommitted</span>}
+      {tx === "committed" && <span className="lit">{sep}committed</span>}
     </div>
   );
 }
@@ -413,6 +461,8 @@ export function ResultBlock({
   tabTitle,
   preview = null,
   onRun,
+  onCommit,
+  onRollback,
   runBusy = false,
   faces = ASK_FACES,
   face: docFace,
@@ -489,6 +539,9 @@ export function ResultBlock({
   // the glyph names the face you will GET (W7's rule, over more faces now):
   // the diff and the preview wear the table's, since both stand in its place
   const nextLabel = next === "chart" ? "Show Chart" : next === "sql" ? "Show SQL" : "Show Table";
+
+  const band = bandFace({ preview, onRun, onCommit, onRollback });
+  const species = bandSpecies(preview?.verb);
 
   // the block's own height, sprung between the faces AND over the band as it
   // leaves. popLayout parks the leaving face (and the leaving band) out of the
@@ -603,16 +656,53 @@ export function ResultBlock({
           </AnimatePresence>
         </div>
 
-        {/* the band: the block's own bottom, one danger button at the right.
-            It leaves on the Run, parked out of the flow while the block's
-            height springs shut over it (DESIGN rule 2's scope note: a mode
-            transition may reflow its own controls) */}
+        {/* the band: the block's own bottom, the change's own actions at the
+            right. Before the Run it holds the Run; after it, the TAB's two,
+            because a transaction the statement opened is what there is left
+            to do and it belongs on the object it acts on (DESIGN rule 15's
+            first question). The two faces crossfade in place on swapIn: the
+            band is one fixture through the whole change, and it leaves only
+            when the transaction does, parked out of the flow while the
+            block's height springs shut over it */}
         <AnimatePresence mode="popLayout" initial={false}>
-          {preview !== null && onRun && (
-            <motion.div key="band" className="rb-act" exit={{ opacity: 0 }} transition={spring.layout}>
-              <button type="button" className="btnish danger" disabled={runBusy} onClick={onRun}>
-                {runLabel(preview.verb, preview.exact_rows)}
-              </button>
+          {band !== null && (
+            <motion.div
+              key={band}
+              className="rb-act"
+              initial={swapIn.initial}
+              animate={swapIn.animate}
+              exit={{ opacity: 0, transition: spring.layout }}
+              transition={swapIn.transition}
+            >
+              {band === "tx" ? (
+                <>
+                  {/* the ghost species: rolling back loses nothing that was
+                      not already provisional, and the irreversible half of
+                      this pair is the other one */}
+                  <button type="button" className="btnish" disabled={runBusy} onClick={onRollback}>
+                    Rollback
+                  </button>
+                  <button
+                    type="button"
+                    className={`btnish ${species}`}
+                    disabled={runBusy}
+                    onClick={onCommit}
+                  >
+                    Commit
+                  </button>
+                </>
+              ) : (
+                preview && (
+                  <button
+                    type="button"
+                    className={`btnish ${species}`}
+                    disabled={runBusy}
+                    onClick={onRun}
+                  >
+                    {runLabel(preview.verb, preview.exact_rows)}
+                  </button>
+                )
+              )}
             </motion.div>
           )}
         </AnimatePresence>

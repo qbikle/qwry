@@ -64,7 +64,7 @@ import { FailureBlock } from "./FailureBlock";
 import { FollowUps, questionLayoutId } from "./FollowUps";
 import { MentionText } from "./Mention";
 import { modelLabel } from "./modelSources";
-import { insertSql, RanHeadline, ResultBlock, WriteHeadline } from "./ResultBlock";
+import { insertSql, RanHeadline, ResultBlock, WriteHeadline, type RanTx } from "./ResultBlock";
 import { SanityLine } from "./SanityLine";
 import { sanityStep } from "./sanityStep";
 import { ThinkingStrip } from "./ThinkingStrip";
@@ -283,6 +283,11 @@ export const AnswerBlock = memo(function AnswerBlock({
   // this exchange ran must survive reopening the thread (LESSONS 9)
   const ranVerb = preview?.verb ?? writeVerbOf(exchange.answer?.sql ?? null);
   const uncommitted = useConnections((s) => (exchange.ranTab ? s.txTabs[exchange.ranTab] === true : false));
+  // what the tab's transaction is doing to the run, the ONE fact the headline
+  // and the band both read: open while the tab holds it, then whichever way
+  // the app ended it, and nothing at all when the app cannot know (a reload,
+  // a COMMIT typed into the tab, a session that died)
+  const ranTx: RanTx = !ranWrite ? null : uncommitted ? "open" : (exchange.ranTx ?? null);
   const writing = useAgent((s) => s.writing[exchange.id] === true);
 
   // the chips in the echo (W6): resolved once per exchange against what the
@@ -435,7 +440,7 @@ export const AnswerBlock = memo(function AnswerBlock({
                     it as one fragment rather than as a line of its own */}
                 {proposed && preview && <WriteHeadline preview={preview} />}
                 {ranWrite && ranVerb && (
-                  <RanHeadline verb={ranVerb} rows={exchange.ranRows ?? 0} uncommitted={uncommitted} />
+                  <RanHeadline verb={ranVerb} rows={exchange.ranRows ?? 0} tx={ranTx} />
                 )}
 
                 {(run !== null || blockSql !== null || preview !== null) && (
@@ -445,10 +450,17 @@ export const AnswerBlock = memo(function AnswerBlock({
                     sql={blockSql}
                     tabTitle={tabTitle(exchange.question)}
                     preview={preview}
-                    // the Run belongs to the query tab, not to the block: the
-                    // store hands the statement to the tab's own run path, and
-                    // the tab's Commit / Rollback take it from there
+                    // every act in the band is the query tab's, not the
+                    // block's: the store hands the statement to the tab's own
+                    // run path, and the tab's own Commit and Rollback end the
+                    // transaction that run opened. They stand while it does
                     onRun={proposed ? () => void useAgent.getState().runWrite(exchange.id) : undefined}
+                    onCommit={
+                      ranTx === "open" ? () => void useAgent.getState().commitWrite(exchange.id) : undefined
+                    }
+                    onRollback={
+                      ranTx === "open" ? () => void useAgent.getState().rollbackWrite(exchange.id) : undefined
+                    }
                     runBusy={writing || busy}
                   />
                 )}

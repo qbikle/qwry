@@ -38,7 +38,7 @@ import type {
   WriteVerb,
 } from "../ipc/types";
 import { headToken } from "../editor/statements";
-import { useConnections } from "./connections";
+import { endTabTx, txEnds, useConnections, type TxEnd } from "./connections";
 import { useAsk, type AskBlock } from "./ask";
 import { useSchema } from "./schema";
 import { useSaved, visibleSaved, type SavedQuery } from "./saved";
@@ -154,6 +154,12 @@ export interface Exchange {
    * reads `uncommitted` while that tab's transaction is open and drops the
    * word the moment it commits, rolls back or closes. Never persisted */
   ranTab?: string;
+  /** B1: how that transaction ENDED, when the app is the one that ended it
+   * (the block's own band, or the status bar's control, both through
+   * `endTabTx`). Absent while it is open, and absent for a transaction that
+   * ended anywhere else: the headline then says only what the run did, which
+   * is what a reload says too (LESSONS 9). Never persisted */
+  ranTx?: TxOutcome;
   /** the tab an `Explain with Ask` named (A2 item 5): the echo paints the
    * token quoting this name as a pill and never resolves it again, because a
    * closed tab must not un-pill a bubble. The pill names what was SENT, a
@@ -191,9 +197,14 @@ export interface PriorAnswer {
   write?: WriteState;
 }
 
-/** A4: the four fields a change leaves on an exchange, kept together so a
+/** B1: what became of the transaction a run opened, in the two words the
+ * headline reads. The tab is the fact; this is the app's record of how IT
+ * ended it, and nothing else may write one. */
+export type TxOutcome = "committed" | "rolledback";
+
+/** A4: the fields a change leaves on an exchange, kept together so a
  * stash carries them and a new verdict clears them in one move. */
-type WriteState = Partial<Pick<Exchange, "status" | "preview" | "ranRows" | "ranTab">>;
+type WriteState = Partial<Pick<Exchange, "status" | "preview" | "ranRows" | "ranTab" | "ranTx">>;
 
 /** One assumption chip's wanted state, carried into a re-ask as a stated
  * constraint and reapplied to the landed chips (applyFlips). */
@@ -282,6 +293,13 @@ interface AgentState {
    * calls it, only on a standing `proposed` exchange, and only once. What the
    * TAB reports lands on the exchange and persists as `ran` */
   runWrite: (exchangeId: string) => Promise<void>;
+  /** B1: end the transaction that run opened, from the block that ran it. Both
+   * acts are the TAB's and reach it through the tab's one implementation
+   * (`endTabTx`), standing on the object they act on instead of only in a
+   * strip that names it from outside (DESIGN rule 15). Refused unless the
+   * exchange's own tab still holds the transaction */
+  commitWrite: (exchangeId: string) => Promise<void>;
+  rollbackWrite: (exchangeId: string) => Promise<void>;
   /** thread closed or connection disconnected: the session goes with it */
   closeThread: (threadId: string) => Promise<void>;
   dropProfile: (profileId: string) => Promise<void>;
@@ -328,8 +346,9 @@ const runInTab = async (profileId: string, sql: string, tabName?: string) => {
   return runStatementInTab(profileId, sql, tabName);
 };
 
-/** The calls this store makes out of itself: the two model ones, and A4's
- * three (the write gate, the dry run, the tab's run). A seam, not a switch:
+/** The calls this store makes out of itself: the two model ones, and the
+ * change's four (the write gate, the dry run, the tab's run, the tab's way of
+ * ending the transaction that run opened). A seam, not a switch:
  * the store's own tests stand scripted ones in here (agent-pending.test.ts),
  * because a bun module mock is process-global and reached the loop's own
  * tests. */
@@ -339,6 +358,7 @@ export const runner = {
   isWrite,
   writePreview: agentWritePreview,
   runInTab,
+  endTabTx,
 };
 
 /** Not state: an AbortController is not serialisable and nothing renders it. */
@@ -1014,6 +1034,9 @@ export const useAgent = create<AgentState>((set, get) => ({
     await persistRan(get, threadId, exchangeId, rows);
   },
 
+  commitWrite: (exchangeId) => endWrite(set, get, exchangeId, "commit"),
+  rollbackWrite: (exchangeId) => endWrite(set, get, exchangeId, "rollback"),
+
   closeThread: async (threadId) => {
     controllers.get(threadId)?.abort();
     controllers.delete(threadId);
@@ -1378,6 +1401,7 @@ function writeState(e: Exchange): WriteState {
   if (e.preview !== undefined) out.preview = e.preview;
   if (e.ranRows !== undefined) out.ranRows = e.ranRows;
   if (e.ranTab !== undefined) out.ranTab = e.ranTab;
+  if (e.ranTx !== undefined) out.ranTx = e.ranTx;
   return out;
 }
 
@@ -1390,11 +1414,12 @@ function clearWrite(e: Exchange): Exchange {
     e.status === undefined &&
     e.preview === undefined &&
     e.ranRows === undefined &&
-    e.ranTab === undefined
+    e.ranTab === undefined &&
+    e.ranTx === undefined
   ) {
     return e;
   }
-  const { status: _s, preview: _p, ranRows: _r, ranTab: _t, ...rest } = e;
+  const { status: _s, preview: _p, ranRows: _r, ranTab: _t, ranTx: _x, ...rest } = e;
   return rest;
 }
 
@@ -2073,3 +2098,75 @@ function firstLine(e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e);
   return raw.split("\n")[0].trim() || "the request failed";
 }
+
+// ---- the transaction the Run opened (B1) -----------------------------------
+// The change ran in a query tab, inside that tab's transaction, so committing
+// or rolling it back is the TAB's act and the block only presses it: the same
+// shape as the Run itself (AGENT-UX 13.6). The two actions stand on the block
+// because that is the object they act on (DESIGN rule 15's first question),
+// and both go through the tab's ONE implementation, so the status bar's
+// control and the band can never become two ceremonies for one statement.
+
+/** B1: `commitWrite` / `rollbackWrite`, which differ only in the word they
+ * send. Everything is read before the first await (LESSONS 3), the press is
+ * refused unless the exchange's own tab still holds the transaction, and
+ * `writing` disables the band for the round trip the way it does for the Run.
+ * What the exchange ends up SAYING is stamped by the watcher below and never
+ * here: the tab closing is the fact, and one fact has one writer. */
+async function endWrite(
+  set: Setter,
+  get: () => AgentState,
+  exchangeId: string,
+  end: TxEnd,
+): Promise<void> {
+  const profileId = get().activeProfileId;
+  if (!profileId) return;
+  const threadId = get().activeThread[profileId];
+  if (!threadId) return;
+  const exchange = (get().exchanges[threadId] ?? []).find((e) => e.id === exchangeId);
+  if (!exchange || exchange.status !== "ran" || !exchange.ranTab) return;
+  if (get().writing[exchangeId]) return;
+  // the band is drawn from the same flag, so this only catches a press that
+  // raced the transaction closing somewhere else
+  const key = exchange.ranTab;
+  if (useConnections.getState().txTabs[key] !== true) return;
+  set((s) => ({ writing: { ...s.writing, [exchangeId]: true } }));
+  try {
+    await runner.endTabTx(key, end);
+  } catch (e) {
+    // the tab's own pane carries what went wrong, and the transaction stands
+    console.error("agent tx end failed", e);
+  }
+  set((s) => ({ writing: without(s.writing, exchangeId) }));
+}
+
+/** every `ran` exchange on that tab now says how its transaction ended */
+function stampTxEnd(key: string, ranTx: TxOutcome): void {
+  const all = useAgent.getState().exchanges;
+  const next: Record<string, Exchange[]> = {};
+  let touched = false;
+  for (const [threadId, list] of Object.entries(all)) {
+    const hit = list.some((e) => e.status === "ran" && e.ranTab === key && e.ranTx !== ranTx);
+    touched ||= hit;
+    next[threadId] = hit
+      ? list.map((e) => (e.status === "ran" && e.ranTab === key ? { ...e, ranTx } : e))
+      : list;
+  }
+  if (touched) useAgent.setState({ exchanges: next });
+}
+
+// The tab is where the block learns the transaction closed, from EITHER side:
+// the band's own two buttons, the status bar's control, a disconnect that
+// rolls everything back. The band leaves and `uncommitted` goes the moment it
+// does. `txEnds` says which way the app sent it; a transaction that ended
+// anywhere else stamps nothing and the headline falls back to what a reload
+// says, because a line the app cannot know is a line it must not print
+// (LESSONS 9).
+useConnections.subscribe((s, prev) => {
+  if (s.txTabs === prev.txTabs) return;
+  for (const key of Object.keys(prev.txTabs)) {
+    if (!prev.txTabs[key] || s.txTabs[key]) continue;
+    const end = txEnds.get(key);
+    if (end) stampTxEnd(key, end === "commit" ? "committed" : "rolledback");
+  }
+});

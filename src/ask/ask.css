@@ -1856,14 +1856,18 @@
 .rb.preview:has(.vgrid) {
   --acts-surface: var(--bg-raised);
 }
-/* the block's own bottom band: one danger button at the right, the confirm's
-   place (.danger-actions), on the panel. The button acts on the statement, so
-   it stands on the block (rule 15's first question) and never hides: rule 8
+/* the block's own bottom band: the change's actions at the right, the
+   confirm's place (.danger-actions), on the panel. They act on the statement,
+   so they stand on the block (rule 15's first question) and never hide: rule 8
    lets a control hide only when the surface works without finding it, and a
-   danger action nobody can see is a hidden affordance */
+   destructive action nobody can see is a hidden affordance. One band, two
+   faces (B1): the Run, then the tab's `Rollback` · `Commit` while the
+   transaction that run opened is still open. Both faces are one row of the
+   action-button species at the same right edge, so the swap moves nothing */
 .rb-act {
   display: flex;
   justify-content: flex-end;
+  gap: var(--sp-2);
   padding: var(--sp-2);
   border-top: 1px solid var(--border);
   background: var(--bg-panel);

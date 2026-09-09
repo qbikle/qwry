@@ -117,6 +117,7 @@ import { RESULT_CHOICE, type ResultState } from "./fixtures.result";
 import { RICH_CHOICE, richSeed, type RichState } from "./fixtures.rich";
 import { stripSeed } from "./fixtures.strip";
 import { WRITES_CHOICE, type WritesState } from "./fixtures.writes";
+import { B1_CHOICE, type B1State } from "./fixtures.b1";
 
 export type HarnessState =
   | "answer"
@@ -154,7 +155,8 @@ export type HarnessState =
   | ResultState
   | RichState
   | WritesState
-  | CanvasAskState;
+  | CanvasAskState
+  | B1State;
 export const HARNESS_STATES: readonly HarnessState[] = [
   "answer",
   "empty",
@@ -211,6 +213,11 @@ export const HARNESS_STATES: readonly HarnessState[] = [
   "a2-ask-why",
   "a3-add",
   "a3-ask-block",
+  "b1-preview-insert",
+  "b1-ran",
+  "b1-ran-insert",
+  "b1-committed",
+  "b1-rolled-back",
 ];
 export const HARNESS_WIDTHS = [320, 392, 560] as const;
 export type HarnessTheme = "dark" | "light";
@@ -667,6 +674,11 @@ export function exchangeFor(state: HarnessState): Exchange | null {
     case "a2-ask-why":
     case "a3-add":
     case "a3-ask-block":
+    case "b1-preview-insert":
+    case "b1-ran":
+    case "b1-ran-insert":
+    case "b1-committed":
+    case "b1-rolled-back":
       return null;
     case "pending":
     case "retry":
@@ -730,6 +742,12 @@ export function choiceFor(state: HarnessState): { provider: string; model: strin
     case "a4-preview-busy":
     case "a4-writes-off":
       return WRITES_CHOICE;
+    case "b1-preview-insert":
+    case "b1-ran":
+    case "b1-ran-insert":
+    case "b1-committed":
+    case "b1-rolled-back":
+      return B1_CHOICE;
     case "insight":
     case "insight-prose":
     case "insight-steps":

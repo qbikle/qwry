@@ -168,12 +168,23 @@ export function followUpMessage(args: { thread: string }): string {
  *
  * The statement is proposed, never run: `run_sql` is read-only on every
  * connection (AGENT-SPEC section 8.7), so a model that tries one there is
- * refused and has spent a turn. Saying so here is what keeps it out. */
+ * refused and has spent a turn. Saying so here is what keeps it out.
+ *
+ * B1 (2026-09-08): it also says what the APP does with the statement, because
+ * a model that does not know is polite about it, and the politeness is wrong
+ * in three ways at once. `Copy and run this statement in your PostgreSQL
+ * client` sends the user out of the app that is about to run it for them;
+ * `Here's the INSERT statement` narrates a fence the reader can see, which is
+ * the same fact in two slots (DESIGN rule 14); `Perfect!` is filler. The
+ * block now names the surface (a preview of the affected rows under a Run
+ * button) and asks for the one sentence the prose slot is for. */
 export function writesMessage(): string {
   return `
 WRITES: the user has allowed changes to this database. If the question asks to change data, finish with exactly ONE INSERT, UPDATE or DELETE
-statement in the final \`\`\`sql block, with a WHERE clause that names the rows it touches. Do NOT call run_sql with it: run_sql runs reads only,
-and the statement in your final block is shown to the user, who runs it. Anything the question only asks about is read-only work as before.`;
+statement in the final \`\`\`sql block, with a WHERE clause that names the rows it touches. Do NOT call run_sql with it: run_sql runs reads only.
+qwry renders that statement as a preview of the rows it affects, under a Run button the user presses, so never tell anyone to run, copy or paste
+it anywhere, never announce the statement, and never open with filler: write one sentence of what will change and why, then the fence. Anything
+the question only asks about is read-only work as before.`;
 }
 
 // ---- what this connection knows (A2 item 4) --------------------------------

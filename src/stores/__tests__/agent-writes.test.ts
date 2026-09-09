@@ -67,7 +67,8 @@ const { useAgent, runner, writeVerbOf } = agent;
 type Exchange = import("../agent").Exchange;
 const { useSchema } = await import("../schema");
 const { useSettings, writesAllowed } = await import("../settings");
-const { useConnections, skey } = await import("../connections");
+const { endTabTx, useConnections, skey } = await import("../connections");
+const { bandFace, bandSpecies } = await import("../../ask/ResultBlock");
 const { useTabs } = await import("../tabs");
 const { runStatementInTab, useResults } = await import("../results");
 
@@ -596,5 +597,141 @@ describe("what a reload can still say", () => {
     expect(writeVerbOf("INSERT INTO t VALUES (1)")).toBe("INSERT");
     expect(writeVerbOf("SELECT 1")).toBeNull();
     expect(writeVerbOf(null)).toBeNull();
+  });
+});
+
+// ---- the transaction the run opened (B1) ------------------------------------
+//
+// Four things: the two actions reach the TAB's one implementation with the
+// exchange's own tab key; what the exchange SAYS is stamped by the transaction
+// closing and not by the press, so the status bar's own ROLLBACK reaches it
+// too; a transaction that ended anywhere the app cannot see stamps nothing;
+// and the band's face and species, the two pure rules the block draws from.
+
+describe("committing and rolling back a run", () => {
+  const KEY = skey(PID, "tab-1");
+  const ran = (over: Partial<Exchange> = {}): Exchange => ({
+    id: "ex-1",
+    turnId: 7,
+    question: "mark them paid",
+    text: "Marked them paid.",
+    thinking: "",
+    chips: [],
+    answer: { ...answerOf({ status: "proposed", sql: SQL }, SQL), text: "Marked them paid." },
+    error: null,
+    streaming: false,
+    provider: "claude-code",
+    model: "claude-sonnet-5",
+    status: "ran",
+    preview: preview(),
+    ranRows: 12,
+    ranTab: KEY,
+    ...over,
+  });
+
+  let sent: [string, string][] = [];
+  beforeEach(() => {
+    seed();
+    sent = [];
+    runner.endTabTx = async (key, end) => {
+      sent.push([key, end]);
+      useConnections.getState().setTxTab(key, false);
+      return true;
+    };
+    useAgent.setState({ exchanges: { [TID]: [ran()] } });
+    // opened the way the app opens one (results.ts's tx-state listener), which
+    // is also what forgets how the LAST transaction on this tab ended
+    useConnections.setState({ txTabs: {}, tabSessions: { [KEY]: "session-tab-1" } });
+    useConnections.getState().setTxTab(KEY, true);
+  });
+
+  test("both actions go to the tab's own way of ending it, on the exchange's own tab", async () => {
+    await useAgent.getState().commitWrite("ex-1");
+    expect(sent).toEqual([[KEY, "commit"]]);
+
+    useAgent.setState({ exchanges: { [TID]: [ran()] } });
+    useConnections.getState().setTxTab(KEY, true);
+    await useAgent.getState().rollbackWrite("ex-1");
+    expect(sent[1]).toEqual([KEY, "rollback"]);
+    expect(useAgent.getState().writing["ex-1"]).toBeUndefined();
+  });
+
+  test("nothing to end: a proposal, a closed transaction and a reloaded run all refuse", async () => {
+    useAgent.setState({ exchanges: { [TID]: [ran({ status: "proposed" })] } });
+    await useAgent.getState().commitWrite("ex-1");
+
+    useAgent.setState({ exchanges: { [TID]: [ran()] } });
+    useConnections.setState({ txTabs: {} });
+    await useAgent.getState().commitWrite("ex-1");
+
+    // a reload keeps the run and loses the tab: there is no transaction to name
+    useAgent.setState({ exchanges: { [TID]: [ran({ ranTab: undefined })] } });
+    useConnections.getState().setTxTab(KEY, true);
+    await useAgent.getState().rollbackWrite("ex-1");
+    expect(sent).toEqual([]);
+  });
+
+  test("the transaction closing is what stamps the exchange, from either side", async () => {
+    // the block's own Commit, through the REAL endTabTx: the seam being tested
+    // is the one both surfaces press, so it is not the one being stood in
+    Object.assign(runner, { endTabTx: real.endTabTx });
+    await useAgent.getState().commitWrite("ex-1");
+    expect(only().ranTx).toBe("committed");
+    expect(useConnections.getState().txTabs[KEY]).toBe(false);
+
+    // and the status bar's ROLLBACK, which never touches the agent store: the
+    // tab closes the transaction and the exchange reads it
+    useAgent.setState({ exchanges: { [TID]: [ran()] } });
+    useConnections.getState().setTxTab(KEY, true);
+    await endTabTx(KEY, "rollback");
+    expect(only().ranTx).toBe("rolledback");
+  });
+
+  test("a transaction that ended somewhere else says nothing, and a new one forgets the last", async () => {
+    // a typed COMMIT, a dead session: the tab's flag goes and the app never
+    // sent the word, so the headline falls back to what a reload says
+    useConnections.getState().setTxTab(KEY, false);
+    expect(only().ranTx).toBeUndefined();
+
+    Object.assign(runner, { endTabTx: real.endTabTx });
+    useConnections.getState().setTxTab(KEY, true);
+    await endTabTx(KEY, "commit");
+    expect(only().ranTx).toBe("committed");
+
+    // the NEXT transaction on that tab is not the one that was committed
+    useAgent.setState({ exchanges: { [TID]: [ran()] } });
+    useConnections.getState().setTxTab(KEY, true);
+    useConnections.getState().setTxTab(KEY, false);
+    expect(only().ranTx).toBeUndefined();
+  });
+
+  test("a stash carries the ending and a new verdict clears it", () => {
+    const before = ran({ ranTx: "committed" });
+    expect(agent.restorePrior(agent.stashPrior(before, true))).toEqual({
+      ...before,
+      textStale: false,
+    });
+    expect(agent.stashPrior(before, true).ranTx).toBeUndefined();
+  });
+});
+
+describe("what the band shows", () => {
+  const run = { verb: "UPDATE" } as WritePreview;
+  const noop = () => {};
+
+  test("the tab's two while its transaction is open, the Run before that, none after", () => {
+    expect(bandFace({ preview: run, onRun: noop })).toBe("run");
+    expect(bandFace({ preview: run, onRun: noop, onCommit: noop, onRollback: noop })).toBe("tx");
+    // the surface hands the pair over only while the transaction is open, so a
+    // settled change and a reloaded one are the same thing here: no band
+    expect(bandFace({ preview: run })).toBeNull();
+    expect(bandFace({ preview: null, onRun: noop })).toBeNull();
+  });
+
+  test("red states loss: INSERT wears the accent, the other two and the unknown wear danger", () => {
+    expect(bandSpecies("INSERT")).toBe("primary");
+    expect(bandSpecies("UPDATE")).toBe("danger");
+    expect(bandSpecies("DELETE")).toBe("danger");
+    expect(bandSpecies(null)).toBe("danger");
   });
 });

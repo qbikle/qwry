@@ -28,8 +28,10 @@
 //              mention-trace,result-table,result-sql,result-scalar,failure-cap,
 //              answer-actions,followups-end,a4-preview,a4-preview-warn,
 //              a4-preview-sql,a4-ran,a4-preview-busy,a4-writes-off,a2-explain,
-//              a2-knowledge-trace,a2-ask-why,a3-add,a3-ask-block
-//              (default: all fifty-five; each other harness has its own list,
+//              a2-knowledge-trace,a2-ask-why,a3-add,a3-ask-block,
+//              b1-preview-insert,b1-ran,b1-ran-insert,b1-committed,
+//              b1-rolled-back
+//              (default: all sixty; each other harness has its own list,
 //              above)
 //   --widths   subset of 320,392,560 (default: all three; 620 under `--harness
 //              palette`, 560,780,1040 under `structure`, 640,960,1280 under
@@ -40,7 +42,7 @@
 //              echo and the thinking strip instead (the 640px card cannot hold the
 //              whole live answer, so the two ends are two runs). Frames of a top run
 //              carry a -top suffix so the two sets sit side by side. The `strip`,
-//              `kv-wide`, `insight*` and `result*` states park at the top by default
+//              `kv-wide`, `insight*`, `result*`, `a4-*` and `b1-*` states park at the top by default
 //              (the harness's own default for them: their subject sits above the fold);
 //              an EXPLICIT `--scroll bottom` reaches the harness as `scroll=bottom`
 //              and pins them like every other state, so their footers can be framed
@@ -269,6 +271,11 @@ const ALL_STATES = [
   "a2-ask-why",
   "a3-add",
   "a3-ask-block",
+  "b1-preview-insert",
+  "b1-ran",
+  "b1-ran-insert",
+  "b1-committed",
+  "b1-rolled-back",
 ] as const;
 /** the second root (A2): the palette is a modal over the window, not a pane in
  * a card, so it has one width, its own (`src/harness/PaletteHarness.tsx`) */

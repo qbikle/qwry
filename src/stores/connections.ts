@@ -381,6 +381,10 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
   setTxTab: (key, inTx) =>
     set((s) => {
       if (!!s.txTabs[key] === inTx) return s;
+      // a fresh transaction on this tab is not the one that ended: the record
+      // of how the last one went dies with it, so no reader can describe a
+      // transaction by its predecessor's ending
+      if (inTx) txEnds.delete(key);
       return { txTabs: { ...s.txTabs, [key]: inTx } };
     }),
 
@@ -695,6 +699,46 @@ async function healInner(
     void get().ensureTabSession(profileId, tabId);
   }
   return { ok: true, rebuilt };
+}
+
+// ---- ending a tab's transaction (B1) ---------------------------------------
+// COMMIT and ROLLBACK are the tab's two acts, and they have ONE implementation
+// here, because two surfaces now send them: the status bar's TX OPEN control
+// and the Ask block's own band, which stands on the change it ran (DESIGN
+// rule 15's first question). A second copy in the pane would be the founding
+// sin rule 1 exists to prevent, and the two would drift the first time either
+// grew a step.
+
+/** how the app ends a tab's transaction */
+export type TxEnd = "commit" | "rollback";
+
+/** the end the app SENT on a tab's session, so a reader watching the
+ * transaction close can say which way it went (Ask's headline reads it).
+ * Cleared when a new transaction opens on that tab, and never written for a
+ * transaction that ended anywhere else (a typed COMMIT, a dead session): what
+ * the app did not do, it cannot report (LESSONS 9). Session-lived, like the
+ * tab's transaction itself. */
+export const txEnds = new Map<string, TxEnd>();
+
+/** End the open transaction on one tab's session. Straight on the session,
+ * never through `run()`, which would wipe the result grid the user is
+ * inspecting mid-transaction. False = there was no session to send it on, or
+ * the send failed and the session's closed event resets the tx state. */
+export async function endTabTx(key: string, end: TxEnd): Promise<boolean> {
+  const sid = useConnections.getState().tabSessions[key];
+  if (!sid) return false;
+  // stamped BEFORE the round trip: the server's own tx-state event can close
+  // the flag first, and a reader woken by it must find the answer already
+  // there
+  txEnds.set(key, end);
+  try {
+    await ipc.execute(sid, end === "commit" ? "COMMIT" : "ROLLBACK");
+  } catch {
+    txEnds.delete(key);
+    return false;
+  }
+  useConnections.getState().setTxTab(key, false);
+  return true;
 }
 
 /** open explicit transactions across a profile's tab sessions */

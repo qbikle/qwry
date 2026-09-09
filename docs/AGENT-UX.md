@@ -772,12 +772,17 @@ disagree marks no cell at all, because a wrong `old →` is worse than none
 
 ### 13.5 The action band
 
-One `.btnish.danger` at the block's own bottom-right (`.rb-act`, the app's
-confirm-row place), on the panel, never inside the hover cluster: DESIGN
-rule 8 lets a control hide only when the surface works without finding it,
-and a danger action nobody can see is a hidden affordance, where `Copy` ·
+One button at the block's own bottom-right (`.rb-act`, the app's confirm-row
+place), on the panel, never inside the hover cluster: DESIGN rule 8 lets a
+control hide only when the surface works without finding it, and a
+destructive action nobody can see is a hidden affordance, where `Copy` ·
 `Flip` · `Insert` earn the hover because the block still reads without them.
-Label grammar: `<Verb> <n> Rows`, Title Case, thousands through
+Its species follows the verb, never a blanket danger (maintainer finding,
+2026-09-08): `.btnish.primary` for `INSERT` (the editor's own Run species,
+`qb-run btnish primary` in `QueryBox.tsx`'s `Run ⌘↩`) and `.btnish.danger`
+for `UPDATE`/`DELETE` (DESIGN rule 3: red states loss, and a row that does
+not exist yet has none to lose). Label grammar: `<Verb> <n> Rows`, Title
+Case, thousands through
 `toLocaleString`, singular at 1 (`Update 1 Row`), 0 kept and enabled
 (`Update 0 Rows`, the grid absent — the statement is legal and the tab's
 outcome is the truth, not the preview's row count). Never the table on the
@@ -797,18 +802,72 @@ ceremony opens over the WINDOW, never the pane. Wrapped in `BEGIN` when the
 tab holds no open transaction, so the tab's own Commit/Rollback take over
 from there, the rollback plan made real (DESIGN rule 15). No query tab
 active → one is created and the cue names it, `Ran in a new tab` (the W7
-Insert precedent, §2 item 4). The band leaves on `spring.layout` (the
+Insert precedent, §2 item 4). The headline's text changes in place to the
+TAB's outcome the instant Run lands, `Updated 12 rows · uncommitted`, from
+the tab's OWN rows-affected, never the preview's number, which is stale the
+instant a real transaction has run.
+
+The band does not leave on Run (maintainer finding, 2026-09-08, correcting
+this section's own first draft): rule 15 puts an action on the object it
+acts on, and a block that reads `uncommitted` and hands the user nothing is
+the tab's status bar speaking for an object it does not stand on. It is one
+fixture across the whole life of a change, wearing two faces that crossfade
+on `swapIn` (the headline's own text changes in place beside it, no motion
+wrapper of its own): the one Run button before,
+then the tab's own `Rollback` at the left (`.btnish`, the
+DangerModal/CloseGuardModal ghost-in-a-confirm-row species, since undoing a
+proposal takes away nothing Run had not already proposed) and `Commit` at
+the right, the confirm row's primary slot, species by verb exactly as
+§13.5's Run button (`.btnish.primary` for `INSERT`, `.btnish.danger` for
+`UPDATE`/`DELETE`, because the commit is the irreversible moment for the
+last two, DESIGN rule 3). Both are the TAB's act and reach it through the
+tab's ONE implementation, never a second: `endTabTx(key, "commit" |
+"rollback")` (`stores/connections.ts`) runs `COMMIT`/`ROLLBACK` straight on
+the session (never through `run()`, which would wipe the grid the user is
+mid-transaction inspecting) and flips `txTabs[key]` false; the status bar's
+`TX OPEN` chip's own ROLLBACK button (`TxChip`, `ResultsPane.tsx`) was
+rewritten onto this same call rather than kept as its own copy (DESIGN rule
+15's consolidate-before-you-add, answered by giving the object's actions ONE
+body instead of two that merely agree). `useAgent`'s `commitWrite` /
+`rollbackWrite` are the block's own two callers of it, refused unless the
+exchange's own tab still holds the transaction. The tab and the block read
+one `txTabs` fact (DESIGN rule 14): the band leaves on `spring.layout` (the
 block's height springing shut over it, the same spring the Flip crossfade
-rides) while the headline's text swaps on `swapIn` to the TAB's outcome,
-`Updated 12 rows · uncommitted`, from the tab's OWN rows-affected, never the
-preview's number, which is stale the instant a real transaction has run.
-`uncommitted` is the one word lit as the exception speaking (the norm stays
-silent, DESIGN rule 11) and is bound to the tab's LIVE transaction: shown
-while it stays open, gone the moment it commits, rolls back or closes,
-never persisted; the line goes false the day the user commits in the tab
-(LESSONS 9). Persisted `agent_answers.status` is `proposed` | `ran` with
-`row_count` (AGENT-SPEC §9); a reload after a commit reads `Updated 12
-rows`, no `uncommitted`.
+rides) the MOMENT the transaction closes, from EITHER side, its own Commit,
+its own Rollback, or the status bar's chip, which closes it exactly as well
+since all three end in the one `txTabs[key]` this section and the chip
+share.
+
+The headline follows that same fact, and needs to know not just THAT the
+transaction closed but which way: `endTabTx` stamps a session-lived map,
+`txEnds` (tab key → `"commit"` | `"rollback"`), immediately before the round
+trip, and a `useConnections` subscriber in `agent.ts` reads it the moment
+`txTabs[key]` flips false, writing `exchange.ranTx` (`"committed"` |
+`"rolledback"`) onto every `ran` exchange pointing at that tab
+(`stampTxEnd`). Three readings result, never a fourth. Staying open reads
+`Updated 12 rows · uncommitted` (above, unchanged). Commit reads `Updated 12
+rows · committed`, the word replacing `uncommitted` in the same lit slot:
+DESIGN rule 11 still applies (the norm stays silent), but a state the user
+just caused by pressing a button is not yet the silent norm, and saying so
+is the truthful feedback LESSONS 9 asks for (the same reason `useEdits`'
+own commit confirms with its own checkmark line rather than going quiet).
+Rollback reads `Rolled back · nothing changed`, replacing the WHOLE line
+rather than adding a fragment, because `Deleted 1 row` would now be false
+(LESSONS 9): nothing was deleted, the statement never survived its own
+transaction. `uncommitted`, `committed` and `Rolled back · nothing changed`
+are all lit as the exception speaking (DESIGN rule 11); none of the three is
+the silent norm, which is reached only after reload, next. A transaction
+that closes some other way than these three, a dead session, a bare
+`COMMIT` typed straight into the tab, stamps nothing in `txEnds`: `ranTx`
+stays unset and the headline falls back to the plain reload-shaped line
+below rather than guess (LESSONS 9: a line the app cannot know is a line it
+must not print). Persisted `agent_answers.status` is `proposed` | `ran`
+with `row_count` (AGENT-SPEC §9); `ranTab` and `ranTx` are both
+session-only, never persisted, so a reload after a commit reads `Updated 12
+rows`, no `uncommitted`, and a reload after a ROLLBACK reads that identical
+line: appdb's flat `status`/`row_count` shape cannot yet distinguish the two
+once the session ends, an accepted gap this wave leaves open rather than
+grows the persisted schema to close (ROADMAP_log, the B1 note).
 
 ### 13.7 Off, and on production
 
@@ -853,12 +912,20 @@ opacity when the PROPOSAL lands, wearing its SQL face (§13.2); the headline
 enters on that same `--dur-slow` opacity when the DRY RUN lands, the block's
 face crossfading sql to preview on `swapIn` beneath it. Flip is W7's
 unchanged crossfade (`swapIn` + `spring.layout`, the action band riding the
-block's bottom edge throughout the spring). On Run: the band leaves on
-`spring.layout` (the block's height springing shut over it) while the
-headline swaps its text on `swapIn`; the tab's own ceremony (danger
-confirm, prod safe mode) opens over the window, never the pane. Reduced
-motion: the chip appears, the faces swap, the band is gone, with no
-crossfade or spring of its own.
+block's bottom edge throughout the spring). On Run: the band's content
+crossfades on `swapIn` from the one Run button to the pair (`Rollback` at
+left, `Commit` at right, species by verb per §13.5); the band itself does
+not leave here (§13.6, correcting this section's own first draft, which had
+it leaving on Run). The headline's text changes in place to the tab's
+outcome, a re-rendered div with no motion wrapper of its own, unlike the
+band and Flip crossfades above; the tab's own ceremony (danger confirm,
+prod safe mode) opens over the window, never the pane. On Commit or
+Rollback, from either the band's own buttons or the tab's own `TX OPEN`
+chip: the band leaves on `spring.layout` (the block's height springing shut
+over it, the same spring Flip rides) while the headline's text changes in
+place to whichever of §13.6's three readings applies. Reduced motion: every
+crossfade above collapses to the new content at once, no animation; the
+headline was already rendering that way.
 
 ## 14. Knowledge
 

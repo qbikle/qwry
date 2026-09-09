@@ -174,6 +174,7 @@ import { SHELL_THREADS, shellAfterMount } from "./fixtures.shell";
 import { STARTER_STATES, startersSeed, type StarterState } from "./fixtures.starters";
 import { STRIP_STATES, stripSeed, type StripState } from "./fixtures.strip";
 import { WRITES_STATES, writesAfterMount, writesSeed, type WritesState } from "./fixtures.writes";
+import { B1_STATES, b1AfterMount, b1Seed, type B1State } from "./fixtures.b1";
 import "../app/v2.css";
 import "./harness.css";
 
@@ -206,7 +207,8 @@ function paramsFrom(search: string): Params {
           state === "kv-wide" ||
           state.startsWith("insight") ||
           (RESULT_STATES as readonly string[]).includes(state) ||
-          (WRITES_STATES as readonly string[]).includes(state)))
+          (WRITES_STATES as readonly string[]).includes(state) ||
+          (B1_STATES as readonly string[]).includes(state)))
         ? "top"
         : "bottom",
   };
@@ -269,6 +271,9 @@ function seed({ state, w, theme }: Params) {
   // A4: one proposed change, with its own busy / phase (the result shape); the
   // seed also opens or clears the query tab's transaction `uncommitted` reads
   const writes = (WRITES_STATES as readonly string[]).includes(state) ? writesSeed(state as WritesState) : null;
+  // B1: the same shape one step on, the change already in a query tab; the
+  // seed opens or closes the transaction the band and the headline read
+  const b1 = (B1_STATES as readonly string[]).includes(state) ? b1Seed(state as B1State) : null;
   // the A3 thread: the pane's own two canvas states, whose follow-up row and
   // whose named blocks are the fixture's, not the trace's (fixtures.canvas-ask.ts)
   const a3 = (CANVAS_ASK_STATES as readonly string[]).includes(state)
@@ -288,12 +293,13 @@ function seed({ state, w, theme }: Params) {
     result?.exchanges ??
     ans?.exchanges ??
     writes?.exchanges ??
+    b1?.exchanges ??
     a3?.exchanges ??
     echo ??
     (exchange ? [exchange] : null);
   // the seed that carries this state's own busy and phase (a state matches at
   // most one of them); `busy` is the one state that runs without a seed
-  const live = w4 ?? result ?? writes ?? interact ?? strip ?? rich;
+  const live = w4 ?? result ?? writes ?? b1 ?? interact ?? strip ?? rich;
   const choice = choiceFor(state);
 
   applySettings(choice, theme);
@@ -391,6 +397,7 @@ function Harness({ state, w, scroll }: Params) {
       canvasAskAfterMount(state);
       resultAfterMount(state);
       writesAfterMount(state);
+      b1AfterMount(state);
       editAfterMount(state);
       mentionsAfterMount(state);
       mentionsEchoAfterMount(state);

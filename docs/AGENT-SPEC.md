@@ -461,8 +461,17 @@ parallel turn in ONE message). Bedrock/Vertex/Foundry are a research item.
    before, and the refusal names the way out, "this is prose, not SQL" for a
    non-statement and, for a real write, a sentence pointing at the final
    `sql` fence instead (the same redirect shape as the prose-loop breaker,
-   §4.5, applied to a new case). The only path a write can take is the
-   model's final answer: when it parses as a write, `agent_gate(sql, mode)`
+   §4.5, applied to a new case). The `WRITES:` block itself (`writesMessage()`,
+   prompt.ts) tells the model what the app actually does with that fence, not
+   where to send it: the statement is rendered as a preview with the affected
+   rows and a Run button the user presses inside qwry, so the block carries no
+   instruction to run it elsewhere, no sentence announcing that a statement
+   follows, and no filler, one sentence of what will change and why
+   immediately before the fence (maintainer finding, 2026-09-08, replacing a
+   draft that told the model to say things like "Copy and run this statement
+   in your PostgreSQL client"; `PROMPT_VERSION` stays `v4`, `SYSTEM_PROMPT`
+   byte-equal, since the block rides the USER message alone). The only path a
+   write can take is the model's final answer: when it parses as a write, `agent_gate(sql, mode)`
    grows a `"write"` mode beside `"read"`, and `gate_write(sql)` (`agent.rs`)
    is the check it runs, through the same `pg_query` crate as the read gate,
    accepting exactly ONE `INSERT`/`UPDATE`/`DELETE` statement: no second

@@ -3,9 +3,8 @@ import { overlayOpen } from "../app/overlay/escStack";
 import { useGridStats } from "../stores/gridStats";
 import { useGridFilter } from "../stores/gridFilter";
 import { RotateCw } from "lucide-react";
-import { skey, useConnections } from "../stores/connections";
+import { endTabTx, skey, useConnections } from "../stores/connections";
 import { useTabs } from "../stores/tabs";
-import * as ipc from "../ipc/commands";
 import { ListFilter, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useEdits } from "../stores/edits";
@@ -369,21 +368,11 @@ function TxChip() {
     return hit ? hit[0].split("::")[0] : null;
   });
   if (!txPid) return null;
+  // the tab's ONE way to end a transaction (stores/connections `endTabTx`),
+  // which Ask's own band presses too: one act, one implementation
   const rollback = async () => {
-    const { tabSessions, setTxTab } = useConnections.getState();
     const tabId = useTabs.getState().activeId;
-    if (!tabId) return;
-    const key = skey(txPid, tabId);
-    const sid = tabSessions[key];
-    if (!sid) return;
-    try {
-      // straight on the session: running it through run() would wipe the
-      // result grid the user is probably inspecting mid-transaction
-      await ipc.execute(sid, "ROLLBACK");
-      setTxTab(key, false);
-    } catch {
-      /* session died: the closed event resets tx state */
-    }
+    if (tabId) await endTabTx(skey(txPid, tabId), "rollback");
   };
   return (
     <span className="status-tx">
