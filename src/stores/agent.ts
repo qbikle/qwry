@@ -45,6 +45,8 @@ import { useSaved, visibleSaved, type SavedQuery } from "./saved";
 import { useSettings, writesAllowed } from "./settings";
 import { useSidePane } from "./sidePane";
 import { useKnowledge } from "./knowledge";
+import { useRecents } from "./recents";
+import { canvasTabRefs } from "./tabs";
 import { driftLabel } from "./checks";
 import { createTauriTools } from "../agent/tools.tauri";
 import { tauriPlatform } from "../agent/platform.tauri";
@@ -651,8 +653,11 @@ export const useAgent = create<AgentState>((set, get) => ({
     );
     // the first canvas block the question named (the ladder's fifth rung): the
     // exchange remembers where it was asked from, so Add to Canvas on the
-    // reply lands under that block instead of at the document's end
-    const askedFrom = mentions.find((m) => m.kind === "block")?.ref.id;
+    // reply lands under that block instead of at the document's end. A whole
+    // canvas rides the same kind (B2) and is not a place a reply can land
+    const askedFrom = mentions.filter((m) => m.kind === "block").find((m) => !m.ref.canvas)?.ref.id;
+    // B2 `Recent`: what a question SENT, not what a draft once held
+    useRecents.getState().touchMentions(profileId, mentions);
     // the row Record View attached, read and CLEARED in one call: a row's
     // values are true of the question asked over them and of no later one
     // (LESSONS 3). Before the first await, like everything else here
@@ -1140,6 +1145,7 @@ function mentionsFor(
     threads: get().threads[profileId] ?? [],
     currentThreadId: threadId,
     blocks: Object.values(useAsk.getState().blocks),
+    canvases: canvasTabRefs(profileId),
   });
 }
 

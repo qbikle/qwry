@@ -21,7 +21,9 @@
 //                                           `threads` state gets the shell builder's
 //                                           five rows (fixtures.shell.ts), else the
 //                                           mount would overwrite the seeded five
-//                                           with the one
+//                                           with the one, and the W6 / B2 states
+//                                           their own connection's threads for the
+//                                           same reason (a `@` box offers them)
 //   agent_key_has                           false: ModelPicker.loadSourceState asks
 //                                           per hosted provider; no key is saved
 //   history_search                          no rows: the palette harness asks on
@@ -89,6 +91,8 @@ import type { Channel, InvokeArgs } from "@tauri-apps/api/core";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { GateVerdict, HttpChunk, HttpDone, WritePreview, WriteVerb } from "../ipc/types";
 import { FIXTURE, LOCAL_MODELS_JSON, LOCAL_MODELS_URL } from "./fixtures";
+import { B2_PILL_STATES } from "./fixtures.b2pills";
+import { B2_POPOVER_STATES, b2ThreadRows } from "./fixtures.b2popover";
 import { MENTION_STATES, mentionThreadRows } from "./fixtures.mentions";
 import { SHELL_THREAD_ROWS } from "./fixtures.shell";
 import { structureStats } from "./fixtures.structure";
@@ -206,12 +210,18 @@ export function installTauriShim(): void {
   mockIPC(
     (cmd, payload) => {
       switch (cmd) {
-        case "agent_thread_list":
-          return harnessState() === "threads"
-            ? SHELL_THREAD_ROWS
-            : (MENTION_STATES as readonly string[]).includes(harnessState() ?? "")
-              ? mentionThreadRows()
-              : [FIXTURE.threadRow];
+        case "agent_thread_list": {
+          const st = harnessState() ?? "";
+          if (st === "threads") return SHELL_THREAD_ROWS;
+          // the W6 states and B2's pill draft share one connection's threads;
+          // the B2 popover four have their own five, three of which fill the
+          // box's `Threads` section
+          if ((B2_POPOVER_STATES as readonly string[]).includes(st)) return b2ThreadRows();
+          const w6 =
+            (MENTION_STATES as readonly string[]).includes(st) ||
+            (B2_PILL_STATES as readonly string[]).includes(st);
+          return w6 ? mentionThreadRows() : [FIXTURE.threadRow];
+        }
         case "agent_key_has":
           return false;
         // the palette's own history query (PaletteHarness): no rows, so the

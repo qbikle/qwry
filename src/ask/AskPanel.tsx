@@ -1,6 +1,6 @@
 // The Ask pane's content (AGENT-UX section 1): a header that says where you
 // are (Ask · Threads · New Thread, DESIGN rule 12), the thread scroller of
-// answer blocks, the two-row composer (textarea, then model pill · send) and
+// answer blocks, the two-row composer (textarea, then `+` · model pill · send) and
 // the two slide-overs, the trace drawer and the Threads sheet, over the
 // thread. The shell owns the pane (width, mode, ⌘J, focus restore); this
 // component owns everything inside it.
@@ -65,8 +65,10 @@
 // Esc and ⌘ chords reach the window; a blur, a press outside it, Esc or the
 // caret leaving the token closes it, and a query dismissed by Esc or a press
 // stays dismissed until the caret's `@` or its fragment changes. The
-// draft's chips are a backdrop (.ask-ta-back) behind the textarea: the same
-// glyphs in the same font, lines and width with their colour transparent, its
+// draft's chips are a backdrop (.ask-ta-back) in front of the textarea: the
+// same glyphs in the same font, lines and width, PAINTED in tier 1 while the
+// textarea's own text goes transparent (B2: the pill's kind icon lives in the
+// backdrop's `@` cell, so the textarea's opaque `@` would print over it), its
 // scrollTop mirrored, painting one .mention pill (Mention.tsx, the echo's own
 // class) behind each mention that resolves against the connection's snapshot,
 // visible saved queries and threads, and nothing behind one that does not.
@@ -74,6 +76,24 @@
 // The wrap and the backdrop carry the same 2px side padding (ask.css, W7), so
 // the pill's outdent has room at position 0 of the draft and the two glyph
 // runs still start on the same pixel.
+//
+// The `+` pill and the paths (B2 item 3, item 2's UI half): the control row's
+// leftmost control is the MOUSE route to the same completion. It types no `@`
+// and takes no focus (mousedown prevented, the caret stays where it was, and
+// an unfocused textarea is focused with the caret at the end first), and it
+// opens the box with an EMPTY filter: at the caret when the caret stands in
+// plain text, and on the `@` token the caret is already inside when it stands
+// in one, so a pick CLEARS a half-typed `@ord` instead of splicing a second
+// `@` beside it. `tokenEnd` is the one rule for what a pick replaces, read off
+// the query's own position and never off which route opened it. While a
+// pill-opened box stands, `plusAt` holds the caret it opened at and
+// syncMentions leaves the box alone until the caret moves: the first typed
+// character moves it, so the box closes and the character is the textarea's,
+// W6's rule unchanged. A category row (`tables/`) routes to `narrowMention`
+// instead of `pickMention`: the path and its slash go in with NO trailing
+// space and the query re-opens on the new fragment, so the box stands inside
+// the kind and `⌫` over the slash is the textarea's own key and widens it back
+// (mentionRows' fragment grammar accepts the slash).
 //
 // Follow-ups (W7 item 3): the suggestions belong to the THREAD, not to each
 // answer, and stand once, in the block at its end (useAgent.followUps, handed
@@ -102,8 +122,10 @@ import type { Profile } from "../ipc/types";
 import { modelChoice, pendingTarget, retryLabel, useAgent, type Exchange } from "../stores/agent";
 import { useAsk, type MentionQuery } from "../stores/ask";
 import { useSaved, visibleSaved } from "../stores/saved";
+import { useRecents, type Recent } from "../stores/recents";
 import { useSchema, type SchemaSnapshot } from "../stores/schema";
 import { useSettings } from "../stores/settings";
+import { canvasTabRefs, useTabs } from "../stores/tabs";
 import { AnswerBlock } from "./AnswerBlock";
 import { editLiftId } from "./EchoActions";
 import { FollowUps } from "./FollowUps";
@@ -123,6 +145,7 @@ const NO_EXCHANGES: Exchange[] = [];
 const NO_THREADS: Thread[] = [];
 const NO_QUESTIONS: string[] = [];
 const NO_MENTIONS: Mention[] = [];
+const NO_RECENTS: Recent[] = [];
 const COMPOSER_MAX_H = 96;
 
 /** a question on its way from the composer into the thread */
@@ -220,6 +243,16 @@ function Starters({
 const chord = (spec: string) => chordGlyphs(spec).join("");
 const SEND_TIP = `Ask ${chord("return")}`;
 const STOP_TIP = `Stop ${chord("cmd+period")}`;
+/** the `+` pill's tooltip: a pick follows, so the ellipsis is earned
+ * (WRITING rule 2) */
+const ADD_TIP = "Add Context…";
+
+/** What a pick replaces, read off the QUERY and never off how the box was
+ * opened: an `@` at the query's own position means a token to replace, and
+ * anything else means the `+` pill's caret, where a pick inserts and replaces
+ * nothing. One rule, so a pill pressed inside `@ord` cannot leave two `@`s */
+const tokenEnd = (text: string, q: MentionQuery, caret: number) =>
+  text[q.at] === "@" ? mentionTokenEnd(text, q.at, Math.max(caret, q.at + 1)) : q.at;
 
 export function AskPanel({ profile, connected }: { profile: Profile; connected: boolean }) {
   const profileId = profile.id;
@@ -271,6 +304,13 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
   const savedAll = useSaved((s) => s.queries);
   const saved = useMemo(() => visibleSaved(savedAll, profileId), [savedAll, profileId]);
   const blocks = useAsk((s) => s.blocks);
+  // the canvases and the recents B2 adds to the ladder and to the box, read
+  // through their own stores' selectors so a tab opened or a pick made
+  // re-renders the pills and re-draws the box. `tabList` and `recentList` are
+  // the subscriptions; the refs the two helpers read are the same stores, so
+  // the value and the trigger cannot disagree
+  const tabList = useTabs((s) => s.tabs);
+  const recentList = useRecents((s) => s.byProfile[profileId]);
   const mentionCtx = useMemo<MentionCtx>(
     () => ({
       snapshot,
@@ -278,8 +318,10 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
       threads: threads ?? NO_THREADS,
       currentThreadId: threadId,
       blocks: Object.values(blocks),
+      canvases: canvasTabRefs(profileId),
+      recents: recentList ?? NO_RECENTS,
     }),
-    [snapshot, saved, threads, blocks, threadId],
+    [snapshot, saved, threads, blocks, threadId, profileId, tabList, recentList],
   );
   const mentionCtxRef = useRef(mentionCtx);
   mentionCtxRef.current = mentionCtx;
@@ -291,9 +333,25 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
   // the caret's `@` or the fragment differs, else the very next keyup would
   // reopen what Esc just closed
   const dismissed = useRef<MentionQuery | null>(null);
+  // the caret the `+` pill opened its box at (B2 item 3). The box stands with
+  // an empty filter and the pill types no `@`, so while it stands syncMentions
+  // leaves it alone for as long as the caret has not moved: the first typed
+  // character moves it, the box closes and the character is the textarea's
+  // (W6's rule, every key but the box's own falls through)
+  const plusAt = useRef<number | null>(null);
   const syncMentions = useCallback(() => {
     const ta = taRef.current;
     const a = useAsk.getState();
+    if (plusAt.current !== null) {
+      if (
+        ta &&
+        document.activeElement === ta &&
+        ta.selectionStart === ta.selectionEnd &&
+        ta.selectionStart === plusAt.current
+      )
+        return;
+      plusAt.current = null;
+    }
     const q =
       ta && document.activeElement === ta && ta.selectionStart === ta.selectionEnd
         ? mentionQueryAt(ta.value, ta.selectionStart)
@@ -310,8 +368,34 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
   }, []);
   const dismissMentions = useCallback(() => {
     const a = useAsk.getState();
-    dismissed.current = a.mentionQuery;
+    const ta = taRef.current;
+    // what stays dismissed is the query the TEXT would produce, not the one
+    // the store holds: the `+` pill's box over a half-typed `@ord` carries an
+    // empty filter, and remembering that would let the very next keyup reopen
+    // the box on `ord` that Esc just closed
+    dismissed.current = (ta && mentionQueryAt(ta.value, ta.selectionStart)) || a.mentionQuery;
+    plusAt.current = null;
     a.closeMentions();
+  }, []);
+
+  // the `+` pill: the same box, an empty filter, no `@` typed and the caret
+  // where it was. An unfocused textarea takes focus first, its caret at the
+  // end, so the pill's box always has a place to splice into
+  const openPlus = useCallback(() => {
+    const ta = taRef.current;
+    if (!ta || ta.disabled) return;
+    if (document.activeElement !== ta) {
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    }
+    const caret = ta.selectionStart;
+    // the caret inside a half-typed tag: the box belongs to THAT tag with its
+    // filter cleared, so a pick replaces `@ord` instead of adding a second `@`
+    // beside it. Everywhere else the caret itself is the query's `at`
+    const q = mentionQueryAt(ta.value, caret);
+    plusAt.current = caret;
+    dismissed.current = null;
+    useAsk.getState().openMentions(q?.at ?? caret, "");
   }, []);
 
   // a pick: the canonical token and one space over the whole token the caret
@@ -325,11 +409,33 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
       const ta = taRef.current;
       if (q === null || !ta || a.draftFor !== profileId) return;
       const text = ta.value;
-      const end = mentionTokenEnd(text, q.at, Math.max(ta.selectionStart, q.at + 1));
+      const end = tokenEnd(text, q, ta.selectionStart);
+      plusAt.current = null;
       pendingCaret.current = q.at + token.length + 1;
       dismissed.current = null;
       a.setDraft(`${text.slice(0, q.at)}${token} ${text.slice(end)}`);
       a.closeMentions();
+    },
+    [profileId],
+  );
+
+  // a category row: `@tables/` over the token with NO space, the caret after
+  // the slash, and the query re-opened on the new fragment, so the box stands
+  // inside the kind while the draft says which one (B2 item 2). ⌫ over the
+  // slash is the textarea's own key and widens it straight back
+  const narrowMention = useCallback(
+    (token: string) => {
+      const a = useAsk.getState();
+      const q = a.mentionQuery;
+      const ta = taRef.current;
+      if (q === null || !ta || a.draftFor !== profileId) return;
+      const text = ta.value;
+      const end = tokenEnd(text, q, ta.selectionStart);
+      plusAt.current = null;
+      pendingCaret.current = q.at + token.length;
+      dismissed.current = null;
+      a.setDraft(`${text.slice(0, q.at)}${token}${text.slice(end)}`);
+      a.openMentions(q.at, token.slice(1));
     },
     [profileId],
   );
@@ -798,12 +904,14 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
           )}
           <div className="ask-box" ref={boxRef}>
             <div className="ask-ta-wrap">
-              {/* the draft's pills (file header): the textarea's glyphs again,
-                  transparent, a .mention span around each resolved tag; the
-                  trailing newline gives a draft that ends in one the empty
-                  last line the textarea shows, so the two scroll as one. The
-                  wrap pads the outdent's 2px and this pays them back, so a
-                  first-token pill keeps its left edge */}
+              {/* the draft's pills (file header): the textarea's text again,
+                  PAINTED (B2: the pill's kind icon lives here, so the backdrop
+                  draws the glyphs and the textarea's own go transparent), a
+                  .mention span around each resolved tag; the trailing newline
+                  gives a draft that ends in one the empty last line the
+                  textarea shows, so the two scroll as one. The wrap pads the
+                  outdent's 2px and this pays them back, so a first-token pill
+                  keeps its left edge */}
               {connected && (
                 <div ref={backRef} className={`ask-ta-back${ghosted ? " ghosted" : ""}`} aria-hidden="true">
                   <MentionText text={draft} mentions={mentions} />
@@ -812,7 +920,7 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
               )}
               <textarea
                 ref={taRef}
-                className={`ask-ta${ghosted ? " ghosted" : ""}`}
+                className="ask-ta"
                 rows={1}
                 placeholder={connected ? `Ask about ${profile.dbname}…` : "Connect to ask"}
                 aria-label="Ask"
@@ -832,6 +940,21 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
               />
             </div>
             <div className="ask-ctl">
+              {/* the `+` context pill (B2 item 3): the mouse route to the `@`
+                  completion, leftmost in the row so it reads add · model ·
+                  send, three controls in 151 of the floor's 274px (DESIGN
+                  rule 12, amended by this wave). mousedown is prevented so
+                  the textarea keeps focus and its caret, the box's own rule */}
+              <button
+                className="ask-add"
+                title={ADD_TIP}
+                aria-label="Add Context"
+                disabled={!connected}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={openPlus}
+              >
+                <Plus size={12} />
+              </button>
               <ModelPicker
                 profileId={profileId}
                 choice={choice}
@@ -856,11 +979,12 @@ export function AskPanel({ profile, connected }: { profile: Profile; connected: 
             <MentionPopover
               ref={mentionPop}
               query={mentionQuery}
-              draft={draft}
+              quoted={draft[mentionQuery.at] === "@" && draft[mentionQuery.at + 1] === '"'}
               boxRef={boxRef}
               textareaRef={taRef}
               ctx={mentionCtx}
               onPick={pickMention}
+              onNarrow={narrowMention}
               onClose={dismissMentions}
             />
           )}

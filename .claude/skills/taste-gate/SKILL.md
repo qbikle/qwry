@@ -40,7 +40,10 @@ The fixture harness is a vite route that renders `AskPanel` with a canned thread
   ends; neither defect can appear in a frame whose only chip sits mid-line with room on
   both sides. The `@` pill's pair is `mention-first` (a tag at position 0 of the draft) and
   `mention-draft` (a tag breaking across a line at 320); a new chip species draws its own
-  two before its wave is framed.
+  two before its wave is framed. Since B2 the `@` pill wears its kind icon inside the `@`'s
+  own cell, so the same two cases are the check that no glyph moved: the icon may not shift
+  the pill's left edge at position 0, nor leave the wrapped fragment without it
+  (`b2-pill-icons` draws three kinds in one draft).
 - Frames land in `~/projects/qwry-agent-lab/docs/research/<wave>-frames/` for the
   maintainer's re-check (W2 used `w2-pixels/`). Open the locked sketch beside them:
   `http://127.0.0.1:5462/ask-sketch-v2.html` (`t` toggles its theme).
@@ -58,8 +61,8 @@ Rules 11–14 (DESIGN.md):
   any chrome explain a standard interaction (↩, ⇧↩, ⌘., Esc) or state what is always true
   (read-only, "shows its SQL")? Does anything, anywhere, explain a tier?
 - **12 · a strip states one thing.** Count the header: title + at most one qualifier + at most
-  two icon buttons. Count the composer control row: pill + send, nothing else. Is every
-  control that configures an action beside that action? Does provenance appear more than
+  two icon buttons. Count the composer control row: `+` · model pill · Send, nothing else. Is
+  every control that configures an action beside that action? Does provenance appear more than
   once in a zone (header avatar AND footer avatar is a finding)?
 - **13 · floor first.** Lay 320, 392 and 560 side by side: is the chrome pixel-identical
   (same rows, same order, same control count)? At 320, does anything clip, wrap or

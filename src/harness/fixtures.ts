@@ -94,6 +94,21 @@
 // main-area face and is framed through the harness's second root
 // (`?harness=canvas`, fixtures.canvas.ts), not from this list.
 //
+// The B2 states are the `@` completion grown up and the pill wearing its
+// kind, over the discussion thread again: fixtures.b2popover.ts
+// (`b2-popover-empty`, `b2-popover-category`, `b2-popover-fuzzy`,
+// `b2-plus-pill`: the sectioned box, one kind inside `tables/`, one fuzzy run,
+// and the control row at rest with the `+` pill in it) and fixtures.b2pills.ts
+// (`b2-pill-icons`: three kinds of pill in one draft, one at position 0 and
+// one the line breaks). Both write the draft after mount through the store's
+// own doors (the W6 shape) and read `FIXTURE` only inside functions. The
+// popover four carry their OWN schema, bookmarks, canvas tabs, threads and
+// recents, chosen so the product's matcher returns the sketch's own rows;
+// `b2-pill-icons` reuses the W6 order_v2 schema with one long-named bookmark
+// added, so it reads against `mention-draft` at the same width. AskHarness
+// seeds `useRecents` for them (the first states to), and every other state
+// clears it, the bookmarks' own rule.
+//
 // Follow-ups now live on the THREAD (useAgent.followUps), not on an answer, so
 // no fixture's exchange carries one: `followUpsFor` reads the row back out of
 // the last exchange's own `followups` trace step, which is where the loop
@@ -112,6 +127,8 @@ import type { Exchange, ToolChip } from "../stores/agent";
 import { ACTIONS_CHOICE } from "./fixtures.actions";
 import { anatomyExchangeFor } from "./fixtures.anatomy";
 import { ANSWER_CHOICE, type AnswerState } from "./fixtures.answer";
+import type { B2PillState } from "./fixtures.b2pills";
+import type { B2PopoverState } from "./fixtures.b2popover";
 import type { B4State } from "./fixtures.b4";
 import { interactSeed } from "./fixtures.interact";
 import type { KnowledgeState } from "./fixtures.knowledge";
@@ -162,7 +179,9 @@ export type HarnessState =
   | RichState
   | WritesState
   | CanvasAskState
-  | B1State;
+  | B1State
+  | B2PopoverState
+  | B2PillState;
 export const HARNESS_STATES: readonly HarnessState[] = [
   "answer",
   "empty",
@@ -225,6 +244,11 @@ export const HARNESS_STATES: readonly HarnessState[] = [
   "b1-committed",
   "b1-rolled-back",
   "b4-empty",
+  "b2-popover-empty",
+  "b2-popover-category",
+  "b2-popover-fuzzy",
+  "b2-plus-pill",
+  "b2-pill-icons",
 ];
 export const HARNESS_WIDTHS = [320, 392, 560] as const;
 export type HarnessTheme = "dark" | "light";
@@ -687,6 +711,11 @@ export function exchangeFor(state: HarnessState): Exchange | null {
     case "b1-committed":
     case "b1-rolled-back":
     case "b4-empty":
+    case "b2-popover-empty":
+    case "b2-popover-category":
+    case "b2-popover-fuzzy":
+    case "b2-plus-pill":
+    case "b2-pill-icons":
       return null;
     case "pending":
     case "retry":
@@ -734,6 +763,11 @@ export function choiceFor(state: HarnessState): { provider: string; model: strin
     case "a2-explain":
     case "a2-knowledge-trace":
     case "a2-ask-why":
+    case "b2-popover-empty":
+    case "b2-popover-category":
+    case "b2-popover-fuzzy":
+    case "b2-plus-pill":
+    case "b2-pill-icons":
       return ACTIONS_CHOICE;
     case "answer-actions":
     case "followups-end":

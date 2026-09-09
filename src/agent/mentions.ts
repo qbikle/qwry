@@ -11,15 +11,28 @@
 // what parseMentions() reads back, quotes doubled the way Postgres doubles
 // them, and mentions.test.ts walks names through both.
 //
-// The ladder has five rungs: table, column, saved query, thread, canvas block
-// (A3). The block is last and is the only one naming something the user built
-// rather than something the connection has, so a saved query and a block of
-// one name still send the saved query.
+// The ladder has six rungs: table, column, saved query, thread, canvas block
+// (A3), canvas (B2). The two canvas rungs are last and are the only ones
+// naming something the user built rather than something the connection has,
+// so a saved query and a block of one name still send the saved query, and a
+// rung added after them never re-decides a collision that already had an
+// answer.
 //
 // Two words that look alike and are not: `token` is what the user tagged
 // WITHOUT the leading `@` (`order_v2`, `users.email`, `"Monthly revenue"`),
 // which is what the trace's tagged line prints; canonicalToken() returns what
 // the popover INSERTS, which is `@` + that.
+//
+// B2 adds the picker's five PATHS to the grammar: `@tables/order_v2`,
+// `@columns/order_v2.total`, `@saved/"Orders by day"`, `@canvases/"August
+// finance"`, `@threads/"is the USD share growing"`. A path is a route through
+// the completion, never a namespace: it is stripped before anything else
+// looks at the tag, so `@tables/order_v2` and `@order_v2` are the same
+// Mention with the same `token`, and the resolve ladder, the TAGGED block,
+// the trace's tagged line, the prefilter's must-include list, the eval's
+// byte-identical messages and the bubble's pill all read exactly what they
+// read before B2. The typed glyphs still own the span, so the pill in the
+// draft paints over the path the user can see.
 
 import type { SchemaSnapshot, TableInfo } from "../stores/schema";
 import type { SavedQuery } from "../stores/saved";
@@ -56,6 +69,12 @@ export interface SavedRef {
 export interface BlockRef {
   id: string;
   name: string;
+  /** B2: this ref is a whole CANVAS, not one block inside one. Both ride the
+   * ladder's fifth kind because one pill species and one `LayoutGrid` glyph
+   * serve them (Mention.tsx's map is by kind) and a canvas is the same sort
+   * of fact as a block: something the user built. What tells them apart is
+   * this flag and the context line it writes. */
+  canvas?: boolean;
   /** the statement the block ran; absent on a note */
   sql?: string | null;
   /** the run's columns, the shape half of what the model is told */
@@ -63,6 +82,16 @@ export interface BlockRef {
   rowCount?: number | null;
   /** a note's own words: what a note carries instead of a run */
   text?: string | null;
+}
+
+/** A canvas document, by the title its tab wears (B2). The caller hands over
+ * the ones a question may name, like every other rung; a canvas whose tab is
+ * closed is not one of them, and a tag naming it stays plain text (LESSONS
+ * 5). What the model is told is the title alone: reading the document is a
+ * tool, not a paste (B3). */
+export interface CanvasRef {
+  id: string;
+  title: string;
 }
 
 export interface ThreadRef {
@@ -92,13 +121,22 @@ export type Mention =
   | { span: Span; token: string; kind: "tab"; ref: TabRef }
   | { span: Span; token: string; kind: "block"; ref: BlockRef };
 
+/** The five paths the completion offers as rows and accepts as typed
+ * prefixes (B2 item 2), in the order the box draws them. */
+export const MENTION_PATHS = ["tables", "columns", "saved", "canvases", "threads"] as const;
+export type MentionPath = (typeof MENTION_PATHS)[number];
+
 /** One `@…` span the grammar found, before anything is known about what it
  * names. An unresolved one is plain text: no chip, no context. */
 export interface RawMention {
   span: Span;
-  /** the text after the `@`, as typed: `order_v2`, `users.email`,
-   * `"Monthly revenue"` (escapes included) */
+  /** the text after the `@` and after any `kind/` path, as typed:
+   * `order_v2`, `users.email`, `"Monthly revenue"` (escapes included). The
+   * path is NOT here: it is how the tag was reached, not what it names */
   token: string;
+  /** the path typed after the `@`, null when the tag is bare. Kept so the
+   * completion can tell where the caret stands; resolution ignores it */
+  path: MentionPath | null;
   /** an identifier path's segments; empty for a quoted name */
   parts: string[];
   /** a quoted name with its `""` escapes resolved; null for a path */
@@ -117,6 +155,9 @@ export interface MentionCtx {
   /** the canvas blocks a question may name (A3). Optional: a caller with no
    * canvas open passes none, and the rung simply has nothing on it */
   blocks?: readonly BlockRef[];
+  /** the canvases a question may name (B2), in the order their tabs stand.
+   * Optional on the same terms */
+  canvases?: readonly CanvasRef[];
 }
 
 /** One segment of the question: a run of plain text, or a mention's own
@@ -136,12 +177,18 @@ const PUBLIC = "public";
 
 // ---- grammar ---------------------------------------------------------------
 
-/** `@` + an identifier path of at most three segments (table, schema.table,
- * table.column, schema.table.column), or `@"a quoted name"` where `""` stands
- * for one quote, as it does in a Postgres identifier. No newline inside the
- * quotes: an unclosed one would otherwise swallow the rest of the draft. */
-const MENTION =
-  /@(?:"((?:[^"\n]|"")*)"|([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){0,2}))/g;
+/** `@`, an optional `kind/` path (B2), then an identifier path of at most
+ * three segments (table, schema.table, table.column, schema.table.column) or
+ * `@"a quoted name"` where `""` stands for one quote, as it does in a
+ * Postgres identifier. No newline inside the quotes: an unclosed one would
+ * otherwise swallow the rest of the draft. A path with nothing after it
+ * (`@tables/`) is a fragment mid-typing, not a tag: the alternation fails and
+ * the scan falls back to reading `tables` as the name, which is what it is
+ * until the next character arrives. */
+const MENTION = new RegExp(
+  `@(?:(${MENTION_PATHS.join("|")})\\/)?(?:"((?:[^"\\n]|"")*)"|([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*){0,2}))`,
+  "g",
+);
 
 /** A letter, digit or underscore in ANY script: `a@b` and `नाम@users` are one
  * word each, not a tag. matchAll() iterates over its own copy of the regex,
@@ -159,13 +206,17 @@ export function parseMentions(text: string): RawMention[] {
   for (const m of text.matchAll(MENTION)) {
     const at = m.index ?? 0;
     if (at > 0 && WORDY.test(text[at - 1])) continue;
-    const name = m[1] === undefined ? null : m[1].replace(/""/g, '"');
+    const path = (m[1] ?? null) as MentionPath | null;
+    const name = m[2] === undefined ? null : m[2].replace(/""/g, '"');
     // `@""` names nothing, and an empty name would match an unnamed thread
     if (name !== null && name.length === 0) continue;
     out.push({
       span: [at, at + m[0].length],
-      token: m[0].slice(1),
-      parts: name === null ? m[2].split(".") : [],
+      // the path is dropped HERE, once, so nothing downstream has to know it
+      // existed: the token is the canonical one either way
+      token: m[0].slice(1 + (path ? path.length + 1 : 0)),
+      path,
+      parts: name === null ? m[3].split(".") : [],
       name,
     });
   }
@@ -201,11 +252,15 @@ const columnOf = (t: TableInfo | undefined, name: string): string | null =>
   t?.columns.find((c) => c.name.toLowerCase() === name.toLowerCase())?.name ?? null;
 
 /** Resolve each span in one order and stop at the first hit: table, column,
- * saved query, thread, canvas block. An unresolved span is dropped, which is
- * what leaves it plain text on screen and out of the context block. The block
- * is last because it is the only rung naming something outside the database:
- * a saved query and a block of the same name send the saved query, exactly as
- * they did before the canvas existed. */
+ * saved query, thread, canvas block, canvas. An unresolved span is dropped,
+ * which is what leaves it plain text on screen and out of the context block.
+ * The two canvas rungs are last because they are the only ones naming
+ * something outside the database: a saved query and a block of the same name
+ * send the saved query, exactly as they did before the canvas existed, and
+ * B2's canvas rung was appended rather than inserted so that no collision
+ * that already had an answer got a new one. A path the user typed
+ * (`@saved/…`) does not narrow this ladder: it is how the completion was
+ * walked, and two spellings of one tag must send one thing. */
 export function resolveMentions(raw: readonly RawMention[], ctx: MentionCtx): Mention[] {
   if (raw.length === 0) return [];
   const tables = indexTables(ctx.snapshot);
@@ -224,6 +279,11 @@ export function resolveMentions(raw: readonly RawMention[], ctx: MentionCtx): Me
   for (const b of ctx.blocks ?? []) {
     const key = b.name.toLowerCase();
     if (!blocks.has(key)) blocks.set(key, b);
+  }
+  const canvases = new Map<string, CanvasRef>();
+  for (const c of ctx.canvases ?? []) {
+    const key = c.title.toLowerCase();
+    if (!canvases.has(key)) canvases.set(key, c);
   }
 
   const out: Mention[] = [];
@@ -288,7 +348,19 @@ export function resolveMentions(raw: readonly RawMention[], ctx: MentionCtx): Me
       continue;
     }
     const block = blocks.get(text.toLowerCase());
-    if (block) out.push({ span: one.span, token: one.token, kind: "block", ref: block });
+    if (block) {
+      out.push({ span: one.span, token: one.token, kind: "block", ref: block });
+      continue;
+    }
+    const canvas = canvases.get(text.toLowerCase());
+    if (canvas) {
+      out.push({
+        span: one.span,
+        token: one.token,
+        kind: "block",
+        ref: { id: canvas.id, name: canvas.title, canvas: true },
+      });
+    }
   }
   return out;
 }
@@ -357,6 +429,8 @@ export function canonicalToken(kind: MentionKind, ref: Mention["ref"]): string {
     // write it, and the echo reads it back off the exchange (AGENT-UX 15)
     case "tab":
       return `@${quoted((ref as TabRef).name)}`;
+    // a canvas rides this kind too (BlockRef.canvas), quoted by its title:
+    // one form for everything the user built
     case "block":
       return `@${quoted((ref as BlockRef).name)}`;
   }
@@ -378,7 +452,7 @@ function refKey(m: Mention): string {
     case "tab":
       return `tab:${m.ref.name}`;
     case "block":
-      return `block:${m.ref.id}`;
+      return `${m.ref.canvas ? "canvas" : "block"}:${m.ref.id}`;
   }
 }
 
@@ -428,6 +502,12 @@ export function mentionContext(mentions: readonly Mention[]): string {
         lines.push(`query tab "${m.ref.name}"`);
         break;
       case "block": {
+        // a whole canvas is named and nothing more: what is ON it is a tool's
+        // answer (B3), and a paste of every block would bury the question
+        if (m.ref.canvas) {
+          lines.push(`canvas "${m.ref.name}"`);
+          break;
+        }
         // the block's own record: what it asked, what it ran, and the SHAPE
         // of what came back. Never the rows: the block stands on the canvas
         // beside the answer, and a paste of its table would be the same data

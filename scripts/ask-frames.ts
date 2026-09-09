@@ -282,6 +282,11 @@ const ALL_STATES = [
   "b1-committed",
   "b1-rolled-back",
   "b4-empty",
+  "b2-popover-empty",
+  "b2-popover-category",
+  "b2-popover-fuzzy",
+  "b2-plus-pill",
+  "b2-pill-icons",
 ] as const;
 /** the second root (A2): the palette is a modal over the window, not a pane in
  * a card, so it has one width, its own (`src/harness/PaletteHarness.tsx`) */

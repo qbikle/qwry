@@ -40,11 +40,14 @@ confirm, ↩ opens it, Esc closes the sheet; the current thread's row is
 `.active`. Deleting the current thread selects the newest that remains, and
 the last delete leaves the pane's empty state. The
 composer at the bottom is two rows: the textarea, then a control row with the
-model pill at the left (§8) and the accent send button at the right, which
-becomes `Stop` while a turn runs and is the surface's cancel affordance
-beside ⌘.. No hint line sits under it: ↩ sends and ⇧↩ newlines are standard,
-so they live in the send button's tooltip and the Keyboard Shortcuts sheet
-(DESIGN rule 11).
+`+` context pill (B2: the Dashed ghost species at 22px, `Add Context…`,
+opening the `@` completion of §1a with an empty filter and typing no `@`)
+and the model pill (§8) at the left and the accent send button at the right,
+which becomes `Stop` while a turn runs and is the surface's cancel affordance
+beside ⌘.. Three controls sit in the row now, add · model · send, and
+nothing else (DESIGN rule 12). No hint line sits under it: ↩ sends and ⇧↩
+newlines are standard, so they live in the send button's tooltip and the
+Keyboard Shortcuts sheet (DESIGN rule 11).
 
 Empty state (no model configured): a setup card with the provider picker,
 key field (saved to Keychain), and one sentence of what Ask does. Empty state
@@ -66,72 +69,171 @@ of the connection, and the three crossfade when they change; no shuffle
 control. Starters are drawn from the schema ("How many rows in each table?" is
 never one of them; use the connection's real nouns).
 
-### 1a. The composer's `@` completion (W6)
+### 1a. The composer's `@` completion (W6, sectioned and fuzzy B2)
 
 Typing `@` at a word boundary in the textarea (the grammar of
 `src/agent/mentions.ts`: `a@b` and an email are one word and never a tag)
 opens a completion over the composer: the model picker's box (§8) opened
 upward from the composer box at the composer's own width, its edges on the
 box's outer edges 4px above it at every width (DESIGN rule 13), no title (the
-`@` under the caret is the title), no footer, and never an empty row: when
-nothing matches, the box is gone (a `No results` row is rule 11 dead text).
-It is the composer's completion, not an overlay: it never joins the overlay
-stack, so no click catcher stands over Send or the model pill and every
-window chord stays live while an `@word` is under the caret (LESSONS 10). It
-is focusless like the picker: the caret never leaves the textarea. The filter
-is the text typed after the `@` up to the caret, read from the textarea on
+`@` under the caret is the title), no footer. It is the composer's
+completion, not an overlay: it never joins the overlay stack, so no click
+catcher stands over Send, the `+` pill or the model pill and every window
+chord stays live while an `@word` is under the caret (LESSONS 10). It is
+focusless like the picker: the caret never leaves the textarea. The filter is
+the text typed after the `@` up to the caret, read from the textarea on
 every change and caret move (a caret placed back inside a finished token
 reopens it; a selection is no caret); a quoted fragment (`@"Monthly rev`)
 keeps its spaces until its closing quote, an identifier fragment ends at a
-space or any character outside `[A-Za-z0-9_.]`. Rows are the picker's menu
-rows at a fixed 28px, in this order, no group headings (W7: an icon per row
-under a heading naming the same kind is one fact in two slots, DESIGN rule
-14): each row opens with a kind icon at `--icon-sm`, tier 2 (lucide
-`Table2` tables, `Columns3` columns, `Bookmark` saved queries,
-`MessageSquare` threads), then the mono name, then the hint at the row's
-right in tier 2: `Tables` (name, with its `schema.` only outside `public`;
-the hint carries the row estimate, else the column count), `Columns`
-(`table.column`, from two typed characters, capped at 40, matched on the
-column's name; the hint is the type in psql's short spelling), `Saved
-Queries` (name, no hint), `Threads` (title, this connection's other threads,
-no hint), the rows of each kind drawn contiguously in that order and a kind
-with no rows contributing nothing. A dotted fragment (`order_v2.`) names the
-table and filters its columns; a quoted fragment offers saved queries and
-threads only. Legacy and foreign tables are never offered (AGENT-SPEC §6
-rule 3: a row that cannot be the answer is a dead row). The match is
-substring on the name the user would type, a prefix outranking a substring,
-ties in the connection's own order; never cmdk's fuzzy scorer. Keys: ↑↓ move
-the hot row, ↩ or ⇥ pick (the canonical token plus one space replaces the
-whole token under the caret, the caret parks after the space), Esc closes
-the completion only (the pane's Esc ladder gets the next Esc); every other
-key is the textarea's, Home and End included, and ⌘ chords bubble to the
-window. A click on a row picks it; a mousedown anywhere else closes the box
-and lands where it was aimed (Send sends, the pill opens the picker). Blur
-closes it. Identifiers in the rows are mono (WRITING: data wears data's
-clothes); the panel itself is flat (`--bg-panel`, `border-strong`,
-`shadow-pop`, no gradient).
+space or any character outside `[A-Za-z0-9_.]`.
+
+The box is a FIXED 320px (DESIGN rule 2: chrome is sized to its tallest
+state, content swaps inside it), never sized to what it holds: rows draw
+from the top and the list scrolls inside when it runs longer, so the hot row
+and the box's own top edge never move across a keystroke, a completed
+category or a changing section count; a sparse filter (three rows inside a
+thin category) leaves the panel standing below its own rows rather than
+shrinking to meet them, Raycast's own cost and a rare one once matching is
+fuzzy over ~200 tables and ~4000 columns. When nothing matches at all the box
+is gone (a `No results` row is rule 11 dead text). This reverses W7's box,
+which simply stopped growing at 320px; the height is now the box's own floor
+and ceiling, not a limit its content happened to hit.
+
+B2 also reverses W7's flat list: with an EMPTY filter the box no longer runs
+every askable table by row count in one pass. It opens on five category
+rows, `tables/` · `columns/` · `saved/` · `canvases/` · `threads/` — a kind
+icon, then the path word in mono with its slash (it is the token you would
+type), then `ChevronRight` at `--icon-sm` tier 2, flex:none at the right
+(the ContextMenu's `.ctx-arrow`: a row that opens a level wears the mark
+every such row in the app wears, DESIGN rule 1); no count rides the hint
+slot (delete `202`, rule 11: nothing is lost). ↩, →, a click, or typing the
+path itself (`tables/`) narrows the box to that kind and the filter
+continues after the slash (`@tables/pflg` searches tables only); ⌫ over the
+slash widens it back out. Below the categories: `Recent` (the profile's
+last-used tables, saved queries, canvases and mentions sent, ≤4, a small
+per-profile store persisted the way the model picker's sources are),
+`Tables` (≤5, by recent use then by size), `Saved` (≤3), `Canvases` (≤3),
+`Threads` (≤3); `Columns` carries no section of its own here, since a column
+row needs two typed characters (`COLUMN_MIN_FILTER`, unchanged) and an empty
+filter has none. Each present section sits under its own labelled hairline
+(a 20px band, the label in the app's smallest register, `.picker-group` /
+`.tkind`: `--text-2xs`, 700, uppercase, `.04em`, in TIER 2 — `Recent` is
+load-bearing, four different kinds sit under it and only the word says why
+— then an 8px gap and a 1px `--border` hairline running to the row's right
+edge; nothing sits above the first section) and is absent the moment it has
+nothing to show: at most 23 rows and 5 hairlines in all. A row `Recent`
+already shows is not repeated in its own kind section below (rule 14); a
+kind section fills with the next by its own order. A typed fragment
+collapses all of this to ONE run with no hairlines: the categories that
+match rise to the top, then rows in the categories' own order (tables,
+columns, saved, canvases, threads); inside a completed category
+(`@tables/…`) the run holds one kind only, still no hairlines.
+
+Matching is fuzzy from here, not substring (reversing W7): a subsequence of
+the filter's characters against the name the user would type, with bonuses
+for a prefix match, a word start (the character after a `_`), and a run of
+consecutive matched characters, so `t-a-` reaches `tables/` and `pflg`
+reaches `product_flatlay_generations`. An exact or prefix match still ranks
+above a looser subsequence, and ties keep the connection's own order (tables
+largest first, columns by position, saved queries and threads as their
+lists hold them, canvases as their tabs stand); the scorer is a pure
+function with property tests, ≤1 ms for 500 rows. Inside `@columns/` the
+two-character gate does NOT apply (the path is the request, so an empty
+filter there is a real list of the connection's columns, capped like any
+other run), and a dotted fragment's head must PREFIX its table, never
+merely subsequence it, so `order_v2.pa` and `ord.pa` both filter that one
+table's columns while `o_v2.pa`, a subsequence and not a prefix, reaches
+nothing (a dotted filter is a decision, not a guess). A category-prefixed
+token (`@tables/order_v2`, `@columns/…`, `@saved/…`, `@canvases/…`,
+`@threads/…`) is accepted by the grammar and canonicalized to the plain
+token that already resolves (`@order_v2`, or `@"…"` for a quoted kind)
+before anything downstream reads it: the resolve ladder, the `TAGGED BY THE
+USER:` block (§2), the eval's byte-identical messages (AGENT-SPEC §4.1) and
+the bubble's pill all see exactly the token they saw before B2, and a test
+pins the canonical form.
+
+Rows are the picker's menu rows at a fixed 28px: each opens with a kind icon
+at `--icon-sm`, tier 2 (lucide `Table2` tables, `Columns3` columns,
+`Bookmark` saved queries, `MessageSquare` threads, `LayoutGrid` canvases),
+then the mono name, then the hint at the row's right in tier 2: `Tables`
+(name, with its `schema.` only outside `public`; the hint carries the row
+estimate, else the column count), `Columns` (`table.column`, from two typed
+characters, capped at 40, matched on the column's name; the hint is the
+type in psql's short spelling), `Saved Queries`, `Canvases` and `Threads`
+(name or title, no hint). A dotted fragment (`order_v2.`) names the table
+and filters its columns; a quoted fragment offers saved queries, canvases
+and threads only. Legacy and foreign tables are never offered (AGENT-SPEC §6
+rule 3: a row that cannot be the answer is a dead row). The `canvases/`
+category and its rows name a whole canvas by its own title, never one of
+its blocks: a canvas's individual blocks are not offered as popover rows
+this wave, nor are canvas tools given to the model (both B3).
+
+Keys: ↑↓ move the hot row, ↩ or ⇥ pick (on a table, column, saved query,
+canvas or thread row the canonical token plus one space replaces the whole
+token under the caret and the caret parks after the space; on a category
+row it instead completes the path with no space, and the box, re-reading
+the fragment, stands inside that kind), Esc closes the completion only (the
+pane's Esc ladder gets the next Esc); every other key is the textarea's,
+Home and End included, and ⌘ chords bubble to the window. A click on a row
+picks it; a mousedown anywhere else closes the box and lands where it was
+aimed (Send sends, the `+` pill and the model pill open their own pickers).
+Blur closes it. Identifiers in the rows are mono (WRITING: data wears
+data's clothes); the panel itself is flat (`--bg-panel`, `border-strong`,
+`shadow-pop`, 4px padding, no gradient).
+
+A dashed `+` pill sits leftmost in the composer's control row (§1), 8px
+before the model pill: 22×22, `--radius-pill`, no fill, 1px dashed
+`--border-strong`, lucide `Plus` at `--icon-sm` in tier 2 (the Dashed ghost
+species, DESIGN rule 1, `.rail-add`'s face at the composer's tier). Hover
+firms the dash to a solid `--accent` edge, lifts the glyph to tier 1 and
+fills `--bg-hover`; pressed is `scale(.97)`; focus-visible the accent
+outline; disabled with the textarea (`--o-disabled`). Tooltip `Add
+Context…` (WRITING rule 2: a pick follows). It is the mouse route to the
+same box with an empty filter and no `@` typed: a pick splices `@token ` at
+the caret, Esc leaves the draft untouched, and mousedown is prevented so
+the textarea keeps focus and its caret (focusing it first, caret at the
+end, when the textarea was not already focused). It never shows the
+contexts already chosen a second time: the pills already in the text do
+that (rule 14).
 
 In the draft, every RESOLVED mention (a table, a column, a saved query, a
-thread the ladder of `resolveMentions` finds) wears a pill: the textarea
-stays the source of truth (plain text; copy and paste work) and a backdrop
-behind it paints `.mention` (accent-soft fill, a 1px ring firmed to 40%
-accent, the bubble's own hover-ring value (W7), so the edge reads as a
+thread or a canvas the ladder of `resolveMentions` finds) wears a pill: the
+textarea stays the source of truth (plain text; copy and paste work) and a
+backdrop behind it paints `.mention` (accent-soft fill, a 1px ring firmed to
+40% accent, the bubble's own hover-ring value (W7), so the edge reads as a
 chip's and not a find-match highlight; 4px corners, outdented 2px so no
 letter moves when a pill appears or leaves; `box-decoration-break: clone` so
 a pill the line breaks keeps rounded ends on both fragments) under exactly
-the mention's glyphs, in the surrounding text's own font. The pill carries
-NO kind icon: an icon can stand only where a glyph stands, and the `@` cell
-is 8px against a 12px icon (DESIGN rule 5, one size per surface); the kind
-is stated once already, on the popover row where the pick was made. The
-textarea's own wrap pads 2px on each side and takes it back in margin (the
-textarea's inset moves to match), so a pill at position 0 of the draft keeps
-its left edge instead of losing it to the outdent (the `mention-first`
-fixture, W7, pins this at 320). An `@word` that resolves to nothing gets no
-pill and sends no context; it is plain text and the question still runs
-(LESSONS 5). The pill, the `@` and the quotes are the data costume;
-WRITING's mono form applies to the rows and to the trace's `tagged` line,
-never to the chip. The lift on send carries the pills into the bubble (§2
-item 1).
+the mention's glyphs, in the surrounding text's own font. B2 reverses W7's
+"the pill carries NO kind icon": the icon now stands IN the `@` cell rather
+than beside it. The `@` glyph itself goes transparent and keeps its
+advance; the kind's icon (`--icon-sm`, `--accent`, `.chip.active`'s icon
+inside an accent-soft chip) sits centred on that same cell, so no glyph
+moves and the caret's positions stay exactly the textarea's, and W7's own
+objection (an icon can stand only where a glyph stands, DESIGN rule 5) is
+met by taking the glyph's own cell rather than adding one: measured, the
+`@`'s advance at `--text-md` is 11.86px and the 12px icon is centred on it,
+its own left edge 1.92px inside the backdrop's clip. That slack is the
+whole margin: a larger `--icon-sm`, or a kind whose glyph inks its own left
+edge, clips at draft position 0, and the fix then is the wrap's 2px padding
+and the backdrop's, moved together. The cell stays `display: inline`, never
+`inline-block` (an `inline-block` adds a break opportunity between the `@`
+and a following quote that the textarea's own wrap never has, UAX 14 AL ×
+QU, and the pill would drift off its glyphs at a wrap). The technique: the
+backdrop paints the glyphs in tier 1 and the textarea's own text is
+transparent with `caret-color` kept and a translucent `::selection` (the
+`.ask-ta.ghosted` technique, made permanent). One face renders everywhere:
+the bubble's `MentionText` renders the same span and the lift carries it.
+The textarea's own wrap pads 2px on each side and takes it back in margin
+(the textarea's inset moves to match), so a pill at position 0 of the draft
+keeps its left edge instead of losing it to the outdent (`mention-first`
+pins this at 320, and `mention-draft` pins a pill breaking across a line,
+the taste-gate's first-position-and-wrap rule). An `@word` that resolves to
+nothing gets no pill and sends no context; it is plain text and the
+question still runs (LESSONS 5). The pill, the `@`, its icon and the quotes
+are the data costume; WRITING's mono form applies to the rows and to the
+trace's `tagged` line, never to the chip. The lift on send carries the
+pills into the bubble (§2 item 1).
 
 ## 2. Anatomy of an answer
 

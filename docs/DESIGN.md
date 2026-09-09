@@ -175,6 +175,16 @@ badge clipped to `READ-ONL` at the floor because the strip had nothing left
 to give. The Inspector's header, a text title and two icon buttons, was the
 pattern in the same window all along.
 
+The composer's control row is one strip holding what travels with the
+question and nothing else: the `+` context pill, the model pill and Send,
+three controls in 149 of 272px at the 320 floor (`Haiku 4.5` on the pill;
+246 at its 180px cap). A control that edits the question or configures its
+answer sits there; anything else does not, and a fourth control rewrites
+this sentence with its count. Precedent: B2's `+` pill, the mouse route to
+the `@` completion, seated leftmost beside the model pill rather than on
+the text's first line, where it would have cost the textarea, the backdrop
+and the lift ghost an indent.
+
 ## Rule 13: Floor first
 
 Chrome is designed at the floor width and then given room, never the reverse.

@@ -36,6 +36,7 @@ import { setCanvasPort } from "../canvas/port";
 import { useAgent } from "./agent";
 import { useAsk } from "./ask";
 import { useConnections } from "./connections";
+import { useRecents } from "./recents";
 import { useSettings } from "./settings";
 import { useTabs } from "./tabs";
 import type { Exchange } from "./agent";
@@ -721,6 +722,7 @@ export const useCanvas = create<CanvasState>((set, get) => ({
 
   deleteCanvas: async (canvasId) => {
     const doomed = get().docs[canvasId]?.blocks ?? [];
+    useRecents.getState().forget(metaOf(get(), canvasId)?.profileId, "canvas", canvasId); // B2 `Recent`
     // the tab goes with the document, here and in appdb (canvas_delete
     // unbinds the row): a tab whose canvas is gone would restore onto nothing
     const tab = useTabs.getState().tabs.find((t) => t.canvas_id === canvasId);
@@ -861,6 +863,9 @@ async function save(canvasId: string): Promise<void> {
 }
 
 function persist(canvasId: string): void {
+  // B2 `Recent`: every write is a touch, and a rename refreshes the title the
+  // completion shows, because the row is read off the live canvas
+  useRecents.getState().touch(metaOf(useCanvas.getState(), canvasId)?.profileId, "canvas", canvasId);
   const t = timers.get(canvasId);
   if (t) clearTimeout(t);
   timers.set(

@@ -8,6 +8,8 @@ import {
   writeTextFile,
 } from "../ipc/commands";
 import { useConnections } from "./connections";
+import { useRecents } from "./recents";
+import type { CanvasRef } from "../agent/mentions";
 import type { TableInfo } from "./schema";
 
 export interface Tab {
@@ -426,6 +428,7 @@ export const useTabs = create<TabsState>((set, get) => ({
     };
     set({ tabs: [...tabs, t], activeId: id });
     rememberActive(activePid(), id);
+    useRecents.getState().touch(t.profile_id, "table", `${table.schema}.${table.name}`); // B2 `Recent`
     persist(); // no-op for the table tab itself; keeps query-tab order in sync
     return id;
   },
@@ -869,6 +872,24 @@ export async function saveActiveToFile(): Promise<void> {
     ),
   }));
   if (firstSave) persist(); // the rename is appdb-visible; file fields aren't
+}
+
+/** The connection's canvases, in the order their tabs stand: what the `@`
+ * completion offers under `canvases/` and what the resolve ladder's canvas
+ * rung reads (B2, AGENT-UX 1a). A canvas whose tab is closed is not offered,
+ * and a tag naming it stays plain text (LESSONS 5). Here rather than in the
+ * canvas store because the pane must not import the document store (the
+ * canvas/port.ts rule), and the tab already carries the title: `rename` syncs
+ * it, so one fact stands in one slot (DESIGN rule 14). */
+export function canvasTabRefs(profileId: string | null | undefined): CanvasRef[] {
+  if (!profileId) return [];
+  const out: CanvasRef[] = [];
+  for (const t of useTabs.getState().tabs) {
+    if (t.kind === "canvas" && t.canvas_id && t.profile_id === profileId) {
+      out.push({ id: t.canvas_id, title: t.name });
+    }
+  }
+  return out;
 }
 
 // editor text changes flow into the active tab (and debounce to disk).

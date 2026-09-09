@@ -123,6 +123,7 @@ import { useAsk } from "../stores/ask";
 import { useCanvas } from "../stores/canvas";
 import { useConnections } from "../stores/connections";
 import { useSaved } from "../stores/saved";
+import { useRecents } from "../stores/recents";
 import { useSchema } from "../stores/schema";
 import { useSettings } from "../stores/settings";
 import { useSidePane } from "../stores/sidePane";
@@ -141,6 +142,13 @@ import {
 import { ACTIONS_STATES, actionsAfterMount, actionsSeed, type ActionsState } from "./fixtures.actions";
 import { ANATOMY_STATES, anatomyTraceFor, type AnatomyState } from "./fixtures.anatomy";
 import { ANSWER_STATES, answerAfterMount, answerSeed, type AnswerState } from "./fixtures.answer";
+import { B2_PILL_STATES, b2PillsAfterMount, b2PillsSeed } from "./fixtures.b2pills";
+import {
+  B2_POPOVER_STATES,
+  b2PopoverAfterMount,
+  b2PopoverSeed,
+  type B2PopoverState,
+} from "./fixtures.b2popover";
 import {
   CANVAS_PROFILE_ID,
   CANVAS_STATES,
@@ -290,6 +298,14 @@ function seed({ state, w, theme }: Params) {
   const know = (KNOWLEDGE_STATES as readonly string[]).includes(state)
     ? knowledgeSeed(state as KnowledgeState)
     : null;
+  // the B2 threads: the popover four bring their own connection (a schema,
+  // bookmarks, canvas TABS, threads and RECENTS chosen so the product's own
+  // matcher returns the sketch's rows), and the pill state the W6 one with a
+  // long-named bookmark and the canvas it tags
+  const b2pop = (B2_POPOVER_STATES as readonly string[]).includes(state)
+    ? b2PopoverSeed(state as B2PopoverState)
+    : null;
+  const b2pill = (B2_PILL_STATES as readonly string[]).includes(state) ? b2PillsSeed() : null;
   // the thread a state shows, oldest first: one seed wins, and the same list
   // is the active thread, the exchanges and what the follow-up row reads
   const list =
@@ -301,6 +317,8 @@ function seed({ state, w, theme }: Params) {
     writes?.exchanges ??
     b1?.exchanges ??
     a3?.exchanges ??
+    b2pop?.exchanges ??
+    b2pill?.exchanges ??
     echo ??
     (exchange ? [exchange] : null);
   // the seed that carries this state's own busy and phase (a state matches at
@@ -311,7 +329,7 @@ function seed({ state, w, theme }: Params) {
   applySettings(choice, theme);
 
   useSchema.setState({
-    snapshots: { [pid]: know?.snapshot ?? w6?.snapshot ?? FIXTURE.snapshot },
+    snapshots: { [pid]: know?.snapshot ?? w6?.snapshot ?? b2pop?.snapshot ?? b2pill?.snapshot ?? FIXTURE.snapshot },
     source: { [pid]: "server" },
     loading: {},
     errors: {},
@@ -319,7 +337,12 @@ function seed({ state, w, theme }: Params) {
 
   useAgent.setState({
     activeProfileId: pid,
-    threads: { [pid]: mention ? mention.threads : state === "threads" ? SHELL_THREADS : [FIXTURE.thread] },
+    threads: {
+      [pid]:
+        b2pop?.threads ??
+        b2pill?.threads ??
+        (mention ? mention.threads : state === "threads" ? SHELL_THREADS : [FIXTURE.thread]),
+    },
     activeThread: { [pid]: list ? tid : null },
     exchanges: list ? { [tid]: list } : {},
     sessions: {},
@@ -338,12 +361,17 @@ function seed({ state, w, theme }: Params) {
 
   // every other state resets the bookmarks (the starter pools precedent), so
   // one persisted by an earlier page never reaches a frame
-  useSaved.setState({ queries: know?.saved ?? w6?.saved ?? [] });
+  useSaved.setState({ queries: know?.saved ?? w6?.saved ?? b2pop?.saved ?? b2pill?.saved ?? [] });
 
   // the workspace behind the pane: only the A2 states have one, and every
   // other state clears it, so a tab persisted by an earlier page never
   // reaches a frame (the bookmarks' own rule, above)
-  useTabs.setState({ tabs: know?.tabs ?? [], activeId: know?.activeTabId ?? null });
+  useTabs.setState({ tabs: know?.tabs ?? b2pop?.tabs ?? [], activeId: know?.activeTabId ?? null });
+
+  // what the `@` box offers under `Recent`, and the recency half of its
+  // `Tables` order: only the B2 popover states have any, and every other
+  // state clears it, so a recent this browser persisted never reaches a frame
+  useRecents.setState({ byProfile: b2pop ? { [pid]: b2pop.recents } : {} });
 
   useSidePane.setState({ mode: "ask", open: true, width: w });
   useAsk.setState({
@@ -358,7 +386,7 @@ function seed({ state, w, theme }: Params) {
     // the blocks a question may name are the PANE's session state, not the
     // exchange's: without them the pill in the bubble is plain text, which is
     // the face a DELETED block gives back (LESSONS 5)
-    blocks: a3?.blocks ?? {},
+    blocks: a3?.blocks ?? b2pill?.blocks ?? {},
   });
 }
 
@@ -407,6 +435,8 @@ function Harness({ state, w, scroll }: Params) {
       editAfterMount(state);
       mentionsAfterMount(state);
       mentionsEchoAfterMount(state);
+      b2PopoverAfterMount(state);
+      b2PillsAfterMount(state);
       knowledgeAfterMount(state);
       b4AfterMount(state);
       if (scroll === "top") {

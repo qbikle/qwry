@@ -17,6 +17,7 @@ import {
   mentionsIn,
   mentionTags,
   type BlockRef,
+  type CanvasRef,
   type MentionCtx,
 } from "../mentions";
 import type { SavedQuery } from "../../stores/saved";
@@ -127,5 +128,64 @@ describe("a canvas block on the ladder", () => {
     expect(mentionTags(mentionsIn(`@"${REVENUE}"`, CTX))).toEqual([
       { kind: "block", token: `"${REVENUE}"` },
     ]);
+  });
+});
+
+// A whole canvas rides the same rung and the same kind (B2): one pill species
+// and one LayoutGrid glyph serve a canvas and a block, because both name
+// something the user built, and `BlockRef.canvas` is what tells them apart.
+// The rung was APPENDED under the block's, so no collision that already had
+// an answer got a new one.
+
+describe("a whole canvas on the fifth rung", () => {
+  const CANVASES: CanvasRef[] = [
+    { id: "cv1", title: "August finance" },
+    { id: "cv2", title: "Canvas" },
+  ];
+  const WITH: MentionCtx = { ...CTX, canvases: CANVASES };
+  const augustRef = { id: "cv1", name: "August finance", canvas: true };
+
+  test("a canvas resolves by its title, quoted the way a block is", () => {
+    expect(canonicalToken("block", augustRef)).toBe('@"August finance"');
+    const [one] = mentionsIn('@"August finance" this week', WITH);
+    expect(one.kind).toBe("block");
+    expect(one.ref).toEqual(augustRef);
+    expect(one.span).toEqual([0, 17]);
+  });
+
+  test("the canvas rung is under the block's: a block of the same title wins", () => {
+    const twin: BlockRef = { id: "b7", name: "August finance" };
+    expect(mentionsIn('@"August finance"', { ...WITH, blocks: [twin] })[0].ref).toEqual(twin);
+  });
+
+  test("a saved query of the same title still wins over both", () => {
+    const named: MentionCtx = { ...WITH, saved: [{ id: "s9", name: "August finance", sql: "SELECT 9;" }] };
+    expect(mentionsIn('@"August finance"', named)[0].kind).toBe("saved");
+  });
+
+  test("the context names the canvas and nothing more", () => {
+    expect(mentionContext(mentionsIn('@"August finance"', WITH))).toBe('canvas "August finance"');
+    expect(mentionTags(mentionsIn('@"August finance"', WITH))).toEqual([
+      { kind: "block", token: '"August finance"' },
+    ]);
+  });
+
+  test("a canvas and a block are two lines, and one canvas twice is one", () => {
+    const both = `@"August finance" beside @"${REVENUE}"`;
+    expect(mentionContext(mentionsIn(both, WITH)).split("\n")[0]).toBe('canvas "August finance"');
+    expect(mentionContext(mentionsIn(both, WITH))).toContain(`canvas block "${REVENUE}"`);
+    const twice = '@"August finance" and @"August finance"';
+    expect(mentionContext(mentionsIn(twice, WITH))).toBe('canvas "August finance"');
+  });
+
+  test("a title no open canvas has is plain text and the question still runs", () => {
+    expect(mentionsIn('@"Returns by city"', WITH)).toEqual([]);
+    expect(mentionsIn('@"August finance"', CTX)).toEqual([]);
+  });
+
+  test("`@canvases/` reaches the same tag as the bare quoted form", () => {
+    const [one] = mentionsIn('@canvases/"August finance"', WITH);
+    expect(one.token).toBe('"August finance"');
+    expect(one.ref).toEqual(augustRef);
   });
 });

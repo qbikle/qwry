@@ -329,3 +329,60 @@ describe("the tagged block", () => {
     ]);
   });
 });
+
+// ---- the `kind/` path (B2) --------------------------------------------------
+
+describe("the picker's paths", () => {
+  test("every path parses to the same tag as its bare form", () => {
+    expect(kinds("@tables/customer")).toEqual(["table:customer"]);
+    expect(kinds("@columns/customer.email")).toEqual(["column:customer.email"]);
+    expect(kinds('@saved/"Monthly revenue"')).toEqual(['saved:"Monthly revenue"']);
+    expect(kinds('@threads/"how many orders were refunded in August"')).toEqual([
+      'thread:"how many orders were refunded in August"',
+    ]);
+  });
+
+  test("the token is the BARE one, and the span is the glyphs the user can see", () => {
+    const [one] = mentionsIn("@tables/customer counts", CTX);
+    expect(one.token).toBe("customer");
+    expect(one.span).toEqual([0, 16]);
+    expect("@tables/customer counts".slice(...one.span)).toBe("@tables/customer");
+  });
+
+  test("the TAGGED block and the trace read one form, whichever was typed", () => {
+    expect(mentionContext(mentionsIn("@tables/customer", CTX))).toBe(
+      mentionContext(mentionsIn("@customer", CTX)),
+    );
+    expect(mentionTags(mentionsIn('@saved/"Monthly revenue"', CTX))).toEqual(
+      mentionTags(mentionsIn('@"Monthly revenue"', CTX)),
+    );
+    expect(mentionTags(mentionsIn("@columns/customer.email", CTX))).toEqual([
+      { kind: "column", token: "customer.email" },
+    ]);
+  });
+
+  test("a path is a route through the completion, never a namespace", () => {
+    // `customer` is a table AND a saved query: `@saved/` does not change that
+    expect(kinds("@saved/customer")).toEqual(["table:customer"]);
+    expect(kinds("@threads/customer")).toEqual(["table:customer"]);
+  });
+
+  test("the path rides the raw mention, for the completion alone", () => {
+    expect(parseMentions("@canvases/\"August finance\"")[0]).toMatchObject({
+      path: "canvases",
+      token: '"August finance"',
+    });
+    expect(parseMentions("@customer")[0].path).toBeNull();
+  });
+
+  test("a path with nothing after it, and a word that is not one of the five", () => {
+    // `@tables/` mid-typing reads as the name `tables`, which is what it is
+    expect(parseMentions("@tables/")[0]).toMatchObject({ token: "tables", path: null });
+    expect(parseMentions("@docs/readme")[0]).toMatchObject({ token: "docs", path: null });
+    expect(parseMentions("@tables/1bad")[0]).toMatchObject({ token: "tables", path: null });
+  });
+
+  test("a path inside a word is still not a tag", () => {
+    expect(parseMentions("mail me@tables/customer")).toEqual([]);
+  });
+});

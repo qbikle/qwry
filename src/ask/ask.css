@@ -373,20 +373,14 @@
 .ask-ghost > span {
   display: block;
 }
-/* while the ghost shows, the textarea keeps its text (the box keeps its
-   height, the caret its place) but paints none of it: one set of glyphs */
-.ask-ta.ghosted {
-  color: transparent;
-  caret-color: var(--fg);
-}
 
 /* ---- @ mention chips (Mention.tsx, W6) ----------------------------------- */
-/* one face, two homes: the composer's backdrop (.ask-ta-back) paints it
-   behind a resolved mention's glyphs in the draft, the question echo wears it
-   in the bubble, and the lift ghost carries it between them. A marked run of
-   text, never a control (rule 8's inverse): accent-soft fill, the bubble's
-   hover ring, 4px corners, no hover, no font of its own (the textarea paints
-   the glyphs, and a backdrop set in mono would drift off them; the @ and the
+/* one face, two homes: the composer's backdrop (.ask-ta-back) paints the
+   draft's resolved runs, the question echo wears the same pill in the bubble,
+   and the lift ghost carries it between them. A marked run of text, never a
+   control (rule 8's inverse): accent-soft fill, the bubble's hover ring, 4px
+   corners, no hover, no font of its own (the textarea's own metrics rule the
+   caret, and a backdrop set in mono would drift off them; the @ and the
    quotes are the data costume). The box outdents 2px each side over its own
    margin, so the glyph run stays where the textarea put it and a pill
    appearing or leaving never moves a letter; a pill the line breaks keeps
@@ -405,6 +399,32 @@
   padding: 0 2px;
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
+}
+/* the pill's kind (B2 item 4, reversing W7's icon-less pill): the glyph stands
+   IN the `@`'s cell. The `@` keeps its advance and goes transparent, the icon
+   is centred on it at --icon-sm in --accent (.chip.active svg: the app's icon
+   inside an accent-soft chip), so not one letter moves, no gap is spent and
+   the caret's positions stay the textarea's. The quotes of a quoted name stay
+   painted: they are the user's own glyphs, not the costume.
+   The cell keeps `display: inline`, and that is the whole reason it works: an
+   inline-block would open a break opportunity between the `@` and a quoted
+   name's `"` that a textarea's own wrap does not have (UAX 14 gives AL x QU
+   no break), so the backdrop would wrap a line earlier than the textarea and
+   every pill after it would drift off the letters it paints behind. An inline
+   box is also its own abspos containing block, which is what centres the icon
+   on the glyph for free */
+.mention-at {
+  position: relative;
+  color: transparent;
+}
+.mention-at svg {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  color: var(--accent);
 }
 
 /* ---- edit mode (W4): the travel's composer side and the fold's stack ----- */
@@ -1255,14 +1275,15 @@
   opacity: var(--o-disabled);
   cursor: default;
 }
-/* the draft's @ chips (W6, AskPanel): the textarea is the truth and paints
-   its own glyphs; the backdrop under it repeats the text in the same font,
-   size, 20px lines and width (the .ask-ghost technique) with its glyphs
-   transparent, so all it paints is one .mention pill (Mention.tsx) behind
-   each tag that resolves. The wrap is a flex box so the textarea sizes it
-   with no line-box slack under an inline-block; the backdrop clips and takes
-   the textarea's scrollTop from AskPanel. While a ghost carries the words it
-   hides with the textarea's text, so the pills exist once */
+/* the draft's @ chips (W6, AskPanel): the textarea is the truth of the text,
+   the caret and the selection; the backdrop over it repeats that text in the
+   same font, size, 20px lines and width (the .ask-ghost technique) and, since
+   B2 gave the pill a kind icon, PAINTS it, one .mention pill (Mention.tsx)
+   around each tag that resolves while the textarea's own glyphs go
+   transparent. The wrap is a flex box so the textarea sizes it with no
+   line-box slack under an inline-block; the backdrop clips and takes the
+   textarea's scrollTop from AskPanel. While a ghost carries the words it
+   hides too, so the glyphs exist once */
 .ask-ta-wrap {
   position: relative;
   display: flex;
@@ -1286,13 +1307,29 @@
   font-family: var(--font-ui);
   font-size: var(--text-md);
   line-height: 20px;
-  color: transparent;
+  color: var(--fg);
   white-space: pre-wrap;
   overflow-wrap: break-word;
   pointer-events: none;
 }
 .ask-ta-back.ghosted {
   visibility: hidden;
+}
+/* the two swap jobs for B2's kind icon (Mention.tsx): the icon lives in the
+   backdrop, and the textarea's own opaque `@` printed straight over it, so
+   the backdrop paints the glyphs in tier 1 and the textarea keeps the text,
+   the caret and the selection and paints none of it. The `.ask-ta.ghosted`
+   rule is gone: the base does what it did, so the lift and the edit ghost
+   need no class of their own to blank the text they carry.
+   The sibling is the condition, not decoration: AskPanel renders the backdrop
+   only while the connection is up, and the canvas note editor wears `.ask-ta`
+   with no backdrop at all, so a bare `.ask-ta { color: transparent }` would
+   have blanked a disconnected draft and every note under edit. Selection
+   needs nothing here: tokens.css's one ::selection is already translucent, so
+   the band reads under the glyphs the backdrop paints above it (rule 15) */
+.ask-ta-back + .ask-ta {
+  color: transparent;
+  caret-color: var(--fg);
 }
 .ask-ctl {
   display: flex;
@@ -1330,25 +1367,110 @@
 .ask-send.stop:hover:not(:disabled) {
   background: var(--bg-hover);
 }
+/* the `+` context pill (B2 item 3): the Dashed ghost species (DESIGN rule 1),
+   .rail-add's own face at the composer's 22px tier, leftmost in the control
+   row 8px before the model pill, so the row reads add · model · send. It is
+   the MOUSE route to the `@` completion, which is why it wears the create
+   costume and not a chip's: nothing is chosen on it, a picker opens. Hover
+   firms the dash to a solid accent edge, lifts the glyph to tier 1 and fills
+   bg-hover; pressed is the species' own scale; focus-visible is tokens.css's
+   ring on every button, and disabled follows the textarea (rule 2's five).
+   It never shows the chosen contexts: the pills in the text already do
+   (rule 14) */
+.ask-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-quick),
+    color var(--dur-quick),
+    background var(--dur-quick);
+}
+.ask-add:hover:not(:disabled) {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.ask-add:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.ask-add:disabled {
+  opacity: var(--o-disabled);
+  cursor: default;
+}
 
 /* ---- @ completion popover (MentionPopover, W6) -------------------------- */
 /* the picker's box (.picker-pop, .picker-anchor: border-strong, radius-md,
    shadow-pop, 4px padding, grown upward from a zero-height anchor) at the
-   composer box's width, its edges on the box's outer edges 4px above it; past
-   320px of rows it scrolls. No title, no footer, no empty row, and since W7
-   no group headings either: the row's kind icon says what they said. The
-   anchor is portaled and fixed at the box's top-left on the anchored popups'
-   rung (overlay.css's 40), under the overlay stack (50+) it never joins */
+   composer box's width, its edges on the box's outer edges 4px above it. No
+   title, no footer and no empty row; W7's group headings stay struck, and the
+   labelled hairlines B2 adds (.mention-sep) name BOUNDARIES in a list that
+   mixes recency with kinds, not the kind each row already wears (rule 14).
+   The anchor is portaled and fixed at the box's top-left on the anchored
+   popups' rung (overlay.css's 40), under the overlay stack (50+) it never
+   joins */
 .mention-anchor {
   position: fixed;
   z-index: 40;
 }
+/* the box is a FIXED 320px (B2), W7's cap made the height: chrome is sized to
+   its tallest state and the content swaps inside it (DESIGN rule 2), so the
+   hot row and the top edge hold still across every filter, every completed
+   category and every section count, and the list scrolls inside (.picker-pop
+   is the scroller, its own 4px padding included). A sparse filter leaves the
+   panel standing below its rows: Raycast's own cost, shown honestly in
+   b2-popover-category and rare once matching is by subsequence */
 .mention-pop {
   width: 100%;
-  max-height: 320px;
+  height: 320px;
+  max-height: none;
   /* flat on the composer's own panel, not the picker's raised tone (W7): the
      box stands on the composer and one surface says so */
   background: var(--bg-panel);
+}
+/* a section is a hairline with its LABEL AT ITS LEFT, never a heading row of
+   its own (the Raycast exemplar): a 20px band, the label in the app's one
+   small-label register (.picker-group / .tkind: --text-2xs, 700, uppercase,
+   .04em) in TIER 2, then an 8px gap and a 1px --border hairline (the picker
+   foot's inside hairline, not the box's own border-strong) running to the
+   row's right edge. Tier 2 and not faint because `Recent` is load-bearing:
+   four different kinds stand under it and only the word says why (rule 3).
+   Nothing sits above the first section, so the categories open the box */
+.mention-sep {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 20px;
+  padding: 0 var(--sp-2);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+.mention-sep::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+/* a category row's chevron: the ContextMenu's own .ctx-arrow slot, since a row
+   that opens a level wears the mark every such row in the app wears (rule 1).
+   The glyph's size and tier are the row's (--icon-sm, tier 2, above) */
+.mention-arrow {
+  display: flex;
+  flex: none;
 }
 /* the row's kind (MentionPopover KIND_ICON) at the trio's small size in tier
    2: metadata beside the name, never the accent the picker's check wears */

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import * as ipc from "../ipc/commands";
 import { terminatedSessions } from "./sessionFlags";
+import { useRecents } from "./recents";
 
 /** app-ordered session death: mark BEFORE the IPC so an in-flight run's
  * connection-closed rejection classifies as a cancel, not an error
@@ -272,6 +273,9 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
     // the model row falls back to App default and would revoke edits for a
     // choice about models
     useSettings.getState().setAgentWrites(id, false);
+    // and what its `@` completion remembered reaching for (B2): the store is
+    // self-bounded, so an orphan would only be harmless, never right
+    useRecents.getState().drop(id);
     // its workspace dies with it (pinned tabs survive as orphans)
     void import("./tabs").then(({ useTabs }) => useTabs.getState().purgeProfileTabs(id));
   },

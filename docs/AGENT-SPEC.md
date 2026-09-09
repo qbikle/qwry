@@ -127,7 +127,10 @@ hops out of what the user pointed at. A tagged table is included LEGACY or
 not: the prefilter guesses and the user does not, and §6 rule 3 still
 travels. A tag the snapshot no longer resolves yields nothing (LESSONS 5).
 The eval sends no tags, so its messages are byte-identical to the measured
-ones (a loop test pins this).
+ones (a loop test pins this). A category-prefixed tag (`@tables/order_v2`,
+AGENT-UX §1a, B2) reaches this stage already canonicalized to the plain
+token by `mentions.ts`, so must-include selection and the eval's
+byte-identical claim read it exactly as they read any other tag.
 
 Synonyms (A2, 2026-09-06): the connection's own synonyms — `agent_knowledge`
 rows of kind `synonym`, §9 — merge over the static `SYN` map at call time.
