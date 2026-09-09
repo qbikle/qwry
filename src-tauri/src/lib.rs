@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod agent_canvas;
 pub mod agent_claude;
 pub mod agent_http;
 pub mod agent_mcp;
@@ -369,6 +370,7 @@ pub fn run() {
             agent_mcp::agent_mcp_serve,
             agent_mcp::agent_mcp_stop,
             agent_mcp::agent_mcp_log,
+            agent_canvas::agent_canvas_result,
             agent_write::agent_write_preview,
             commands::agent_knowledge_list,
             commands::agent_knowledge_upsert,

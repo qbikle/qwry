@@ -340,7 +340,21 @@ describe("addExchange", () => {
     expect(b.ms).toBe(311.8);
     // an assumption the user switched off is not one the answer made
     expect(b.chips).toEqual(["Last Month = August 2026", "Revenue = Paid Orders"]);
+    // B3: a press keeps the face the reader was looking at, which for ONE row
+    // is its figures (the values face) and for more is the grid
+    expect(b.face).toBe("values");
+  });
+
+  test("a run of more than one row opens on the grid, as the pane showed it", () => {
+    const ex = exchange();
+    const wide = run(["payment_status", "orders"], [["paid", "482"], ["failed", "61"]]);
+    const out = useCanvas
+      .getState()
+      .addExchange("staging", { ...ex, answer: { ...ex.answer!, run: wide } });
+    if (!out.ok) throw new Error("add failed");
+    const b = resultAt(out.canvasId, 0);
     expect(b.face).toBe("table");
+    expect(b.status).toBe("2 rows · 311.8 ms");
   });
 
   test("a run that left no rows opens on the SQL face (W7's own rule)", async () => {
@@ -418,8 +432,12 @@ describe("faces", () => {
     expect(chartOf(block(["city", "state", "orders"], [["Pune", "MH", "187"]]))).toBeNull();
     // no numbers at all is no chart either
     expect(chartOf(block(["city", "state"], [["Pune", "MH"]]))).toBeNull();
-    // and the cycle simply loses the face rather than landing on nothing
-    expect(facesOf(block(["city", "state"], [["Pune", "MH"]]))).toEqual(["table", "sql"]);
+    // and the cycle simply loses the face rather than landing on nothing. One
+    // row stands on its figures, which is the table face's own place (B3)
+    expect(facesOf(block(["city", "state"], [["Pune", "MH"]]))).toEqual(["values", "sql"]);
+    expect(
+      facesOf(block(["city", "state"], [["Pune", "MH"], ["Nashik", "MH"]])),
+    ).toEqual(["table", "sql"]);
   });
 
   test("flip walks the cycle the block actually has and comes back round", async () => {
@@ -428,16 +446,19 @@ describe("faces", () => {
     if (!out.ok) throw new Error("add failed");
     const cid = out.canvasId;
     const bid = out.blockId;
-    expect(resultAt(cid, 0).face).toBe("table");
+    // the fixture's run is one row, so the values face holds the table's place
+    expect(resultAt(cid, 0).face).toBe("values");
     useCanvas.getState().flip(cid, bid);
     expect(resultAt(cid, 0).face).toBe("chart");
     useCanvas.getState().flip(cid, bid);
     expect(resultAt(cid, 0).face).toBe("sql");
     useCanvas.getState().flip(cid, bid);
-    expect(resultAt(cid, 0).face).toBe("table");
+    expect(resultAt(cid, 0).face).toBe("values");
     // a face the block does not have is refused, not stored
     useCanvas.getState().setFace(cid, bid, "diff");
-    expect(resultAt(cid, 0).face).toBe("table");
+    expect(resultAt(cid, 0).face).toBe("values");
+    useCanvas.getState().setFace(cid, bid, "table");
+    expect(resultAt(cid, 0).face).toBe("values");
     expect(id).toBeTruthy();
   });
 

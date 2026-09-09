@@ -441,9 +441,16 @@ export const agentClaudeKill = (runId: string) =>
 /** start the in-process MCP server if needed and mint this thread's bearer
  * token, bound to its database session. `timeoutMs` is the statement_timeout
  * every tool call the child makes will run under; omitted takes the AGENT-SPEC
- * 5 default, since a child process cannot read the setting itself. */
-export const agentMcpServe = (sessionId: string, timeoutMs?: number) =>
-  invoke<McpEndpoint>("agent_mcp_serve", { sessionId, timeoutMs: timeoutMs ?? null });
+ * 5 default, since a child process cannot read the setting itself. `tools` is
+ * the list this exchange's provider was handed, by name: the server serves
+ * exactly those, so a thread with no canvas target is offered the five and
+ * omitting the argument is that same thread (canvas-agent-spec 1.6). */
+export const agentMcpServe = (sessionId: string, timeoutMs?: number, tools?: string[]) =>
+  invoke<McpEndpoint>("agent_mcp_serve", {
+    sessionId,
+    timeoutMs: timeoutMs ?? null,
+    tools: tools ?? null,
+  });
 
 /** revoke one thread's token; the listener stays up for other threads */
 export const agentMcpStop = (token: string) => invoke<void>("agent_mcp_stop", { token });
@@ -452,6 +459,14 @@ export const agentMcpStop = (token: string) => invoke<void>("agent_mcp_stop", { 
  * unknown or revoked token returns [], because a torn-down thread has no
  * trace to answer with and a missing log is not an error. */
 export const agentMcpLog = (token: string) => invoke<McpCall[]>("agent_mcp_log", { token });
+
+/** answer one `canvas-tool-call`: `text` is what the model sees, flagged the
+ * way a failed tool call is when `isError`. An answer to a call that already
+ * timed out, or whose thread closed while the canvas was being written, is
+ * dropped: the blocks stand and the model was told to say its findings in the
+ * reply instead. */
+export const agentCanvasResult = (callId: string, text: string, isError: boolean) =>
+  invoke<void>("agent_canvas_result", { callId, text, isError });
 
 export const agentThreadCreate = (profileId: string, title: string) =>
   invoke<AgentThread>("agent_thread_create", { profileId, title });

@@ -103,7 +103,8 @@ describe("what a sent question contributes", () => {
   const column = mention({ kind: "column", ref: { schema: "sales", table: "orders", column: "total" } });
   const query = mention({ kind: "saved", ref: { id: "s1", name: "Monthly revenue", sql: "" } });
   const thread = mention({ kind: "thread", ref: { id: "t1", title: "refunds" } });
-  const canvas = mention({ kind: "block", ref: { id: "cv1", name: "August finance", canvas: true } });
+  // B3: a canvas is the ladder's own kind now, not a flag inside a block ref
+  const canvas = mention({ kind: "canvas", ref: { id: "cv1", title: "August finance" } });
   const block = mention({ kind: "block", ref: { id: "b1", name: "the revenue block" } });
   const tab = mention({ kind: "tab", ref: { name: "scratch.sql" } });
 

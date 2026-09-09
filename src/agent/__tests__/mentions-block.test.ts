@@ -131,26 +131,39 @@ describe("a canvas block on the ladder", () => {
   });
 });
 
-// A whole canvas rides the same rung and the same kind (B2): one pill species
-// and one LayoutGrid glyph serve a canvas and a block, because both name
-// something the user built, and `BlockRef.canvas` is what tells them apart.
-// The rung was APPENDED under the block's, so no collision that already had
-// an answer got a new one.
+// A whole canvas is the ladder's SEVENTH kind (B2 landed the rung, B3 gave it
+// its own kind): one pill species and one LayoutGrid glyph still serve a
+// canvas and a block, because both name something the user built, but the two
+// send different things. A block is CONTEXT (its statement, the shape of its
+// rows); a canvas is a DESTINATION, and where an answer goes is stated once,
+// by the CANVAS block the loop appends, so the tag writes no context line at
+// all (DESIGN rule 14). The rung is APPENDED under the block's, so no
+// collision that already had an answer got a new one.
 
-describe("a whole canvas on the fifth rung", () => {
+describe("a whole canvas on the seventh rung", () => {
   const CANVASES: CanvasRef[] = [
     { id: "cv1", title: "August finance" },
     { id: "cv2", title: "Canvas" },
   ];
   const WITH: MentionCtx = { ...CTX, canvases: CANVASES };
-  const augustRef = { id: "cv1", name: "August finance", canvas: true };
+  const august = CANVASES[0];
 
   test("a canvas resolves by its title, quoted the way a block is", () => {
-    expect(canonicalToken("block", augustRef)).toBe('@"August finance"');
+    expect(canonicalToken("canvas", august)).toBe('@"August finance"');
     const [one] = mentionsIn('@"August finance" this week', WITH);
-    expect(one.kind).toBe("block");
-    expect(one.ref).toEqual(augustRef);
+    expect(one.kind).toBe("canvas");
+    expect(one.ref).toEqual(august);
     expect(one.span).toEqual([0, 17]);
+  });
+
+  test("canonicalToken and parseMentions are a pair over a hostile title", () => {
+    const odd: CanvasRef = { id: "cv3", title: 'the "August" canvas' };
+    const token = canonicalToken("canvas", odd);
+    expect(token).toBe('@"the ""August"" canvas"');
+    const [one] = mentionsIn(`${token} please`, { ...CTX, canvases: [odd] });
+    expect(one.kind).toBe("canvas");
+    expect(one.ref).toEqual(odd);
+    expect(one.span).toEqual([0, token.length]);
   });
 
   test("the canvas rung is under the block's: a block of the same title wins", () => {
@@ -163,19 +176,17 @@ describe("a whole canvas on the fifth rung", () => {
     expect(mentionsIn('@"August finance"', named)[0].kind).toBe("saved");
   });
 
-  test("the context names the canvas and nothing more", () => {
-    expect(mentionContext(mentionsIn('@"August finance"', WITH))).toBe('canvas "August finance"');
+  test("a canvas sends no context line: the CANVAS block names it, once", () => {
+    expect(mentionContext(mentionsIn('@"August finance"', WITH))).toBe("");
     expect(mentionTags(mentionsIn('@"August finance"', WITH))).toEqual([
-      { kind: "block", token: '"August finance"' },
+      { kind: "canvas", token: '"August finance"' },
     ]);
   });
 
-  test("a canvas and a block are two lines, and one canvas twice is one", () => {
+  test("a block beside a canvas still sends its own line, and only that", () => {
     const both = `@"August finance" beside @"${REVENUE}"`;
-    expect(mentionContext(mentionsIn(both, WITH)).split("\n")[0]).toBe('canvas "August finance"');
-    expect(mentionContext(mentionsIn(both, WITH))).toContain(`canvas block "${REVENUE}"`);
-    const twice = '@"August finance" and @"August finance"';
-    expect(mentionContext(mentionsIn(twice, WITH))).toBe('canvas "August finance"');
+    expect(mentionContext(mentionsIn(both, WITH))).toStartWith(`canvas block "${REVENUE}"`);
+    expect(mentionContext(mentionsIn(both, WITH))).not.toContain("August finance");
   });
 
   test("a title no open canvas has is plain text and the question still runs", () => {
@@ -186,6 +197,7 @@ describe("a whole canvas on the fifth rung", () => {
   test("`@canvases/` reaches the same tag as the bare quoted form", () => {
     const [one] = mentionsIn('@canvases/"August finance"', WITH);
     expect(one.token).toBe('"August finance"');
-    expect(one.ref).toEqual(augustRef);
+    expect(one.kind).toBe("canvas");
+    expect(one.ref).toEqual(august);
   });
 });

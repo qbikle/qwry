@@ -17,6 +17,38 @@ export type ToolName =
   | "run_sql"
   | "probe";
 
+/** The three tools a run with a canvas target also sees (B3), as named in
+ * tools.schema.json's `canvasTools`. Kept apart from ToolName on purpose: the
+ * five are the measured surface and a run without a target must offer exactly
+ * them (EVAL 4). There is no create and no delete: the target is resolved
+ * before the run and captured in the tool, so writing outside it has no wire
+ * representation, and deleting a block stays the user's own keypress. */
+export type CanvasToolName = "canvas_write" | "canvas_replace" | "canvas_read";
+
+/** Which face a canvas result block opens on. `values` is the one-row shape
+ * (headline figures over their column names); the document's own BlockFace
+ * adds `diff`, which a model never writes. Declared here because the tool
+ * schema's enum and the store's block must name the same four things. */
+export type CanvasFace = "chart" | "table" | "values" | "sql";
+
+/** What one exchange wrote to a canvas, in write order (B3). The blocks are
+ * the document's; this is the only record of WHOSE they are, which is what a
+ * re-run clears and a cut deletes. It is never parsed back out of the tool's
+ * model-facing text: deriving one record from another rendering is the bug
+ * tools.ts warns about. Session-lived, like askedFrom. */
+export interface CanvasWrites {
+  canvasId: string;
+  blockIds: string[];
+  /** B3: the canvas's title as this exchange wrote to it, so the pane's
+   * status line can name the link without the pane importing the document
+   * store (the `tabName` precedent, canvas/port.ts's rule). The agent store
+   * fills it from the target it resolved before the run */
+  title: string;
+  /** B3: how many of those blocks stood IN PLACE of one already there, so
+   * the status line can read `3 blocks · 1 replaced` */
+  replaced: number;
+}
+
 /** One executed read-only statement. Cell values are wire text (what psql
  * shows); null = SQL NULL. `capped` = the result exceeded the row cap and the
  * surplus was never sent, so `rows.length` is not the whole answer. */
@@ -43,10 +75,19 @@ export interface TokenUsage {
  * trace's context step carries it. `tab` is the one kind the resolver never
  * mints: it is resolved once, when `Explain with Ask` fires, and carried on
  * the exchange, so a tab closed since cannot un-pill a bubble that already
- * reported what it sent (AGENT-UX 15). `block` is a canvas block (A3): the one
- * kind that names something the user built rather than something the
- * connection has, which is why it is the ladder's last rung. */
-export type MentionKind = "table" | "column" | "saved" | "thread" | "tab" | "block";
+ * reported what it sent (AGENT-UX 15). `block` is a canvas block (A3) and
+ * `canvas` a whole canvas (B2, its own kind since B3): the two kinds that
+ * name something the user built rather than something the connection has,
+ * which is why they are the ladder's last rungs. `canvas` is appended last
+ * so no collision that already had an answer gets a new one. */
+export type MentionKind =
+  | "table"
+  | "column"
+  | "saved"
+  | "thread"
+  | "tab"
+  | "block"
+  | "canvas";
 
 /** How a thread's question ended. The tokens are persisted verbatim in
  * `agent_answers.status`, so they never drift between store and appdb.

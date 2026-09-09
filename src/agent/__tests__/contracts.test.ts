@@ -65,9 +65,11 @@ describe("AGENT-SPEC section 2 rule 2", () => {
     expect(offenders).toEqual([]);
   });
 
-  test("the rule has something to catch: the two .tauri.ts files do reach out", () => {
+  test("the rule has something to catch: the three .tauri.ts files do reach out", () => {
     const tauri = [...sources(AGENT_DIR)].filter((p) => p.endsWith(".tauri.ts"));
-    expect(tauri).toHaveLength(2);
+    // B3 added canvas.tauri.ts, the third and the only one that also reaches a
+    // store: the canvas document is what its tools write into
+    expect(tauri).toHaveLength(3);
     for (const path of tauri) {
       expect(readFileSync(path, "utf8")).toContain("../ipc/commands");
     }
@@ -77,6 +79,11 @@ describe("AGENT-SPEC section 2 rule 2", () => {
 describe("the tool contract", () => {
   test("TOOL_SCHEMAS names are exactly TOOL_NAMES, in order", () => {
     expect(TOOL_SCHEMAS.map((s) => s.name)).toEqual([...TOOL_NAMES]);
+  });
+
+  test("ToolName stays the five: the canvas family is its own list (B3)", () => {
+    expect(TOOL_NAMES).toHaveLength(5);
+    expect((TOOL_NAMES as readonly string[]).some((n) => n.startsWith("canvas"))).toBe(false);
   });
 
   test("every schema is an object schema that refuses extra properties", () => {

@@ -306,8 +306,11 @@ export interface Platform {
     signal?: AbortSignal,
   ): SpawnedProcess;
   /** The MCP endpoint for this thread's database session: qwry's own Rust
-   * server in the app, the node server in the eval harness. */
-  mcpServer(sessionRef: string): Promise<McpEndpoint>;
+   * server in the app, the node server in the eval harness. `toolNames` is
+   * the list this token serves, which is the list the run offers (B3): absent
+   * means the five of tools.schema.json, in file order, which is what keeps a
+   * no-target run byte-identical to what it always served. */
+  mcpServer(sessionRef: string, toolNames?: readonly string[]): Promise<McpEndpoint>;
   /** milliseconds, injectable so the harness can be deterministic */
   now(): number;
 }

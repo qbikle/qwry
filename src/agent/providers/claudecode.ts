@@ -356,7 +356,13 @@ class ClaudeCodeProvider implements Provider {
 
     let endpoint: McpEndpoint;
     try {
-      endpoint = await this.platform.mcpServer(thread.id);
+      // B3: the token serves exactly the tools this run offers, so the child
+      // sees the canvas family only when the exchange has a target and a
+      // no-target run's list is the byte-identical five (canvas-agent-spec 1.6)
+      endpoint = await this.platform.mcpServer(
+        thread.id,
+        req.tools.map((t) => t.name),
+      );
     } catch (err) {
       if (isAbort(err, req.signal)) {
         yield { done: { stopReason: "cancelled" } };

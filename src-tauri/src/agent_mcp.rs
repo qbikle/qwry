@@ -33,6 +33,18 @@
 //! `run_text`, `peek_text` and `probe_text` below mirror `buildMeta` /
 //! `renderDescribe` in `src/agent/context.ts` and `formatRun` in
 //! `src/agent/tools.tauri.ts` line for line. Change one, change both.
+//!
+//! The CANVAS family (`canvas_write`, `canvas_replace`, `canvas_read`) is the
+//! one exception, and deliberately: those three are advertised here and
+//! implemented nowhere here. `agent_canvas.rs` parks the call and the app
+//! applies it in TypeScript, which is the only place the block shape, the row
+//! caps, the block ids and the result texts live. Mirroring three more tools
+//! would double this file's largest debt (canvas-agent-spec §1.7).
+//!
+//! Which tools a token serves is fixed when it is minted: `agent_mcp_serve`
+//! takes the list the loop handed its provider, so a thread with no canvas
+//! target serves the five and a model that has no canvas to write into is
+//! never shown a tool that would refuse it (§1.6).
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -65,8 +77,11 @@ use crate::driver::postgres::PgSession;
 use crate::driver::{DriverError, Result};
 use crate::state::AppState;
 
-/// The five tool schemas (AGENT-SPEC §5), shared verbatim with TypeScript.
-/// `tools.ts` imports the same file; neither side may paraphrase the other.
+/// The tool schemas (AGENT-SPEC §5), shared verbatim with TypeScript:
+/// `tools` is the five, `canvasTools` the canvas family. `tools.ts` imports
+/// the same file; neither side may paraphrase the other. Included at compile
+/// time rather than read from disk because a bundled `.app` has no `src/`
+/// beside it, and a second reader would be a second authority.
 pub const TOOL_SCHEMAS_JSON: &str = include_str!("../../src/agent/tools.schema.json");
 
 /// MCP server name; `claude -p` exposes the tools as `mcp__qwry__<tool>` and
@@ -117,15 +132,16 @@ pub struct McpCall {
 type CallLog = Arc<Mutex<Vec<McpCall>>>;
 type McpResult<T> = std::result::Result<T, McpError>;
 /// Ok = the text the model sees; Err = the same, flagged `isError`.
-type ToolText = std::result::Result<String, String>;
+pub type ToolText = std::result::Result<String, String>;
 
 // ---------------------------------------------------------------------------
 // tool surface
 // ---------------------------------------------------------------------------
 
-/// The five tools, over whatever executes them. The app's implementation runs
-/// them on the thread's dedicated read-only session; tests substitute their
-/// own, which is what lets the transport be tested without a database.
+/// The five tools, over whatever executes them, plus the canvas family's one
+/// door. The app's implementation runs the five on the thread's dedicated
+/// read-only session and hands a canvas call to the app; tests substitute
+/// their own, which is what lets the transport be tested without a database.
 #[async_trait::async_trait]
 pub trait McpToolBackend: Send + Sync + 'static {
     async fn list_tables(&self) -> ToolText;
@@ -133,27 +149,61 @@ pub trait McpToolBackend: Send + Sync + 'static {
     async fn peek_values(&self, table: String, column: String, limit: u32) -> ToolText;
     async fn run_sql(&self, sql: String) -> ToolText;
     async fn probe(&self, sqls: Vec<String>) -> ToolText;
+    /// ONE method for all three canvas tools, not three: this side knows the
+    /// name and the raw arguments and nothing else about them (§1.7).
+    async fn canvas_call(&self, name: String, args_json: String) -> ToolText;
 }
 
-fn parse_tools(json: &str) -> Option<Vec<Tool>> {
+fn parse_tools(json: &str, key: &str) -> Option<Vec<Tool>> {
     let doc: serde_json::Value = serde_json::from_str(json).ok()?;
     let mut out = Vec::new();
-    for t in doc.get("tools")?.as_array()? {
+    for t in doc.get(key)?.as_array()? {
         out.push(Tool::new(
             t.get("name")?.as_str()?.to_string(),
             t.get("description")?.as_str()?.to_string(),
+            // the parameters object goes over the wire whole, `$ref` and
+            // `$defs` included: rmcp resolves nothing and strips nothing, so
+            // a `$ref` only resolves for the child if its `$defs` sit inside
+            // this same object (verified by `a_ref_and_its_defs_survive…`)
             Arc::new(t.get("parameters")?.as_object()?.clone()),
         ));
     }
     Some(out)
 }
 
-/// `tools.schema.json` as rmcp's wire type. A malformed file would be a build
-/// time bug caught by `tool_schemas_json_carries_the_five_tools`; at runtime
-/// an empty list is still better than a panic in a spawned connection task.
+/// `tools.schema.json`'s `tools` as rmcp's wire type. A malformed file would
+/// be a build time bug caught by `tool_schemas_json_carries_the_five_tools`;
+/// at runtime an empty list is still better than a panic in a spawned
+/// connection task.
 fn tools() -> &'static Vec<Tool> {
     static TOOLS: OnceLock<Vec<Tool>> = OnceLock::new();
-    TOOLS.get_or_init(|| parse_tools(TOOL_SCHEMAS_JSON).unwrap_or_default())
+    TOOLS.get_or_init(|| parse_tools(TOOL_SCHEMAS_JSON, "tools").unwrap_or_default())
+}
+
+/// The same file's `canvasTools`. A sibling key, not a sixth entry in `tools`:
+/// that array is prompt surface for every HTTP provider and does not move
+/// (EVAL §4).
+fn canvas_tools() -> &'static Vec<Tool> {
+    static CANVAS: OnceLock<Vec<Tool>> = OnceLock::new();
+    CANVAS.get_or_init(|| parse_tools(TOOL_SCHEMAS_JSON, "canvasTools").unwrap_or_default())
+}
+
+/// The tools one token serves. `None` is every run without a canvas target,
+/// and it returns the five in file order: the same `Vec` this file served
+/// before the canvas family existed, which is what keeps a no-target
+/// `claude -p` run byte-identical (§1.6). `Some(names)` is the list the loop
+/// handed its provider, so the tools array is the gate and there is no second
+/// flag to disagree with it.
+fn tools_for(names: Option<&[String]>) -> Vec<Tool> {
+    let Some(names) = names else {
+        return tools().clone();
+    };
+    tools()
+        .iter()
+        .chain(canvas_tools().iter())
+        .filter(|t| names.iter().any(|n| n == t.name.as_ref()))
+        .cloned()
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -521,6 +571,9 @@ fn probe_text(results: &[crate::agent::ProbeResult]) -> String {
 struct SessionBackend {
     app: tauri::AppHandle,
     session_id: String,
+    /// this thread's bearer token, minted before the backend so a canvas call
+    /// can name the caller the app registered its tools for (§2.2)
+    token: String,
     /// the user's `statement_timeout` setting as it stood when the thread
     /// opened, so a `claude -p` tool call obeys the same limit the loop does
     timeout_ms: u64,
@@ -635,6 +688,12 @@ impl McpToolBackend for SessionBackend {
         let results = crate::agent::probe(&session, &asked).await.map_err(tool_error)?;
         Ok(probe_text(&results))
     }
+
+    /// Straight over the bridge. No validation, no cap, no block: the app
+    /// answers with the same text the driven path's tool would (§1.7).
+    async fn canvas_call(&self, name: String, args_json: String) -> ToolText {
+        crate::agent_canvas::call(&self.app, &self.token, &self.session_id, name, args_json).await
+    }
 }
 
 /// PostgreSQL errors carry a DETAIL/HINT tail the model does not need and a
@@ -647,15 +706,28 @@ fn first_line(s: &str) -> &str {
 // the rmcp handler
 // ---------------------------------------------------------------------------
 
-/// One thread's MCP handler. Cloned per request in stateless mode, so both
-/// fields are shared handles rather than owned state.
+/// One thread's MCP handler. Cloned per request in stateless mode, so every
+/// field is a shared handle or a copy rather than owned state.
 #[derive(Clone)]
 struct QwryMcp {
     backend: Arc<dyn McpToolBackend>,
     log: CallLog,
+    /// what THIS token serves, fixed when it was minted. `list_tools` answers
+    /// from here and never from the global list, so two threads of one app can
+    /// offer different tools, and the served list is the only gate: the tools
+    /// array IS the target (§1.6)
+    tools: Arc<Vec<Tool>>,
 }
 
 impl QwryMcp {
+    /// The five are the app's floor and keep their unconditional arms. A
+    /// canvas tool is answered only by a token that serves it, so a thread
+    /// with no target reads the unknown-tool error and is never taught that
+    /// the tool exists.
+    fn serves(&self, name: &str) -> bool {
+        self.tools.iter().any(|t| t.name.as_ref() == name)
+    }
+
     fn record(&self, tool: &str, started: Instant, text: &str, is_error: bool) {
         if let Ok(mut log) = self.log.lock() {
             if log.len() >= CALL_LOG_CAP {
@@ -695,9 +767,18 @@ impl QwryMcp {
                 let sqls = string_array(args, "sqls")?;
                 self.backend.probe(sqls).await
             }
+            canvas
+                if crate::agent_canvas::CANVAS_TOOL_NAMES.contains(&canvas)
+                    && self.serves(canvas) =>
+            {
+                // the arguments go over as the model wrote them: every cap and
+                // every refusal text belongs to the TypeScript tool
+                let args = serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string());
+                self.backend.canvas_call(canvas.to_string(), args).await
+            }
             other => Err(format!(
                 "ERROR: unknown tool '{other}'. Valid tools: {}",
-                tools()
+                self.tools
                     .iter()
                     .map(|t| t.name.as_ref())
                     .collect::<Vec<_>>()
@@ -741,7 +822,7 @@ impl ServerHandler for QwryMcp {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> McpResult<ListToolsResult> {
-        Ok(ListToolsResult::with_all_items(tools().clone()))
+        Ok(ListToolsResult::with_all_items(self.tools.as_ref().clone()))
     }
 
     async fn call_tool(
@@ -986,17 +1067,22 @@ fn mint_token() -> String {
     )
 }
 
-/// Mint a token bound to `backend` and return the endpoint it answers on. Any
-/// listener serves any token, so `port` is only what the URL advertises.
+/// Bind `token` to `backend` and return the endpoint it answers on. Any
+/// listener serves any token, so `port` is only what the URL advertises. The
+/// token is an argument rather than minted here because the backend needs to
+/// know its own name before it can emit a canvas call under it (§2.2).
 fn register_backend(
     port: u16,
     session_id: &str,
+    token: String,
+    tools: Vec<Tool>,
     backend: Arc<dyn McpToolBackend>,
 ) -> Result<McpEndpoint> {
     let log: CallLog = Arc::new(Mutex::new(Vec::new()));
     let handler = QwryMcp {
         backend,
         log: log.clone(),
+        tools: Arc::new(tools),
     };
     let config = StreamableHttpServerConfig::default()
         // never issue an Mcp-Session-Id: the CLI opens session-less and the
@@ -1012,7 +1098,6 @@ fn register_backend(
         config,
     );
 
-    let token = mint_token();
     registry().lock().map_err(|_| poisoned())?.tokens.insert(
         token.clone(),
         TokenEntry {
@@ -1027,42 +1112,45 @@ fn register_backend(
     })
 }
 
-/// Start the server if it is not running, and mint this thread's token. The
-/// app path and the tests share this; only the backend differs.
-fn serve_backend(session_id: &str, backend: Arc<dyn McpToolBackend>) -> Result<McpEndpoint> {
-    register_backend(ensure_listener()?, session_id, backend)
-}
-
 /// Start the server if it is not running, mint a bearer token bound to
 /// `session_id`, and return the endpoint for this thread. `timeout_ms` is the
 /// user's `statement_timeout` setting; `None` takes the §5 default, because a
-/// tool call cannot reach `useSettings` from the child process.
+/// tool call cannot reach `useSettings` from the child process. `tools` is the
+/// list the loop handed this exchange's provider, by name; `None` serves the
+/// five, which is every run without a canvas target (§1.6).
 #[tauri::command]
 pub async fn agent_mcp_serve(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     timeout_ms: Option<u64>,
+    tools: Option<Vec<String>>,
 ) -> Result<McpEndpoint> {
     // fail here rather than on the child's first tool call: a dead MCP server
     // is invisible to `claude -p`, which exits 0 with a toolless model (W0 §7)
     if state.session(&session_id).is_none() {
         return Err(DriverError::NoSession);
     }
+    let port = ensure_listener()?;
+    let token = mint_token();
     let backend = Arc::new(SessionBackend {
         app,
         session_id: session_id.clone(),
+        token: token.clone(),
         timeout_ms: timeout_ms.unwrap_or(RUN_SQL_TIMEOUT_MS),
         meta: Mutex::new(None),
     });
-    serve_backend(&session_id, backend)
+    register_backend(port, &session_id, token, tools_for(tools.as_deref()), backend)
 }
 
 /// Revoke one thread's token. The listener stays up for other threads;
-/// an unknown token is a no-op.
+/// an unknown token is a no-op. Any canvas call still parked for this token
+/// is dropped with an error rather than left to wait out its timeout: the
+/// exchange that could have answered it is over (`agent_canvas.rs`).
 #[tauri::command]
 pub async fn agent_mcp_stop(token: String) -> Result<()> {
     registry().lock().map_err(|_| poisoned())?.tokens.remove(&token);
+    crate::agent_canvas::drop_parked(&token);
     Ok(())
 }
 
@@ -1099,6 +1187,24 @@ pub fn session_for_token(token: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// The five, in file order. Written out rather than read from the file so
+    /// a test that pins the served list has something to pin it against.
+    const FIVE: [&str; 5] = [
+        "list_tables",
+        "describe_tables",
+        "peek_values",
+        "run_sql",
+        "probe",
+    ];
+
+    fn names_of(tools: &[Tool]) -> Vec<&str> {
+        tools.iter().map(|t| t.name.as_ref()).collect()
+    }
+
+    fn asked(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| (*n).to_string()).collect()
+    }
+
     /// tools.schema.json is the contract with TypeScript (`src/agent/tools.ts`
     /// imports the same file). If it stops parsing, loses a tool, or is moved,
     /// the MCP surface and every other provider's tool list silently diverge,
@@ -1124,11 +1230,8 @@ mod tests {
     /// and `claude -p` would never say so (W0 §7).
     #[test]
     fn the_served_tools_come_from_the_shared_schema_file() {
-        let served: Vec<&str> = tools().iter().map(|t| t.name.as_ref()).collect();
-        assert_eq!(
-            served,
-            ["list_tables", "describe_tables", "peek_values", "run_sql", "probe"]
-        );
+        assert_eq!(names_of(tools()), FIVE);
+        assert_eq!(names_of(&tools_for(None)), FIVE);
         let run_sql = tools().iter().find(|t| t.name == "run_sql").expect("run_sql");
         assert_eq!(
             run_sql.input_schema.get("required").and_then(|v| v.as_array()),
@@ -1138,6 +1241,124 @@ mod tests {
             .description
             .as_deref()
             .is_some_and(|d| d.contains("read-only")));
+    }
+
+    /// THE BYTE PIN. A token with no canvas list serves what this file served
+    /// before the canvas family existed: `ListToolsResult` over the global
+    /// list, serialized. The five schemas are prompt surface for every
+    /// provider (EVAL §4) and `claude -p` reads them off this wire, so the
+    /// expectation is HEAD's own expression, kept here on purpose.
+    #[test]
+    fn a_token_with_no_canvas_list_serves_the_five_byte_for_byte() {
+        let head = serde_json::to_string(&ListToolsResult::with_all_items(tools().clone()))
+            .expect("serialize");
+        let served = serde_json::to_string(&ListToolsResult::with_all_items(tools_for(None)))
+            .expect("serialize");
+        assert_eq!(served, head);
+        assert!(!served.contains("canvas"));
+
+        // and those bytes are the file's own, not a paraphrase of them
+        let doc: serde_json::Value =
+            serde_json::from_str(TOOL_SCHEMAS_JSON).expect("tools.schema.json");
+        let wire: serde_json::Value = serde_json::from_str(&served).expect("wire");
+        let listed = wire["tools"].as_array().expect("wire tools");
+        assert_eq!(listed.len(), FIVE.len());
+        for (i, t) in doc["tools"].as_array().expect("file tools").iter().enumerate() {
+            assert_eq!(listed[i]["name"], t["name"]);
+            assert_eq!(listed[i]["description"], t["description"]);
+            assert_eq!(listed[i]["inputSchema"], t["parameters"]);
+        }
+    }
+
+    /// The canvas family is advertised from the same file, under its own key,
+    /// and the names it advertises are the three the bridge routes: a fourth
+    /// name in the file would be a tool the child can see and this side
+    /// answers with the unknown-tool error.
+    #[test]
+    fn the_canvas_tools_come_from_the_shared_schema_file() {
+        assert_eq!(
+            names_of(canvas_tools()),
+            crate::agent_canvas::CANVAS_TOOL_NAMES
+        );
+        let write = canvas_tools()
+            .iter()
+            .find(|t| t.name == "canvas_write")
+            .expect("canvas_write");
+        assert!(write.input_schema.get("properties").is_some());
+    }
+
+    /// A token that asked for the canvas family is served the five first, in
+    /// file order, then the family: the model reads the tools it has always
+    /// had before the ones this wave adds.
+    #[test]
+    fn a_token_that_asks_for_the_canvas_family_is_served_it_after_the_five() {
+        let all = asked(&[
+            "list_tables",
+            "describe_tables",
+            "peek_values",
+            "run_sql",
+            "probe",
+            "canvas_write",
+            "canvas_replace",
+            "canvas_read",
+        ]);
+        let served = tools_for(Some(&all));
+        let expected: Vec<&str> = FIVE
+            .iter()
+            .copied()
+            .chain(canvas_tools().iter().map(|t| t.name.as_ref()))
+            .collect();
+        assert_eq!(names_of(&served), expected);
+        assert_eq!(names_of(&served)[..5], FIVE);
+        assert_eq!(served.len(), 5 + canvas_tools().len());
+
+        // the same list minus the canvas names is the no-target list again
+        assert_eq!(names_of(&tools_for(Some(&asked(&FIVE)))), FIVE);
+        // a name this app does not have is not a tool it serves
+        assert_eq!(names_of(&tools_for(Some(&asked(&["run_sql", "nope"])))), ["run_sql"]);
+    }
+
+    /// `Tool::new` takes the parameters object whole, so whatever the schema
+    /// file puts there is what the child sees: rmcp resolves no `$ref` and
+    /// strips no `$defs`. Which means a `$ref` in a canvas tool's parameters
+    /// resolves for the child ONLY if its `$defs` sit inside that same
+    /// object, next to the `$ref` (canvas-agent-spec §1.3, §6 item 8).
+    #[test]
+    fn a_ref_and_its_defs_survive_the_wire_verbatim() {
+        let file = serde_json::json!({
+            "tools": [{
+                "name": "canvas_write",
+                "description": "d",
+                "parameters": {
+                    "type": "object",
+                    "properties": { "blocks": { "items": { "$ref": "#/$defs/block" } } },
+                    "$defs": { "block": { "type": "object" } }
+                }
+            }]
+        });
+        let parsed = parse_tools(&file.to_string(), "tools").expect("parse");
+        let wire = serde_json::to_value(ListToolsResult::with_all_items(parsed)).expect("wire");
+        let schema = &wire["tools"][0]["inputSchema"];
+        assert_eq!(schema["properties"]["blocks"]["items"]["$ref"], "#/$defs/block");
+        assert_eq!(schema["$defs"]["block"]["type"], "object");
+    }
+
+    /// Which is why no schema this server serves may point at a `$defs` that
+    /// is not in the same object: the file's own `$defs` would sit beside
+    /// `tools`, one level above anything the child ever receives, and the
+    /// pointer would dangle. The canvas tools inline their union instead.
+    #[test]
+    fn no_served_schema_points_at_defs_it_does_not_carry() {
+        for t in tools().iter().chain(canvas_tools().iter()) {
+            let schema = serde_json::to_value(t.input_schema.as_ref()).expect("schema");
+            if schema.to_string().contains("\"$ref\"") {
+                assert!(
+                    schema.get("$defs").is_some(),
+                    "{} points at $defs it does not carry",
+                    t.name
+                );
+            }
+        }
     }
 
     #[test]
@@ -1432,6 +1653,11 @@ mod tests {
         async fn probe(&self, sqls: Vec<String>) -> ToolText {
             Ok(format!("{} probes", sqls.len()))
         }
+        /// stands in for the app on the other side of the bridge: the name and
+        /// the model's raw arguments, which is everything this side hands over
+        async fn canvas_call(&self, name: String, args_json: String) -> ToolText {
+            Ok(format!("{name} {args_json}"))
+        }
     }
 
     async fn post(
@@ -1459,8 +1685,18 @@ mod tests {
     /// shares one listener; a test binds its own and registers into the same
     /// token map, which is what the gate actually routes on.
     fn endpoint_for(session: &str, backend: Arc<dyn McpToolBackend>) -> McpEndpoint {
+        endpoint_serving(session, backend, None)
+    }
+
+    /// `tools` is what the loop offered this exchange's provider, by name:
+    /// `None` is a thread with no canvas target.
+    fn endpoint_serving(
+        session: &str,
+        backend: Arc<dyn McpToolBackend>,
+        tools: Option<&[String]>,
+    ) -> McpEndpoint {
         let port = bind_listener().expect("listen");
-        register_backend(port, session, backend).expect("register")
+        register_backend(port, session, mint_token(), tools_for(tools), backend).expect("register")
     }
 
     fn init_params() -> serde_json::Value {
@@ -1617,6 +1853,102 @@ mod tests {
         assert_eq!(session_for_token(&endpoint.token).as_deref(), Some("session-1"));
         agent_mcp_stop(endpoint.token.clone()).await.expect("stop");
         assert_eq!(session_for_token(&endpoint.token), None);
+    }
+
+    /// A canvas-targeted thread: the family is listed after the five and a
+    /// call reaches the backend's one bridge method with the model's raw
+    /// arguments. Nothing about the block is read on this side.
+    #[tokio::test]
+    async fn a_canvas_token_lists_the_family_and_routes_a_call_over_the_bridge() {
+        let all = asked(&[
+            "list_tables",
+            "describe_tables",
+            "peek_values",
+            "run_sql",
+            "probe",
+            "canvas_write",
+            "canvas_replace",
+            "canvas_read",
+        ]);
+        let endpoint = endpoint_serving("session-canvas", Arc::new(FakeTools), Some(&all));
+
+        post(&endpoint, &endpoint.token, rpc(1, "initialize", init_params())).await;
+        let listed: serde_json::Value =
+            post(&endpoint, &endpoint.token, rpc(2, "tools/list", serde_json::json!({})))
+                .await
+                .json()
+                .await
+                .expect("tools/list json");
+        let names: Vec<String> = listed["result"]["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .map(|t| t["name"].as_str().unwrap_or_default().to_string())
+            .collect();
+        let expected: Vec<String> = FIVE
+            .iter()
+            .copied()
+            .chain(canvas_tools().iter().map(|t| t.name.as_ref()))
+            .map(|n| n.to_string())
+            .collect();
+        assert_eq!(names, expected);
+
+        let called: serde_json::Value = post(
+            &endpoint,
+            &endpoint.token,
+            rpc(
+                3,
+                "tools/call",
+                serde_json::json!({
+                    "name": "canvas_write",
+                    "arguments": {"blocks": [{"kind": "note", "text": "August held"}]}
+                }),
+            ),
+        )
+        .await
+        .json()
+        .await
+        .expect("tools/call json");
+        assert_ne!(called["result"]["isError"], serde_json::json!(true));
+        assert_eq!(
+            called["result"]["content"][0]["text"],
+            "canvas_write {\"blocks\":[{\"kind\":\"note\",\"text\":\"August held\"}]}"
+        );
+
+        let log = agent_mcp_log(endpoint.token.clone()).await.expect("log");
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].tool, "canvas_write");
+        agent_mcp_stop(endpoint.token.clone()).await.expect("stop");
+    }
+
+    /// A thread with no canvas target refuses a canvas call in the words this
+    /// file has always refused an unknown tool with, listing the tools it
+    /// actually serves. A model that never saw the tool cannot call it, and
+    /// one that guesses is not taught that the tool exists.
+    #[tokio::test]
+    async fn a_token_with_no_canvas_list_refuses_a_canvas_call_in_todays_words() {
+        let endpoint = endpoint_for("session-no-canvas", Arc::new(FakeTools));
+        post(&endpoint, &endpoint.token, rpc(1, "initialize", init_params())).await;
+        let called: serde_json::Value = post(
+            &endpoint,
+            &endpoint.token,
+            rpc(
+                2,
+                "tools/call",
+                serde_json::json!({"name": "canvas_write", "arguments": {"blocks": []}}),
+            ),
+        )
+        .await
+        .json()
+        .await
+        .expect("tools/call json");
+        assert_eq!(called["result"]["isError"], serde_json::json!(true));
+        assert_eq!(
+            called["result"]["content"][0]["text"],
+            "ERROR: unknown tool 'canvas_write'. Valid tools: list_tables, describe_tables, \
+             peek_values, run_sql, probe"
+        );
+        agent_mcp_stop(endpoint.token.clone()).await.expect("stop");
     }
 
     #[tokio::test]
@@ -1831,6 +2163,11 @@ mod tests {
             async fn probe(&self, sqls: Vec<String>) -> ToolText {
                 let results = crate::agent::probe(&self.0, &sqls).await.map_err(tool_error)?;
                 Ok(probe_text(&results))
+            }
+            /// no window on the other side of this one: the lab run drives the
+            /// database, and the canvas is the app's
+            async fn canvas_call(&self, _name: String, _args_json: String) -> ToolText {
+                Err("ERROR: the canvas is closed. Say your findings here instead".into())
             }
         }
 

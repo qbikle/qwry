@@ -40,6 +40,7 @@
 import { RISK_BLOCK, isRisky } from "./risk";
 import { toks } from "./context";
 import { parseDefinition } from "./definitions";
+import { outlineLine, type CanvasOutlineEntry } from "./tools";
 import type { HistoryPair, KnowledgeKind, KnowledgeRow, Synonym } from "./types";
 
 /** Bumped whenever any string in this file changes. EVAL baselines are tied
@@ -411,4 +412,51 @@ export function historyMessage(
   if (entries.length === 0) return { text: "", questions: [] };
   const { text, kept } = fitBlock(HISTORY_HEAD, entries, HISTORY_CAP);
   return { text, questions: kept.map((e) => e.name) };
+}
+
+// ---- the canvas the answer lands in (B3) ------------------------------------
+
+/** B3 (2026-09-09): appended to the USER message when the exchange has a
+ * canvas target (`AskRequest.canvas`), and to nothing else. `SYSTEM_PROMPT` and
+ * `PROMPT_VERSION` do not move for it, exactly as they did not for A4's
+ * `WRITES:` block: the eval drives no target, so its bytes are the measured
+ * ones and every baseline row in EVAL.md still names the run that produced it
+ * (EVAL section 4; a loop test pins the no-target message byte for byte).
+ *
+ * It rides LAST, after the RISK CHECK block and after `WRITES:` when those
+ * fire: those instruct the next turn's probes and the final fence, this one
+ * governs where the whole answer lands, which is the outermost instruction. It
+ * overrides the system prompt's own "finish with the final SQL in a fenced sql
+ * block" in the same place and the same way `WRITES:` overrides run_sql's
+ * instinct.
+ *
+ * What is NOT in it: any sentence forbidding a canvas the user did not ask
+ * for. There is no `canvas_create` and no tool takes a canvas id, so the rule
+ * is enforced by the tool list's own shape and a sentence about it would be
+ * dead text (DESIGN rule 11, AGENT-SPEC section 8's habit). Same for deleting:
+ * there is no delete tool, and canvas_replace refuses a block the model did
+ * not write. */
+export function canvasMessage(
+  title: string,
+  outline: readonly CanvasOutlineEntry[] = [],
+): string {
+  const head = `
+CANVAS: the user is reading a canvas called "${title}" and your answer goes INTO it through canvas_write, canvas_replace and canvas_read, not into this
+reply. A result block carries one read-only SELECT; the canvas runs it, keeps its rows and prints its own status line under them. It stands on its chart
+when the rows have one label column and one to three numeric columns, on its values when it returns one row, and on its table otherwise, so name a face
+only to override that. Every result after the first carries a title of at most six words naming what it shows; the first wears the question. A note block
+carries markdown: at most one bold lead-in ending in a colon and two to four bullets, each ONE finding with its own figure, a comparison the blocks above
+cannot make for themselves, never a figure a result on this canvas already prints and never a markdown table. An insight question gets two to five blocks,
+the results first and one note last; a direct question gets one result and no note. Write the results first and read their shapes back before you write the
+note. Call canvas_read before writing into a canvas that already holds blocks, and replace a block you wrote yourself when new work supersedes it rather
+than writing a second one beside it. A question that asks to change data is answered in this reply exactly as before, never as a block. When the blocks
+are written, finish HERE with one sentence naming what you wrote and no \`\`\`sql block: each result's assumptions ride that block, so no Assumptions line
+is needed here.`;
+  if (outline.length === 0) return head;
+  // the ids are the replace handles, and the lines are what stops the model
+  // writing what already stands. Rendered by the tool layer's own outlineLine,
+  // so this block and canvas_read can never describe the document differently
+  // (LESSONS 13). Absent, not "(0 blocks)", on an empty canvas (rule 11)
+  const count = `${outline.length} ${outline.length === 1 ? "block" : "blocks"}`;
+  return `${head}\nOUTLINE OF "${title}" (${count}):\n${outline.map(outlineLine).join("\n")}`;
 }

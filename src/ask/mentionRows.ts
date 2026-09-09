@@ -181,8 +181,8 @@ export function rowsHint(reltuples: number | null | undefined): string | null {
 
 export interface MentionRow {
   /** never `tab`: that kind is minted by `Explain with Ask` and never typed,
-   * so the popover has no row for it (AGENT-UX 15). A canvas rides `block`
-   * (mentions.ts BlockRef.canvas), which is also the glyph it wears */
+   * so the popover has no row for it (AGENT-UX 15). A canvas is its own kind
+   * (B3) wearing the block's own LayoutGrid glyph */
   kind: Exclude<MentionKind, "tab">;
   /** a CATEGORY row: ↩, → or a click completes the path and the box stands
    * inside that kind instead of closing. Absent on every other row */
@@ -277,9 +277,9 @@ const savedRow = (q: SavedQuery): MentionRow => ({
 });
 
 const canvasRow = (c: CanvasRef): MentionRow => ({
-  kind: "block",
+  kind: "canvas",
   value: `canvas:${c.id}`,
-  token: canonicalToken("block", { id: c.id, name: c.title, canvas: true }),
+  token: canonicalToken("canvas", c),
   label: c.title,
   hint: null,
 });
@@ -293,12 +293,12 @@ const threadRow = (t: Thread): MentionRow => ({
 });
 
 /** which kind each path fills, and so which glyph its row wears. `canvases/`
- * lands on the ladder's fifth kind, where a canvas rides beside a block */
+ * lands on the ladder's own canvas kind (B3), which wears the block's glyph */
 const PATH_KIND: Record<MentionPath, MentionRow["kind"]> = {
   tables: "table",
   columns: "column",
   saved: "saved",
-  canvases: "block",
+  canvases: "canvas",
   threads: "thread",
 };
 

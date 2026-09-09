@@ -7,6 +7,12 @@
 // from there (ask.css .ans-kv; the wrapper is the container the query reads).
 // Five or more: the grid, which is the honest shape for that many facts.
 //
+// B3 adds `row`, the canvas's VALUES face: every column takes the one-column
+// pair whole (the big register over its name) and the pairs flow as one row,
+// because a one-row result on a canvas is the page's headline figures and not
+// a line of an answer. Same values, same registers, one wrapper (canvas.css
+// .rb-vals); the pane never asks for it, so nothing in Ask moves.
+//
 // The values are the grid's truth in the grid's registers: NULL and '' wear
 // the grid's own chips (grid.css), text stays wire text, and only a numeric
 // value gains thousands separators, by string surgery on the integer part
@@ -54,20 +60,34 @@ function Value({ v }: { v: string | null }) {
  * drops to the stacked form's register and wraps as text */
 const GLANCE_CHARS = 24;
 
-export function ScalarResult({ run }: { run: AgentRun }) {
-  const row = run.rows[0] ?? [];
-  if (run.columns.length === 1) {
-    const v = row[0] ?? null;
-    const long = v !== null && groupDigits(v).length > GLANCE_CHARS;
+/** one column as a pair: the value in the data register with its column name
+ * as the caption. The one-column answer IS this shape, and the canvas's
+ * values face is this shape once per column (one derivation, LESSONS 1) */
+function Pair({ name, v }: { name: string; v: string | null }) {
+  const long = v !== null && groupDigits(v).length > GLANCE_CHARS;
+  return (
+    <div className="ans-scalar">
+      <span className={`ans-scalar-v${long ? " long" : ""}`}>
+        <Value v={v} />
+      </span>
+      <span className="ans-scalar-k">{name}</span>
+    </div>
+  );
+}
+
+export function ScalarResult({ run, row = false }: { run: AgentRun; row?: boolean }) {
+  const cells = run.rows[0] ?? [];
+  // one column, or the canvas's values face: pairs in the big register. The
+  // wrapper is the face's (ask.css .rb-scalar, canvas.css .rb-vals), so this
+  // renders the pairs and nothing around them
+  if (row || run.columns.length === 1)
     return (
-      <div className="ans-scalar">
-        <span className={`ans-scalar-v${long ? " long" : ""}`}>
-          <Value v={v} />
-        </span>
-        <span className="ans-scalar-k">{run.columns[0]}</span>
-      </div>
+      <>
+        {run.columns.map((name, i) => (
+          <Pair key={`${i}:${name}`} name={name} v={cells[i] ?? null} />
+        ))}
+      </>
     );
-  }
   return (
     <div className="ans-kv-slot">
       <dl className="ans-kv">
@@ -75,7 +95,7 @@ export function ScalarResult({ run }: { run: AgentRun }) {
           <div className="ans-kv-row" key={`${i}:${name}`}>
             <dt className="ans-kv-k">{name}</dt>
             <dd className="ans-kv-v">
-              <Value v={row[i] ?? null} />
+              <Value v={cells[i] ?? null} />
             </dd>
           </div>
         ))}

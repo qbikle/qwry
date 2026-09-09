@@ -202,8 +202,9 @@ describe("the sectioned box (nothing typed)", () => {
       "@threads/",
     ]);
     expect(cats.rows.every((r) => r.hint === null && r.path !== undefined)).toBe(true);
-    // the glyph each path wears; a canvas rides the ladder's fifth kind
-    expect(cats.rows.map((r) => r.kind)).toEqual(["table", "column", "saved", "block", "thread"]);
+    // the glyph each path wears; a canvas is the ladder's own kind (B3), and
+    // wears the block's LayoutGrid
+    expect(cats.rows.map((r) => r.kind)).toEqual(["table", "column", "saved", "canvas", "thread"]);
   });
 
   test("Recent is what the connection reached for, one row per kind, newest first", () => {
@@ -446,9 +447,9 @@ describe("inside a category", () => {
     expect(box.rows[0].column).toBe(".col_0");
   });
 
-  test("a canvas row names the whole canvas, quoted, and wears the ladder's fifth kind", () => {
+  test("a canvas row names the whole canvas, quoted, and wears the ladder's canvas kind", () => {
     const [first] = list("canvases/aug").rows;
-    expect(first).toMatchObject({ kind: "block", label: "August finance", token: '@"August finance"', hint: null });
+    expect(first).toMatchObject({ kind: "canvas", label: "August finance", token: '@"August finance"', hint: null });
     expect(first.path).toBeUndefined();
   });
 });

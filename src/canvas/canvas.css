@@ -8,11 +8,27 @@
    chrome: 3 boxes at rest become 0, and the .rb keeps its own edge because a
    grid needs one. Page padding 20, blocks 16 apart, the parts of a block 8
    apart; a note's measure stops at 680 while its box spans the column
-   (growth feeds content, and a 1250px line is worse content, rule 13). */
+   (growth feeds content, and a 1250px line is worse content, rule 13).
+
+   B3 finishes that rule at the faces (frames 3 → 1 on a four-block answer):
+   only a face whose own content needs a boundary keeps the .rb edge, which is
+   the TABLE (a grid's cells need an outer edge) and the SQL (the editor
+   register is a panel inset). The chart and the values stand on the page,
+   bars having their own shape and four figures over four names their own row.
+   And a block with a TITLE opens a section, 24 above it where the column's
+   own gap is 16, so the model's own titled results read as sections of one
+   document and its untitled note reads as the reading under the question
+   above it. */
 
 /* the whole surface is a place to write: the tail under the last block is at
    least 64px and takes the same click that the empty canvas does */
 .cv-scroll {
+  /* a block leaving is parked out of the flow so the gap closes over it on
+     the same spring (AnimatePresence popLayout, AGENT-UX section 16g), and
+     what it is parked against has to be the SCROLLER: parked against the card
+     it would stand at its unscrolled place, which on a scrolled page is
+     somewhere else entirely */
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -33,6 +49,14 @@
    shrinks under the blocks above it */
 .cv-item {
   flex-shrink: 0;
+}
+
+/* a titled block opens a section: 24 above it, where the column's own gap is
+   16. The marker rides the FLEX CHILD (the entrance wrapper of a note, the
+   block itself of a result), so one rule reads both kinds and the first block
+   of the page keeps the page's own 20 (DESIGN rule 4's ladder) */
+.cv-scroll > * + .titled {
+  margin-top: var(--sp-2);
 }
 
 /* a block: its own positioning box, so the cluster floats at ITS top-right
@@ -93,14 +117,45 @@
   color: var(--fg);
 }
 
+/* ---- the faces that stand on the page (B3) --------------------------------
+   The table keeps the .rb edge (a grid's cells need an outer boundary) and so
+   does the SQL (the editor register is a panel inset). The chart and the
+   values have their own shape and lose it: what frames them is the block, the
+   title above and the status line below. Scoped to .blk, so the pane's own
+   block is untouched, DOM for DOM. */
+.blk .rb.chart,
+.blk .rb.values {
+  border: none;
+  border-radius: 0;
+  background: none;
+  /* the bars' value labels ride at the plot's own right edge (cv-chart svg) */
+  overflow: visible;
+}
+
+/* the values face: a one-row result's figures, each column a pair of the
+   value in the data register over its column name, the pairs in one row with
+   24 between them and wrapping only past four or under 480 (ScalarResult's
+   `row`). No inset of its own: the page's left edge is the first value's */
+.blk .rb-vals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--sp-6);
+}
+.blk .rb-vals .ans-scalar {
+  padding: var(--sp-1) 0;
+  min-width: 96px;
+}
+
 /* ---- the chart face (Chart.tsx) ------------------------------------------
-   The face's own 12px, an SVG sized to it after layout. Labels ride in the
-   status register (UI font, tier 2) right-aligned to meet their bars; the
-   value at every bar's end is data (mono, tabular, tier 1), which is what
-   retires the value axis (rule 14). */
+   An SVG sized to the face after layout. Labels ride in the status register
+   (UI font, tier 2) right-aligned to meet their bars; the value at every
+   bar's end is data (mono, tabular, tier 1), which is what retires the value
+   axis (rule 14). With the frame gone the inset goes with it: the label
+   gutter starts at the page's own left edge and 4px of air holds the plot off
+   the title and the status line. */
 .cv-chart {
   display: block;
-  padding: var(--sp-3);
+  padding: var(--sp-1) 0;
 }
 .cv-chart svg {
   display: block;

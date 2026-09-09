@@ -69,6 +69,17 @@
 //                                           written debounced, and a probe reads
 //                                           back what the last one saved
 //   canvas_delete                           nothing, for the same reason
+//   agent_mcp_serve                         a canned endpoint, its `tools`
+//                                           argument recorded on `mcpServed`:
+//                                           the token serves exactly the tools
+//                                           the run offered (AGENT-SPEC 7), so
+//                                           a probe can read back which list a
+//                                           canvas-targeted exchange handed it
+//   agent_canvas_result                     recorded on `canvasResults` and
+//                                           nothing else: the `claude -p`
+//                                           bridge's answer to one parked call,
+//                                           which in a browser tab has no Rust
+//                                           to park it (canvas-agent-spec 2.2)
 //   agent_connect / agent_run_readonly /    the `Compare With` path: a session
 //   disconnect                              id, then the canned B side of the
 //                                           revenue block (one row on B alone,
@@ -107,6 +118,16 @@ export const clipboardWrites: string[] = [];
  * by a probe through this module. A canvas edit is saved debounced, so a probe
  * that adds a block waits for a row here rather than for a repaint */
 export const canvasUpserts: { id: string; doc_json: string }[] = [];
+
+/** every canvas call the bridge has answered, oldest first: on the `claude -p`
+ * path Rust parks the call and this is the reply it waits for, so a probe reads
+ * back the very text the model would have been handed */
+export const canvasResults: { callId: string; text: string; isError: boolean }[] = [];
+
+/** the tool list every `agent_mcp_serve` was asked to serve, oldest first:
+ * `undefined` is the five (`tools_for(None)`), and a canvas-targeted run's
+ * entry names all eight */
+export const mcpServed: (string[] | undefined)[] = [];
 
 /** the sibling connection's answer to the revenue block's statement: the same
  * three columns, a currency each, with one row (GBP) on this side alone, so a
@@ -241,6 +262,20 @@ export function installTauriShim(): void {
         case "agent_write_preview": {
           const args = record(payload);
           return writePreview(typeof args.sql === "string" ? args.sql : "");
+        }
+        case "agent_mcp_serve": {
+          const tools = record(payload).tools;
+          mcpServed.push(Array.isArray(tools) ? tools.map(String) : undefined);
+          return { url: "http://127.0.0.1:0/mcp", token: "harness-token" };
+        }
+        case "agent_canvas_result": {
+          const args = record(payload);
+          canvasResults.push({
+            callId: typeof args.callId === "string" ? args.callId : "",
+            text: typeof args.text === "string" ? args.text : "",
+            isError: args.isError === true,
+          });
+          return undefined;
         }
         case "canvas_list":
           return [];

@@ -17,11 +17,22 @@
 // carries the composer's padding under a transparent border, outdented over
 // its own margin the way a `.mention` pill outdents (ask.css), so entering
 // edit fades a border in AROUND the words and moves no glyph (AGENT-UX
-// section 16, the motion note). ⌘↩ commits, Esc cancels, and a note emptied
-// in edit deletes itself on commit with no dialog: the preview IS the commit,
-// the fold's own contract (DECISIONS, W4). The menu's `Delete…` is the other
-// direction of the same ellipsis contract (WRITING rule 2) and goes through
-// the app's danger confirm, because a note is words with no way back.
+// section 16, the motion note). B3 finishes that: edit adds the RING and
+// nothing else, one 1px accent hairline fading in over --dur-quick with no
+// fill step and no border step under it, because a step from one visible
+// border to another is a jump and a darker card under the words is a second
+// surface. An EMPTY note in edit is a caret and no ring at all: a ring around
+// nothing is a rounded box with a thinner line, and the ring arrives with the
+// first glyph (note.css .note-box.ring).
+//
+// ⌘↩ commits, Esc cancels, and a note emptied in edit deletes itself on
+// commit with no dialog: the preview IS the commit, the fold's own contract
+// (DECISIONS, W4). BLUR is that same commit one step earlier (B3): leaving
+// the words keeps them, so a tab switch never loses a draft, and a box that
+// never had any leaves with the caret, which is what three empty boxes on a
+// page were. The menu's `Delete…` is the other direction of the same
+// ellipsis contract (WRITING rule 2) and goes through the app's danger
+// confirm, because a note is words with no way back.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Copy, Ellipsis, MessageSquare } from "lucide-react";
@@ -55,7 +66,7 @@ export interface NoteBlockProps {
   canMoveDown: boolean;
   /** a click on the words, and the palette's New Note on a fresh one */
   onEdit: () => void;
-  /** ⌘↩ with words left: the source as the textarea holds it */
+  /** ⌘↩, or a blur with words left: the source as the textarea holds it */
   onCommit: (text: string) => void;
   /** Esc: the words go back to what they were. A note that never had any
    * deletes instead, so the palette's `New Note` leaves nothing behind */
@@ -79,6 +90,21 @@ export function NoteBlock({
   const [draft, setDraft] = useState(block.text);
   const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
   const ta = useRef<HTMLTextAreaElement | null>(null);
+  const words = draft.trim().length > 0;
+  // the ring FADES: the box mounts with a transparent border and takes the
+  // accent on the next frame, so a note the reader clicked and an empty one
+  // that just took its first glyph both gain the hairline over --dur-quick
+  // (a transition cannot run on the frame an element mounts). Reduced motion
+  // is instant, from tokens.css's own duration kill
+  const [ring, setRing] = useState(false);
+  useEffect(() => {
+    if (!editing || !words) {
+      setRing(false);
+      return;
+    }
+    const id = requestAnimationFrame(() => setRing(true));
+    return () => cancelAnimationFrame(id);
+  }, [editing, words]);
 
   // the words the box opens with are the words on screen; a note the canvas
   // rewrote under a live edit (an Ask reply landing) is not silently adopted
@@ -102,7 +128,8 @@ export function NoteBlock({
     el.setSelectionRange(el.value.length, el.value.length);
   }, [editing]);
 
-  /** an emptied note deletes itself: the preview is the commit */
+  /** an emptied note deletes itself: the preview is the commit, and a blur
+   * is a commit (B3), so nothing empty is ever left standing */
   const commit = () => {
     const next = draft.trim();
     if (next) onCommit(next);
@@ -158,13 +185,17 @@ export function NoteBlock({
     return (
       <div className={`blk blk-note${block.question ? "" : " noq"} edit`} data-block={block.id}>
         {block.question && <div className="blk-q">{block.question}</div>}
-        <div className="ask-box note-box" onKeyDown={(e) => e.stopPropagation()}>
+        <div className={`note-box${ring ? " ring" : ""}`} onKeyDown={(e) => e.stopPropagation()}>
           <textarea
             ref={ta}
             className="ask-ta"
             aria-label="Note"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
+            // leaving the words is keeping them, the fold's own contract one
+            // step earlier; a box that never had any was not a block and
+            // leaves with the caret
+            onBlur={commit}
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();

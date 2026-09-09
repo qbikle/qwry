@@ -38,6 +38,7 @@ import type {
   WriteVerb,
 } from "../ipc/types";
 import { headToken } from "../editor/statements";
+import { copyCueShow } from "../lib/copyCue";
 import { endTabTx, txEnds, useConnections, type TxEnd } from "./connections";
 import { useAsk, type AskBlock } from "./ask";
 import { useSchema } from "./schema";
@@ -46,9 +47,11 @@ import { useSettings, writesAllowed } from "./settings";
 import { useSidePane } from "./sidePane";
 import { useKnowledge } from "./knowledge";
 import { useRecents } from "./recents";
-import { canvasTabRefs } from "./tabs";
+import { canvasTabRefs, useTabs } from "./tabs";
+import { loadCanvasPort, useCanvasPort } from "../canvas/port";
 import { driftLabel } from "./checks";
 import { createTauriTools } from "../agent/tools.tauri";
+import { createCanvasTools } from "../agent/canvas.tauri";
 import { tauriPlatform } from "../agent/platform.tauri";
 import { providerFor, tierOf } from "../agent/providers/index";
 import type { Provider, ProviderId } from "../agent/providers/types";
@@ -66,6 +69,7 @@ import {
   canonicalToken,
   MENTION_TEXT_CAP,
   clip,
+  type CanvasRef,
   type Mention,
   parseMentions,
   resolveMentions,
@@ -75,6 +79,8 @@ import { answerText } from "../agent/display";
 import type {
   AnswerStatus,
   Assumption,
+  CanvasToolName,
+  CanvasWrites,
   KnowledgeRow,
   SanityFragment,
   Thread,
@@ -89,10 +95,12 @@ import type {
  * trace drawer can open the chip before the answer lands. */
 export interface ToolChip {
   id: string;
-  /** one of the five tools, or A4's `preview`: the dry run is not a tool the
-   * model can call, but it is work the user waits on, so it wears the strip's
-   * own chip and the `run` chip's species (AGENT-UX 13.2) */
-  name: ToolName | "preview";
+  /** one of the five tools, one of B3's three canvas tools, or A4's
+   * `preview`: the dry run is not a tool the model can call, but it is work
+   * the user waits on, so it wears the strip's own chip and the `run` chip's
+   * species (AGENT-UX 13.2), and so does a canvas call, which is the call
+   * that produced the answer (AGENT-UX 16) */
+  name: ToolName | CanvasToolName | "preview";
   label: string;
   ms: number | null;
   isError: boolean;
@@ -183,6 +191,17 @@ export interface Exchange {
    * Session-lived like the block registry it points into: a reloaded thread
    * has no answer to "where did this come from" and says so by having none */
   askedFrom?: string;
+  /** B3: what this exchange wrote to a canvas, and which canvas. Assigned
+   * whole at the seam where the blocks land (the loop's `canvasWrite` event
+   * carries every id the exchange has written so far), never appended to and
+   * never parsed back out of the tool's own model-facing text: one authority,
+   * which is what the pane's status line counts, what a cut deletes and what
+   * a re-run clears (LESSONS 13). It shrinks when a block is deleted by hand,
+   * because the count is the blocks that still stand. `title` is the canvas's
+   * name as the answer was sent to it, the `tabName` precedent (AGENT-UX 15):
+   * a fact about the exchange, not about the workspace. Session-lived like
+   * `askedFrom`; the canvas itself is the persisted document */
+  canvasWrites?: CanvasWrites;
 }
 
 /** What a retry replaces: kept whole so restorePrior() is exact. */
@@ -280,6 +299,12 @@ interface AgentState {
    * mints a fresh provider session, because a resumed one remembers the
    * turns the cut deleted and cannot be rewound. Refused while busy */
   truncateThread: (threadId: string, fromExchangeId: string, inclusive: boolean) => Promise<void>;
+  /** B3: the canvas dropping blocks these exchanges wrote (a hand delete, a
+   * replace, a deleted canvas). The exchange stands and its status line reads
+   * the number that REMAINS, because the count is the blocks the document
+   * still holds and never a tally of what the model meant to write
+   * (LESSONS 13). An exchange left with none loses the line */
+  forgetCanvasBlocks: (blockIds: readonly string[]) => void;
   /** send from edit mode: the thread is cut from that exchange inclusive and
    * the new question lands where the old one stood */
   askFrom: (exchangeId: string, question: string) => Promise<void>;
@@ -494,7 +519,11 @@ export const useAgent = create<AgentState>((set, get) => ({
   followUps: {},
   writing: {},
 
-  setActiveProfile: (profileId) => set({ activeProfileId: profileId }),
+  setActiveProfile: (profileId) => {
+    set({ activeProfileId: profileId });
+    // the composer that just arrived says where its answers go (B3)
+    syncCanvasPill(profileId);
+  },
 
   loadThreads: async (profileId) => {
     const rows = await agentThreadList(profileId);
@@ -643,33 +672,53 @@ export const useAgent = create<AgentState>((set, get) => ({
     if (!profileId) return;
     const snapshot = useSchema.getState().snapshots[profileId];
     const choice = modelChoice(profileId);
+    let threadId = get().activeThread[profileId];
+    // a question typed into a busy thread would abort the live run through
+    // the controller swap in runInto(); the composer refuses it, and so does
+    // the store, so no caller can cancel an answer by accident. It is refused
+    // HERE, before anything a send does: route 2 makes a canvas and cues it,
+    // and a question that asks nothing must make nothing (LESSONS 3)
+    if (threadId && get().busy[threadId]) return;
     // the `@` tags, resolved against what this connection has RIGHT NOW and
     // before the thread create below, like every other capture here. A tab's
     // own token is claimed by the tab: a saved query of the same name must
     // not answer for it (the quoted ladder collides, A2 item 5)
     const tabToken = opts?.tabName ? canonicalToken("tab", { name: opts.tabName }).slice(1) : null;
-    const mentions = mentionsFor(get, profileId, get().activeThread[profileId], text).filter(
+    const mentions = mentionsFor(get, profileId, threadId, text).filter(
       (m) => m.token !== tabToken,
     );
-    // the first canvas block the question named (the ladder's fifth rung): the
+    // the first canvas block the question named (the ladder's block rung): the
     // exchange remembers where it was asked from, so Add to Canvas on the
     // reply lands under that block instead of at the document's end. A whole
-    // canvas rides the same kind (B2) and is not a place a reply can land
-    const askedFrom = mentions.filter((m) => m.kind === "block").find((m) => !m.ref.canvas)?.ref.id;
-    // B2 `Recent`: what a question SENT, not what a draft once held
-    useRecents.getState().touchMentions(profileId, mentions);
+    // canvas is the rung above it (B3) and is a destination, never a place a
+    // reply lands
+    const askedFromTag = (ms: readonly Mention[]) => ms.find((m) => m.kind === "block")?.ref.id;
     // the row Record View attached, read and CLEARED in one call: a row's
     // values are true of the question asked over them and of no later one
     // (LESSONS 3). Before the first await, like everything else here
     const rowContext = useAsk.getState().takeAskContext(profileId);
+    // B3: where this question's answer goes, read from the same moment as
+    // everything else. Route 2 makes the canvas and PREFIXES its pill, so the
+    // question is re-tagged against the tab that now stands and the bubble
+    // records the destination the way the pill route already does
+    const aimed = await aimCanvas(profileId, text, mentions);
+    const asking = aimed.question;
+    const tags =
+      asking === text
+        ? mentions
+        : mentionsFor(get, profileId, threadId, asking).filter(
+            (m) => m.token !== tabToken,
+          );
+    if (aimed.cue) copyCueShow(aimed.cue);
+    // the draft is about to be spent: whatever the composer leaves empty gets
+    // the destination stated again (the subscription at the file's end)
+    sent.add(profileId);
+    // B2 `Recent`: what a question SENT, not what a draft once held, so the
+    // canvas the app added for it counts as much as a tag the user typed
+    useRecents.getState().touchMentions(profileId, tags);
 
-    let threadId = get().activeThread[profileId];
-    // a question typed into a busy thread would abort the live run through
-    // the controller swap in runInto(); the composer refuses it, and so does
-    // the store, so no caller can cancel an answer by accident
-    if (threadId && get().busy[threadId]) return;
     if (!threadId) {
-      const row = await agentThreadCreate(profileId, title(text));
+      const row = await agentThreadCreate(profileId, title(asking));
       threadId = row.id;
       const thread: Thread = {
         id: row.id,
@@ -691,7 +740,7 @@ export const useAgent = create<AgentState>((set, get) => ({
       turnId: null,
       userTurnId: null,
       idx: null,
-      question: text,
+      question: asking,
       text: "",
       thinking: "",
       chips: [],
@@ -702,7 +751,7 @@ export const useAgent = create<AgentState>((set, get) => ({
       model: choice?.model ?? "",
       ...(opts?.tabName ? { tabName: opts.tabName } : {}),
       ...(opts?.context ? { context: opts.context } : {}),
-      ...(askedFrom ? { askedFrom } : {}),
+      ...(askedFromTag(tags) ? { askedFrom: askedFromTag(tags) } : {}),
     };
     set((s) => ({
       exchanges: { ...s.exchanges, [tid]: [...(s.exchanges[tid] ?? []), exchange] },
@@ -721,12 +770,13 @@ export const useAgent = create<AgentState>((set, get) => ({
       profileId,
       threadId: tid,
       exchangeId: exchange.id,
-      question: text,
-      askText: text,
+      question: asking,
+      askText: asking,
       snapshot,
       choice,
-      mentions,
+      mentions: tags,
       ...(rowContext ? { rowContext } : {}),
+      ...(aimed.aim ? { canvas: aimed.aim } : {}),
     });
   },
 
@@ -844,6 +894,7 @@ export const useAgent = create<AgentState>((set, get) => ({
       choice,
       mentions,
       flips,
+      ...canvasFor(exchange, profileId, mentions),
     });
   },
 
@@ -868,6 +919,7 @@ export const useAgent = create<AgentState>((set, get) => ({
       snapshot,
       choice,
       mentions,
+      ...canvasFor(exchange, profileId, mentions),
     });
   },
 
@@ -885,6 +937,7 @@ export const useAgent = create<AgentState>((set, get) => ({
       snapshot,
       choice,
       mentions,
+      ...canvasFor(exchange, profileId, mentions),
     });
   },
 
@@ -908,7 +961,31 @@ export const useAgent = create<AgentState>((set, get) => ({
       snapshot,
       choice,
       mentions,
+      ...canvasFor(exchange, profileId, mentions),
       persistUserTurn: false,
+    });
+  },
+
+  forgetCanvasBlocks: (blockIds) => {
+    const gone = new Set(blockIds);
+    if (gone.size === 0) return;
+    set((s) => {
+      let touched = false;
+      const exchanges: Record<string, Exchange[]> = {};
+      for (const [tid, list] of Object.entries(s.exchanges)) {
+        exchanges[tid] = list.map((e) => {
+          const held = e.canvasWrites;
+          if (!held || !held.blockIds.some((id) => gone.has(id))) return e;
+          touched = true;
+          const blockIds = held.blockIds.filter((id) => !gone.has(id));
+          if (blockIds.length > 0) return { ...e, canvasWrites: { ...held, blockIds } };
+          // nothing of this exchange stands on the canvas any more, so the
+          // status line has no number to print and the slot goes
+          const { canvasWrites: _gone, ...rest } = e;
+          return rest;
+        });
+      }
+      return touched ? { exchanges } : {};
     });
   },
 
@@ -937,6 +1014,10 @@ export const useAgent = create<AgentState>((set, get) => ({
     // its pair after its own successors', so neither the row count nor the id
     // order of a thread says where the cut falls
     const cutRows = gone.flatMap(rowsOf);
+    // B3: a cut deletes the blocks of every exchange it removes (spec 2.4
+    // rule 1), one document write per canvas. A null port means nothing was
+    // ever written to a canvas from here, so there is nothing to lose
+    useCanvasPort.getState().port?.removeByExchange(gone.map((e) => e.id));
     try {
       if (cutRows.length > 0) await agentThreadTruncate(threadId, cutRows);
       await agentThreadSessionSet(threadId, sessionKey);
@@ -997,6 +1078,7 @@ export const useAgent = create<AgentState>((set, get) => ({
       snapshot,
       choice,
       mentions,
+      ...canvasFor(exchange, profileId, mentions),
     });
   },
 
@@ -1344,6 +1426,14 @@ function findExchange(get: () => AgentState, exchangeId: string) {
  * the old prose, grid and footer stay on screen (text deltas are held back
  * until the verdict, see runInto), and a cancel restores the stash exactly */
 function rearm(set: Setter, threadId: string, exchangeId: string, forget = false) {
+  // B3: this exchange is about to be asked again, so its next canvas write
+  // clears what its previous attempt wrote. Marked, not deleted: an attempt
+  // that fails, is refused or is cancelled before writing anything leaves the
+  // blocks that stand exactly where they are (spec 2.4 rule 2). One rule
+  // covers Restart, Retry, Fix It and a chip toggle, which is every path that
+  // re-enters runInto with an existing exchange; Continue is not one of them,
+  // because it finishes an answer rather than replacing it
+  useCanvasPort.getState().port?.clearOnNextWrite(exchangeId);
   set((s) => ({
     exchanges: {
       ...s.exchanges,
@@ -1561,6 +1651,10 @@ interface RunArgs {
   /** chip states the user chose, reapplied to the landed chips whatever the
    * re-run's own Assumptions line said */
   flips?: Flip[];
+  /** B3: the canvas this exchange writes into, resolved by the caller before
+   * its first await (LESSONS 3). Absent on every run without a target, which
+   * is what keeps the tools array and the user message byte-identical to v4 */
+  canvas?: CanvasAim;
   /** false for a Continue (W7): the run is not a new question, so it creates
    * no rows. It rewrites the ones the capped run left, and a capped run that
    * left none leaves history as it found it */
@@ -1612,6 +1706,21 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
     cancelExchange(set, threadId, exchangeId, true);
     return;
   }
+
+  // B3: the canvas family, fixed to the target resolved before this run and
+  // to this exchange, so no tool takes a canvas id and `wroteBy` is never in
+  // doubt. Absent with no target, which is the gate: the tools array a
+  // provider is handed IS the offer (canvas-agent-spec 1.6)
+  const aim = args.canvas ?? null;
+  const canvas = aim
+    ? createCanvasTools({
+        sessionId,
+        canvasId: aim.canvasId,
+        title: aim.title,
+        exchangeId,
+        question: args.question,
+      })
+    : null;
 
   const controller = new AbortController();
   controllers.get(threadId)?.abort();
@@ -1679,6 +1788,23 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
           thinking: e.thinking + ev.delta,
         }));
         break;
+      case "canvasWrite":
+        // the record is ASSIGNED, not appended to: the event carries every id
+        // the exchange has written so far, read off the seam where the blocks
+        // landed, so one authority answers the status line, the cut and the
+        // re-run (LESSONS 13)
+        patchExchange(set, threadId, exchangeId, (e) => ({
+          ...e,
+          canvasWrites: {
+            canvasId: ev.canvasId,
+            blockIds: [...ev.blockIds],
+            title: aim?.title ?? "",
+            // absent reads as none: the loop sends the fragment's number only
+            // when a replace actually happened
+            replaced: ev.replaced ?? 0,
+          },
+        }));
+        break;
       case "error":
         patchExchange(set, threadId, exchangeId, (e) => ({
           ...e,
@@ -1721,6 +1847,7 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
       ...(mentions.length > 0 ? { mentions } : {}),
       ...(args.rowContext ? { rowContext: args.rowContext } : {}),
       ...(attached ? { context: attached } : {}),
+      ...(canvas ? { canvas } : {}),
       knowledge,
       history,
       onEvent,
@@ -1778,6 +1905,19 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
       ...(proposal !== null ? { status: "proposed" as const } : {}),
     }));
     set((s) => ({ pending: without(s.pending, exchangeId) }));
+    // B3: the assumptions are not parsed until now, so they reach the canvas
+    // after its blocks do: onto the FIRST result block this exchange wrote and
+    // no other, because an assumption belongs to the exchange and the same
+    // labels under four blocks would be one fact in four slots (rule 14). An
+    // assumption the user switched off is not one the answer made
+    if (aim) {
+      useCanvasPort
+        .getState()
+        .port?.assumeOn(
+          exchangeId,
+          landed.assumptions.filter((a) => a.active).map((a) => a.label),
+        );
+    }
   }
   if (mine) {
     set((s) => ({
@@ -2174,5 +2314,225 @@ useConnections.subscribe((s, prev) => {
     if (!prev.txTabs[key] || s.txTabs[key]) continue;
     const end = txEnds.get(key);
     if (end) stampTxEnd(key, end === "commit" ? "committed" : "rolledback");
+  }
+});
+
+// ---- the canvas a question aims at (B3) -----------------------------------
+//
+// ONE mechanism (canvas-agent 3.4). The target is a property of the QUESTION
+// (this question's answer goes there), so it lives IN the question as a
+// mention pill, the composer's own species: nothing new stands in the control
+// row, and one ⌫ removes it. The pill is the only authority, so the answer
+// never lands anywhere the bubble does not name; the active canvas tab's one
+// job is to PREFILL that pill into an empty draft (`syncCanvasPill`), which
+// is a suggestion the caret can take back. The routes are read here, before
+// the first await of a send (LESSONS 3), and the tab strip is what they read:
+// the pane must not import the canvas document (canvas/port.ts's rule) and
+// the tab already carries the title.
+//
+// The MODEL never creates a canvas: it has no tool for one and no id to name
+// one. The APP does, once, for a question that asked for one on a connection
+// with none, and a Send is the press.
+
+/** the canvas an exchange writes into: the id every canvas tool is fixed to,
+ * and the title the CANVAS block, the pane's status line and the cue name */
+export interface CanvasAim {
+  canvasId: string;
+  title: string;
+}
+
+/** the word, whole, in any case: `analyse this in a canvas` says it, and so
+ * does `Canvas please`; `canvases` and `canvas_write` do not */
+const SAYS_CANVAS = /\bcanvas\b/i;
+
+/** the canvas whose tab is ACTIVE for this connection, or null: what the
+ * prefilled pill names, and nothing else (a tab is not a target). Whether a
+ * canvas is THIS connection's is decided by the one function the `@` rung
+ * already asks (stores/tabs `canvasTabRefs`, B2), so the pill the prefill
+ * writes and the pill the send reads can never disagree about it */
+function activeCanvas(profileId: string): CanvasRef | null {
+  const { tabs, activeId } = useTabs.getState();
+  const tab = tabs.find((t) => t.id === activeId);
+  if (!tab || tab.kind !== "canvas" || !tab.canvas_id) return null;
+  const id = tab.canvas_id;
+  return canvasTabRefs(profileId).find((c) => c.id === id) ?? null;
+}
+
+/** the title a canvas's tab wears now, so a re-run of an older exchange aims
+ * at the canvas by its CURRENT name rather than the one it was created under */
+const canvasTitleNow = (profileId: string, canvasId: string): string | null =>
+  canvasTabRefs(profileId).find((c) => c.id === canvasId)?.title ?? null;
+
+/** Where a question's answer goes, and the question as it will be SENT.
+ *
+ * 1. the canvas pill in the question, which is every targeted question: a
+ *    pill prefilled beside an active canvas tab is this route by the time
+ *    Send lands (`syncCanvasPill`), and a ⌫ that took the pill out took the
+ *    target with it, because a target nobody can decline is not one;
+ * 2. else the word "canvas" on a connection with NO canvas tab: the app makes
+ *    `Canvas N`, opens its tab beside the user's without taking focus,
+ *    prefixes the question's own pill so the bubble records where the answer
+ *    went, and cues `New canvas` (LESSONS 9: no silent action). A connection
+ *    that HAS a canvas gets no second one from a word: the pill and the tab
+ *    are both one press away;
+ * 3. else no target, and the exchange is exactly today's exchange.
+ */
+export async function aimCanvas(
+  profileId: string,
+  text: string,
+  mentions: readonly Mention[],
+): Promise<{ aim: CanvasAim | null; question: string; cue: string | null }> {
+  const none = { aim: null, question: text, cue: null };
+  const pill = mentions.find((m) => m.kind === "canvas");
+  if (pill) return { aim: { canvasId: pill.ref.id, title: pill.ref.title }, question: text, cue: null };
+  if (!SAYS_CANVAS.test(text)) return none;
+  if (canvasTabRefs(profileId).length > 0) return none;
+  const port = await loadCanvasPort();
+  if (!port) return none;
+  const made = port.newCanvasFor(profileId);
+  const token = canonicalToken("canvas", { id: made.canvasId, title: made.title });
+  return { aim: made, question: `${token} ${text}`, cue: "New canvas" };
+}
+
+/** Where a RE-RUN's answer goes: the canvas this exchange already wrote to,
+ * else the pill its question still carries. Never a new canvas: the word that
+ * made one made it once, and the exchange remembers where (LESSONS 4). */
+function reaimCanvas(
+  e: Exchange,
+  profileId: string,
+  mentions: readonly Mention[],
+): CanvasAim | null {
+  const held = e.canvasWrites;
+  if (held) {
+    return { canvasId: held.canvasId, title: canvasTitleNow(profileId, held.canvasId) ?? held.title };
+  }
+  const pill = mentions.find((m) => m.kind === "canvas");
+  return pill ? { canvasId: pill.ref.id, title: pill.ref.title } : null;
+}
+
+/** the `canvas` field a re-run's RunArgs carries, spread so a run with no
+ * target passes no key at all and its message and tool list stay the ones the
+ * eval measured (EVAL section 4) */
+const canvasFor = (
+  e: Exchange,
+  profileId: string,
+  mentions: readonly Mention[],
+): { canvas?: CanvasAim } => {
+  const aim = reaimCanvas(e, profileId, mentions);
+  return aim ? { canvas: aim } : {};
+};
+
+/** Connections whose composer has just spent its draft on a send, so the
+ * prefilled pill may come back when the composer clears it: a thread that
+ * deals with a canvas keeps dealing with it, and the canvas grows
+ * (canvas-agent 3.4 item 1). A ⌫ that empties the draft by hand is NOT a send
+ * and refills nothing, because a pill one keystroke could not remove would be
+ * a target the user cannot decline. */
+const sent = new Set<string>();
+
+/** The token the APP wrote into a connection's draft, so an untouched prefill
+ * can follow the tab while a draft the user has typed into is never edited:
+ * the caret is the one authority over the words (LESSONS 7). */
+const prefilled = new Map<string, string>();
+
+/** The prefilled pill (canvas-agent 3.4 item 1): an EMPTY draft beside an
+ * active canvas tab reads `@"Canvas 4" `, so the destination is stated before
+ * a word is typed. It follows the tab: switch canvases and the pill changes,
+ * switch to a query tab and it leaves. A draft the user has touched is theirs
+ * and is left alone, and after a send the draft is empty again, so the pill
+ * comes back and a thread that deals with a canvas keeps dealing with it.
+ *
+ * It writes the draft and asks for nothing else: activating a canvas tab
+ * gives the PAGE the caret (AGENT-UX 16f), and a prefill that also grabbed
+ * focus would take it back the same frame. `useAsk.prefill` is the door for
+ * `Ask` on a block, which IS a request to type; this is an announcement.
+ */
+export function syncCanvasPill(profileId: string | null | undefined): void {
+  if (!profileId) return;
+  const at = activeCanvas(profileId);
+  const token = at ? `${canonicalToken("canvas", at)} ` : "";
+  const held = useAsk.getState().drafts[profileId] ?? "";
+  if (held !== "" && held !== prefilled.get(profileId)) {
+    prefilled.delete(profileId);
+    return;
+  }
+  if (held === token) return;
+  if (token) prefilled.set(profileId, token);
+  else prefilled.delete(profileId);
+  useAsk.setState((s) => {
+    const drafts = { ...s.drafts };
+    if (token) drafts[profileId] = token;
+    else delete drafts[profileId];
+    return { drafts };
+  });
+}
+
+/** The compact exchange's status line, up to the canvas's own name: `4 blocks`
+ * · `1 block` · `3 blocks · 1 replaced` · `1 replaced`. Two numbers of two
+ * kinds, and each one absent when it is zero (DESIGN rule 11: the norm is
+ * silent). The count is the blocks the DOCUMENT still holds, so a block
+ * deleted by hand takes itself out of it (LESSONS 13); an exchange left with
+ * nothing on the canvas has no line at all. The canvas's title is the link
+ * that follows, and the slot that prints it joins the two. */
+export function canvasStatusText(writes: CanvasWrites): string {
+  const { replaced } = writes;
+  const wrote = Math.max(0, writes.blockIds.length - replaced);
+  const parts: string[] = [];
+  if (wrote > 0) parts.push(`${wrote} ${wrote === 1 ? "block" : "blocks"}`);
+  if (replaced > 0) parts.push(`${replaced} replaced`);
+  return parts.join(" · ");
+}
+
+/** the canvas blocks an exchange's own successors still hold, which is what
+ * the older-Restart confirm has to count: a cut takes the answers AND the
+ * blocks those answers wrote (canvas-agent 3.5) */
+const blocksAfter = (later: readonly Exchange[]): number =>
+  later.reduce((n, e) => n + (e.canvasWrites?.blockIds.length ?? 0), 0);
+
+/** The older-Restart confirm's words (canvas-agent 3.5): a question for the
+ * title, one sentence naming the count and every half of the loss, a verb and
+ * its object on the button. The canvas blocks join the sentence only when
+ * there are some, because a connection with no canvas must not be told about
+ * one (DESIGN rule 11), and they are counted from the document rather than
+ * from what the model said it wrote (LESSONS 13). */
+export function restartConfirmText(
+  later: readonly Exchange[],
+): { title: string; detail: string; label: string } {
+  const n = later.length;
+  const blocks = blocksAfter(later);
+  const asks = n === 1 ? "The question after this one" : `The ${n} questions after this one`;
+  const answers = n === 1 ? "its answer" : "their answers";
+  // two items are joined by `and`; three take a comma and an `and`, which is
+  // the sentence the sketch's own confirm reads
+  const lost =
+    blocks === 0
+      ? `${asks} and ${answers}`
+      : `${asks}, ${answers} and ${blocks} ${blocks === 1 ? "canvas block" : "canvas blocks"}`;
+  return {
+    title: "Restart from Here?",
+    detail: `${lost} will be deleted.`,
+    label: n === 1 ? "Delete 1 Question" : `Delete ${n} Questions`,
+  };
+}
+
+// the prefilled pill follows the tab: a canvas tab taking the main card
+// states where the next question's answer will go, and a query tab taking it
+// says the pane is back to answering in the pane
+useTabs.subscribe((s, prev) => {
+  if (s.activeId === prev.activeId) return;
+  syncCanvasPill(useAgent.getState().activeProfileId);
+});
+
+// and it comes back after a send. The composer clears the draft it spent in
+// the notification that appends the exchange (AskPanel's own send net), so the
+// FIRST change to that draft after a send is the clear; an empty result gets
+// the pill back and anything typed after ↩ keeps the caret's own words
+useAsk.subscribe((s, prev) => {
+  if (sent.size === 0 || s.drafts === prev.drafts) return;
+  for (const profileId of [...sent]) {
+    const now = s.drafts[profileId] ?? "";
+    if (now === (prev.drafts[profileId] ?? "")) continue;
+    sent.delete(profileId);
+    if (now === "") syncCanvasPill(profileId);
   }
 });

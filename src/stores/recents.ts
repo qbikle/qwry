@@ -74,10 +74,11 @@ export function recentOf(m: Mention): Recent | null {
       return { kind: "saved", key: m.ref.id };
     case "thread":
       return { kind: "thread", key: m.ref.id };
-    // the ladder's fifth rung carries both a canvas and a block inside one
-    // (mentions.ts BlockRef.canvas); only the canvas has a row
+    case "canvas":
+      return { kind: "canvas", key: m.ref.id };
+    // a block is the ladder's own rung (A3) and has no completion row of its
+    // own, so nothing recent points at one
     case "block":
-      return m.ref.canvas ? { kind: "canvas", key: m.ref.id } : null;
     case "tab":
       return null;
   }

@@ -11,7 +11,7 @@
 // commit, deliberately, and re-baselines.
 
 import { describe, expect, test } from "bun:test";
-import { PROMPT_VERSION, SYSTEM_PROMPT } from "../prompt";
+import { PROMPT_VERSION, SYSTEM_PROMPT, canvasMessage } from "../prompt";
 
 /** byte-equal across v1, v2, v3 and v4 */
 const MEASURED = [
@@ -98,5 +98,63 @@ describe("prompt v4", () => {
 
   test("headings and a markdown table of the result are still refused", () => {
     expect(SYSTEM_PROMPT).toContain("Never a heading, never a markdown table of the result.");
+  });
+});
+
+// ---- the CANVAS block (B3) --------------------------------------------------
+// It rides the USER message, so PROMPT_VERSION does not move and no baseline
+// row is owed (EVAL.md section 4). Pinned byte for byte the way A4's WRITES
+// block is: it is the only place the model is told that the answer lands
+// somewhere other than this reply, and a reword that drops a clause changes
+// what the model writes into a person's document.
+describe("the canvas block", () => {
+  test("it names the target, the shapes and the one-line reply, byte for byte", () => {
+    expect(canvasMessage("Canvas 4")).toBe(
+      '\nCANVAS: the user is reading a canvas called "Canvas 4" and your answer goes INTO it through canvas_write, canvas_replace and canvas_read, not into this\n' +
+        "reply. A result block carries one read-only SELECT; the canvas runs it, keeps its rows and prints its own status line under them. It stands on its chart\n" +
+        "when the rows have one label column and one to three numeric columns, on its values when it returns one row, and on its table otherwise, so name a face\n" +
+        "only to override that. Every result after the first carries a title of at most six words naming what it shows; the first wears the question. A note block\n" +
+        "carries markdown: at most one bold lead-in ending in a colon and two to four bullets, each ONE finding with its own figure, a comparison the blocks above\n" +
+        "cannot make for themselves, never a figure a result on this canvas already prints and never a markdown table. An insight question gets two to five blocks,\n" +
+        "the results first and one note last; a direct question gets one result and no note. Write the results first and read their shapes back before you write the\n" +
+        "note. Call canvas_read before writing into a canvas that already holds blocks, and replace a block you wrote yourself when new work supersedes it rather\n" +
+        "than writing a second one beside it. A question that asks to change data is answered in this reply exactly as before, never as a block. When the blocks\n" +
+        "are written, finish HERE with one sentence naming what you wrote and no ```sql block: each result's assumptions ride that block, so no Assumptions line\n" +
+        "is needed here.",
+    );
+  });
+
+  test("the outline is the tool layer's own lines, and absent on an empty canvas", () => {
+    expect(canvasMessage("Sales")).not.toContain("OUTLINE OF");
+    const one = canvasMessage("Sales", [
+      {
+        id: "9c110000-0000-4000-8000-000000000002",
+        kind: "result",
+        line: "Revenue by month",
+        rows: 12,
+        columns: ["month", "revenue"],
+        face: "chart",
+        modelWritten: true,
+      },
+    ]);
+    expect(one).toContain(
+      '\nOUTLINE OF "Sales" (1 block):\n9c11  result  Revenue by month · 12 rows: month, revenue · chart face',
+    );
+  });
+
+  test("no dead sentence: the rules with no tool behind them are not stated", () => {
+    const block = canvasMessage("Sales");
+    // there is no canvas_create and no tool takes a canvas id, so "never
+    // create a canvas" would be a sentence guarding nothing (DESIGN rule 11)
+    expect(block).not.toContain("create a canvas");
+    // and there is no delete tool: canvas_replace refuses an empty block, so
+    // the model cannot delete by emptying either
+    expect(block).not.toContain("delete");
+  });
+
+  test("the system prompt is untouched by it", () => {
+    expect(PROMPT_VERSION).toBe("v4");
+    expect(SYSTEM_PROMPT).not.toContain("CANVAS:");
+    expect(SYSTEM_PROMPT).not.toContain("canvas");
   });
 });

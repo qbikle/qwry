@@ -3,8 +3,10 @@
    is written once, in canvas.css; everything here is scoped to .blk-note so
    the two files can never disagree about a shared rule. The registers a note
    wears are the pane's: ask.css draws .ans-text, .acts-float and the
-   composer's box, and NoteBlock imports it, because a note is prose in the
-   answer slot's own voice standing somewhere else. */
+   composer's own textarea (.ask-ta, the source's font and its 20px lines),
+   and NoteBlock imports it, because a note is prose in the answer slot's own
+   voice standing somewhere else. The box around that textarea is this file's
+   (B3): the composer's fill and its border step belong to the composer. */
 
 /* the positioning box and the surface the cluster dissolves into, so a note
    renders whole even before the canvas shell is on the page (a fixture, a
@@ -46,10 +48,24 @@
 .blk-note > .blk-q + .note-box {
   margin-top: -1px; /* optical */ /* the 8px gap, less the box's 9px outset */
 }
-/* the composer's box, minus its control row: a note has no send button, and
-   ⌘↩ and Esc are standard and say so nowhere (DESIGN rule 11) */
+/* Edit adds the RING and nothing else (B3). The read view's border is already
+   there and merely transparent, so edit changes one colour: no fill under the
+   words (the page shows through; a darker card would be a second surface for
+   the same words) and no step from a visible hairline to an accent one, which
+   is a jump wearing a transition. The ring is 1px of accent, faded in over
+   --dur-quick, and it is ABSENT while the box is empty: a ring around nothing
+   is a rounded box with a thinner line, which is what the empty canvas's
+   three boxes were. The stack is the composer's minus its control row, since
+   a note has no send button and ⌘↩ and Esc say so nowhere (DESIGN rule 11) */
 .blk-note .note-box {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid transparent;
+  background: none;
   transition: border-color var(--dur-quick) var(--ease-std);
+}
+.blk-note .note-box.ring {
+  border-color: var(--accent);
 }
 /* the note's textarea grows with its words (NoteBlock measures it); the
    composer's 96px ceiling belongs to the composer, where a long draft must

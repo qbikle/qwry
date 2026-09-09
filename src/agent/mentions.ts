@@ -11,12 +11,19 @@
 // what parseMentions() reads back, quotes doubled the way Postgres doubles
 // them, and mentions.test.ts walks names through both.
 //
-// The ladder has six rungs: table, column, saved query, thread, canvas block
-// (A3), canvas (B2). The two canvas rungs are last and are the only ones
-// naming something the user built rather than something the connection has,
-// so a saved query and a block of one name still send the saved query, and a
-// rung added after them never re-decides a collision that already had an
-// answer.
+// The ladder has seven rungs: table, column, saved query, thread, canvas block
+// (A3), canvas (B2, its own kind since B3). The two canvas rungs are last and
+// are the only ones naming something the user built rather than something the
+// connection has, so a saved query and a block of one name still send the
+// saved query, and a rung added after them never re-decides a collision that
+// already had an answer.
+//
+// B3 gives the canvas its own kind rather than a flag inside BlockRef: a
+// canvas is the one tag that names where an ANSWER GOES, not what a question
+// is about, so it sends no `TAGGED BY THE USER:` line at all (the `CANVAS:`
+// block describes the canvas, once, DESIGN rule 14) while a block sends its
+// statement and its shape. A boolean deciding which of two contexts a kind
+// writes was a kind doing two jobs; kinds 6 -> 7, flags 1 -> 0.
 //
 // Two words that look alike and are not: `token` is what the user tagged
 // WITHOUT the leading `@` (`order_v2`, `users.email`, `"Monthly revenue"`),
@@ -69,12 +76,6 @@ export interface SavedRef {
 export interface BlockRef {
   id: string;
   name: string;
-  /** B2: this ref is a whole CANVAS, not one block inside one. Both ride the
-   * ladder's fifth kind because one pill species and one `LayoutGrid` glyph
-   * serve them (Mention.tsx's map is by kind) and a canvas is the same sort
-   * of fact as a block: something the user built. What tells them apart is
-   * this flag and the context line it writes. */
-  canvas?: boolean;
   /** the statement the block ran; absent on a note */
   sql?: string | null;
   /** the run's columns, the shape half of what the model is told */
@@ -84,11 +85,13 @@ export interface BlockRef {
   text?: string | null;
 }
 
-/** A canvas document, by the title its tab wears (B2). The caller hands over
- * the ones a question may name, like every other rung; a canvas whose tab is
- * closed is not one of them, and a tag naming it stays plain text (LESSONS
- * 5). What the model is told is the title alone: reading the document is a
- * tool, not a paste (B3). */
+/** A canvas document, by the title its tab wears (B2), the ladder's seventh
+ * kind (B3). The caller hands over the ones a question may name, like every
+ * other rung; a canvas whose tab is closed is not one of them, and a tag
+ * naming it stays plain text (LESSONS 5). The model is told nothing here: the
+ * tag is a DESTINATION, and where the answer goes is stated once, by the
+ * `CANVAS:` block the loop appends for the target this tag resolved to
+ * (canvas-agent-spec 3.3). Reading the document is a tool, not a paste. */
 export interface CanvasRef {
   id: string;
   title: string;
@@ -119,7 +122,8 @@ export type Mention =
   | { span: Span; token: string; kind: "saved"; ref: SavedRef }
   | { span: Span; token: string; kind: "thread"; ref: ThreadRef }
   | { span: Span; token: string; kind: "tab"; ref: TabRef }
-  | { span: Span; token: string; kind: "block"; ref: BlockRef };
+  | { span: Span; token: string; kind: "block"; ref: BlockRef }
+  | { span: Span; token: string; kind: "canvas"; ref: CanvasRef };
 
 /** The five paths the completion offers as rows and accepts as typed
  * prefixes (B2 item 2), in the order the box draws them. */
@@ -252,7 +256,8 @@ const columnOf = (t: TableInfo | undefined, name: string): string | null =>
   t?.columns.find((c) => c.name.toLowerCase() === name.toLowerCase())?.name ?? null;
 
 /** Resolve each span in one order and stop at the first hit: table, column,
- * saved query, thread, canvas block, canvas. An unresolved span is dropped,
+ * saved query, thread, canvas block, canvas (seven kinds, `tab` never typed).
+ * An unresolved span is dropped,
  * which is what leaves it plain text on screen and out of the context block.
  * The two canvas rungs are last because they are the only ones naming
  * something outside the database: a saved query and a block of the same name
@@ -354,12 +359,7 @@ export function resolveMentions(raw: readonly RawMention[], ctx: MentionCtx): Me
     }
     const canvas = canvases.get(text.toLowerCase());
     if (canvas) {
-      out.push({
-        span: one.span,
-        token: one.token,
-        kind: "block",
-        ref: { id: canvas.id, name: canvas.title, canvas: true },
-      });
+      out.push({ span: one.span, token: one.token, kind: "canvas", ref: canvas });
     }
   }
   return out;
@@ -406,6 +406,7 @@ export function canonicalToken(kind: "saved", ref: SavedRef): string;
 export function canonicalToken(kind: "thread", ref: ThreadRef): string;
 export function canonicalToken(kind: "tab", ref: TabRef): string;
 export function canonicalToken(kind: "block", ref: BlockRef): string;
+export function canonicalToken(kind: "canvas", ref: CanvasRef): string;
 export function canonicalToken(kind: MentionKind, ref: Mention["ref"]): string {
   // one cast per branch: the overloads above are the contract callers see
   switch (kind) {
@@ -429,10 +430,13 @@ export function canonicalToken(kind: MentionKind, ref: Mention["ref"]): string {
     // write it, and the echo reads it back off the exchange (AGENT-UX 15)
     case "tab":
       return `@${quoted((ref as TabRef).name)}`;
-    // a canvas rides this kind too (BlockRef.canvas), quoted by its title:
-    // one form for everything the user built
     case "block":
       return `@${quoted((ref as BlockRef).name)}`;
+    // quoted by its title, the same form everything the user built wears:
+    // `@"Canvas 4"` is the canonical target token B2's `@canvases/"Canvas 4"`
+    // canonicalises to (canvas-agent 3.4)
+    case "canvas":
+      return `@${quoted((ref as CanvasRef).title)}`;
   }
 }
 
@@ -452,7 +456,9 @@ function refKey(m: Mention): string {
     case "tab":
       return `tab:${m.ref.name}`;
     case "block":
-      return `${m.ref.canvas ? "canvas" : "block"}:${m.ref.id}`;
+      return `block:${m.ref.id}`;
+    case "canvas":
+      return `canvas:${m.ref.id}`;
   }
 }
 
@@ -501,13 +507,13 @@ export function mentionContext(mentions: readonly Mention[]): string {
       case "tab":
         lines.push(`query tab "${m.ref.name}"`);
         break;
+      // a canvas is a destination, not context: the `CANVAS:` block the loop
+      // appends names it, describes it and carries its outline, so a line
+      // here would be the same fact in a second slot (DESIGN rule 14), and
+      // what is ON it is a tool's answer rather than a paste (B3)
+      case "canvas":
+        break;
       case "block": {
-        // a whole canvas is named and nothing more: what is ON it is a tool's
-        // answer (B3), and a paste of every block would bury the question
-        if (m.ref.canvas) {
-          lines.push(`canvas "${m.ref.name}"`);
-          break;
-        }
         // the block's own record: what it asked, what it ran, and the SHAPE
         // of what came back. Never the rows: the block stands on the canvas
         // beside the answer, and a paste of its table would be the same data

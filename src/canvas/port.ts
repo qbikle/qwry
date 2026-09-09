@@ -48,6 +48,27 @@ export interface CanvasPort {
   /** the palette's `New Note`: the keyboard route onto an empty canvas, whose
    * only other door is a click on the card (A3 item 6, DESIGN rule 8) */
   newNote: () => void;
+  /** B3: the one canvas a QUESTION can cause. A question carrying the word
+   * "canvas" on a connection with no canvas tab gets one, its tab opening
+   * beside the user's WITHOUT focus; the caller prefixes the question's pill
+   * and cues `New canvas`. The model creates nothing: it has no tool for a
+   * canvas and no id to name one (canvas-agent-spec 1.1, 3.2) */
+  newCanvasFor: (profileId: string) => { canvasId: string; title: string };
+  /** B3: forget every block these exchanges wrote, one document write per
+   * canvas that changed. The cut's own act, so the pane's store can drop the
+   * blocks of the exchanges it is dropping without importing the document
+   * (a null port means nothing was ever written and nothing can be lost) */
+  removeByExchange: (exchangeIds: readonly string[]) => void;
+  /** B3: this exchange is about to be asked again, so its FIRST canvas write
+   * clears what its previous attempt wrote. Marked rather than deleted: an
+   * attempt that fails, is refused or is cancelled before writing anything
+   * leaves the blocks that stand exactly where they are (spec 2.4 rule 2) */
+  clearOnNextWrite: (exchangeId: string) => void;
+  /** B3: the exchange's assumption labels, once its verdict has parsed them,
+   * onto the FIRST result block it wrote. They belong to the exchange, so
+   * they stand in one slot and not under every block it wrote (DESIGN rule
+   * 14); an empty list clears the fragment a re-run's own answer dropped */
+  assumeOn: (exchangeId: string, labels: readonly string[]) => void;
 }
 
 interface CanvasPortState {

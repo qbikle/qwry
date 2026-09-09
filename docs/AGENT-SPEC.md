@@ -93,6 +93,19 @@ was typed from as they already are by a tag (§4.1, §4.2, W6).
 the session, so `Add to Canvas` on the reply can find the block it answers
 (AGENT-UX §16d).
 
+B3 (2026-09-09) adds the ladder's **seventh kind**, `canvas` (`MentionKind`,
+6 → 7), promoted out of the `block` kind's `canvas?: boolean` flag B2 shipped
+as a stopgap: `@"Canvas 4"` is the canonical bare quoted form and B2's
+`@canvases/"Canvas 4"` canonicalizes to it before the ladder, the way
+`@tables/` already does (§4.1). A whole canvas and a block of one are
+different nouns, and only the canvas can be a TARGET (AGENT-UX §16l). Unlike
+every other kind, a `canvas` tag contributes **no line** to `TAGGED BY THE
+USER:` (§4.2): it resolves to `AskRequest.canvas` instead, and the `CANVAS:`
+block (§5.1) is the one place the canvas is described, with its title and the
+outline the model may edit against, so a second description would be one fact
+in two slots (DESIGN rule 14). The question text still goes to the model with
+its `@` tokens exactly as typed, and `PROMPT_VERSION` does not move.
+
 ## 3. Tier gating (measured)
 
 | tier | examples | what it gets | why |
@@ -305,6 +318,172 @@ pruning history, never by blinding tools.
 final answer, gated by `agent_gate(sql, "write")` (§8.7), never through a
 tool call (§8.9).
 
+### 5.1 The canvas family (B3, 2026-09-09)
+
+Three more tools, offered only when the exchange carries a resolved canvas
+target (`AskRequest.canvas`, AGENT-UX §16l): `canvas_write({ blocks: [1..6],
+after? })` appends, `canvas_replace({ block_id, block })` replaces one block
+in place, `canvas_read({})` returns the target's outline. No `canvas_create`
+and no delete tool exist: the target is resolved by the store before the run
+(§2, LESSONS 3) and is unrepresentable to the model — no tool takes a canvas
+id or a title — so a canvas the user did not ask for is not merely
+forbidden, it has no wire shape to ask for it in. Deleting a person's block
+is the user's own act (`⌫` on a focused block, AGENT-UX §16b);
+`canvas_replace` refuses to empty a block (an empty `note.text` is an error,
+never a delete) so the model cannot delete by emptying either. Model-facing
+tools: **5 → 8**.
+
+The block the model may write is the SAME union AGENT-UX §16 already ships,
+**two kinds, not three**: a `metric` variant was drafted in research and is
+dropped — the figure row it would have carried is a `result` whose statement
+returns one row, rendered on its **values** face (`ScalarResult`, unchanged),
+never a kind of its own. Faces on a canvas result: `table | chart | values |
+sql`. `face` defaults to `chart` when `chartOf` (AGENT-UX §16a) yields a
+spec, else `values` for a one-row result, else `table`; an explicit `face`
+that does not exist for the rows lands on the same fallback and the tool
+result says so, never a refusal (DESIGN rule 11). This is one deliberate
+asymmetry with `Add to Canvas` (AGENT-UX §16c), which keeps opening on
+`table`: a person's press keeps the face they were looking at, a model's
+write composes a reading.
+
+```jsonc
+// note: prose, rendered by AnswerText (AGENT-UX §16a item 2)
+{ "kind": "note", "text": "**August, against the year:**\n- COD took 22% …" }
+
+// result: one statement the tool runs read-only and keeps with its rows
+{ "kind": "result",
+  "title": "Revenue by month",   // optional: absent on an exchange's FIRST
+                                  // block, which takes the exchange's own
+                                  // question (AGENT-UX §16a item 1); every
+                                  // block after it needs its own title
+  "sql":   "SELECT …",
+  "note":  "Paid orders carry the year.",   // optional, rides above the face
+  "face":  "chart" }                        // optional, see the default above
+```
+
+Caps: `blocks` 1..6 per `canvas_write` call (`CANVAS_WRITE_MAX`), 8 blocks an
+**exchange** may write across every call (`CANVAS_EXCHANGE_MAX`); 5 rows
+echoed to the model per block (`CANVAS_ECHO_ROWS`, = `PROBE_ROW_CAP`, enough
+to write truthfully, never a second `run_sql`); **200 rows kept on a canvas
+result block (`CANVAS_BLOCK_ROWS`) — the ONE number for a canvas document,
+both routes**: `Add to Canvas` (AGENT-UX §16c) is capped at the same 200,
+down from its prior `UI_ROW_CAP` of 2,000, and a press or a write that
+truncates says so in the status line, `200 of 1,842 rows` (AGENT-UX §16a item
+4's register). Short block ids: 4 hex characters minted once, in TypeScript,
+per block (`crypto.randomUUID()`'s own prefix); a call may name one by its
+full id or any unique prefix of at least 4 characters, and an ambiguous
+prefix is refused (`ERROR: '7' matches 3 blocks. Use at least 4 characters of
+the id`) rather than guessing.
+
+A `result` block's `sql` reaches PostgreSQL through the SAME door as
+`run_sql`, `agent_run_readonly` on the thread's own session (§8 item 11): a
+refused statement lands NO block, the refusal text returned to the model
+verbatim, first line, exactly as a write sent to `run_sql` is refused.
+
+**The gate is the tool array itself, one boolean, both provider paths**
+(§7): `AskRequest` gains `canvas?: CanvasTools`, resolved before the
+exchange's first await (LESSONS 3); `tools: toolsFor(!!req.canvas)` (`5` or
+`5 + 3`, the five always first, in file order) is what an HTTP provider is
+handed, so a no-target run is gated by construction, and the `claude -p`
+path is gated the same way through the per-token MCP tool list (§7). The
+unknown-tool error lists only the names actually offered, so a no-target
+run's refusal text stays byte-identical to before this wave. One
+implementation: `src/agent/canvas.tauri.ts` (new; the second `*.tauri.ts`
+file under `src/agent/` besides `tools.tauri.ts` / `platform.tauri.ts`, so
+rule 2's placement test still holds — it is the only file of its kind
+allowed to import a store). The target's `canvasId` is captured once at
+construction and never re-read from a store after an await (LESSONS 3): the
+model cannot name a canvas, so "write outside the target" has no wire
+representation at all. Block ids are minted here, once; the store never
+mints an id for a model-written block, and Rust never mints one either (§7).
+
+**The `$ref` question is resolved, no.** `tools.schema.json` carries no
+`$ref` and no `$defs` anywhere. Every schema, canvas or not, is
+self-contained on the wire, because each adapter puts `parameters` on the
+wire ALONE (`openai.ts`'s `renderTools`, `anthropic.ts`'s `input_schema`,
+`agent_mcp.rs`'s `parse_tools`, which reads `t.get("parameters")` off one
+object and never looks for a sibling key) — a `$defs` sibling of `tools`
+would never reach the model, and a pointer into it would not resolve. The
+block union is written out in full inside BOTH `canvas_write` and
+`canvas_replace`, and `tools.test.ts` pins the two copies equal, so the one
+place they could drift (a cap or a field added to one and not the other) is
+caught at the schema level rather than trusted to eyes.
+
+**The `CANVAS:` block** rides the user message last, after `RISK CHECK` and
+after `WRITES:` when either fires (§6, §8 item 7's own pattern: it governs
+the FINAL shape of the answer, the outermost instruction), appended only
+when `req.canvas` is set and to nothing else, so `SYSTEM_PROMPT` and
+`PROMPT_VERSION` do not move (EVAL §3, §4). Quoted whole, as shipped by the
+tools builder (`canvasMessage(title, outline)`, `prompt.ts`; if the shipped bytes
+differ from this paragraph, this document is amended to match, never the
+reverse):
+
+> CANVAS: the user is reading a canvas called "Canvas 4" and your
+> answer goes INTO it through canvas_write, canvas_replace and
+> canvas_read, not into this reply. A result block carries one
+> read-only SELECT; the canvas runs it, keeps its rows and prints its
+> own status line under them. It stands on its chart when the rows
+> have one label column and one to three numeric columns, on its
+> values when it returns one row, and on its table otherwise, so name
+> a face only to override that. Every result after the first carries a
+> title of at most six words naming what it shows; the first wears the
+> question. A note block carries markdown: at most one bold lead-in
+> ending in a colon and two to four bullets, each ONE finding with its
+> own figure, a comparison the blocks above cannot make for
+> themselves, never a figure a result on this canvas already prints
+> and never a markdown table. An insight question gets two to five
+> blocks, the results first and one note last; a direct question gets
+> one result and no note. Write the results first and read their
+> shapes back before you write the note. Call canvas_read before
+> writing into a canvas that already holds blocks, and replace a block
+> you wrote yourself when new work supersedes it rather than writing a
+> second one beside it. A question that asks to change data is
+> answered in this reply exactly as before, never as a block. When the
+> blocks are written, finish HERE with one sentence naming what you
+> wrote and no ```sql block: each result's assumptions ride that
+> block, so no Assumptions line is needed here.
+
+A canvas that already holds blocks appends its OUTLINE under the paragraph,
+one line per block, rendered by the tool layer's own `outlineLine` so this
+block and `canvas_read` can never describe the document differently
+(LESSONS 13). It is ABSENT on an empty canvas, never `(0 blocks)`
+(DESIGN rule 11):
+
+> OUTLINE OF "Canvas 4" (1 block):
+> b3f2  result  what stood out in orders last month · 1 row: orders, collected · values face
+
+Every sentence earns itself against a rule already in this file or in
+AGENT-UX §16, in the order shipped: 1 names the tools and the target and
+overrides the system prompt's own "finish with the final SQL in a fenced sql
+block" the same way `WRITES:` overrides `run_sql`'s instinct (§8 item 7); 2
+and 3 are what a result block IS and the face default, stated once so a
+prompt sentence, not this spec alone, is what the model reads; 4 is the
+title rule (AGENT-UX §16i, the question once); 5 is the note's shape
+(prompt v3's own rule) with rule 14 restated across blocks; 6 is the
+block-count budget; 7 is the results-before-the-note order, which is what
+makes a note describe rows that actually came back rather than rows the
+model imagined; 8 is read-before-repeating and the consent rule
+(AGENT-UX §16i), the same pair `canvas_read`'s own description states; 9 is
+the safety rule §8 item 11 already enforces structurally, restated where
+the model reads it; 10 keeps the pane's summary exchange to one line
+(AGENT-UX §16k) and needs no separate `Assumptions:` line, since the
+assumption rule below patches the labels onto the block after the verdict
+regardless of what the closing sentence says. Amended 2026-09-09 against the
+shipped bytes (the paragraph above was a pre-build draft; its own rule is
+that the shipped text wins).
+
+**Assumptions on a model-written result block.** The loop does not parse the
+model's `Assumptions:` line until after the verdict (§4.6), so after it, the
+store patches the exchange's active assumption labels onto the FIRST result
+block the exchange wrote — never onto every block, never onto the note: an
+assumption belongs to the exchange, and the same label under four blocks is
+one fact in four slots (DESIGN rule 14). An `assumptions` field on the block
+itself was considered and refused: one more thing the model can get wrong,
+for a fact the loop already extracts once.
+
+`run_sql` and the five measured tools do not move: their schemas, their
+caps, their refusals are byte-frozen, unchanged by this section.
+
 ## 6. Prompt rules (frozen text lives in `prompt.ts`)
 
 The system prompt states, verbatim in spirit:
@@ -407,6 +586,50 @@ v1 adapters, in build order:
    `--output-format stream-json --verbose`, `--system-prompt`,
    `--session-id`/`--resume`; prompt on stdin. A not-`connected` MCP status
    in `system/init` fails the turn before the model runs. No key needed.
+
+**The canvas bridge (B3, 2026-09-09).** `agent_mcp_serve` gains a fourth,
+optional argument, `tools: Option<Vec<String>>`: the list of tool NAMES this
+token's MCP server actually serves, `None` reading as today's five in file
+order (§5.1's gate, the other half of it). Every `claude -p` spawn already
+calls `mcpServer` once per exchange and revokes the token in the adapter's
+own `finally` (item 3 above), so a per-token list is per-exchange with no
+new lifetime to manage: `platform.tauri.ts`'s `mcpServer` passes
+`req.tools.map(t => t.name)` — the same array `toolsFor(!!req.canvas)`
+already computed for the HTTP path (§5.1) — straight through, so the token
+this exchange holds can never serve a superset of what the HTTP providers
+were handed. `agent_mcp.rs` parses `tools.schema.json`'s new `canvasTools`
+sibling key beside its existing `tools` (`tools_for(names)`, `None` =>
+`tools().clone()`, the unchanged five in file order), and `QwryMcp.tools` —
+one field on the struct — is the `Vec` `list_tools` answers from, never the
+file-wide global.
+
+**Rust holds zero canvas semantics.** The three canvas tool names are
+dispatched through one new trait method, `McpToolBackend::canvas_call(name,
+args_json) -> ToolText`, and `SessionBackend`'s implementation is a BRIDGE,
+not a mirror: today's five tools are already mirrored line-for-line in Rust
+(item 3's own ~470-line debt, "change one, change both"), and mirroring
+three more — block-id minting, chart availability, the canvas document's own
+rules — would double it and hand the two copies a fresh way to drift on the
+next cap change. Instead: `canvas_call` mints a `call_id`, parks a
+`tokio::sync::oneshot::Sender<ToolText>` in a process-wide pending map,
+emits `canvas-tool-call { call_id, session_id, name, args_json }` on the
+app's existing event bus (the shape `commands.rs` already uses), and awaits
+the oneshot under a 20 s timeout (`CANVAS_BRIDGE_TIMEOUT_MS`, mirrored as a
+Rust constant, the only canvas number that lives in both languages because
+it is a timeout, not a rule). TS answers through one new command,
+`agent_canvas_result(call_id, text, is_error)`, from a listener
+`createCanvasTools` (§5.1) registers keyed on session id, last write wins, no
+dispose — a stale entry is unreachable the instant its exchange's own MCP
+token is revoked (item 3), which is a clean error already (§8). An event for
+a session with no registered listener answers
+`ERROR: the canvas is not open for this thread` rather than dropping it,
+which would spend the child's whole 20 s for nothing; on elapse the pending
+entry is dropped and the call answers
+`ERROR: the canvas did not answer. Say your findings here instead` — the
+model's own way out, never a hung turn. Cost: +1 IPC round trip per canvas
+tool call, sub-millisecond beside a run allowed 10 s; benefit: one
+implementation instead of two that could disagree, DESIGN rule 14 applied to
+code rather than chrome.
 
 Side calls (the follow-up prompt of §4.6 and the starter pool of AGENT-UX §1)
 are one tool-less text turn with no thread: a hosted adapter takes them
@@ -525,6 +748,35 @@ parallel turn in ONE message). Bedrock/Vertex/Foundry are a research item.
     picked at all, since nothing the gate would refuse can pass it on either
     connection. The comparison session is opened for the one run and
     dropped, never left resident.
+11. **The canvas tools (B3, 2026-09-09)** reach PostgreSQL through exactly
+    one door, and it is the door that already exists. A `result` block's
+    `sql`, from `canvas_write` or `canvas_replace` alike, goes to
+    `agent_run_readonly` on the thread's own session — the same call
+    `run_sql` makes — so both halves of item 1 apply unchanged: server-side
+    `default_transaction_read_only=on` AND the AST gate (one
+    `SELECT`/`WITH … SELECT`/`EXPLAIN`, no data-modifying CTE, no `SELECT
+    INTO`, no `FOR UPDATE`/`SHARE`, no deny-listed function). A write sent
+    to a canvas block is refused in the gate's own words, first line,
+    exactly as a write sent to `run_sql` is, and the refused statement
+    lands NO block (LESSONS 9: the refusal names the way out, never a block
+    standing in for one). `run_sql` itself does not move: its schema,
+    description, caps and refusals are byte-frozen (§5). The canvas tools
+    write appdb only, through the SAME debounced `canvas_upsert` a person's
+    own edit already takes (§9); Rust gains a bridge (§7) and no
+    `rusqlite` call for a canvas tool — no database path is added on the
+    Rust side by this wave. Production is allowed, for reads, on item 10's
+    own reasoning: the AST gate is what makes a prod target legal at all,
+    and a canvas result block reads the connection the thread is already
+    on, its provenance structural (the canvas belongs to a profile, §9) and
+    the chrome speaking for the data's origin (LESSONS 4). The model cannot
+    address a canvas: no tool takes a canvas id (captured once, at
+    `createCanvasTools`'s construction, from the target resolved before the
+    exchange's first await, LESSONS 3, §5.1), no tool creates or deletes
+    one (§5.1), and with no target no canvas tool exists at all — the array
+    a provider is handed IS the gate (§5.1, §7). Row caps: 5 rows echoed to
+    the model per block, 200 kept on the document (§5.1, the one number
+    both `Add to Canvas` and a model write now share), 6 blocks a call, 8
+    an exchange; the statement timeout is the thread's own (item 2).
 
 ## 9. Data model (appdb, rusqlite)
 
@@ -667,6 +919,56 @@ change rather than field by field; `canvas_list(profile_id)`,
 (`lib.rs`). A block never earns its own row: the whole document is one
 write, so a reorder, a face flip that persists (AGENT-UX §16a) and a note's
 edited text all move together or not at all.
+
+**Provenance of a model-written block (B3, 2026-09-09).** A block a canvas
+tool writes carries one more field inside `doc_json`, `wroteBy: exchangeId`,
+set once at write time and never touched again: the block's own record of
+whose turn wrote it, which is what `canvas_replace`'s consent rule reads (a
+model may replace a block it wrote IN THIS THREAD, or one the user named
+with `@`; a user's own note, or a block another thread or `Add to Canvas`
+put there, is never replaced unnamed, AGENT-UX §16i) and what a cut or a
+re-run reads to find what to remove, below. It does not become a fifth
+appdb column: `doc_json` stays opaque to appdb (above), a block's shape is
+the canvas store's, not the schema's, and `wroteBy` rides inside the block
+exactly as `askedFrom` already rides the OTHER direction (§2's
+`askedFrom: blockId` on the exchange).
+
+The exchange carries the matching half, `Exchange.canvasWrites?: {
+canvasId: string; blockIds: string[] }` (`src/stores/agent.ts`), in write
+order, session-lived like `askedFrom` — never persisted, since a reload's
+`doc_json` already knows which blocks exist and each one's own `wroteBy`
+already knows which exchange wrote it; `canvasWrites` exists only so a CUT
+and a RE-RUN, which act on the THREAD's own rows, know which document rows
+to remove without scanning every block of every canvas for a matching
+`wroteBy`. Three rules, no fourth, extending the cut semantics above:
+
+1. A cut deletes the blocks of every exchange it removes: in
+   `truncateThread`, beside `rowsOf(e)`, one `removeMany(e.canvasWrites)`
+   per canvas, not per block.
+2. The FIRST canvas write of a re-run clears what the previous attempt of
+   THAT exchange wrote. One rule covers Restart, Retry, Fix It and an
+   assumption-chip toggle — every path that re-enters `runInto` on an
+   existing `exchangeId` — and it fires on the first write, not the run's
+   start, so a re-run that fails, is refused, or is cancelled BEFORE
+   writing leaves the standing blocks alone.
+3. A cancelled run keeps the blocks it already wrote, and `canvasWrites`
+   names exactly the blocks now standing. `PriorAnswer` is not extended for
+   this: a Stop restores the pane's own answer, and a document is not
+   un-written by a Stop any more than a note a person typed by hand is.
+
+A block the user deleted meanwhile is a no-op on all three (`remove`
+already resolves nothing for an id no document holds, above). An older
+Restart's confirm counts the canvas blocks beside the questions it deletes:
+`Restart from Here?` · `The 2 questions after this one, their answers and 7
+canvas blocks will be deleted.` · `Delete 2 Questions` (AGENT-UX §16i).
+
+One new `AskEvent`, kinds 9 → 10 (`loop.ts`):
+`{ type: "canvasWrite"; canvasId: string; blockIds: string[] }`, emitted
+right after a canvas tool call returns and recorded by `runInto`'s
+`onEvent`. The ids are never parsed out of the model-facing result text —
+deriving one record from another rendering is the exact bug the tool
+result's own tolerant-parsing comment (§4.6) warns against — so this event
+is the only place `canvasWrites` is ever written.
 
 ## 10. Budgets
 

@@ -9,13 +9,17 @@
 // (EVAL.md section 3), and both run this same file.
 
 import {
+  CANVAS_CHIP,
+  CANVAS_TOOL_NAMES,
   PEEK_MAX,
   PROBE_MAX,
   PROSE_STRIKES,
   TOOL_NAMES,
-  TOOL_SCHEMAS,
   isProseRefusal,
+  toolsFor,
   type AgentTools,
+  type CanvasTools,
+  type CanvasWriteResult,
 } from "./tools";
 import type { Tier } from "./providers/registry";
 import type {
@@ -29,6 +33,7 @@ import type {
 import type {
   AgentRun,
   Assumption,
+  CanvasToolName,
   HistoryPair,
   KnowledgeCounts,
   KnowledgeRow,
@@ -58,6 +63,7 @@ import {
   SMALL_SYSTEM_PROMPT,
   SYSTEM_PROMPT,
   askMessage,
+  canvasMessage,
   historyMessage,
   knowledgeMessage,
   repairMessage,
@@ -102,6 +108,11 @@ export type AskErrorKind = "provider" | "sql" | "turncap" | "cancelled" | "write
 
 export type AskEvent =
   | { type: "status"; phase: AskPhase }
+  /** `name` is the chip's species and stays one of the five: a canvas call
+   * and an off-list tool alike wear the run chip, which is the species of the
+   * call that produced the answer (AGENT-UX 16). `label` is what the strip
+   * reads, so a canvas call says `canvas` there and the trace step, which is
+   * where the true name is law, carries `canvas_write` itself. */
   | { type: "toolStart"; id: string; name: ToolName; label: string; args: string }
   | {
       type: "toolEnd";
@@ -124,6 +135,22 @@ export type AskEvent =
     }
   | { type: "thinking"; delta: string }
   | { type: "usage"; usage: TokenUsage }
+  | {
+      /** B3: blocks of THIS exchange reached the canvas. Every block the
+       * exchange has written so far, in write order, read off the seam where
+       * they landed and never parsed back out of the model-facing text
+       * (LESSONS 13, tools.ts's own warning): the store assigns this record
+       * rather than appending to one, so a cut and a re-run have one
+       * authority to read. */
+      type: "canvasWrite";
+      canvasId: string;
+      blockIds: string[];
+      /** how many of them stood IN PLACE of a block already there, so the
+       * status line can read `3 blocks · 1 replaced`. A count, always sent:
+       * the fragment it feeds is what goes absent at zero, not the number
+       * the exchange records (DESIGN rule 11 binds the line, not the record) */
+      replaced: number;
+    }
   | { type: "answer"; answer: AskAnswer }
   | {
       type: "error";
@@ -184,6 +211,14 @@ export interface AskRequest {
    * thing the user pointed at, and a second header would be a second grammar
    * for one idea (DESIGN rule 15). Absent on the eval path. */
   rowContext?: string;
+  /** B3: the canvas this exchange writes into, resolved by the caller before
+   * its first await (LESSONS 3) and captured in the tool, so no tool takes a
+   * canvas id and writing outside the target has no wire representation.
+   * Absent on every run without a target and on the whole eval path, which is
+   * what keeps the tools array and the user message byte-identical to v4
+   * (EVAL section 4). It is the ONE gate: the array a provider is handed IS
+   * the offer, so a message can never describe tools it does not offer. */
+  canvas?: CanvasTools;
   /** what the connection allows the model to propose (A4). Absent on the
    * eval path and nowhere else: the app passes it for every run, edits on or
    * off, because the loop's job when they are off is to REFUSE a write the
@@ -286,6 +321,9 @@ const sameSql = (a: string, b: string) =>
 
 const isName = (n: string): n is ToolName => (TOOL_NAMES as readonly string[]).includes(n);
 
+const isCanvasName = (n: string): n is CanvasToolName =>
+  (CANVAS_TOOL_NAMES as readonly string[]).includes(n);
+
 const asRecord = (v: unknown): Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 
@@ -296,7 +334,7 @@ const strings = (v: unknown): string[] | null =>
 
 /** The chip the thinking strip shows while this call runs (AGENT-UX 2):
  * status register, lowercase, the object named. */
-function chipLabel(name: ToolName, args: Record<string, unknown>): string {
+function chipLabel(name: ToolName | CanvasToolName, args: Record<string, unknown>): string {
   switch (name) {
     case "list_tables":
       return "tables";
@@ -313,6 +351,13 @@ function chipLabel(name: ToolName, args: Record<string, unknown>): string {
       const noun = probeNoun(strings(args.sqls) ?? []);
       return noun === null ? "probe" : `probe ${noun}`;
     }
+    // one label for all three, so the strip coalesces `canvas ×2` the way it
+    // coalesces `run ×3`: the chip counts CALLS, and which call it was is the
+    // trace step's own fact, one click away (AGENT-UX 16, DESIGN rule 14)
+    case "canvas_write":
+    case "canvas_replace":
+    case "canvas_read":
+      return CANVAS_CHIP;
   }
 }
 
@@ -379,6 +424,51 @@ async function callTool(
   }
 }
 
+/** The canvas family, dispatched exactly as the five are: the arguments are
+ * untrusted text, every refusal goes BACK to the model as `ERROR: <first
+ * line>`, and the structured half carries the block ids the loop reports. One
+ * implementation, reached from here on the driven path and from the MCP bridge
+ * on the `claude -p` one (canvas-agent-spec section 1.7). */
+async function callCanvasTool(
+  canvas: CanvasTools,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<{ text: string; isError: boolean; result: unknown }> {
+  switch (name) {
+    case "canvas_write": {
+      const out = await canvas.write(args);
+      return { text: out.textForModel, isError: !!out.error, result: out.result };
+    }
+    case "canvas_replace": {
+      const out = await canvas.replace(args);
+      return { text: out.textForModel, isError: !!out.error, result: out.result };
+    }
+    case "canvas_read": {
+      const out = await canvas.read();
+      return { text: out.textForModel, isError: !!out.error, result: out.result };
+    }
+    default:
+      return { text: `ERROR: unknown tool '${name}'`, isError: true, result: null };
+  }
+}
+
+/** The ids a canvas call reports, or null when it reported none (a read, a
+ * refusal). Read off the structured half, never off the text. */
+const writesOf = (result: unknown): CanvasWriteResult | null =>
+  typeof result === "object" && result !== null && "blockIds" in result
+    ? (result as CanvasWriteResult)
+    : null;
+
+/** One canvas write, as the event the store records. The one place the tool's
+ * result becomes that event, so the driven path and the MCP bridge cannot
+ * report it two ways. */
+const canvasWriteEvent = (w: CanvasWriteResult): AskEvent => ({
+  type: "canvasWrite",
+  canvasId: w.canvasId,
+  blockIds: w.blockIds,
+  replaced: w.replaced,
+});
+
 const EMPTY_KNOWLEDGE: KnowledgeBlock = { text: "", hints: [], definitions: [], synonyms: [] };
 const EMPTY_HISTORY: HistoryBlock = { text: "", questions: [] };
 
@@ -409,6 +499,11 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
   const now = req.now ?? (() => Date.now());
   const emit = (ev: AskEvent) => req.onEvent?.(ev);
   const maxTurns = req.maxTurns ?? MAX_TURNS;
+  // the names this run offers, which is what an unknown-tool refusal lists:
+  // with no target it is the five, in the order tools.schema.json has them
+  const offered: readonly string[] = req.canvas
+    ? [...TOOL_NAMES, ...CANVAS_TOOL_NAMES]
+    : TOOL_NAMES;
   const started = now();
   const trace: TraceStep[] = [];
   const usage: TokenUsage = { input: 0, output: 0 };
@@ -459,9 +554,14 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
   // are off, which is what keeps the eval's bytes and every baseline row
   // exactly where v4 left them (EVAL 4)
   const writes = req.writes?.on ? writesMessage() : "";
+  // B3: last of all, after the risk block and after WRITES. The outline is
+  // read ONCE, here, before the run's first await (LESSONS 3), and the same
+  // string goes to the model and to the trace: nothing sent is summarised away
+  // (AGENT-SPEC 8.4). Absent with no target, which is the eval's every run
+  const canvasBlock = req.canvas ? canvasMessage(req.canvas.title, req.canvas.outline()) : "";
   const userMsg = withReplay(
     req,
-    askMessage({ ...askArgs, knowledge: know.text, history: past.text }) + writes,
+    askMessage({ ...askArgs, knowledge: know.text, history: past.text }) + writes + canvasBlock,
   );
   trace.push({
     step: "context",
@@ -470,7 +570,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
     // the message WITHOUT the two knowledge blocks: they are the next step's
     // body, and a block in two slots is the same fact twice (DESIGN rule 14).
     // With no profile this is the whole message, which is what the eval sends
-    text: withReplay(req, askMessage(askArgs) + writes),
+    text: withReplay(req, askMessage(askArgs) + writes + canvasBlock),
     // absent, not empty: a question that tagged nothing has no tagged line
     ...(mentions.length > 0 ? { mentions: mentionTags(mentions) } : {}),
   });
@@ -603,6 +703,17 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
     });
   };
 
+  // the `claude -p` path runs the canvas tools inside the child, over the MCP
+  // bridge: Rust emits one call and parks a oneshot, this side answers it with
+  // the very text the driven path returns (canvas-agent-spec 2.2). The
+  // listener's life is the exchange's, started before any child exists and
+  // stopped in the finally that ends the run, so a stale registration is
+  // unreachable rather than merely unlikely
+  const bridge =
+    req.provider.ownsLoop && req.canvas?.serve
+      ? req.canvas.serve((w) => emit(canvasWriteEvent(w)))
+      : null;
+
   try {
     while (turns < maxTurns) {
       if (req.signal.aborted) throw new Cancelled();
@@ -623,7 +734,10 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
       const stream = req.provider.chat({
         system: SYSTEM_PROMPT,
         messages,
-        tools: [...TOOL_SCHEMAS],
+        // B3: the ONE gate. The HTTP adapters render this array, and the
+        // `claude -p` adapter serves exactly these names off its MCP token, so
+        // neither can offer a canvas tool to a run with no target
+        tools: toolsFor(!!req.canvas),
         model: req.model,
         signal: req.signal,
         thread: req.thread
@@ -653,14 +767,13 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
           }
           calls.push(ev.toolCall);
           openedAt.set(ev.toolCall.id, now());
-          const name = isName(ev.toolCall.name) ? ev.toolCall.name : "run_sql";
+          const raw = ev.toolCall.name;
+          const named = isName(raw) || isCanvasName(raw);
           emit({
             type: "toolStart",
             id: ev.toolCall.id,
-            name,
-            label: isName(ev.toolCall.name)
-              ? chipLabel(name, asRecord(safeParse(ev.toolCall.args)))
-              : ev.toolCall.name,
+            name: isName(raw) ? raw : "run_sql",
+            label: named ? chipLabel(raw, asRecord(safeParse(ev.toolCall.args))) : raw,
             args: ev.toolCall.args,
           });
         } else if ("toolResult" in ev) {
@@ -746,19 +859,34 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
               const t = now();
               const parsed = safeParse(call.args);
               let out: { text: string; isError: boolean; result: unknown };
-              if (!isName(call.name)) {
-                out = {
-                  text: `ERROR: unknown tool '${call.name}'. Valid tools: ${TOOL_NAMES.join(", ")}`,
-                  isError: true,
-                  result: null,
-                };
+              // the canvas family only when this exchange has a target, and
+              // the refusal lists the names ACTUALLY offered, so a no-target
+              // run's text is the one it always was
+              const onCanvas = req.canvas && isCanvasName(call.name) ? req.canvas : null;
+              const unknownTool = () => ({
+                text: `ERROR: unknown tool '${call.name}'. Valid tools: ${offered.join(", ")}`,
+                isError: true,
+                result: null,
+              });
+              if (!isName(call.name) && !onCanvas) {
+                out = unknownTool();
               } else if (parsed === undefined) {
                 out = {
                   text: `ERROR: arguments were not valid JSON: ${call.args.slice(0, 200)}`,
                   isError: true,
                   result: null,
                 };
-              } else {
+              } else if (onCanvas) {
+                try {
+                  out = await callCanvasTool(onCanvas, call.name, asRecord(parsed));
+                } catch (e) {
+                  out = { text: `ERROR: ${firstLine(e)}`, isError: true, result: null };
+                }
+                // the ids reach the store from the seam that minted them, not
+                // from the text the model read (LESSONS 13)
+                const wrote = writesOf(out.result);
+                if (wrote && wrote.blockIds.length > 0) emit(canvasWriteEvent(wrote));
+              } else if (isName(call.name)) {
                 const args = asRecord(parsed);
                 try {
                   out = await callTool(req.tools, call.name, args);
@@ -776,14 +904,24 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
                     if (p.fragment) sanity.push({ ...p.fragment, stepId: call.id });
                   }
                 }
+              } else {
+                // the guard above admits only the five and, with a target, the
+                // three, so this is unreachable; it answers in the same words
+                // rather than inventing a second refusal for one case
+                out = unknownTool();
               }
+              // the chip's `name` is its SPECIES: a canvas call and an
+              // off-list tool alike wear the run chip. The trace's is the
+              // name the model actually wrote, because the drawer is where
+              // that is law and nothing sent is laundered (AGENT-SPEC 8.4)
               const name = isName(call.name) ? call.name : "run_sql";
+              const traced = isCanvasName(call.name) ? call.name : name;
               const ms = Math.round(now() - t);
               trace.push({
                 step: "tool",
                 ms,
                 id: call.id,
-                name,
+                name: traced,
                 args: call.args,
                 result: out.text,
                 isError: out.isError,
@@ -804,7 +942,10 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
         );
         messages.push({ role: "tool", results });
         for (const r of results) {
-          if (r.name !== "run_sql") continue;
+          // a canvas result block's statement goes through the same read gate,
+          // so prose sent to one spirals the same way and is broken the same
+          // way (W7; canvas-agent-spec 1.5)
+          if (r.name !== "run_sql" && !isCanvasName(r.name)) continue;
           proseStrikes = r.isError && isProseRefusal(r.result) ? proseStrikes + 1 : 0;
         }
         if (proseStrikes >= PROSE_STRIKES) return proseAnswer();
@@ -945,6 +1086,8 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
       turns,
       sanity: sanityLine(peeked, sanity),
     });
+  } finally {
+    bridge?.();
   }
 }
 

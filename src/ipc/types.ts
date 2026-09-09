@@ -489,6 +489,21 @@ export interface McpCall {
   is_error: boolean;
 }
 
+/** one canvas tool call a `claude -p` child made, as the app receives it on
+ * the `canvas-tool-call` event (agent_canvas.rs CanvasToolCall). The MCP
+ * server holds no canvas logic: it parks the call for 20 s and the app
+ * answers it with `agentCanvasResult`. `token` is the caller's bearer token
+ * and `session_id` its database session, so a listener keys its canvas tools
+ * on whichever it registered them under; `args_json` is what the model wrote,
+ * unparsed, since every cap and refusal text belongs to the tool. */
+export interface CanvasToolCall {
+  call_id: string;
+  token: string;
+  session_id: string;
+  name: string;
+  args_json: string;
+}
+
 /** one Ask thread (appdb agent_threads). `id` is the row's identity and the
  * MCP session's name; `session_key` is what `claude -p` resumes. They are the
  * same uuid until a cut re-mints the key. Rust always sends it (the column

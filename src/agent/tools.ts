@@ -5,6 +5,7 @@
 //                       this file imports it and agent_mcp.rs include_str!s it
 //   tools.ts            this file: TOOL_SCHEMAS + the AgentTools interface
 //   tools.tauri.ts      AgentTools over Tauri commands (the app)
+//   canvas.tauri.ts     CanvasTools over the read gate and the canvas document
 //   loop.ts             the turn loop, section 4; streams events to the store
 //   context.ts          prefilter, index, candidate assembly, sections 4.1-4.2
 //   risk.ts             risky-shape classifier, section 4.4
@@ -24,16 +25,20 @@ import schema from "./tools.schema.json";
 import type { ToolSchema } from "./providers/types";
 import type {
   AgentRun,
+  CanvasFace,
+  CanvasToolName,
   SanityFragment,
   ToolName,
 } from "./types";
 
-export type { ToolName } from "./types";
+export type { CanvasFace, CanvasToolName, ToolName } from "./types";
 
 /** The five tools every provider sees, rendered per wire format by each
  * adapter. Byte-identical to what agent_mcp.rs serves, because both sides read
  * tools.schema.json. Anthropic caches the tools+system prefix, so the array
- * must stay stable between requests of a thread or the whole prefix misses. */
+ * must stay stable between requests of a thread or the whole prefix misses. A
+ * run with a canvas target is offered three more (toolsFor) and this array
+ * does not move for it: a run without one presents exactly these bytes. */
 export const TOOL_SCHEMAS: readonly ToolSchema[] = schema.tools;
 
 export const TOOL_NAMES: readonly ToolName[] = [
@@ -164,4 +169,306 @@ export interface AgentTools {
   /** the only method whose structured half feeds the results grid */
   runSql(sql: string): Promise<ToolOutcome<AgentRun>>;
   probe(sqls: string[]): Promise<ToolOutcome<ProbeOutcome[]>>;
+}
+
+// ---- the canvas family (B3) -------------------------------------------------
+//
+// Three tools a run offers only when its exchange has a canvas target, and the
+// pure half of what they do: the union the model may write, the caps, the
+// refusals, the short-id resolution and the outline's one renderer. Nothing
+// here touches a store or Tauri; canvas.tauri.ts runs the SQL and hands the
+// blocks to the document (AGENT-SPEC section 2 rule 2).
+
+/** The three canvas schemas, from the same file the five come from. Offered
+ * ONLY with a target (toolsFor): the tool list is prompt surface (EVAL.md
+ * section 4), so a run without one must present the byte-identical five, and a
+ * tool the model can see but that always refuses is W7's prose spiral with a
+ * new name. There is no canvas_create and no canvas_delete (canvas-agent-spec
+ * section 1.1): the target is captured in the tool, so writing outside it has
+ * no wire representation, and a delete stays the user's own keypress. */
+export const CANVAS_TOOL_SCHEMAS: readonly ToolSchema[] = schema.canvasTools;
+
+export const CANVAS_TOOL_NAMES: readonly CanvasToolName[] = [
+  "canvas_write",
+  "canvas_replace",
+  "canvas_read",
+];
+
+/** The array a run hands its provider: the five, plus the canvas family when
+ * the exchange has a target. ONE gate for both halves of the prompt surface,
+ * so a message can never describe tools it does not offer. */
+export const toolsFor = (canvas: boolean): ToolSchema[] =>
+  canvas ? [...TOOL_SCHEMAS, ...CANVAS_TOOL_SCHEMAS] : [...TOOL_SCHEMAS];
+
+/** Rows of a canvas result echoed back to the MODEL: enough to write the note
+ * truthfully, never enough to be a second run_sql (probe's own number). */
+export const CANVAS_ECHO_ROWS = 5;
+/** Rows a canvas result BLOCK keeps, for a model write and for `Add to Canvas`
+ * alike: a reading, not an export. The chart and diff faces already stop
+ * reading at this number, and the whole document is one debounced blob. */
+export const CANVAS_BLOCK_ROWS = 200;
+/** Blocks one canvas_write may append (probe's own maxItems). */
+export const CANVAS_WRITE_MAX = 6;
+/** Blocks one exchange may write, across every call: the runaway-loop bound,
+ * W7's prose-spiral precedent. */
+export const CANVAS_EXCHANGE_MAX = 8;
+/** How long Rust waits for this side to answer an MCP canvas call; mirrored in
+ * agent_mcp.rs, because the child cannot read this file. */
+export const CANVAS_BRIDGE_TIMEOUT_MS = 20_000;
+
+/** Field caps, mirrored by the schema's own maxLength so a well-behaved
+ * provider refuses before the model spends a turn. */
+export const CANVAS_NOTE_CAP = 2000;
+export const CANVAS_TITLE_CAP = 120;
+export const CANVAS_PROSE_CAP = 600;
+
+/** Characters of a block id the outline prints, and the fewest a handle may
+ * carry: 4 hex digits of a uuid, unique on any canvas a person reads. */
+export const CANVAS_HANDLE = 4;
+/** Where the outline ellipsizes a block's first line. */
+export const CANVAS_LINE_CAP = 60;
+
+/** The strip's chip for every canvas call, coalesced `canvas ×2` the way
+ * `run ×3` is: the chip counts CALLS, the trace's own unit (AGENT-UX 16). */
+export const CANVAS_CHIP = "canvas";
+
+/** One block as the MODEL writes it: an INTENT. The document holds a result
+ * (columns, rows, status, ms); this holds the statement that will produce one.
+ * canvas.tauri.ts is the one place the two meet, exactly as tools.tauri.ts is
+ * the one place the wire record and the domain record meet. */
+export type ModelBlock =
+  | { kind: "note"; text: string }
+  | {
+      kind: "result";
+      sql: string;
+      /** at most six words; absent on the first block of an answer, which
+       * wears the question instead (LESSONS 4, the question stands once) */
+      title?: string;
+      /** one sentence above the face */
+      note?: string;
+      /** an explicit override; absent means the rows decide */
+      face?: CanvasFace;
+    };
+
+/** What a canvas write reports back to the loop: every block this exchange
+ * has put on the canvas, and how many of them stood IN PLACE of one already
+ * there. Read off the seam that landed them, never re-parsed out of the
+ * model-facing text, so the pane's `3 blocks · 1 replaced` and the document
+ * are one reading (LESSONS 13). */
+export interface CanvasWriteResult {
+  canvasId: string;
+  blockIds: string[];
+  replaced: number;
+}
+
+/** One line of the outline, as the DOCUMENT reads itself. `line` is the
+ * block's own first line (a question, a model title, a note's opening) and is
+ * ellipsized by the renderer here, so the store never formats for a model.
+ * `modelWritten` is the consent gate: a block with no `wroteBy` is the user's
+ * own work and canvas_replace refuses it. */
+export interface CanvasOutlineEntry {
+  id: string;
+  kind: "note" | "result";
+  line: string;
+  rows?: number;
+  columns?: string[];
+  face?: CanvasFace;
+  modelWritten: boolean;
+}
+
+export interface CanvasOutline {
+  canvasId: string;
+  title: string;
+  blocks: CanvasOutlineEntry[];
+}
+
+/** The canvas surface the loop calls, implemented once over the store and the
+ * read gate (canvas.tauri.ts). `title` and `outline()` are read BEFORE the
+ * first await of a run, for the CANVAS user-message block; `canvasId` is
+ * captured at construction and no tool takes one, so the model cannot address
+ * a canvas at all (canvas-agent-spec section 4 item 7). */
+export interface CanvasTools {
+  readonly canvasId: string;
+  readonly title: string;
+  /** what the canvas holds right now, read straight off the document. The
+   * CANVAS user-message block and canvas_read both render THESE, through
+   * outlineLine, so the message and the tool can never disagree about what
+   * stands there (LESSONS 13). Read before the run's first await. */
+  outline(): readonly CanvasOutlineEntry[];
+  write(args: unknown): Promise<ToolOutcome<CanvasWriteResult>>;
+  replace(args: unknown): Promise<ToolOutcome<CanvasWriteResult>>;
+  read(): Promise<ToolOutcome<CanvasOutline>>;
+  /** the `claude -p` bridge: answer the MCP server's `canvas-tool-call`
+   * events for this session until the returned stop is called. `onWrite` is
+   * how the block ids reach the loop's canvasWrite event on that path, since
+   * the loop never sees the call. Absent on a platform with no bridge. */
+  serve?(onWrite: (result: CanvasWriteResult) => void): () => void;
+}
+
+// ---- validating what the model wrote ---------------------------------------
+//
+// Every refusal names the way out (LESSONS 9). `ERROR: <first line>` is the
+// shape section 5 mandates on every path, so the loop feeds these straight
+// back and the model reads them the way it reads a gate refusal.
+
+export type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
+
+const bad = (error: string): { ok: false; error: string } => ({ ok: false, error });
+
+/** A cap refusal, one sentence for three fields: what it is, what the cap is,
+ * and what to write instead. */
+const overCap = (field: string, length: number, cap: number, advice: string) =>
+  bad(`ERROR: \`${field}\` is ${length.toLocaleString()} characters; the cap is ${cap}. ${advice}`);
+
+const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
+
+const FACES: readonly CanvasFace[] = ["chart", "table", "values", "sql"];
+const isFace = (v: unknown): v is CanvasFace => FACES.includes(v as CanvasFace);
+
+/** One block of the union. An unknown `face` is NOT a refusal: the tool falls
+ * back to the face the rows deserve and says so in its reply, because a model
+ * that guessed a face wrong still wrote a good statement (DESIGN rule 11). */
+export function parseCanvasBlock(v: unknown): Parsed<ModelBlock> {
+  const b =
+    typeof v === "object" && v !== null && !Array.isArray(v)
+      ? (v as Record<string, unknown>)
+      : null;
+  if (!b) return bad("ERROR: a block needs `kind`: 'note' or 'result'");
+  if (b.kind === "note") {
+    const text = typeof b.text === "string" ? b.text : "";
+    if (!text.trim()) {
+      return bad(
+        "ERROR: a note block needs `text`, and it cannot be empty. Deleting a block is the user's own action",
+      );
+    }
+    if (text.length > CANVAS_NOTE_CAP) {
+      return overCap("text", text.length, CANVAS_NOTE_CAP, "Write the finding, not the transcript");
+    }
+    return { ok: true, value: { kind: "note", text } };
+  }
+  if (b.kind === "result") {
+    const sql = str(b.sql);
+    if (!sql) return bad("ERROR: a result block needs `sql`, one read-only statement");
+    const title = str(b.title);
+    if (title && title.length > CANVAS_TITLE_CAP) {
+      return overCap("title", title.length, CANVAS_TITLE_CAP, "Six words name a block");
+    }
+    const note = str(b.note);
+    if (note && note.length > CANVAS_PROSE_CAP) {
+      return overCap("note", note.length, CANVAS_PROSE_CAP, "One sentence rides above a face");
+    }
+    return {
+      ok: true,
+      value: {
+        kind: "result",
+        sql,
+        ...(title ? { title: title.trim() } : {}),
+        ...(note ? { note: note.trim() } : {}),
+        ...(isFace(b.face) ? { face: b.face } : {}),
+      },
+    };
+  }
+  return bad("ERROR: a block needs `kind`: 'note' or 'result'");
+}
+
+/** canvas_write's `blocks`, in order. One bad block refuses the whole call:
+ * a half-applied batch would leave the model writing a note about results
+ * that are not on the page. */
+export function parseCanvasBlocks(v: unknown): Parsed<ModelBlock[]> {
+  const raw = asBlockArray(v);
+  if (!raw) {
+    return bad(`ERROR: canvas_write needs \`blocks\`, an array of 1 to ${CANVAS_WRITE_MAX} blocks`);
+  }
+  const out: ModelBlock[] = [];
+  for (const item of raw) {
+    const one = parseCanvasBlock(item);
+    if (!one.ok) return one;
+    out.push(one.value);
+  }
+  return { ok: true, value: out };
+}
+
+/** A `blocks` argument that is an array of the right length, or null. A model
+ * that wrote ONE block without its array gets the same reading rather than a
+ * refusal it has to spend a turn on. */
+function asBlockArray(v: unknown): unknown[] | null {
+  if (Array.isArray(v)) return v.length >= 1 && v.length <= CANVAS_WRITE_MAX ? v : null;
+  return typeof v === "object" && v !== null ? [v] : null;
+}
+
+/** A block id as the model wrote it: the whole uuid, or the first 4 or more
+ * characters the outline printed. Ambiguity and absence each name their way
+ * out; neither is ever resolved to a guess. */
+export function resolveHandle(ids: readonly string[], raw: unknown): Parsed<string> {
+  const want = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (!want) return bad("ERROR: `block_id` is the id, or its first 4 characters, as canvas_read printed it");
+  const exact = ids.find((id) => id.toLowerCase() === want);
+  if (exact) return { ok: true, value: exact };
+  if (want.length < CANVAS_HANDLE) {
+    return bad(`ERROR: '${want}' is too short. Use at least ${CANVAS_HANDLE} characters of the id`);
+  }
+  const hits = ids.filter((id) => id.toLowerCase().startsWith(want));
+  if (hits.length === 1) return { ok: true, value: hits[0] };
+  if (hits.length === 0) {
+    return bad(`ERROR: no block '${want}' on this canvas. Call canvas_read for the block ids`);
+  }
+  return bad(
+    `ERROR: '${want}' matches ${hits.length} blocks. Use at least ${CANVAS_HANDLE} characters of the id`,
+  );
+}
+
+/** The bridge's own failure: the child asked and this side never answered, so
+ * the model is told to say its findings where it can (LESSONS 9). Mirrored in
+ * agent_mcp.rs, which is the side that times out. */
+export const CANVAS_BRIDGE_LOST = "ERROR: the canvas did not answer. Say your findings here instead";
+
+// ---- the outline, one renderer ---------------------------------------------
+
+/** A block's first line as a line: whitespace collapsed, ellipsized. Every
+ * place a block is named to the model goes through this, so an outline line
+ * and a write's own reply cannot cut the same note at two lengths. */
+export const gist = (text: string, cap = CANVAS_LINE_CAP): string => {
+  const one = text.replace(/\s+/g, " ").trim();
+  return one.length > cap ? `${one.slice(0, cap).trimEnd()}…` : one;
+};
+
+/** The short handle the outline prints and the model writes back. */
+export const handleOf = (id: string): string => id.slice(0, CANVAS_HANDLE);
+
+/** One block's line: the handle, the kind, then dot-separated facts about it.
+ * The one line shape, so the outline and a write's own reply read alike; each
+ * caller says which facts belong on it, since a write prints the rows under
+ * the line and the outline has nowhere else to put them (DESIGN rule 14). */
+export function blockLine(
+  id: string,
+  kind: "note" | "result",
+  parts: readonly (string | null | undefined)[],
+): string {
+  const said = parts.filter((p): p is string => !!p);
+  return `${handleOf(id)}  ${kind.padEnd(6)}  ${said.join(" · ")}`;
+}
+
+/** `12 rows: month, revenue`, the shape a result's rows have. */
+export const rowsPart = (rows: number, columns?: readonly string[]): string =>
+  `${rows.toLocaleString()} ${rows === 1 ? "row" : "rows"}` +
+  (columns?.length ? `: ${columns.join(", ")}` : "");
+
+/** One block as the outline prints it. A result names its shape because that
+ * is what stops the model writing a note about columns that never came back. */
+export function outlineLine(entry: CanvasOutlineEntry): string {
+  return blockLine(entry.id, entry.kind, [
+    gist(entry.line) || "(untitled)",
+    entry.kind === "result" && entry.rows !== undefined
+      ? rowsPart(entry.rows, entry.columns)
+      : null,
+    entry.kind === "result" && entry.face ? `${entry.face} face` : null,
+  ]);
+}
+
+/** The whole outline, headed the way canvas_read heads it. Empty is one
+ * sentence, never a header over nothing (DESIGN rule 11). */
+export function outlineText(title: string, blocks: readonly CanvasOutlineEntry[]): string {
+  if (blocks.length === 0) return `Canvas "${title}" is empty.`;
+  const head = `Canvas "${title}", ${blocks.length} ${blocks.length === 1 ? "block" : "blocks"}.`;
+  return [head, ...blocks.map(outlineLine)].join("\n");
 }

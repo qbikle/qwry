@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "note": "AGENT-SPEC section 5. The single source of truth for the agent's tool surface: src/agent/tools.ts imports this file and src-tauri/src/agent_mcp.rs include_str!s it, so every provider and the MCP server present byte-identical schemas. Anthropic caches the tools+system prefix, so any edit here is a cache-invalidating change: bump version and re-baseline (EVAL.md section 4).",
+  "version": 2,
+  "note": "AGENT-SPEC section 5. The single source of truth for the agent's tool surface: src/agent/tools.ts imports this file and src-tauri/src/agent_mcp.rs include_str!s it, so every provider and the MCP server present byte-identical schemas. Anthropic caches the tools+system prefix, so any edit here is a cache-invalidating change: bump version and re-baseline (EVAL.md section 4). B3 added `canvasTools`, offered only to a run with a canvas target (AGENT-SPEC section 5, canvas-agent-spec section 1.3): `tools` did not move one byte, so no baseline row moves and no gated run sees a different prefix. Every schema is self-contained, with no $ref and no $defs: each adapter puts `parameters` on the wire alone (openai.ts renderTools, anthropic.ts input_schema, agent_mcp.rs parse_tools), so a $defs sibling of `tools` would never reach the model and a pointer into it would not resolve. The block union is written out in both tools that take one, and tools.test.ts pins the two copies equal.",
   "tools": [
     {
       "name": "list_tables",
@@ -86,6 +86,174 @@
           }
         },
         "required": ["sqls"],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "canvasTools": [
+    {
+      "name": "canvas_write",
+      "description": "Append blocks to the canvas the user is reading. A `result` block carries one read-only SELECT: this tool runs it, keeps up to 200 rows on the canvas with their columns, and opens it on the face its rows deserve. A `note` block carries markdown you write. The reply gives every block a short id, and every result its columns and first 5 rows, so the note you write last describes what actually came back.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "blocks": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "note"
+                    },
+                    "text": {
+                      "type": "string",
+                      "description": "Markdown. One bold lead-in ending in a colon and two to four bullets read well, each bullet ONE finding with its own figure. Never a markdown table: the result blocks carry the rows.",
+                      "maxLength": 2000
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "text"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "result"
+                    },
+                    "sql": {
+                      "type": "string",
+                      "description": "One read-only PostgreSQL statement and nothing else, under the same rules as run_sql: never prose, never a markdown fence."
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "At most six words naming what this block shows, identifiers in backticks. Leave it off the first block of an answer: that one wears the question.",
+                      "maxLength": 120
+                    },
+                    "note": {
+                      "type": "string",
+                      "description": "One sentence above the face saying what the number means. Most results in an analysis carry none, because the note block holds the reading.",
+                      "maxLength": 600
+                    },
+                    "face": {
+                      "enum": [
+                        "chart",
+                        "table",
+                        "values",
+                        "sql"
+                      ],
+                      "description": "Which face the block opens on. Omit it and the canvas picks: the chart when the rows make one, the values when there is one row, the table otherwise."
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "sql"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 6
+          },
+          "after": {
+            "type": "string",
+            "description": "Put them after this block instead of at the end of the canvas: the id, or its first 4 characters, as canvas_read printed it."
+          }
+        },
+        "required": [
+          "blocks"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "canvas_replace",
+      "description": "Replace one block of the canvas, keeping its place. Use it when new work supersedes a block you wrote rather than writing a second one beside it; a result block's statement is run again. A block you did not write belongs to the user and is refused, and no block can be emptied: deleting is the user's own action.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "block_id": {
+            "type": "string",
+            "description": "The id, or its first 4 characters, as canvas_read printed it."
+          },
+          "block": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "note"
+                  },
+                  "text": {
+                    "type": "string",
+                    "description": "Markdown. One bold lead-in ending in a colon and two to four bullets read well, each bullet ONE finding with its own figure. Never a markdown table: the result blocks carry the rows.",
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "kind",
+                  "text"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "result"
+                  },
+                  "sql": {
+                    "type": "string",
+                    "description": "One read-only PostgreSQL statement and nothing else, under the same rules as run_sql: never prose, never a markdown fence."
+                  },
+                  "title": {
+                    "type": "string",
+                    "description": "At most six words naming what this block shows, identifiers in backticks. Leave it off the first block of an answer: that one wears the question.",
+                    "maxLength": 120
+                  },
+                  "note": {
+                    "type": "string",
+                    "description": "One sentence above the face saying what the number means. Most results in an analysis carry none, because the note block holds the reading.",
+                    "maxLength": 600
+                  },
+                  "face": {
+                    "enum": [
+                      "chart",
+                      "table",
+                      "values",
+                      "sql"
+                    ],
+                    "description": "Which face the block opens on. Omit it and the canvas picks: the chart when the rows make one, the values when there is one row, the table otherwise."
+                  }
+                },
+                "required": [
+                  "kind",
+                  "sql"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "required": [
+          "block_id",
+          "block"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "canvas_read",
+      "description": "What the canvas already holds: every block's id, kind and first line, and for a result its columns, its row count and the face it is on. Call it before writing into a canvas that is not empty, so you add to the document instead of repeating it.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
         "additionalProperties": false
       }
     }

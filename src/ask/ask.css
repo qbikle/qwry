@@ -891,6 +891,19 @@
 .ans-status .frag.warn svg {
   color: var(--warn);
 }
+/* B3: the canvas an answer went to, worn as the link that shows its tab
+   (`4 blocks · Canvas 4`). The footer's own treatment for a link inside a
+   status strip (.ans-foot .linkish), plus the strip's line-height, because a
+   button brings its own and a taller one would push the 16px row; a title
+   longer than the line ellipsizes rather than running past the pane, the way
+   the footer's meta does (DESIGN rule 13: data owns its own overflow) */
+.ans-status .linkish {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  line-height: inherit;
+}
 
 /* ---- result block (W7 item 1, ResultBlock) -------------------------------
    Fenced: owned by the result-block builder.

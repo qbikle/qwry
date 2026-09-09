@@ -100,8 +100,10 @@ export function groupChips(chips: ToolChip[]): ChipGroup[] {
       running: c.ms === null,
       isError: c.isError,
       // A4's dry run wears the run chip's accent: it is the one call in the
-      // strip that touches the rows the answer is about
-      isRun: c.name === "run_sql" || c.name === "preview",
+      // strip that touches the rows the answer is about. B3's canvas family
+      // wears it too, for the same reason read one step further on: on a
+      // canvas-targeted exchange it is the call that produced the answer
+      isRun: c.name === "run_sql" || c.name === "preview" || c.name.startsWith("canvas_"),
     });
   }
   return out;

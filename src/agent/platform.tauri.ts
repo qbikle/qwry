@@ -172,8 +172,16 @@ function spawn(
 /** The child process cannot read `useSettings`, so the thread's MCP server is
  * told the statement_timeout once, when it is minted. A setting of 0 means "no
  * timeout", which is not a shape a tool call has: it falls through to the
- * AGENT-SPEC 5 default rather than down to the one-second floor. */
-async function mcpServer(sessionRef: string): Promise<McpEndpoint> {
+ * AGENT-SPEC 5 default rather than down to the one-second floor.
+ *
+ * B3: it is told the tool list too. The token serves exactly the tools this
+ * exchange's provider was handed, so the canvas family reaches the child only
+ * when the exchange has a target and a run without one mints the token it
+ * always minted (canvas-agent-spec 1.6). */
+async function mcpServer(
+  sessionRef: string,
+  toolNames?: readonly string[],
+): Promise<McpEndpoint> {
   // the adapter refers to the THREAD (ChatRequest.thread.id); the Rust server
   // binds a token to that thread's dedicated PG session. The node platform
   // keys its tools by the same thread ref, so the seam resolves here, once.
@@ -184,7 +192,11 @@ async function mcpServer(sessionRef: string): Promise<McpEndpoint> {
     throw new Error(`agent tools did not start: no database session for this thread`);
   }
   const secs = useSettings.getState().statementTimeoutSecs;
-  const endpoint = await agentMcpServe(sessionId, secs > 0 ? secs * 1000 : undefined);
+  const endpoint = await agentMcpServe(
+    sessionId,
+    secs > 0 ? secs * 1000 : undefined,
+    toolNames ? [...toolNames] : undefined,
+  );
   return {
     url: endpoint.url,
     token: endpoint.token,

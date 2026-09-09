@@ -82,6 +82,16 @@
 // status) rather than to the bordered box (canvas.css .blk). The preview is
 // the one face the canvas never offers: a proposed change is the pane's
 // ceremony and a canvas block is a read someone kept.
+//
+// B3 grows it by props again, and only for the canvas. A fourth face,
+// `values`, draws a one-row result's figures where its grid would stand, and
+// the canvas asks for it in place of `table` (CanvasTab): four figures over
+// four names are their own row, so that face and the chart lose the `.rb`
+// edge there while the grid and the SQL keep theirs, and the flip glyph names
+// the table's own label for it, the way the diff and the preview already do.
+// A canvas title of "" draws no line: the exchange's question stands on the
+// answer's first block and the model's own six-word title on its other
+// results, so a block with neither carries nothing in that slot (rule 14).
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
@@ -111,8 +121,11 @@ import { isScalarRun, ScalarResult } from "./ScalarResult";
 /** which face of the block is up. The canvas document names them (its `diff`
  * stands in the table's place while a comparison holds); `preview` is A4's,
  * the sampled rows of a change that has not run, standing in that same place
- * and never offered by the canvas */
-export type ResultFace = BlockFace | "preview";
+ * and never offered by the canvas; `values` is B3's, a one-row result's
+ * figures standing where its grid would, offered only by the canvas (the pane
+ * keeps the one-row shape inside its table face, where the box is the block's
+ * only edge) */
+export type ResultFace = BlockFace | "preview" | "values";
 
 /** the faces the PANE's block may stand on, in cycle order: the preview leads
  * because a proposal that has sampled rows opens on them, and every read
@@ -186,8 +199,10 @@ export interface ResultBlockProps {
    * face is the session's own memory of this exchange */
   face?: ResultFace;
   onFace?: (face: ResultFace) => void;
-  /** the exchange's question as the block's one-line title: the canvas's
-   * layout, where the cluster belongs to the block and not to the box */
+  /** the block's one-line title, and the switch into the canvas's layout,
+   * where the cluster belongs to the block and not to the box. The exchange's
+   * question on an answer's first block, the model's own title on its other
+   * results, and `""` on a block with neither, which draws no title line */
   headline?: string;
   /** the model's sentence, read-only, above the faces (one exchange is one
    * block: dropping it loses the reading the block was added for) */
@@ -529,7 +544,9 @@ export function ResultBlock({
           ? chart !== null
           : f === "diff"
             ? diff !== null
-            : sql !== null;
+            : f === "values"
+              ? scalar
+              : sql !== null;
   const available = faces.filter(shows);
   const chosen = docFace ?? remembered;
   const face: ResultFace = chosen && available.includes(chosen) ? chosen : (available[0] ?? "sql");
@@ -625,6 +642,12 @@ export function ResultBlock({
       <Chart spec={chart} />
     ) : face === "diff" && diff ? (
       diff.capped ? null : <DiffFace diff={diff} />
+    ) : face === "values" && scalar && run ? (
+      // the canvas's values face: the figures are their own row, so the face
+      // draws no boundary and the block's title and status line frame it
+      <div className="rb-vals">
+        <ScalarResult run={run} row />
+      </div>
     ) : scalar && run ? (
       <div className="rb-scalar">
         <ScalarResult run={run} />
@@ -713,14 +736,19 @@ export function ResultBlock({
 
   if (headline === undefined) return box;
 
-  // the canvas's block: the question line as its title, the model's sentence
-  // read-only above the faces, the status line under them with the
-  // assumptions folded in, and one cluster over the question line
+  // the canvas's block: the title line, the model's sentence read-only above
+  // the faces, the status line under them with the assumptions folded in, and
+  // one cluster over the title. The title is the exchange's question on the
+  // answer's FIRST block and the model's own title on its other results
+  // (B3: the question once, rule 14), so an empty one is a block that has no
+  // title to carry and draws no line rather than an empty 24px band
   return (
     <>
-      <div className="blk-q" title={headline}>
-        {headline}
-      </div>
+      {headline !== "" && (
+        <div className="blk-q" title={headline}>
+          {headline}
+        </div>
+      )}
       {prose ? <AnswerText raw={prose} hasRun={run !== null} live={false} /> : null}
       {content !== null && box}
       {status !== undefined && <div className="ans-status">{status}</div>}

@@ -100,6 +100,12 @@
 // pane (fixtures.canvas-ask.ts: `a3-add`, `a3-ask-block`), since their
 // subject is the pane's own cluster and bubble.
 //
+// B3 adds four canvas states to the same route (fixtures.b3canvas.ts:
+// `b3-canvas-analysis`, `b3-canvas-streaming`, `b3-canvas-empty`,
+// `b3-note-edit`) on a card 40 taller, since a four-block answer with a chart
+// among them does not stand in 760; and one pane state (fixtures.b3ask.ts:
+// `b3-ask-summary`), the record a canvas-targeted answer leaves behind.
+//
 // scripts/ask-frames.ts drives headless Chrome over this route and writes
 // one PNG per state × width × theme. The dev build remains the final eyeball;
 // these frames are the evidence.
@@ -157,6 +163,14 @@ import {
   canvasSeed,
   type CanvasState,
 } from "./fixtures.canvas";
+import { B3_ASK_STATES, b3AskSeed, type B3AskState } from "./fixtures.b3ask";
+import {
+  B3_CANVAS_CARD_H,
+  B3_CANVAS_STATES,
+  b3CanvasAfterMount,
+  b3CanvasSeed,
+  type B3CanvasState,
+} from "./fixtures.b3canvas";
 import {
   CANVAS_ASK_STATES,
   canvasAskAfterMount,
@@ -306,6 +320,11 @@ function seed({ state, w, theme }: Params) {
     ? b2PopoverSeed(state as B2PopoverState)
     : null;
   const b2pill = (B2_PILL_STATES as readonly string[]).includes(state) ? b2PillsSeed() : null;
+  // B3: the canvas-targeted answer's record in the pane. The first seed to
+  // carry a DRAFT: the composer's prefilled pill is part of the picture, and
+  // it is written into `drafts` rather than through `prefill`, which would
+  // move the caret (AGENT-UX 16l item 1)
+  const b3 = (B3_ASK_STATES as readonly string[]).includes(state) ? b3AskSeed(state as B3AskState) : null;
   // the thread a state shows, oldest first: one seed wins, and the same list
   // is the active thread, the exchanges and what the follow-up row reads
   const list =
@@ -317,6 +336,7 @@ function seed({ state, w, theme }: Params) {
     writes?.exchanges ??
     b1?.exchanges ??
     a3?.exchanges ??
+    b3?.exchanges ??
     b2pop?.exchanges ??
     b2pill?.exchanges ??
     echo ??
@@ -349,7 +369,7 @@ function seed({ state, w, theme }: Params) {
     pending: interact?.pending ?? {},
     // the row is the THREAD's now (W7 item 3): the answer states hand theirs
     // over, every other state's is the one its last exchange recorded
-    followUps: list ? { [tid]: (ans ?? a3)?.followUps ?? followUpsFor(list) } : {},
+    followUps: list ? { [tid]: (ans ?? a3 ?? b3)?.followUps ?? followUpsFor(list) } : {},
     phase: { [tid]: live ? live.phase : state === "busy" ? "tools" : null },
     busy: { [tid]: live ? live.busy : state === "busy" },
   });
@@ -363,10 +383,15 @@ function seed({ state, w, theme }: Params) {
   // one persisted by an earlier page never reaches a frame
   useSaved.setState({ queries: know?.saved ?? w6?.saved ?? b2pop?.saved ?? b2pill?.saved ?? [] });
 
-  // the workspace behind the pane: only the A2 states have one, and every
-  // other state clears it, so a tab persisted by an earlier page never
+  // the workspace behind the pane: the A2 states have one, and B3 has the
+  // canvas tab its composer's prefilled pill resolves against (a draft's tags
+  // read the connection's canvas TABS, so without it the pill is plain text);
+  // every other state clears it, so a tab persisted by an earlier page never
   // reaches a frame (the bookmarks' own rule, above)
-  useTabs.setState({ tabs: know?.tabs ?? b2pop?.tabs ?? [], activeId: know?.activeTabId ?? null });
+  useTabs.setState({
+    tabs: know?.tabs ?? b2pop?.tabs ?? b3?.tabs ?? [],
+    activeId: know?.activeTabId ?? b3?.activeTabId ?? null,
+  });
 
   // what the `@` box offers under `Recent`, and the recency half of its
   // `Tables` order: only the B2 popover states have any, and every other
@@ -380,8 +405,8 @@ function seed({ state, w, theme }: Params) {
     threadsOpen: false,
     pickerOpen: false,
     mentionQuery: null,
-    drafts: {},
-    draftFor: null,
+    drafts: b3 ? { [pid]: b3.draft } : {},
+    draftFor: b3 ? pid : null,
     edit: null,
     // the blocks a question may name are the PANE's session state, not the
     // exchange's: without them the pill in the bubble is plain text, which is
@@ -491,17 +516,21 @@ const CANVAS_PROFILES: Profile[] = [
 ];
 
 interface CanvasParams {
-  state: CanvasState;
+  state: CanvasState | B3CanvasState;
   w: number;
   theme: HarnessTheme;
 }
 
+const isB3Canvas = (state: string): state is B3CanvasState =>
+  (B3_CANVAS_STATES as readonly string[]).includes(state);
+
 function canvasParamsFrom(search: string): CanvasParams {
   const q = new URLSearchParams(search);
-  const raw = q.get("state");
+  const raw = q.get("state") ?? "";
   const w = Number(q.get("w"));
+  const known = (CANVAS_STATES as readonly string[]).includes(raw) || isB3Canvas(raw);
   return {
-    state: (CANVAS_STATES as readonly string[]).includes(raw ?? "") ? (raw as CanvasState) : "a3-canvas",
+    state: known ? (raw as CanvasState | B3CanvasState) : "a3-canvas",
     w: (CANVAS_WIDTHS as readonly number[]).includes(w) ? w : 960,
     theme: q.get("theme") === "light" ? "light" : "dark",
   };
@@ -511,7 +540,9 @@ function canvasParamsFrom(search: string): CanvasParams {
  * seeded true with the document, so CanvasTab's own mount effect finds the
  * list already read and never asks the shim for one */
 function seedCanvas({ state, theme }: CanvasParams) {
-  const seed = canvasSeed(state);
+  // the B3 seed's shape is the A3 seed's, whole: one branch on the state name
+  // is the difference between the two waves' documents
+  const seed = isB3Canvas(state) ? b3CanvasSeed(state) : canvasSeed(state);
   applySettings({ provider: FIXTURE.provider, model: FIXTURE.model }, theme);
   useConnections.setState({ profiles: CANVAS_PROFILES, activeProfileId: CANVAS_PROFILE_ID });
   useCanvas.setState({
@@ -535,7 +566,10 @@ function CanvasHarness({ state, w, canvasId }: CanvasParams & { canvasId: string
   useEffect(() => {
     let live = true;
     const id = requestAnimationFrame(() => {
-      void canvasAfterMount(state).then(() => {
+      // both hooks are async and only one of them owns a given state: B3's
+      // poses the arriving block and asserts the empty canvas's caret, the two
+      // things a still cannot hold
+      void (isB3Canvas(state) ? b3CanvasAfterMount(state) : canvasAfterMount(state)).then(() => {
         if (live) document.documentElement.dataset.harnessReady = "1";
       });
     });
@@ -546,7 +580,10 @@ function CanvasHarness({ state, w, canvasId }: CanvasParams & { canvasId: string
   }, [state]);
   return (
     <div className="harness">
-      <main className="card harness-card" style={{ width: w, height: CANVAS_CARD_H }}>
+      <main
+        className="card harness-card"
+        style={{ width: w, height: isB3Canvas(state) ? B3_CANVAS_CARD_H : CANVAS_CARD_H }}
+      >
         <CanvasTab canvasId={canvasId} />
       </main>
     </div>

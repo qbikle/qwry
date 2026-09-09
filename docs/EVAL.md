@@ -133,6 +133,12 @@ score still sits on that question's row in the results file and
 A judge-model rubric stays the fallback for where these five and the
 maintainer's eye disagree on a 20-answer sample. It is not built.
 
+**Canvas answers carry no baseline yet (B3, 2026-09-09).** No bench sends a
+`CANVAS:` block (AGENT-SPEC §5.1), so an insight run with a canvas target is
+a row this file has never scored; the five checks above apply to a
+model-written note block verbatim once one exists, and only the
+maintainer's own baseline commit (section 4) arms the gate on it.
+
 **Measured, 2026-09-06** (lab Postgres, `claude-haiku-4-5` via `claude-code`,
 `--jobs 3`; results in `eval/results/<label>.json`, gitignored, logs in the
 session scratchpad). Every presentation number here is `presentationScore` at
@@ -259,6 +265,19 @@ Haiku `pagila-hard.json` **5/5**; section 4's table has every row.
   is extended to assert the `KNOWLEDGE:` and `EARLIER ANSWERS ON THIS
   DATABASE:` blocks are absent, so every row in the table below still reads
   against the same bytes it always has.
+
+- **B3 moves no prompt byte, and offers no canvas tool with no target**:
+  `PROMPT_VERSION` stays `v4`. A canvas-targeted exchange appends one
+  `CANVAS:` block to the USER message (`canvasMessage()` in `prompt.ts`,
+  AGENT-SPEC §5.1, AGENT-UX §16i) and is offered three more tools
+  (`tools: toolsFor(!!req.canvas)`, AGENT-SPEC §5.1, §7: five without a
+  target, eight with, the five always first, in file order); the eval
+  passes no canvas target, so every bench row in the table below still
+  measures the bare five-tool, no-`CANVAS:` bytes. `loop.test.ts`'s
+  no-target pins hold across this wave — the message byte-identical, and a
+  new pin on the tools array (`length 5`, same order) beside it — and the
+  unknown-tool error text stays the one that lists only those five. No
+  bench row moves for a change no gated run ever sees.
 
 **Reference numbers, 2026-09-06** (W3b; provider `claude-code`, `--jobs 3`,
 `PROMPT_VERSION` v4, 0 turn-cap hits on every row except `pagila-insight.json`

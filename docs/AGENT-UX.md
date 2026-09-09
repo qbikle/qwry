@@ -1560,3 +1560,281 @@ face is its settled one at once, a removed block is simply gone.
 - Multi-DB analysis through an in-app join layer (ROADMAP › A3, third
   clause) is untouched by any of this: `Compare` is a two-connection read,
   never a join.
+
+### 16i. Analysis mode: the model writes into the canvas (B3, 2026-09-09)
+
+Picture: the "B3 · canvas" section of
+`~/projects/qwry-agent-lab/docs/ask-sketch-b3.html` (`b3-canvas-analysis`,
+`b3-canvas-streaming`, `b3-canvas-empty`, `b3-note-edit` at 640 · 960 ·
+1280; `b3-ask-summary` at 320 · 392 · 560); where it and this section
+disagree, this section wins and the sketch gets redrawn, the same rule
+§16's own intro states for A3.
+
+A canvas-targeted exchange is one whose question resolves a target before
+it runs (§16l). With a target, the model is offered three more tools beside
+the five of AGENT-SPEC §5 — `canvas_write`, `canvas_replace`, `canvas_read`
+— through a `CANVAS:` block appended to the user message (AGENT-SPEC §5.1),
+never to the system prompt. With no target none of the three exist; the
+array a provider is handed IS the gate (AGENT-SPEC §5.1, §7).
+
+The model writes the SAME two block kinds this section already ships, no
+third: a `note` (prose, `AnswerText`, §16a item 2, unchanged) and a
+`result` (one statement, run through the read gate every agent read takes,
+AGENT-SPEC §8 item 11, kept with its columns and rows). Its face is `table
+| chart | values | sql`, chosen by the model or defaulted — `chart` when
+the rows make one (`chartOf`, unchanged), else `values` for a one-row
+result, else `table`. **The values face is the metric row**: a one-row
+result on `ScalarResult` (§16a's own values-row shape, the same component,
+no new one), each column a pair, the value in the data register over its
+name in mono tier 2, one row from 480px. It is a FACE, not a kind: a figure
+row with no statement behind it is the wall-of-prose failure in a smaller
+costume (three numbers with nothing backing them), and the fix the model
+already has for "the row I want does not exist" is the same fix it has
+everywhere else — write the SELECT that returns it (`to_char`, `filter
+(where …)`, a cast) — never a block shape invented to paper over a query
+not written (DESIGN rule 14).
+
+**Titles.** The exchange's question is the block's title on the FIRST
+block an exchange writes (§16a item 1, unchanged); every block after it in
+the SAME answer carries the model's own title in the same slot and face —
+Sentence case, at most six words, identifiers in backticks staying mono and
+un-uppercased (`.ans-lead code`) — so no two blocks of one answer read the
+same line; a model-written note carries none (the reading needs no heading
+of its own; the question above it is the section's). A titled block that
+is not the first opens 24px above it instead of the column's 16 (`--sp-6`
+over `gap: var(--sp-4)`); untitled blocks stay 16 apart, parts 8 apart
+(§16f).
+
+**Row caps**, the numbers AGENT-SPEC §5.1 fixes: 5 rows echoed to the model
+per block, 200 rows kept on a canvas result block — the SAME 200 `Add to
+Canvas` now keeps (§16c amended below, one number for a canvas document
+across both routes, retiring the 2,000-row cap that once made the two
+routes disagree), 6 blocks a `canvas_write` call, 8 blocks an exchange
+across every call it makes.
+
+**Assumptions** land as `assumed` fragments (§16a item 4, unchanged shape)
+on the FIRST result block the exchange wrote, patched on after the verdict
+— never on every block it wrote and never on its note: one assumption under
+four blocks would be one fact in four slots (DESIGN rule 14).
+
+**What the model must not do**, each enforced by absence, never a sentence
+alone (AGENT-SPEC §8's own habit): create a canvas (no tool takes a
+title); write outside its target (no tool takes a canvas id; the target is
+fixed before the exchange's first await, LESSONS 3); run a write (a result
+block's SQL takes the read gate, AGENT-SPEC §8 item 11; a question that
+asks to change data is answered in the reply exactly as §13 already
+answers one, never as a block); repeat a figure a result on the SAME
+canvas already prints, or write a markdown table into a note (rule 14; the
+`CANVAS:` block says so, AGENT-SPEC §5.1).
+
+### 16j. The block redesign: no box at rest, the note's ring (B3, 2026-09-09)
+
+§16b's decision ("nothing frames a block") is finished, not reopened: a
+face keeps the `.rb` hairline only when its own content needs a boundary —
+the **table** (a grid's cells need an outer edge) and the **SQL** (the
+editor register is a panel inset). The **chart** and the **values** face
+stand on the page with no box: bars have their own shape and their labels
+their own gutter, four figures over four names are their own row.
+`canvas.css` gains `.blk .rb.chart, .blk .rb.values { border: none;
+background: none }`, the chart's inset dropping to `4px 0`, the label
+gutter starting at the page's own left edge. Ask is untouched: the pane
+never offers the chart, and its own one-row values keep the box, since
+there the box is the block's only edge and the cluster's home; on the
+canvas the cluster is the block's own, riding the question line (§16a), so
+the box has no second job. Frames at rest on the four-block analysis
+fixture (values · chart · note · table): 3 → 1 (the table's).
+
+**The note in edit**: the same box, and only the ring appears — no fill
+step. Today's `.ask-box` swap (a `--border-strong` hairline stepping to
+accent on focus, the `--bg-app` fill one step darker than the panel) is
+replaced by `1px solid var(--accent)` from the first frame, fading in on
+`--dur-quick` (the transition `note.css` already declares); the background
+stays `none`, the page showing through rather than the words landing on a
+darker card. An empty note in edit is a caret and NOTHING else: no ring,
+no box — the ring fades in with the first glyph, exactly as it does on a
+note that already has words. §16f's placeholder count (0 strings) is
+unrevisited this wave: `Write, or ask.` was weighed again and stays
+deleted (rule 11's deletion test — the caret already says "write here,"
+and the composer's own prefilled pill beside the same canvas, §16l,
+teaches "ask" without a second string).
+
+**The blur fix.** A click on the empty canvas surface places ONE caret
+line, never a stack of boxes: today's bug (a click always minted a fresh
+empty note, `CanvasTab.tsx`'s `write()`) is closed by giving blur the
+fold's own contract one step earlier — an empty note in edit that loses
+the caret (a click elsewhere on the page, a tab switch, the pane taking
+focus) is removed on that blur, the same rule an empty COMMIT already
+follows (§16f: the preview is the commit). A note WITH words keeps them on
+blur and commits: leaving it is committing it.
+
+**Arrival.** A block lands complete, never as streaming text: a canvas
+write is a tool call, so the model composes the block whole, the tool runs
+its statement and stores it, and the store inserts it in one write — there
+is no half-block to show, and a note's words arriving one by one under a
+face the reader is already looking at would be a second loading surface
+beside the strip's own (§2 item 2: the strip is the only loading UI). Each
+block arrives on `panelIn` with the blocks under it making room on
+`spring.layout` (§16g, unchanged); a replaced block lands where the old
+one stood on `swapIn`, the flip's own crossfade, so a replacement is SEEN
+as a replacement. When the FIRST block of an answer lands out of view, the
+canvas scrolls once so that block's question line stands at the top of the
+view; the blocks after it land without a second scroll (one scroll
+authority per gesture, LESSONS 7). The caret stays where it was: focus
+never moves into the canvas on a write (the composer keeps it, so the user
+may type the next question at once), and a note the user is editing keeps
+its own caret and words through a write that lands elsewhere on the
+document (§16g's existing refusal to adopt a rewrite under a live edit,
+unmoved). Reduced motion: a block stands at once, as every other canvas
+motion already does (§16g).
+
+### 16k. The pane's compact exchange for a canvas-targeted answer (B3, 2026-09-09)
+
+The canvas takes the answer; the pane keeps the conversation's record of
+it and nothing that stands on the canvas (rule 14: the model's prose lives
+in the canvas once, never twice — the `CANVAS:` block says so, AGENT-SPEC
+§5.1, and EVAL §3.x's presentation checks are the check on a model that
+ignores it, never a code-side truncation of what it actually said, EVAL
+§3, §4). Parts that do not apply are omitted rather than left as dead
+space (§2's own scope note), so the exchange narrows to FOUR
+always-visible lines: **bubble** (the question as typed, its `@"Canvas 4"`
+pill inside it, §16l; Copy · Restart · Jump Back as today, Restart's cut
+now taking the blocks too, AGENT-SPEC §9) · **strip** (the tool calls as
+they ran; a canvas write gets a chip like any other tool, `canvas` /
+coalesced `canvas ×n` exactly as `run ×n` already is, wearing the run
+chip's own accent since it is the call that produced the answer) ·
+**status line** (below) · **footer** (unchanged, `● 2 turns · 48.1 s ·
+Sonnet 5 · Trace`). No answer text (the slot stays in the tree, empty, and
+collapses per §2 item 3; the model's closing sentence lives in the trace
+and nowhere else), no result block, no assumption chips (each rides its
+own result block instead, §16i), **no answer cluster** (nothing to copy,
+nothing to save, nothing to add: the exchange IS on the canvas — 0 hot
+where a normal answer's prose has 3, and `Add to Canvas`, §16c, is not
+offered on an exchange that already wrote to one — nothing replaces its
+slot, the status line's own link is the way back). The sanity line stands
+when probes ran, as today, with no other slot of its own; follow-ups
+stand under the thread's last answer, each carrying the same pill in
+front of the next question so the analysis keeps landing where it started
+(§16l).
+
+The status line: `4 blocks · Canvas 4` — the canvas's own title worn in
+the link species (`.linkish`, the `Trace` precedent, §5: a link of one
+name that opens the surface it names), the one thing on the line that
+answers a pointer (rule 8) by opening the tab. Singular `1 block · Canvas
+4`; with edits, `3 blocks · 1 replaced · Canvas 4` or `1 deleted · Canvas
+4`. The number is the blocks the store actually applied, read once at the
+seam where the writes land and handed to this slot (LESSONS 13) — never
+the model's own count of what it meant to write. Two numbers stand in this
+exchange, of the two kinds their slots have always used: `canvas ×2` in
+the strip counts CALLS (the trace's own unit, `run ×3`'s precedent), `4
+blocks` here counts the store's own applied rows — `Ask`'s `run ×3` over
+`9 rows` is the same pairing already shipped.
+
+Count, always-visible lines of one live answer: a normal one is bubble ·
+strip · prose · block · status · chips · footer, **7**; canvas-targeted is
+bubble · strip · status · footer, **4** (both plus the sanity line when
+probes ran, and the follow-up row on the last exchange). Always-visible
+controls: normal is the assumption chips and `Trace`, **3**; canvas-targeted
+is the canvas link and `Trace`, **2**.
+
+### 16l. Targeting: the mention pill, and the app's one door that creates a canvas (B3, 2026-09-09)
+
+One mechanism, four routes, all landing the same token in the draft:
+`@"Canvas 4"` (the canonical bare quoted form). The pill is the ONE
+authority: a question sent WITHOUT one is answered in the pane, whichever
+tab is active, so the ⌫ that removes a prefilled pill removes the target
+with it (LESSONS 7) and no answer ever lands somewhere its own bubble does
+not name. The `@` ladder gains its
+**SEVENTH kind, `canvas`** (`MentionKind` in `src/agent/types.ts`, 6 → 7),
+promoted out of the `block` kind's `canvas?: boolean` flag B2 shipped as a
+stopgap (DECISIONS, B2's own close note: "promoting it to its own kind
+stays open" — this wave closes it): `@canvases/"Canvas 4"` (B2's own
+prefix) canonicalizes to the bare quoted form before the ladder, exactly
+as `@tables/` already does (AGENT-SPEC §4.1). The store resolves the
+mention to `canvasTarget` on the request before the exchange's first await
+(LESSONS 3), and the mention sends no `TAGGED BY THE USER:` line of its
+own: the `CANVAS:` block (§16i) is where the canvas is described, once
+(rule 14). The composer's control row is unchanged (rule 12: the model
+pill and Send, and now the pill token riding IN the draft rather than
+beside the row): **0 new chrome**.
+
+1. **The active canvas tab, empty draft.** When the active main-area tab
+   is a canvas and the connection's draft is empty, the composer prefills
+   the pill as the draft's first token; an untouched prefill follows the
+   tab (switch canvases and the pill changes, switch to a query tab and it
+   leaves) and never edits a draft the user has typed into (LESSONS 7, the
+   caret is the one authority over the words). After a send the draft is
+   empty again, so the pill returns: a thread that deals with a canvas
+   keeps dealing with it. This is also the empty canvas's only teaching
+   (§16f unmoved): the composer beside a fresh canvas says where an answer
+   will land. The tab's whole job is that prefill: it is a suggestion in
+   the draft, never an ambient target of its own.
+2. **A typed mention**, `@"Canvas 4"` or `@canvases/"Canvas 4"`, anywhere
+   in the question: the ladder's new rung, resolving below `block` (a
+   saved query, a thread or a block of the same name still wins, the
+   ladder's own ordering rule, unmoved).
+3. **The `+` pick**, B2's picker, its `Canvases` section: the same token
+   at the caret.
+4. **The word "canvas."** The model never creates a canvas — no tool
+   takes a title (AGENT-SPEC §5.1). The APP does, exactly once: when the
+   question contains the word "canvas" (a whole word, any case), no pill
+   already stands in the draft, and the connection has no canvas tab at
+   all, sending the question makes the store create `Canvas N`, open its
+   tab beside the user's own without switching the pane's focus off Ask,
+   prefix the draft's own pill, and say so in the exchange's strip (a
+   `New canvas` cue, the register `Added to a new canvas`, §16c, already
+   uses). Send is the press this route needs and the only one it gets: no
+   confirm grammar exists because nothing is created without one. This is
+   the maintainer's own literal usage, "create analysis of `@table` in a
+   canvas" — a sentence with the word already in it and no target pill —
+   and a connection that already HAS a canvas tab takes route 1, 2 or 3
+   instead: the word alone never re-targets an existing canvas, only opens
+   the door to a first one. `Ask` on a block (§16d) is a fifth route in
+   disguise: the block's own pill implies its canvas, so a reply lands
+   under it (`askedFrom`, extended from `Add to Canvas` to the model's own
+   writes, AGENT-SPEC §9) and the status line names that canvas.
+
+`Add to Canvas`'s own row cap (§16c) changes from `UI_ROW_CAP` (2,000) to
+the SAME 200 a model write keeps (§16i, AGENT-SPEC §5.1): one number for a
+canvas document across both routes, not two. A press that truncates says
+so in its own status line, `200 of 1,842 rows`, the register §16a item 4
+already uses.
+
+### 16m. What this wave settles (B3, 2026-09-09)
+
+Resolved against §16h's open list, without editing it: model-side canvas
+creation stays refused (no tool creates one, §16i) and the app-side
+literal-word route above is what answers "in a canvas" instead; the `@`
+ladder's canvas rung is now its own kind, not the `block` flag B2 shipped
+as a placeholder (§16l); `Add to Canvas`'s row cap unifies with the
+model's own (§16l). Unmoved: `now vs then` (§16e, §16h) — nothing here
+gives a block its own re-run, so the same-connection diff still has
+nothing to fall out of; drag-reorder (§16b, §16h); the `@` popover
+offering individual blocks as rows (§16h, B2's own stated non-scope) — a
+whole CANVAS is addressable by name now, its blocks are not, and those are
+different facts; the assumed-fold's chip-vs-fragment question (§16h, last
+item).
+
+### 16n. The empty canvas's caret line (B3, 2026-09-09)
+
+§16f's count is unmoved — **0 strings, 0 controls** — and the sentence it
+refused stays refused (§16j reweighed it). What changes is what a click, and
+an activation, GET back. Activating an empty canvas tab gives the PAGE the
+caret, at the first line's origin (20px in from the top and the left, the
+page's own padding), blinking; the first glyph typed creates the note.
+A blank card with a caret is a page; a blank card with nothing is the
+"literally nothing" the maintainer saw, and the difference is one caret and
+no string.
+
+That caret line is the PAGE's own draft, never a block of the document: it
+holds no id `doc_json` has ever seen, so a click that places it writes
+nothing, a click elsewhere takes it away, and nothing empty can reach appdb
+(the three stacked boxes were the opposite arrangement, §16j). One caret
+line at a time: clicking the surface five times places the same one, five
+times, and never a stack. A note WITH words is a block the moment blur
+commits it (§16j), and from then on it is the document's.
+
+The composer beside the empty canvas carries the prefilled pill `@"Canvas
+4"` (§16l item 1), which is where the canvas's other door is announced, in
+the register that already announces where a question goes (`Ask about
+auth_new…`, §1). The pill announces and does not take the caret: the page
+has it.

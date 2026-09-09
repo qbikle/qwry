@@ -12,6 +12,16 @@
 // here (`statusOf`, `chartOf`, `facesOf`), so the rules that decide whether a
 // chart face exists at all live in one place and are testable without a DOM.
 //
+// B3 gives the MODEL a door into the document: `applyModelBlocks` applies one
+// tool call's blocks in ONE setDoc, so two calls of a turn interleave at call
+// granularity and never at block granularity, and every block it lands wears
+// `wroteBy: exchangeId`. That field is the document's own record of whose a
+// block is, and it is what makes the three cut rules possible without the
+// pane owning a list: a cut removes the blocks of the exchanges it removes
+// (`removeByExchange`), a re-run's first write clears the previous attempt's,
+// and a block the user deleted by hand is simply not there any more. A block
+// with no `wroteBy` is the document's own and no thread may take it away.
+//
 // LESSONS 3 is the rule this file is written around, the same as agent.ts:
 // the canvas id, the block and the connection are captured at entry and never
 // re-read from the store after an await. `compare` runs a query on another
@@ -30,7 +40,13 @@ import {
   canvasUpsert,
   disconnect,
 } from "../ipc/commands";
-import { RUN_SQL_TIMEOUT_MS } from "../agent/tools";
+import {
+  CANVAS_BLOCK_ROWS,
+  RUN_SQL_TIMEOUT_MS,
+  type CanvasOutlineEntry,
+} from "../agent/tools";
+import type { AgentRun, CanvasFace } from "../agent/types";
+import { SCALAR_MAX_COLS } from "../ask/ScalarResult";
 import { msText } from "../lib/duration";
 import { setCanvasPort } from "../canvas/port";
 import { useAgent } from "./agent";
@@ -41,22 +57,28 @@ import { useSettings } from "./settings";
 import { useTabs } from "./tabs";
 import type { Exchange } from "./agent";
 
-/** which face of a result block is up. `diff` stands in the TABLE face's
- * place while a comparison stands (the table's cells are the diff's A cells,
- * DESIGN rule 14), so the flip cycle is three faces either way. */
-export type BlockFace = "table" | "chart" | "sql" | "diff";
+/** which face of a result block is up. `values` stands in the TABLE face's
+ * place when the statement returned exactly one row (the headline figures
+ * over their column names: a figure row is a result, not a third kind, B3),
+ * and `diff` stands there while a comparison stands (the table's cells are
+ * the diff's A cells, DESIGN rule 14), so the flip cycle is three faces
+ * whichever of the three holds that place. */
+export type BlockFace = "table" | "chart" | "values" | "sql" | "diff";
 
 /** the default title of a connection's first canvas */
 export const DEFAULT_CANVAS_TITLE = "Canvas";
 
 /** a chart face exists only for an aggregate: over this many rows there is no
- * chart to read, and the face is ABSENT rather than a message in its place */
-export const CHART_ROW_CAP = 200;
+ * chart to read, and the face is ABSENT rather than a message in its place.
+ * The document's own row cap (`CANVAS_BLOCK_ROWS`, beside the other row caps
+ * in agent/tools) is that number, because a block cannot hold more than it
+ * either: ONE number for the canvas, both doors, B3's own call */
+export const CHART_ROW_CAP = CANVAS_BLOCK_ROWS;
 /** the accent ladder is three steps of one hue; a fourth series has no colour */
 export const CHART_MAX_SERIES = 3;
 /** both sides of a comparison, same reason: a diff of thousands of rows is
  * not a reading, and over the cap the face is its status line and nothing else */
-export const DIFF_ROW_CAP = 200;
+export const DIFF_ROW_CAP = CANVAS_BLOCK_ROWS;
 
 /** appdb write debounce; the tabs store's own 600 is for text typed a
  * character at a time, a block lands whole */
@@ -104,6 +126,14 @@ interface BlockBase {
    * lands under the block it answered. Session memory made durable: the id
    * rides the document, and a block that is gone simply resolves to nothing */
   askedFrom?: string;
+  /** B3: the exchange whose answer wrote this block. The document's own
+   * record of whose a block is, and the only one there is: a cut deletes the
+   * blocks of every exchange it removes, a re-run's first write clears the
+   * previous attempt's, and the pane's status line counts what still stands
+   * (LESSONS 13, the number read from whatever did the counting). ABSENT on a
+   * block the user made, by hand or by pressing Add to Canvas: those are the
+   * document's own and no thread ever takes them away (LESSONS 4) */
+  wroteBy?: string;
 }
 
 /** one exchange, whole: the question, the model's sentence, the run and the
@@ -112,6 +142,13 @@ interface BlockBase {
 export interface ResultBlock extends BlockBase {
   kind: "result";
   question: string;
+  /** B3: the model's own title line, at most six words, Sentence case,
+   * identifiers in backticks. The exchange's question stands on the answer's
+   * FIRST block and this on its others (rule 14: the question once), so the
+   * two facts keep their own fields and share one slot: `titleOf` renders
+   * whichever the block has, and a model's six words are never mistaken for
+   * words the user typed (LESSONS 4) */
+  title?: string;
   /** the model's own words, read-only here; provenance, not decoration */
   prose: string;
   sql: string | null;
@@ -181,6 +218,27 @@ export interface ChartSpec {
 /** `4 rows`, `1 row` */
 const rowsText = (n: number) => `${n.toLocaleString()} ${n === 1 ? "row" : "rows"}`;
 
+/** What a result block keeps of a run, and the status line that tells the
+ * truth about it. BOTH doors into the document go through here (the model's
+ * `canvas_write` and the user's `Add to Canvas` press), so the row cap and
+ * the sentence that reports it stand in one place: over the cap the block
+ * keeps the first `CANVAS_BLOCK_ROWS` rows and says `200 of 1,842 rows`, because
+ * a silently halved table reads as the whole table and is read as one
+ * (LESSONS 9). `rowCount` is what the statement produced, which is already
+ * more than `rows` holds when the run itself was capped. */
+export function capRun(run: {
+  rows: readonly (string | null)[][];
+  rowCount: number;
+  ms: number;
+}): { rows: (string | null)[][]; status: string } {
+  const rows = run.rows.slice(0, CANVAS_BLOCK_ROWS).map((r) => [...r]);
+  const facts =
+    rows.length < run.rowCount
+      ? `${rows.length.toLocaleString()} of ${rowsText(run.rowCount)}`
+      : rowsText(run.rowCount);
+  return { rows, status: `${facts} · ${msText(run.ms)}` };
+}
+
 /** a column is numeric when every value it actually has is a finite number.
  * All-null and all-empty columns are labels: nothing in them can be summed,
  * compared or drawn. */
@@ -238,11 +296,28 @@ export function chartOf(block: Block): ChartSpec | null {
 export function facesOf(block: Block): BlockFace[] {
   if (block.kind !== "result") return [];
   const faces: BlockFace[] = [];
+  // one place, three tenants: a comparison holds it while it stands, a
+  // one-row statement holds it as its figures, and a grid holds it otherwise
   if (block.diff) faces.push("diff");
+  // one row of five or more columns is a grid, not a figure row: ScalarResult
+  // draws at most SCALAR_MAX_COLS pairs, so offering `values` past that would
+  // name a face the run cannot stand on (DESIGN rule 11)
+  else if (block.rows.length === 1 && block.columns.length <= SCALAR_MAX_COLS) faces.push("values");
   else if (block.rows.length > 0) faces.push("table");
   if (chartOf(block)) faces.push("chart");
   if (block.sql) faces.push("sql");
   return faces.length > 0 ? faces : ["table"];
+}
+
+/** the face a result OPENS on, given no instruction: its chart when the rows
+ * make one, its figures when there is one row, its grid when there are more,
+ * its statement when there are none. The model's write composes a reading and
+ * takes this (canvas-agent 3.3, chart before table); `Add to Canvas` does not,
+ * because a press keeps the face the reader was already looking at. */
+export function defaultFace(block: Block): BlockFace {
+  if (block.kind !== "result") return "table";
+  if (chartOf(block)) return "chart";
+  return facesOf(block)[0];
 }
 
 /** the status line's parts. A comparison replaces the run's facts with the
@@ -357,6 +432,27 @@ export type AddOutcome =
   | { ok: true; canvasId: string; blockId: string; created: boolean }
   | { ok: false; message: string };
 
+/** One block on its way in from the model, as `src/agent/canvas.tauri.ts`
+ * hands it over: the model's INTENT (a statement, a title, a face) with the
+ * run it produced beside it. The document turns it into a `Block`, because
+ * the status line and the row cap are the document's own (`capRun`) and a
+ * second formatter on the tool's side would be one string in two places
+ * (DESIGN rule 14). The id and `wroteBy` are the tool's: it minted the id and
+ * it knows which exchange it is running for. */
+export type ModelBlockInput =
+  | { id: string; kind: "note"; text: string; question?: string; wroteBy: string }
+  | {
+      id: string;
+      kind: "result";
+      sql: string;
+      run: AgentRun;
+      face: BlockFace;
+      title?: string;
+      note?: string;
+      question?: string;
+      wroteBy: string;
+    };
+
 export type CompareOutcome = { ok: true } | { ok: false; message: string };
 
 interface CanvasState {
@@ -383,6 +479,43 @@ interface CanvasState {
    * and nothing between the click and the block can be read from a store that
    * has moved on (LESSONS 3) */
   addExchange: (profileId: string, exchange: Exchange) => AddOutcome;
+  /** B3, the model's one door in: one canvas tool call's blocks appended in
+   * ONE setDoc, at the end or after a named block, so two calls of a turn
+   * interleave at CALL granularity and never at block granularity. Returns
+   * the ids in order, which is what the tool reports and what the exchange
+   * records (LESSONS 13: the count comes from whatever did the applying).
+   * Synchronous like `addExchange`: the blocks are the document's the moment
+   * they land, and nothing between the call and them can be re-read from a
+   * store that has moved on (LESSONS 3) */
+  applyModelBlocks: (canvasId: string, blocks: readonly ModelBlockInput[], after?: string) => string[];
+  /** B3: one block replaced in place, keeping its position and the `askedFrom`
+   * link the old one carried, on the flip's own crossfade. Null when no block
+   * of that id stands (the user deleted it meanwhile), which the tool answers
+   * with the id it could not find. The new block carries a new id, so the
+   * exchange that wrote the old one stops counting it */
+  replaceBlock: (canvasId: string, blockId: string, block: ModelBlockInput) => string | null;
+  /** B3: the document as it stands, in reading order, for `canvas_read` and
+   * for the `CANVAS:` message's outline. The store hands over the facts; the
+   * lines the model reads are the tool's own (agent/tools `outlineText`) */
+  outline: (canvasId: string) => CanvasOutlineEntry[];
+  /** B3: forget everything these exchanges wrote, one setDoc per canvas that
+   * changed. The cut's own act (a Restart from an older exchange, a send from
+   * edit mode): the blocks belong to the exchanges that are going, and a
+   * block with no `wroteBy` is the document's own and is never touched */
+  removeByExchange: (exchangeIds: readonly string[]) => void;
+  /** B3: the exchange's assumptions, once the verdict has parsed them, onto
+   * the FIRST result block it wrote and no other. An assumption belongs to
+   * the EXCHANGE, so the same labels under four blocks would be one fact in
+   * four slots (DESIGN rule 14), and a note has no status line to carry them.
+   * Not a field the model writes: one more thing it could get wrong, for a
+   * fact the loop already extracts (canvas-agent-spec 2.7) */
+  assumeOn: (exchangeId: string, labels: readonly string[]) => void;
+  /** B3: this exchange is about to be asked again, so its FIRST write clears
+   * what its previous attempt wrote. Marked rather than deleted, and consumed
+   * by that write: a re-run that fails, is refused or is cancelled before
+   * writing anything leaves the blocks that stand exactly where they are
+   * (canvas-agent-spec 2.4 rule 2) */
+  clearOnNextWrite: (exchangeId: string) => void;
   addNote: (canvasId: string, text: string, at?: number) => string;
   /** commit an edited note; empty text deletes it (the fold precedent: the
    * preview is the commit) */
@@ -415,6 +548,15 @@ interface CanvasState {
   /** the palette's `New Canvas`: a canvas of the active connection, and you go
    * there (unlike Add to Canvas, which leaves the pane where it is) */
   newCanvas: () => void;
+  /** B3: the one canvas a QUESTION can cause. A question carrying the word
+   * "canvas" on a connection that has none gets one: the document is created
+   * and its tab opens BESIDE the user's without taking focus, so the reader
+   * stays where they are while the answer lands where it was sent, and the
+   * caller prefixes the question's own pill and cues `New canvas`. The MODEL
+   * never creates a canvas: it has no tool for one and no canvas id to name
+   * (canvas-agent-spec 1.1, 3.2). A Send is the press, the same consent Add
+   * to Canvas has always asked for */
+  openForQuestion: (profileId: string) => { canvasId: string; title: string };
   /** the palette's `New Note`: the keyboard route onto an empty canvas, whose
    * only other door is a click on the card (A3 item 6) */
   newNote: () => void;
@@ -580,6 +722,87 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     return { ok: true, canvasId, blockId: block.id, created };
   },
 
+  applyModelBlocks: (canvasId, blocks, after) => {
+    // the document is read ONCE here and every block lands in that one array
+    // (LESSONS 3): a call's blocks are contiguous or absent, never woven
+    // through another call's
+    const doc = get().docs[canvasId];
+    if (!doc || blocks.length === 0) return [];
+    const kept = cleared(doc.blocks, blocks[0].wroteBy);
+    const at = after ? kept.findIndex((b) => b.id === after) : -1;
+    const made = blocks.map(blockFromModel);
+    const put = at >= 0 ? at + 1 : kept.length;
+    setDoc(canvasId, { blocks: [...kept.slice(0, put), ...made, ...kept.slice(put)] });
+    return made.map((b) => b.id);
+  },
+
+  replaceBlock: (canvasId, blockId, block) => {
+    const doc = get().docs[canvasId];
+    if (!doc) return null;
+    const kept = cleared(doc.blocks, block.wroteBy);
+    const at = kept.findIndex((b) => b.id === blockId);
+    if (at < 0) {
+      // the clear still stands: a re-run whose first act is a replace of a
+      // block the user deleted has still started over
+      if (kept.length !== doc.blocks.length) setDoc(canvasId, { blocks: kept });
+      return null;
+    }
+    const old = kept[at];
+    // the new block takes the old one's PLACE and its provenance link, so a
+    // reply still stands under the block it answered (A3 item 4)
+    const made = blockFromModel(block);
+    const blocks = [...kept];
+    blocks[at] = old.askedFrom ? { ...made, askedFrom: old.askedFrom } : made;
+    setDoc(canvasId, { blocks });
+    // the block that stood here is gone: its name goes back to plain text and
+    // the exchange that wrote it stops counting it
+    useAsk.getState().forgetBlock(old.id);
+    useAgent.getState().forgetCanvasBlocks([old.id]);
+    return made.id;
+  },
+
+  outline: (canvasId) =>
+    (get().docs[canvasId]?.blocks ?? []).map((b) => ({
+      id: b.id,
+      kind: b.kind,
+      // the line the outline ellipsizes: a result's own title line, a note's
+      // first words. The model wrote one of the two and reads back what the
+      // document holds, never what it sent (LESSONS 13)
+      line: b.kind === "result" ? b.question || b.title || "" : b.text.split("\n")[0],
+      modelWritten: b.wroteBy !== undefined,
+      ...(b.kind === "result"
+        ? { rows: b.rows.length, columns: b.columns, face: faceForModel(b) }
+        : null),
+    })),
+
+  removeByExchange: (exchangeIds) => {
+    const doomed = new Set(exchangeIds);
+    if (doomed.size === 0) return;
+    for (const id of doomed) pendingClear.delete(id);
+    // one setDoc per canvas that changed, never one per block: the whole
+    // document is one write (DECISIONS, A3), so a cut of four blocks across
+    // two canvases is two writes and not four
+    for (const [canvasId, doc] of Object.entries(get().docs)) {
+      const gone = doc.blocks.filter((b) => b.wroteBy !== undefined && doomed.has(b.wroteBy));
+      if (gone.length === 0) continue;
+      setDoc(canvasId, { blocks: doc.blocks.filter((b) => !gone.includes(b)) });
+      for (const b of gone) useAsk.getState().forgetBlock(b.id);
+    }
+  },
+
+  assumeOn: (exchangeId, labels) => {
+    for (const [canvasId, doc] of Object.entries(get().docs)) {
+      const first = doc.blocks.find((b) => b.kind === "result" && b.wroteBy === exchangeId);
+      if (!first) continue;
+      patch(canvasId, first.id, (b) =>
+        b.kind === "result" ? { ...b, chips: [...labels] } : b,
+      );
+      return;
+    }
+  },
+
+  clearOnNextWrite: (exchangeId) => void pendingClear.add(exchangeId),
+
   addNote: (canvasId, text, at) => {
     const block: NoteBlock = { id: crypto.randomUUID(), kind: "note", text };
     insert(canvasId, block, at ?? get().docs[canvasId]?.blocks.length ?? 0);
@@ -599,6 +822,11 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     // a block that is gone stops resolving: its name in an older bubble goes
     // back to plain text and the question still runs (LESSONS 5)
     useAsk.getState().forgetBlock(blockId);
+    // deleting by hand is the document's act and leaves the exchange standing
+    // (canvas-agent 3.5); its status line then reads the number that REMAINS,
+    // because the count is the blocks the store still holds and never the
+    // model's own tally of what it meant to write (LESSONS 13)
+    useAgent.getState().forgetCanvasBlocks([blockId]);
   },
 
   move: (canvasId, blockId, delta) => {
@@ -708,6 +936,13 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     useTabs.getState().openCanvasTab(id, titleOf(id), true);
   },
 
+  openForQuestion: (profileId) => {
+    const canvasId = get().create(profileId);
+    const title = titleOf(canvasId);
+    useTabs.getState().openCanvasTab(canvasId, title, false);
+    return { canvasId, title };
+  },
+
   newNote: () => {
     const pid = useConnections.getState().activeProfileId;
     if (!pid) return;
@@ -743,6 +978,7 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     }));
     clearTimer(canvasId);
     for (const b of doomed) useAsk.getState().forgetBlock(b.id);
+    useAgent.getState().forgetCanvasBlocks(doomed.map((b) => b.id));
     try {
       await canvasDelete(canvasId);
     } catch (e) {
@@ -792,6 +1028,70 @@ function patch(canvasId: string, blockId: string, f: (b: Block) => Block): void 
   setDoc(canvasId, { blocks });
 }
 
+// ---- the model's blocks (B3) ----------------------------------------------
+
+/** Exchanges whose FIRST canvas write clears what their previous attempt
+ * wrote. Marked when a re-run starts and consumed by that write, so a re-run
+ * that fails, is refused or is cancelled before writing leaves the standing
+ * blocks alone (canvas-agent-spec 2.4 rule 2). Session-lived: a reload has no
+ * run in flight to clear for. */
+const pendingClear = new Set<string>();
+
+/** the re-run rule, applied to the array the write is about to land in: the
+ * previous attempt's blocks leave, and the exchange stops counting them */
+function cleared(blocks: readonly Block[], exchangeId: string): Block[] {
+  if (!pendingClear.delete(exchangeId)) return [...blocks];
+  const gone = blocks.filter((b) => b.wroteBy === exchangeId);
+  if (gone.length === 0) return [...blocks];
+  for (const b of gone) useAsk.getState().forgetBlock(b.id);
+  useAgent.getState().forgetCanvasBlocks(gone.map((b) => b.id));
+  return blocks.filter((b) => b.wroteBy !== exchangeId);
+}
+
+/** the face the outline names: `diff` stands in the table's place, and the
+ * model is never told about a comparison it cannot make (its schema's `face`
+ * enum has four values, this one's five) */
+const faceForModel = (b: ResultBlock): CanvasFace => (b.face === "diff" ? "table" : b.face);
+
+/** The model's intent as the document holds it. The status line and the row
+ * cap come from `capRun`, the same pair `Add to Canvas` reads, so `200 of
+ * 1,842 rows` is one sentence in one place. The title line slot takes the
+ * exchange's question on the FIRST block an answer writes and the model's own
+ * title on every result after it (canvas-agent 4.2): one slot, two fields, so
+ * the words keep whose they are. A face the rows cannot wear falls back to the
+ * one they can, and the tool says so rather than refusing (spec 1.2, DESIGN
+ * rule 11). */
+function blockFromModel(b: ModelBlockInput): Block {
+  if (b.kind === "note")
+    return {
+      id: b.id,
+      kind: "note",
+      text: b.text,
+      wroteBy: b.wroteBy,
+      ...(b.question ? { question: b.question } : null),
+    };
+  const { rows, status } = capRun(b.run);
+  const built: ResultBlock = {
+    id: b.id,
+    kind: "result",
+    question: b.question ?? "",
+    ...(b.title ? { title: b.title } : null),
+    prose: b.note ?? "",
+    sql: b.sql,
+    columns: b.run.columns,
+    rows,
+    // an assumption belongs to the EXCHANGE, and lands on the first result
+    // block it wrote once the verdict has parsed it (spec 2.7): never here,
+    // where nothing has been parsed yet
+    chips: [],
+    status,
+    ms: b.run.ms,
+    face: b.face,
+    wroteBy: b.wroteBy,
+  };
+  return facesOf(built).includes(b.face) ? built : { ...built, face: defaultFace(built) };
+}
+
 /** One exchange as one block. A run makes a result block; prose with no run
  * makes a note carrying the question that produced it, so provenance survives
  * either way (LESSONS 4). Nothing at all makes nothing. */
@@ -800,9 +1100,10 @@ function blockOf(ex: Exchange): Block | null {
   const prose = ex.text || ex.answer?.text || "";
   const id = crypto.randomUUID();
   if (!run) return prose.trim() === "" ? null : { id, kind: "note", text: prose, question: ex.question };
-  const status =
-    `${rowsText(run.rowCount)} · ${msText(run.ms)}` +
-    (run.capped ? ` · showing ${run.rows.length.toLocaleString()}` : "");
+  // B3: the press keeps at most the document's own 200 rows and the status
+  // line says `200 of 1,842 rows`, which is the `· showing 2,000` fragment
+  // this replaces: one sentence, one place (capRun)
+  const { rows, status } = capRun(run);
   return {
     id,
     kind: "result",
@@ -810,13 +1111,16 @@ function blockOf(ex: Exchange): Block | null {
     prose,
     sql: ex.answer?.sql ?? null,
     columns: run.columns,
-    rows: run.rows,
+    rows,
     // an assumption the user switched off is not one the answer made
     chips: (ex.answer?.assumptions ?? []).filter((a) => a.active).map((a) => a.label),
     status,
     ms: run.ms,
-    // W7's rule: the table face whenever a run left rows, the SQL when it did not
-    face: run.rows.length > 0 ? "table" : "sql",
+    // W7's rule: the face the reader was already looking at, which for one
+    // row is its figures (B3's values face) and for more is the grid. A
+    // press keeps a face; only the model's own write composes a reading
+    // (`defaultFace`, canvas-agent 3.3)
+    face: rows.length === 1 ? "values" : rows.length > 0 ? "table" : "sql",
   };
 }
 
@@ -929,6 +1233,10 @@ setCanvasPort({
   },
   newCanvas: () => useCanvas.getState().newCanvas(),
   newNote: () => useCanvas.getState().newNote(),
+  newCanvasFor: (profileId) => useCanvas.getState().openForQuestion(profileId),
+  removeByExchange: (exchangeIds) => useCanvas.getState().removeByExchange(exchangeIds),
+  clearOnNextWrite: (exchangeId) => useCanvas.getState().clearOnNextWrite(exchangeId),
+  assumeOn: (exchangeId, labels) => useCanvas.getState().assumeOn(exchangeId, labels),
 });
 
 window.addEventListener?.("blur", () => void flushCanvases());

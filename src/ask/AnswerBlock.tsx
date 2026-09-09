@@ -31,6 +31,20 @@
 // the status line under it stays here, because the rows and the ms are the
 // run's whichever face is up.
 //
+// B3: an exchange that wrote to a canvas keeps the conversation's RECORD of
+// its answer and nothing that stands on the canvas. The prose, the result
+// block, the assumption chips and the answer's own cluster are all there
+// already, so the exchange is bubble · strip · status · footer, four
+// always-visible lines where a normal answer has seven and two controls where
+// it has three (the canvas's own link, and Trace). The model's reading lives
+// where it can be read beside its figures (DESIGN rule 14), and the status
+// line is the one slot that says how much of it landed: `4 blocks · Canvas 4`,
+// the title in the link species, counted from the document so a block deleted
+// by hand takes itself out of the number (LESSONS 13). A proposal is the one
+// exception: A4's branch is untouched, so a change the model wrote anyway
+// still announces itself here, with its canvas blocks standing as the reads
+// they were.
+//
 // A4: an exchange that ends `proposed` carries a change nothing has run. The
 // block wears its third face over the dry run's sampled rows, and the status
 // line ABOVE it becomes the headline (`UPDATE order_v2 · 12 rows`), because a
@@ -48,12 +62,13 @@ import type { ProviderId } from "../agent/providers/types";
 import { prefersReducedMotion, spring } from "../design/springs";
 import { msText } from "../lib/duration";
 import { avatarColor } from "../sidebar/avatar";
-import { useAgent, writeVerbOf, type Exchange } from "../stores/agent";
+import { canvasStatusText, useAgent, writeVerbOf, type Exchange } from "../stores/agent";
 import { useConnections } from "../stores/connections";
 import { useSettings } from "../stores/settings";
 import { useAsk } from "../stores/ask";
 import { useSaved, visibleSaved } from "../stores/saved";
 import { useSchema } from "../stores/schema";
+import { canvasTabRefs, useTabs } from "../stores/tabs";
 import type { Profile } from "../ipc/types";
 import type { AskPhase } from "../agent/loop";
 import { AnswerActions } from "./AnswerActions";
@@ -290,6 +305,15 @@ export const AnswerBlock = memo(function AnswerBlock({
   const ranTx: RanTx = !ranWrite ? null : uncommitted ? "open" : (exchange.ranTx ?? null);
   const writing = useAgent((s) => s.writing[exchange.id] === true);
 
+  // B3: the answer is on a canvas, so the pane keeps its record. A proposal
+  // steps out of the shape: a change the model wrote in spite of the CANVAS
+  // block still needs its preview, its band and its headline here, because
+  // nothing on a canvas can run one (AGENT-UX 16a: the preview is the one
+  // face the canvas never offers)
+  const wrote = exchange.canvasWrites;
+  const compact = wrote !== undefined && !proposed && !ranWrite;
+  const canvasLine = wrote ? canvasStatusText(wrote) : "";
+
   // the chips in the echo (W6): resolved once per exchange against what the
   // connection has now, never against what it had when the question was sent.
   // The one exception is a tab (A2 item 5): its pill is minted from the
@@ -303,21 +327,53 @@ export const AnswerBlock = memo(function AnswerBlock({
   const threads = useAgent((s) => s.threads[profileId]);
   const tabName = exchange.tabName;
   const blocks = useAsk((s) => s.blocks);
+  // B3: the canvas rung resolves against the tabs that stand, so a pill in a
+  // draft that has not been sent yet still paints; once the answer has landed
+  // ON a canvas, the pill is minted from the exchange's own record instead,
+  // the tab pill's precedent below: it names where the answer WENT, a fact
+  // about the exchange and not about the workspace, so closing that canvas's
+  // tab must not un-pill a bubble that reported its destination (AGENT-UX 15)
+  const tabs = useTabs((t) => t.tabs);
+  const wroteToId = wrote?.canvasId;
+  const wroteToTitle = wrote?.title;
   const mentions = useMemo(() => {
-    const resolved = mentionsIn(question, {
+    let resolved = mentionsIn(question, {
       snapshot,
       saved: visibleSaved(saved, profileId),
       threads: threads ?? [],
       currentThreadId: threadId,
       blocks: Object.values(blocks),
+      canvases: canvasTabRefs(profileId),
     });
-    if (!tabName) return resolved;
-    const token = canonicalToken("tab", { name: tabName }).slice(1);
-    const raw = parseMentions(question).find((r) => r.token === token);
-    if (!raw) return resolved;
-    const tab: Mention = { span: raw.span, token, kind: "tab", ref: { name: tabName } };
-    return [...resolved.filter((m) => m.token !== token), tab];
-  }, [question, snapshot, saved, threads, blocks, profileId, threadId, tabName]);
+    // one minter, two kinds that are records rather than lookups
+    const mint = (token: string, made: (span: Mention["span"]) => Mention) => {
+      const raw = parseMentions(question).find((r) => r.token === token);
+      if (!raw) return;
+      resolved = [...resolved.filter((m) => m.token !== token), made(raw.span)];
+    };
+    if (wroteToId !== undefined && wroteToTitle !== undefined) {
+      const ref = { id: wroteToId, title: wroteToTitle };
+      const token = canonicalToken("canvas", ref).slice(1);
+      mint(token, (span) => ({ span, token, kind: "canvas", ref }));
+    }
+    if (tabName !== undefined) {
+      const token = canonicalToken("tab", { name: tabName }).slice(1);
+      mint(token, (span) => ({ span, token, kind: "tab", ref: { name: tabName } }));
+    }
+    return resolved;
+  }, [
+    question,
+    snapshot,
+    saved,
+    threads,
+    blocks,
+    profileId,
+    threadId,
+    tabName,
+    tabs,
+    wroteToId,
+    wroteToTitle,
+  ]);
 
   // the question echo: the user's words in a bubble at the right edge, the
   // anatomy below staying left (ask.css .ans-echo-row). The newest echo is
@@ -423,9 +479,18 @@ export const AnswerBlock = memo(function AnswerBlock({
                     is on screen from the moment its chip lands, not from the
                     verdict: the final text streams after the run and would show
                     a table of it for the length of the stream otherwise */}
+                {/* B3: on a canvas answer the slot STAYS, as the polite live
+                    region it has always been, and renders nothing: the reading
+                    is on the canvas and the model's closing sentence is in the
+                    trace, where nothing sent is summarised away (AGENT-SPEC
+                    8.4). Not a truncation of what it said, and not a second
+                    copy of it either (DESIGN rule 14); `.ans-text:empty`
+                    collapses the slot out of the flow with no gap. The cluster
+                    goes with the words: there is nothing here to copy, save or
+                    add, because the exchange IS on the canvas */}
                 <div className="ans-prose">
-                  <AnswerText raw={exchange.text} hasRun={hasRun} live={isLatest} />
-                  {answerActs && (
+                  <AnswerText raw={compact ? "" : exchange.text} hasRun={hasRun} live={isLatest} />
+                  {!compact && answerActs && (
                     <AnswerActions
                       exchangeId={exchange.id}
                       question={exchange.question}
@@ -443,7 +508,7 @@ export const AnswerBlock = memo(function AnswerBlock({
                   <RanHeadline verb={ranVerb} rows={exchange.ranRows ?? 0} tx={ranTx} />
                 )}
 
-                {(run !== null || blockSql !== null || preview !== null) && (
+                {!compact && (run !== null || blockSql !== null || preview !== null) && (
                   <ResultBlock
                     exchangeId={exchange.id}
                     run={run}
@@ -464,7 +529,7 @@ export const AnswerBlock = memo(function AnswerBlock({
                     runBusy={writing || busy}
                   />
                 )}
-                {run && (
+                {!compact && run && (
                   <div className="ans-status">
                     <span>
                       {run.rowCount.toLocaleString()} {run.rowCount === 1 ? "row" : "rows"} · {msText(run.ms)}
@@ -473,7 +538,28 @@ export const AnswerBlock = memo(function AnswerBlock({
                   </div>
                 )}
 
-                {!failed && answer && answer.assumptions.length > 0 && (
+                {/* B3: the blocks this exchange put on the canvas, and the
+                    canvas itself as the one thing on the line that answers a
+                    pointer (DESIGN rule 8): the link shows its tab. The
+                    number is read from the document, so an exchange whose
+                    blocks were all deleted by hand loses the line rather than
+                    printing a zero (LESSONS 13) */}
+                {wrote && canvasLine !== "" && (
+                  <div className="ans-status">
+                    <span>{canvasLine} ·</span>
+                    <button
+                      type="button"
+                      className="linkish"
+                      onClick={() =>
+                        useTabs.getState().openCanvasTab(wrote.canvasId, wrote.title, true)
+                      }
+                    >
+                      {wrote.title}
+                    </button>
+                  </div>
+                )}
+
+                {!compact && !failed && answer && answer.assumptions.length > 0 && (
                   <AssumptionChips
                     assumptions={answer.assumptions}
                     pending={pending}

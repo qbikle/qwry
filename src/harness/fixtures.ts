@@ -119,6 +119,13 @@
 // focused so qbot's gaze has a frame; `empty` stays the regression pair and
 // now shows qbot too, since he ships in the product's empty state.
 
+// B3: `b3-ask-summary` (fixtures.b3ask.ts) is what a canvas-targeted answer
+// leaves in the PANE: bubble, strip, the status line `4 blocks · Canvas 4`,
+// footer, and nothing else (AGENT-UX 16k). Its thread is read whole from that
+// file, so `exchangeFor` returns null for it, and it is the first state to
+// seed a DRAFT: the composer's prefilled pill is part of the picture, so
+// AskHarness seeds `drafts` and `draftFor` from the same seed.
+
 import type { AskAnswer } from "../agent/loop";
 import type { AgentRun, Assumption, Thread, TraceStep } from "../agent/types";
 import type { AgentThread, Profile } from "../ipc/types";
@@ -129,6 +136,7 @@ import { anatomyExchangeFor } from "./fixtures.anatomy";
 import { ANSWER_CHOICE, type AnswerState } from "./fixtures.answer";
 import type { B2PillState } from "./fixtures.b2pills";
 import type { B2PopoverState } from "./fixtures.b2popover";
+import { B3_ASK_CHOICE, type B3AskState } from "./fixtures.b3ask";
 import type { B4State } from "./fixtures.b4";
 import { interactSeed } from "./fixtures.interact";
 import type { KnowledgeState } from "./fixtures.knowledge";
@@ -171,6 +179,7 @@ export type HarnessState =
   | "edit-latest"
   | "edit-stack"
   | AnswerState
+  | B3AskState
   | B4State
   | KnowledgeState
   | MentionState
@@ -249,6 +258,7 @@ export const HARNESS_STATES: readonly HarnessState[] = [
   "b2-popover-fuzzy",
   "b2-plus-pill",
   "b2-pill-icons",
+  "b3-ask-summary",
 ];
 export const HARNESS_WIDTHS = [320, 392, 560] as const;
 export type HarnessTheme = "dark" | "light";
@@ -716,6 +726,7 @@ export function exchangeFor(state: HarnessState): Exchange | null {
     case "b2-popover-fuzzy":
     case "b2-plus-pill":
     case "b2-pill-icons":
+    case "b3-ask-summary":
       return null;
     case "pending":
     case "retry":
@@ -799,6 +810,8 @@ export function choiceFor(state: HarnessState): { provider: string; model: strin
     case "a3-add":
     case "a3-ask-block":
       return CANVAS_ASK_CHOICE;
+    case "b3-ask-summary":
+      return B3_ASK_CHOICE;
     default:
       return { provider: PROVIDER, model: MODEL };
   }

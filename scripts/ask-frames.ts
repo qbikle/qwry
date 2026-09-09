@@ -14,9 +14,11 @@
 //              surface at 560 · 780 · 1040 (states a2-hint, a2-hint-edit,
 //              a2-hint-rest, a2-hint-aka). canvas: the A3 canvas, a face of the
 //              MAIN card, so its own states (a3-canvas, a3-chart, a3-chart-line,
-//              a3-diff, a3-empty, a3-menu, a3-note-edit), its own widths
-//              (640 · 960 · 1280) and a 760-tall card. `--scroll` means nothing
-//              outside the Ask pane: the canvas is a document, read from its top
+//              a3-diff, a3-empty, a3-menu, a3-note-edit, and B3's
+//              b3-canvas-analysis, b3-canvas-streaming, b3-canvas-empty,
+//              b3-note-edit), its own widths (640 · 960 · 1280) and a 760-tall
+//              card, 800 for the B3 four. `--scroll` means nothing outside the
+//              Ask pane: the canvas is a document, read from its top
 //   --out      where the PNGs land; default
 //              ~/projects/qwry-agent-lab/docs/research/w2d-frames
 //   --states   subset of answer,empty,busy,picker,failure,disconnected,small,
@@ -30,8 +32,9 @@
 //              a4-preview-sql,a4-ran,a4-preview-busy,a4-writes-off,a2-explain,
 //              a2-knowledge-trace,a2-ask-why,a3-add,a3-ask-block,
 //              b1-preview-insert,b1-ran,b1-ran-insert,b1-committed,
-//              b1-rolled-back
-//              (default: all sixty; each other harness has its own list,
+//              b1-rolled-back,b4-empty,b2-popover-empty,b2-popover-category,
+//              b2-popover-fuzzy,b2-plus-pill,b2-pill-icons,b3-ask-summary
+//              (default: all of them; each other harness has its own list,
 //              above)
 //   --widths   subset of 320,392,560 (default: all three; 620 under `--harness
 //              palette`, 560,780,1040 under `structure`, 640,960,1280 under
@@ -52,7 +55,7 @@
 //
 // Output: <out>/<state>-<width>-<theme>[-top].png, 2× device scale, a viewport
 // of (width + 48) × (card + 48) so the card sits in one gutter of app
-// background (688 for the pane's 640, 808 for the canvas's 760).
+// background (688 for the pane's 640, 808 for the canvas's 760, 848 for B3's 800).
 // Prints the list, exits 1 if any frame is missing or empty.
 //
 // Each frame is one headless Chrome driven over CDP (--remote-debugging-port=0,
@@ -287,6 +290,7 @@ const ALL_STATES = [
   "b2-popover-fuzzy",
   "b2-plus-pill",
   "b2-pill-icons",
+  "b3-ask-summary",
 ] as const;
 /** the second root (A2): the palette is a modal over the window, not a pane in
  * a card, so it has one width, its own (`src/harness/PaletteHarness.tsx`) */
@@ -301,9 +305,9 @@ const STRUCTURE_WIDTHS = [560, 780, 1040] as const;
  * their windows are taller */
 const PALETTE_H = 900;
 const STRUCTURE_H = 900;
-/** the canvas root's own seven states and three widths (fixtures.canvas.ts):
- * it is a face of the MAIN card, so it is neither the pane's list nor the
- * pane's widths */
+/** the canvas root's own states and three widths (fixtures.canvas.ts, and B3's
+ * four in fixtures.b3canvas.ts): it is a face of the MAIN card, so it is
+ * neither the pane's list nor the pane's widths */
 const CANVAS_STATES = [
   "a3-canvas",
   "a3-chart",
@@ -312,7 +316,19 @@ const CANVAS_STATES = [
   "a3-empty",
   "a3-menu",
   "a3-note-edit",
+  "b3-canvas-analysis",
+  "b3-canvas-streaming",
+  "b3-canvas-empty",
+  "b3-note-edit",
 ] as const;
+/** the B3 four stand on a taller card: a four-block answer with a chart among
+ * them does not fit A3's 760 (fixtures.b3canvas.ts B3_CANVAS_CARD_H) */
+const B3_CANVAS_STATES: readonly string[] = [
+  "b3-canvas-analysis",
+  "b3-canvas-streaming",
+  "b3-canvas-empty",
+  "b3-note-edit",
+];
 const CANVAS_WIDTHS = [640, 960, 1280] as const;
 const ALL_THEMES = ["dark", "light"] as const;
 const HARNESSES = ["ask", "palette", "structure", "canvas"] as const;
@@ -332,9 +348,16 @@ type Width =
 type Theme = (typeof ALL_THEMES)[number];
 
 /** the pane's card is 640 tall inside one --sp-6 gutter on every side; the
- * canvas needs more, since three blocks with a chart among them do not fit */
+ * canvas needs more, since three blocks with a chart among them do not fit,
+ * and B3's four-block answer needs 40 more again. The three numbers are
+ * AskHarness's own (CANVAS_CARD_H, B3_CANVAS_CARD_H): this script drives the
+ * page over CDP rather than importing it, so the window it opens has to be
+ * told the height the page will lay out at */
 const CARD_H = 640;
 const CANVAS_CARD_H = 760;
+const B3_CANVAS_CARD_H = 800;
+const canvasCardH = (state: string): number =>
+  B3_CANVAS_STATES.includes(state) ? B3_CANVAS_CARD_H : CANVAS_CARD_H;
 const MARGIN = 24;
 
 // ---- args -------------------------------------------------------------------
@@ -542,7 +565,8 @@ async function shoot(base: string, f: Frame): Promise<boolean> {
       (HARNESS === "ask" && (SCROLL === "top" || SCROLL_EXPLICIT) ? `&scroll=${SCROLL}` : "");
   const width = f.w + 2 * MARGIN;
   const height =
-    (PALETTE ? PALETTE_H : STRUCTURE ? STRUCTURE_H : CANVAS ? CANVAS_CARD_H : CARD_H) + 2 * MARGIN;
+    (PALETTE ? PALETTE_H : STRUCTURE ? STRUCTURE_H : CANVAS ? canvasCardH(f.state) : CARD_H) +
+    2 * MARGIN;
   const profile = mkdtempSync(join(tmpdir(), "ask-frames-"));
   const proc = Bun.spawn(
     [

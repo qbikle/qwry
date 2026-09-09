@@ -9,10 +9,13 @@
 // asks through the danger confirm when a later exchange holds an answer or
 // an error, the detail naming the count and the button naming the loss
 // (WRITING rule 4, `Delete` because the rows are persisted like a thread's),
-// then the store cuts after it and re-runs it. Jump Back is the bubble's
-// own click made visible (DESIGN rule 8: a hidden gesture needs a visible
-// route); the bubble owns the mode's entry (AnswerBlock arms the travel), so
-// the button only asks for it. Restart and Jump Back disable while the thread
+// then the store cuts after it and re-runs it. B3: the cut takes the canvas
+// blocks those answers wrote too, so the detail counts them and its words
+// live in the store, the one place that can count them (`restartConfirmText`,
+// imported here and defined nowhere else). Jump Back is the bubble's own
+// click made visible (DESIGN rule 8: a hidden gesture needs a visible route);
+// the bubble owns the mode's entry (AnswerBlock arms the travel), so the
+// button only asks for it. Restart and Jump Back disable while the thread
 // is busy or the pane is in edit mode; Copy never does, and nothing hides
 // (rule 2's matrix).
 //
@@ -25,27 +28,13 @@
 
 import { Copy, CornerUpLeft, RotateCcw } from "lucide-react";
 import { copyCue } from "../lib/copyCue";
-import { useAgent, type Exchange } from "../stores/agent";
+import { restartConfirmText, useAgent, type Exchange } from "../stores/agent";
 import { confirmDanger } from "../stores/danger";
 
 /** the shared layout id a bubble and the composer's edit ghost carry while
  * the words travel between them: AnswerBlock gives it to the bubble the frame
  * before edit begins, the composer side mounts under it while edit is on */
 export const editLiftId = (exchangeId: string) => `ask-edit:${exchangeId}`;
-
-/** the confirm's words for `later` exchanges after the restarted one (the
- * sketch's restart-confirm): a question for the title, one sentence naming
- * the count and both halves of the loss, a verb + object on the button */
-export function restartConfirmText(later: number): { title: string; detail: string; label: string } {
-  return {
-    title: "Restart from Here?",
-    detail:
-      later === 1
-        ? "The question after this one and its answer will be deleted."
-        : `The ${later} questions after this one and their answers will be deleted.`,
-    label: later === 1 ? "Delete 1 Question" : `Delete ${later} Questions`,
-  };
-}
 
 /** the exchanges after one in its thread; empty for the newest */
 function laterThan(threadId: string, exchangeId: string): Exchange[] {
@@ -57,7 +46,7 @@ function laterThan(threadId: string, exchangeId: string): Exchange[] {
 async function restart(threadId: string, exchangeId: string): Promise<void> {
   const later = laterThan(threadId, exchangeId);
   if (later.some((e) => e.answer !== null || e.error !== null)) {
-    const t = restartConfirmText(later.length);
+    const t = restartConfirmText(later);
     if (!(await confirmDanger(t.title, t.detail, t.label))) return;
   }
   await useAgent.getState().restartFrom(exchangeId);

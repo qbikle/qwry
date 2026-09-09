@@ -42,11 +42,11 @@ import type { MentionKind } from "../agent/types";
 
 /** The glyph each kind wears, the sidebar's and the titlebar's own: a saved
  * query is the Bookmark it is saved under, a thread the chat bubble Ask opens
- * with, a canvas block the LayoutGrid the canvas tab wears, a query tab the
- * SquareTerminal the tab strip gives it. All six kinds, `tab` included: a tab
- * is never TYPED (it is minted by `Explain with Ask`, so the popover has no
- * row for it, AGENT-UX 15) but it IS drawn, and a pill with no glyph would be
- * one kind wearing a different face. */
+ * with, a canvas block and a whole canvas the LayoutGrid the canvas tab
+ * wears, a query tab the SquareTerminal the tab strip gives it. All seven
+ * kinds, `tab` included: a tab is never TYPED (it is minted by `Explain with
+ * Ask`, so the popover has no row for it, AGENT-UX 15) but it IS drawn, and a
+ * pill with no glyph would be one kind wearing a different face. */
 export const MENTION_ICON: Record<MentionKind, LucideIcon> = {
   table: Table2,
   column: Columns3,
@@ -54,6 +54,7 @@ export const MENTION_ICON: Record<MentionKind, LucideIcon> = {
   thread: MessageSquare,
   tab: SquareTerminal,
   block: LayoutGrid,
+  canvas: LayoutGrid,
 };
 
 export interface MentionTextProps {

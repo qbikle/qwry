@@ -15,7 +15,15 @@ import type {
   Provider,
   StopReason,
 } from "../providers/types";
-import type { AgentTools, ToolOutcome } from "../tools";
+import {
+  CANVAS_TOOL_NAMES,
+  TOOL_NAMES,
+  TOOL_SCHEMAS,
+  type AgentTools,
+  type CanvasOutlineEntry,
+  type CanvasTools,
+  type ToolOutcome,
+} from "../tools";
 import type { AgentRun } from "../types";
 import type { SchemaSnapshot } from "../../stores/schema";
 import snapshotJson from "./fixtures/pagila-snapshot.json";
@@ -1205,5 +1213,324 @@ describe("the knowledge the profile carries", () => {
     expect(message).toContain('\n\nTAGGED BY THE USER:\ntab "cohort retention":\nSELECT 1');
     // what this question came with sits below what the connection always knows
     expect(message.indexOf("KNOWLEDGE:")).toBeLessThan(message.indexOf("TAGGED BY THE USER:"));
+  });
+});
+
+// ---- the canvas the answer lands in (B3) ------------------------------------
+// The tool list and the user message are both prompt surface (EVAL.md section
+// 4), and both are gated on ONE thing: whether the exchange has a canvas
+// target. With none, the loop must send the byte-identical five and no CANVAS
+// block, which is what every baseline row was measured against; with one, the
+// five come first and the three follow, and the block rides last.
+
+describe("the canvas gate", () => {
+  const outline = (): CanvasOutlineEntry[] => [
+    {
+      id: "9c110000-0000-4000-8000-000000000002",
+      kind: "result",
+      line: "how many orders came from each channel",
+      rows: 6,
+      columns: ["channel", "orders"],
+      face: "chart",
+      modelWritten: true,
+    },
+  ];
+
+  /** A CanvasTools that records what the loop asked of it. */
+  function canvasStub(over: Partial<CanvasTools> = {}) {
+    const seen: { name: string; args: unknown }[] = [];
+    const tools: CanvasTools = {
+      canvasId: "cv-1",
+      title: "Canvas 4",
+      outline: () => [],
+      async write(args) {
+        seen.push({ name: "write", args });
+        return {
+          textForModel: 'Wrote 2 blocks to "Canvas 4".',
+          result: { canvasId: "cv-1", blockIds: ["b1", "b2"], replaced: 0 },
+        };
+      },
+      async replace(args) {
+        seen.push({ name: "replace", args });
+        return {
+          textForModel: "Replaced b1.",
+          result: { canvasId: "cv-1", blockIds: ["b1"], replaced: 1 },
+        };
+      },
+      async read() {
+        seen.push({ name: "read", args: null });
+        return {
+          textForModel: 'Canvas "Canvas 4" is empty.',
+          result: { canvasId: "cv-1", title: "Canvas 4", blocks: [] },
+        };
+      },
+      ...over,
+    };
+    return { tools, seen };
+  }
+
+  const oneAsk = async (over: Partial<Parameters<typeof runAsk>[0]> = {}) => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const { answer, events } = await ask(
+      scripted([[{ text: answerText }, done("stop")]], rec),
+      tools(rec),
+      over,
+    );
+    const first = rec.requests[0].messages[0];
+    return {
+      answer,
+      events,
+      rec,
+      message: "content" in first ? (first.content ?? "") : "",
+      offered: rec.requests[0].tools,
+    };
+  };
+
+  test("no target: the tools array is deep-equal to the measured five", async () => {
+    const { offered } = await oneAsk();
+    expect(offered).toEqual([...TOOL_SCHEMAS]);
+    expect(offered.map((t) => t.name)).toEqual([...TOOL_NAMES]);
+  });
+
+  test("no target: the message is byte-identical and says nothing about a canvas", async () => {
+    const plain = await oneAsk();
+    const withTools = await oneAsk({ writes: undefined });
+    expect(plain.message).toBe(withTools.message);
+    expect(plain.message).not.toContain("CANVAS:");
+    expect(plain.message).not.toContain("OUTLINE OF");
+  });
+
+  test("a target: eight tools, the five first, in file order", async () => {
+    const { tools: canvas } = canvasStub();
+    const { offered } = await oneAsk({ canvas });
+    expect(offered).toHaveLength(8);
+    expect(offered.map((t) => t.name)).toEqual([...TOOL_NAMES, ...CANVAS_TOOL_NAMES]);
+  });
+
+  test("the CANVAS block rides the user message once, and rides LAST", async () => {
+    const { tools: canvas } = canvasStub();
+    const { message } = await oneAsk({
+      question: "how many films were added within 30 days?",
+      writes: { on: true, isWrite: async () => false },
+      canvas,
+    });
+    expect(message.split("CANVAS:")).toHaveLength(2);
+    expect(message.indexOf("RISK CHECK REQUIRED")).toBeLessThan(message.indexOf("CANVAS:"));
+    expect(message.indexOf("WRITES:")).toBeLessThan(message.indexOf("CANVAS:"));
+    expect(message.trimEnd()).toEndWith("is needed here.");
+  });
+
+  test("the outline rides the block when the canvas holds blocks, and not when it is empty", async () => {
+    const full = canvasStub({ outline });
+    const withBlocks = await oneAsk({ canvas: full.tools });
+    expect(withBlocks.message).toContain('OUTLINE OF "Canvas 4" (1 block):');
+    expect(withBlocks.message).toContain(
+      "9c11  result  how many orders came from each channel · 6 rows: channel, orders · chart face",
+    );
+    const empty = await oneAsk({ canvas: canvasStub().tools });
+    expect(empty.message).toContain("CANVAS:");
+    expect(empty.message).not.toContain("OUTLINE OF");
+  });
+
+  test("the trace's context step carries the block: nothing sent is hidden", async () => {
+    const { tools: canvas } = canvasStub({ outline });
+    const { answer } = await oneAsk({ canvas });
+    const step = answer.trace.find((s) => s.step === "context");
+    expect(step && step.step === "context" && step.text).toContain("CANVAS:");
+    expect(step && step.step === "context" && step.text).toContain('OUTLINE OF "Canvas 4"');
+  });
+
+  test("the small tier gets neither the block nor a tool", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const { tools: canvas } = canvasStub();
+    await ask(scripted([[{ text: "```sql\nSELECT 1\n```" }, done("stop")]], rec), tools(rec), {
+      tier: "small",
+      canvas,
+    });
+    expect(rec.requests[0].tools).toEqual([]);
+    const first = rec.requests[0].messages[0];
+    expect("content" in first ? (first.content ?? "") : "").not.toContain("CANVAS:");
+  });
+});
+
+describe("the canvas dispatch", () => {
+  function stub() {
+    const seen: { name: string; args: unknown }[] = [];
+    const tools: CanvasTools = {
+      canvasId: "cv-1",
+      title: "Canvas 4",
+      outline: () => [],
+      async write(args) {
+        seen.push({ name: "write", args });
+        return {
+          textForModel: 'Wrote 2 blocks to "Canvas 4".',
+          result: { canvasId: "cv-1", blockIds: ["b1", "b2"], replaced: 0 },
+        };
+      },
+      async replace(args) {
+        seen.push({ name: "replace", args });
+        return {
+          textForModel: "Replaced b1.",
+          result: { canvasId: "cv-1", blockIds: ["b1"], replaced: 1 },
+        };
+      },
+      async read() {
+        seen.push({ name: "read", args: null });
+        return {
+          textForModel: 'Canvas "Canvas 4" is empty.',
+          result: { canvasId: "cv-1", title: "Canvas 4", blocks: [] },
+        };
+      },
+    };
+    return { tools, seen };
+  }
+
+  const writeCall = call("c1", "canvas_write", {
+    blocks: [{ kind: "result", sql: "SELECT 1" }, { kind: "note", text: "a reading" }],
+  });
+
+  test("a canvas_write reaches the tool and its ids reach the store as an event", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const canvas = stub();
+    const { events, answer } = await ask(
+      scripted(
+        [
+          [writeCall, done("toolCalls")],
+          [{ text: "Four blocks are on Canvas 4." }, done("stop")],
+        ],
+        rec,
+      ),
+      tools(rec),
+      { canvas: canvas.tools },
+    );
+    expect(canvas.seen.map((s) => s.name)).toEqual(["write"]);
+    const wrote = events.filter((e) => e.type === "canvasWrite");
+    expect(wrote).toEqual([
+      { type: "canvasWrite", canvasId: "cv-1", blockIds: ["b1", "b2"], replaced: 0 },
+    ]);
+    // the trace carries the true name; the chip carries the run species and
+    // the strip's own label
+    const step = answer.trace.find((s) => s.step === "tool");
+    expect(step && step.step === "tool" && step.name).toBe("canvas_write");
+    const start = events.find((e) => e.type === "toolStart");
+    expect(start).toMatchObject({ name: "run_sql", label: "canvas" });
+    // and no AgentTools call was made for it
+    expect(rec.calls.filter((c) => c.name === "runSql")).toHaveLength(1);
+  });
+
+  test("a canvas_read reports no blocks, so no write event fires", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const canvas = stub();
+    const { events } = await ask(
+      scripted(
+        [
+          [call("c2", "canvas_read", {}), done("toolCalls")],
+          [{ text: answerText }, done("stop")],
+        ],
+        rec,
+      ),
+      tools(rec),
+      { canvas: canvas.tools },
+    );
+    expect(canvas.seen.map((s) => s.name)).toEqual(["read"]);
+    expect(events.filter((e) => e.type === "canvasWrite")).toEqual([]);
+  });
+
+  test("with no target a canvas tool is unknown, and the refusal is the one it always was", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const { answer } = await ask(
+      scripted(
+        [
+          [writeCall, done("toolCalls")],
+          [{ text: answerText }, done("stop")],
+        ],
+        rec,
+      ),
+      tools(rec),
+    );
+    const step = answer.trace.find((s) => s.step === "tool");
+    expect(step && step.step === "tool" && step.result).toBe(
+      "ERROR: unknown tool 'canvas_write'. Valid tools: list_tables, describe_tables, peek_values, run_sql, probe",
+    );
+  });
+
+  test("with a target the refusal lists the eight it offered", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const canvas = stub();
+    const { answer } = await ask(
+      scripted(
+        [
+          [call("c3", "canvas_burn", {}), done("toolCalls")],
+          [{ text: answerText }, done("stop")],
+        ],
+        rec,
+      ),
+      tools(rec),
+      { canvas: canvas.tools },
+    );
+    const step = answer.trace.find((s) => s.step === "tool");
+    expect(step && step.step === "tool" && step.result).toBe(
+      "ERROR: unknown tool 'canvas_burn'. Valid tools: list_tables, describe_tables, " +
+        "peek_values, run_sql, probe, canvas_write, canvas_replace, canvas_read",
+    );
+    expect(canvas.seen).toEqual([]);
+  });
+
+  test("prose sent to a result block spirals the same way run_sql's does, and breaks", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const refused: CanvasTools = {
+      ...stub().tools,
+      async write() {
+        return { textForModel: PROSE_ERROR, result: null, error: "this is prose, not SQL" };
+      },
+    };
+    const { answer } = await ask(
+      scripted(
+        [
+          [{ text: "There are 1000 films." }, writeCall, done("toolCalls")],
+          [writeCall, done("toolCalls")],
+          [{ text: "still 1000" }, writeCall, done("toolCalls")],
+        ],
+        rec,
+      ),
+      tools(rec),
+      { canvas: refused },
+    );
+    expect(answer.verdict.status).toBe("answered");
+    expect(answer.sql).toBeNull();
+    expect(answer.text).toContain("There are 1000 films.");
+  });
+
+  test("the bridge is served for an ownsLoop provider and stopped when the run ends", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    let served = 0;
+    let stopped = 0;
+    const canvas: CanvasTools = {
+      ...stub().tools,
+      serve() {
+        served += 1;
+        return () => {
+          stopped += 1;
+        };
+      },
+    };
+    await ask(scripted([[{ text: answerText }, done("stop")]], rec, true), tools(rec), {
+      canvas,
+      thread: { id: "t-1", firstCall: true },
+    });
+    expect([served, stopped]).toEqual([1, 1]);
+    // and a provider this loop drives needs no bridge: it dispatches itself
+    const driven: Recorded = { calls: [], requests: [] };
+    let servedAgain = 0;
+    await ask(scripted([[{ text: answerText }, done("stop")]], driven), tools(driven), {
+      canvas: {
+        ...canvas,
+        serve() {
+          servedAgain += 1;
+          return () => {};
+        },
+      },
+    });
+    expect(servedAgain).toBe(0);
   });
 });

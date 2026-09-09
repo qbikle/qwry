@@ -111,9 +111,14 @@ describe("the note block at rest", () => {
     expect(html()).toContain(" noq");
   });
 
-  test("in edit it is the composer's box and nothing else: no cluster, no buttons", () => {
+  // B3: edit is the same box with the RING added, and the ring is the only
+  // thing it adds. The composer's own box brought a `--bg-app` fill and a
+  // border that stepped from strong to accent with it, which is a darker card
+  // and a jump; `.note-box` is now the note's own (note.css)
+  test("in edit it is one box and nothing else: no composer fill, no cluster, no buttons", () => {
     const out = html({}, true);
-    expect(out).toContain("ask-box note-box");
+    expect(out).toContain('class="note-box"');
+    expect(out).not.toContain("ask-box");
     expect(out).toContain('aria-label="Note"');
     expect(out).not.toContain("acts-float");
     expect(out).not.toContain("<button");
