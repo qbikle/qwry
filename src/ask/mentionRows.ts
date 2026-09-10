@@ -251,46 +251,80 @@ const nameable = (name: string) => name.length > 0 && !name.includes("\n");
  * (the grammar has no quoted PATH) */
 const pathable = (t: TableInfo) => BARE.test(t.name) && (t.schema === PUBLIC || BARE.test(t.schema));
 
-const tableRow = (t: TableInfo): MentionRow => ({
-  kind: "table",
-  value: `table:${qualified(t)}`,
-  token: canonicalToken("table", { schema: t.schema, table: t.name }),
-  label: display(t),
-  hint: tableHint(t),
-});
+/** Every row a source object yields, built once and handed back BY IDENTITY
+ * (B5). A row is a pure function of the object it reads, and the box redraws
+ * on every keystroke: a freshly built row meant no drawn row could bail out,
+ * so 21 rows cost ~40 Row renders, ~41 cmdk items and ~37 lucide glyphs per
+ * keystroke and 5 of 12 keystrokes missed the 16 ms budget. The cache is on
+ * the SOURCE OBJECT, never on a name: a snapshot, the saved list, the
+ * canvases and the threads are replaced wholesale rather than mutated, so a
+ * table whose reltuples estimate moved is a new TableInfo with a new hint and
+ * a new row, and a WeakMap dies with the snapshot it describes. Rows handed
+ * out are read-only for the same reason. */
+const rowCache = <K extends object>(cache: WeakMap<K, MentionRow>, key: K, build: () => MentionRow): MentionRow => {
+  const hit = cache.get(key);
+  if (hit) return hit;
+  const made = build();
+  cache.set(key, made);
+  return made;
+};
 
-const columnRow = (t: TableInfo, c: TableInfo["columns"][number]): MentionRow => ({
-  kind: "column",
-  value: `column:${qualified(t)}.${c.name}`,
-  token: canonicalToken("column", { schema: t.schema, table: t.name, column: c.name }),
-  label: display(t),
-  column: `.${c.name}`,
-  hint: shortType(c.type),
-});
+const TABLE_ROWS = new WeakMap<TableInfo, MentionRow>();
+const COLUMN_ROWS = new WeakMap<TableInfo, WeakMap<TableInfo["columns"][number], MentionRow>>();
+const SAVED_ROWS = new WeakMap<SavedQuery, MentionRow>();
+const CANVAS_ROWS = new WeakMap<CanvasRef, MentionRow>();
+const THREAD_ROWS = new WeakMap<Thread, MentionRow>();
 
-const savedRow = (q: SavedQuery): MentionRow => ({
-  kind: "saved",
-  value: `saved:${q.id}`,
-  token: canonicalToken("saved", { id: q.id, name: q.name, sql: q.sql }),
-  label: q.name,
-  hint: null,
-});
+const tableRow = (t: TableInfo): MentionRow =>
+  rowCache(TABLE_ROWS, t, () => ({
+    kind: "table",
+    value: `table:${qualified(t)}`,
+    token: canonicalToken("table", { schema: t.schema, table: t.name }),
+    label: display(t),
+    hint: tableHint(t),
+  }));
 
-const canvasRow = (c: CanvasRef): MentionRow => ({
-  kind: "canvas",
-  value: `canvas:${c.id}`,
-  token: canonicalToken("canvas", c),
-  label: c.title,
-  hint: null,
-});
+// keyed under its own table: a column object belongs to one relation, and the
+// row shows both, so neither may be looked up without the other
+const columnRow = (t: TableInfo, c: TableInfo["columns"][number]): MentionRow => {
+  let per = COLUMN_ROWS.get(t);
+  if (!per) COLUMN_ROWS.set(t, (per = new WeakMap()));
+  return rowCache(per, c, () => ({
+    kind: "column",
+    value: `column:${qualified(t)}.${c.name}`,
+    token: canonicalToken("column", { schema: t.schema, table: t.name, column: c.name }),
+    label: display(t),
+    column: `.${c.name}`,
+    hint: shortType(c.type),
+  }));
+};
 
-const threadRow = (t: Thread): MentionRow => ({
-  kind: "thread",
-  value: `thread:${t.id}`,
-  token: canonicalToken("thread", { id: t.id, title: t.title }),
-  label: t.title,
-  hint: null,
-});
+const savedRow = (q: SavedQuery): MentionRow =>
+  rowCache(SAVED_ROWS, q, () => ({
+    kind: "saved",
+    value: `saved:${q.id}`,
+    token: canonicalToken("saved", { id: q.id, name: q.name, sql: q.sql }),
+    label: q.name,
+    hint: null,
+  }));
+
+const canvasRow = (c: CanvasRef): MentionRow =>
+  rowCache(CANVAS_ROWS, c, () => ({
+    kind: "canvas",
+    value: `canvas:${c.id}`,
+    token: canonicalToken("canvas", c),
+    label: c.title,
+    hint: null,
+  }));
+
+const threadRow = (t: Thread): MentionRow =>
+  rowCache(THREAD_ROWS, t, () => ({
+    kind: "thread",
+    value: `thread:${t.id}`,
+    token: canonicalToken("thread", { id: t.id, title: t.title }),
+    label: t.title,
+    hint: null,
+  }));
 
 /** which kind each path fills, and so which glyph its row wears. `canvases/`
  * lands on the ladder's own canvas kind (B3), which wears the block's glyph */
@@ -302,14 +336,15 @@ const PATH_KIND: Record<MentionPath, MentionRow["kind"]> = {
   threads: "thread",
 };
 
-const categoryRow = (path: MentionPath): MentionRow => ({
-  kind: PATH_KIND[path],
-  path,
-  value: `path:${path}`,
-  token: narrowTo(path),
-  label: `${path}/`,
-  hint: null,
-});
+// the five are constants: one row each, for the life of the module
+const CATEGORY_ROWS = Object.fromEntries(
+  MENTION_PATHS.map((path) => [
+    path,
+    { kind: PATH_KIND[path], path, value: `path:${path}`, token: narrowTo(path), label: `${path}/`, hint: null },
+  ]),
+) as Record<MentionPath, MentionRow>;
+
+const categoryRow = (path: MentionPath): MentionRow => CATEGORY_ROWS[path];
 
 // ---- ranking ---------------------------------------------------------------
 

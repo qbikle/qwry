@@ -2,6 +2,45 @@
 
 > Archived session log, moved verbatim out of `docs/ROADMAP.md`; newest first. Append new session notes at the top.
 
+### 2026-09-09 · Perf · B5 (branch feat/agent-b5-perf)
+
+**Why.** The B5 profiler pass (scratchpad/b5-perf/report.md) ranked eight hotspots without editing any source, then three fixer seats landed the four cheapest ranked fixes plus the two known items the wave's law names in the imperative (display.test.ts's load-brittle parse budget, tabs.ts's leaked debounce), and tried the fifth-ranked fix (the 40-exchange mount) and reverted it. No animation was removed or shortened anywhere in the diff (DESIGN rule 6); every touched spring, preset and `layout`/`AnimatePresence` site was re-read in full context and matches HEAD.
+
+**Before → after**
+
+| metric | before | after | script |
+|---|---|---|---|
+| @ popover, keystrokes over 16 ms budget (of 12) | 5 of 12, worst 2.2x | 2 of 12 (keystrokes 1-2 only, which mount new rows) | `40-interactions.ts a` |
+| @ popover, keystroke 3 / 4 / 5 median | 21.2 / 17.7 / 17.3 ms | 13.6 / 9.9 / 9.2 ms | `40-interactions.ts a` |
+| @ popover, Row / cmdk forwardRef / kind-glyph renders over 12 keystrokes | 356 / 841 / 333 | 131 / 389 / 123 | `HOOKED=1 40-interactions.ts a` |
+| eager payload (entry JS + entry CSS) | 709.03 kB raw / 220.94 kB gzip | 646.56 kB / 200.50 kB (-8.8% / -9.3%) | `01-build.sh` |
+| entry chunk source modules | 466 | 419 | `04-entry-groups.ts` |
+| cold start, shell `/`, to-interactive median | 168 ms | 164 ms (unchanged within noise) | `10-startup.ts` |
+| ⌘K to palette in DOM | 34.6 / 36.2 ms (static import) | 45.8 / 29.1 ms (lazy, warmed at idle) | `f3/palette-open.ts` |
+| 40-exchange thread mount, task / script | 302.6 / 128.1 ms | 251.2 / 99.6 ms (-17% / -22%) | `40-interactions.ts b` |
+| sql-formatter fetch on a first result block | 439.7 kB, starting 288 ms after nav | not fetched at all | `22-format-web.ts` |
+| result-block flip median | 41.5 ms (wave baseline 32.6) | 25.7 / 33.3 ms | `40-interactions.ts c` |
+| formatter chunk, production build | 293.41 kB raw / 76.33 kB gzip | 71.74 kB / 19.59 kB (-75.6% / -74.3%) | `01-build.sh` |
+| non-postgres dialects in emitted formatter chunk | present (bigquery, singlestoredb, clickhouse, transactsql, snowflake, duckdb, mariadb) | 0 occurrences | grep on `dist/assets/formatterChunk-*.js` |
+| canvas steady-state flip, main thread (pooled, 30 a side) | 59.4 ms median | 49.3 ms (-17%) | `f1/50-canvas-flip.ts cost` |
+| canvas flip, ResultBlock / AnswerText renders | 9 / 13 | 2 / 2 | `f1/50-canvas-flip.ts counts` |
+| tabs_save leak after a suite's teardown | 1× `tabs_save failed ReferenceError: window is not defined`, 3 s retry armed | 0 console.error lines, retry armed false | `50-tabs-leak.ts` |
+| display.test.ts parse-budget reading under 8-core load | 478 ms once (15.4x its own median) | 28.3-29.6 ms held | `bun test` |
+
+**What was reverted and why.** `content-visibility: auto` + `contain-intrinsic-size` on the 40-exchange mount's `.ans` rows cut the mount 303.0 → 251.3 ms task (-17%), but paint containment clipped `.ans-echo::before`'s inset ring at the article's edge (`echo-560-dark` and `actions-560-dark` frames differ from control) and turned the scroll from 0 layout / 0 style recalc into 6.1 ms layout / 7.0 ms recalc over 18 layouts, the wrong direction on the one interaction that had been free. Reverted. An in-view gate on the result grid was measured as the alternative (same roughly 50% cut, no pixel cost) but not built: it needs scroll anchoring the shipping WKWebView cannot be leaned on for.
+
+**Gates.** `bunx tsc --noEmit` clean · `bun scripts/design-lint.ts` 0 finding(s) (census mode) · `bun test` 993 pass / 0 fail (60 files, 8,180 `expect()` calls), counts identical to HEAD's baseline.
+
+**Frames.** Per-lane byte-identical counts as the fixers reported, no full post-merge re-shoot in this pass. Popover lane: 24/24 (`mention-popover`, `b2-popover-empty`, `b2-popover-category`, `b2-popover-fuzzy` × 3 widths × 2 themes). Formatter lane: 22/22 (`result-sql`, `a4-preview-sql`, `b1-preview-insert`, `b1-ran`, `b1-ran-insert`, `b1-committed`, `b1-rolled-back` at 560 × dark/light; `a3-canvas`, `a3-chart`, `a3-diff`, `b3-canvas-analysis` at 960 × dark/light). Canvas-memo lane: 66/66 (11 states × 640/960/1280 × dark/light). Palette lane: no frame set of its own, `a2-palette`/`a2-define`/`a2-checks` cannot move since `Palette.tsx` is byte-unchanged and its harness imports it directly.
+
+**Open** (ranked).
+1. The 40-exchange mount still costs about 251 ms; roughly 120 ms of that is about 240 simultaneous `ans-in` entry fades (187.7 ms with them stripped under forced reduced motion against 309.7 ms as shipped, pre-fix). Untouched: it is motion, out of scope this wave.
+2. The grid at 2000 rows re-renders about 143 of 320 windowed cells per scroll commit but holds 60 fps (0 frames over 20 ms). A per-cell identity memo key is the lever if a later wave wants the headroom, against `Grid.tsx`'s 3,405 lines and its editing/selection/find/FK-picker blast radius.
+3. Lucide icon mass (57 modules / 13.9 kB in the entry, 88 distinct bundle-wide) re-renders with its parents; the re-render half is already cut wherever the popover and canvas memo lanes reach it, the bundle half is not where the 648.6 kB entry's weight lives.
+4. @ popover keystrokes 1-2 still miss the 16 ms budget (31.3 / 23.8 ms): they mount 34 then 60 new cmdk items, which a same-row bailout cannot reach. A smaller `ROW_CAP` or virtualizing the list are the only remaining levers, and both change what the box holds (DESIGN rule 2 contract, pinned by `mentionRows.test.ts`), so both are a design decision, not a perf change.
+5. The first flip to a SQL face now costs about +20 ms against the same tree (39/46 → 61/70 ms): the formatter chunk's fetch moved out of mount and into the flip that needs it. Deliberately not mitigated with an idle prefetch, which would put the chunk back on every thread that never opens a SQL face.
+6. A packaged Tauri cold start (`bun run tauri dev`) is still the one number this wave could not produce from a browser; this pass measured the web shell only.
+
 ### 2026-09-09 · Agent A1.5 · B3 the canvas the model writes into (branch feat/agent-b3-canvas-agent)
 
 **Done.** ROADMAP › A1.5, built to the two research briefs (`qwry-agent-lab/docs/research/canvas-agent.md`, `canvas-agent-spec.md`) and the ten maintainer calls, against the "B3 · canvas" section of `ask-sketch-b3.html`. The model gets a door into a canvas: three tools offered ONLY with a resolved target (`canvas_write` 1..6 blocks, `canvas_replace`, `canvas_read`), a `CANVAS:` block appended to the USER message with the target's outline, and one implementation in `src/agent/canvas.tauri.ts` that both provider paths reach — the HTTP path by dispatch, the `claude -p` path over a bridge (Rust emits `canvas-tool-call`, parks a oneshot for 20 s, the app answers `agent_canvas_result`), so Rust holds zero canvas semantics. Two block kinds, not three: a figure row is a `result` on its `values` face. The document gained `applyModelBlocks` / `replaceBlock` / `outline` / `removeByExchange`, `wroteBy: exchangeId` on every model-written block and the three cut rules; the `@` ladder gained its seventh kind, `canvas`; the pane's canvas-targeted exchange narrowed to four lines (bubble · strip · `4 blocks · Canvas 4` · footer); the canvas lost its per-block frames on the chart and values faces, the note's edit fill and border step, and the three empty boxes a click used to mint (the page's own caret line replaced them).

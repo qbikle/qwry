@@ -103,7 +103,7 @@ import type { AgentRun } from "../agent/types";
 import type { WritePreview } from "../ipc/types";
 import type { TxOutcome } from "../stores/agent";
 import { spring, swapIn } from "../design/springs";
-import { formatSqlText } from "../editor/format";
+import { formattedSql, formattedSqlPeek } from "../editor/format";
 import { qwryHighlight, qwryTheme } from "../editor/theme";
 import { Grid } from "../grid/Grid";
 import { copyCue, copyCueShow } from "../lib/copyCue";
@@ -511,22 +511,6 @@ export function ResultBlock({
   );
   const hasPreview = pvStmt !== null;
 
-  // the finished text: formatted once the (lazy) formatter lands, bare + `;`
-  // until then, so Copy and Insert never wait on the import
-  const preset = useSettings((s) => s.formatPreset);
-  const [text, setText] = useState(() => (sql === null ? "" : finished(sql)));
-  useEffect(() => {
-    if (sql === null) return;
-    let live = true;
-    setText(finished(sql));
-    void formatSqlText(sql, preset).then((out) => {
-      if (live) setText(finished(out));
-    });
-    return () => {
-      live = false;
-    };
-  }, [sql, preset]);
-
   const remembered = useAsk((s) => s.face[exchangeId]);
   const setFace = useAsk((s) => s.setFace);
   // the faces this block can actually stand on, in cycle order. The default
@@ -556,6 +540,36 @@ export function ResultBlock({
   // the glyph names the face you will GET (W7's rule, over more faces now):
   // the diff and the preview wear the table's, since both stand in its place
   const nextLabel = next === "chart" ? "Show Chart" : next === "sql" ? "Show SQL" : "Show Table";
+
+  // the finished text, formatted where it is READ and not before: the SQL
+  // face while it is up, Copy and Insert on demand from any face. Every block
+  // of a thread used to format at mount whatever face it wore, so a forty-
+  // exchange thread paid the formatter chunk and 0.7 ms a statement for text
+  // nobody opened. The format is memoized per (sql, preset), so a flip back,
+  // a second block on the same statement and Copy after either are free
+  const preset = useSettings((s) => s.formatPreset);
+  const [pretty, setPretty] = useState(() => (sql === null ? null : formattedSqlPeek(sql, preset)));
+  const text = sql === null ? "" : finished(pretty ?? sql);
+  useEffect(() => {
+    if (sql === null) return;
+    const hit = formattedSqlPeek(sql, preset);
+    if (hit !== null) {
+      setPretty(hit);
+      return;
+    }
+    setPretty(null); // a new statement wears the bare form until it is read
+    if (face !== "sql") return;
+    let live = true;
+    void formattedSql(sql, preset).then((out) => {
+      if (live) setPretty(out);
+    });
+    return () => {
+      live = false;
+    };
+  }, [sql, preset, face]);
+  /** Copy and Insert hand over the FORMATTED statement from every face, so the
+   * clipboard and the tab never get the bare one the block was holding */
+  const finishedSql = () => (sql === null ? Promise.resolve("") : formattedSql(sql, preset).then(finished));
 
   const band = bandFace({ preview, onRun, onCommit, onRollback });
   const species = bandSpecies(preview?.verb);
@@ -587,7 +601,7 @@ export function ResultBlock({
         copiedRowsCue(pv.rows.length),
       );
     else if (face !== "sql" && run) void copyCue(resultTsv(run), copiedRowsCue(run.rows.length));
-    else void copyCue(text, "Copied SQL");
+    else void finishedSql().then((t) => copyCue(t, "Copied SQL"));
   };
 
   // the cluster is VS Code's floating toolbar: at the BOX's top-right in the
@@ -615,7 +629,7 @@ export function ResultBlock({
           className="iconbtn iconbtn-sm"
           title="Insert SQL"
           aria-label="Insert SQL"
-          onClick={() => insertSql(text, tabTitle)}
+          onClick={() => void finishedSql().then((t) => insertSql(t, tabTitle))}
         >
           <Import size={12} />
         </button>

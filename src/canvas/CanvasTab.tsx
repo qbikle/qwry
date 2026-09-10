@@ -42,7 +42,7 @@
 // further scroll (LESSONS 7: one scroll authority per gesture). Focus never
 // moves into the canvas on a write: the composer keeps the caret.
 
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Ellipsis, MessageSquare } from "lucide-react";
 import { ResultBlock, type ResultFace } from "../ask/ResultBlock";
@@ -189,6 +189,134 @@ function CanvasResult({
   );
 }
 
+/** Ask about this block. Module-level, so the row is handed no callback that
+ * is new on every render of the page */
+const askAbout = (b: ResultBlockDoc) => {
+  void import("../stores/agent").then(({ useAgent }) =>
+    useAgent.getState().askAbout({ id: b.id, name: titleOf(b), sql: b.sql, columns: b.columns, rowCount: b.rows.length }),
+  );
+};
+
+/** one block's row, memoised by the block it draws. Every write to the
+ * document rebuilds its array — a face flip, a note's words, a rename, a menu
+ * opening — so the list re-rendered every block whenever any one of them
+ * changed; the props here are the block itself, its place in the page and the
+ * flags the page owns, so a flip renders the block that flipped (ARCHITECTURE
+ * ideology 1). `arrive` is the preset itself and not its spread, so what
+ * decides a skip is the preset's own identity; popLayout hands the child a
+ * ref, a prop in React 19 (the Ask pane's Body precedent) */
+const CanvasRow = memo(function CanvasRow({
+  ref,
+  block,
+  canvasId,
+  arrive,
+  editing,
+  menuHere,
+  first,
+  last,
+  onMenu,
+}: {
+  ref?: Ref<HTMLDivElement>;
+  block: Block;
+  canvasId: string;
+  arrive: typeof panelIn | typeof swapIn;
+  editing: boolean;
+  /** this block's menu is the one standing */
+  menuHere: boolean;
+  first: boolean;
+  last: boolean;
+  onMenu: (blockId: string, x: number, y: number) => void;
+}) {
+  const title = titleOf(block);
+  if (block.kind === "note") {
+    return (
+      <motion.div ref={ref} layout {...arrive} exit={{ opacity: 0 }} className={`cv-item${title ? " titled" : ""}`}>
+        <NoteBlock
+          block={block}
+          editing={editing}
+          canMoveUp={!first}
+          canMoveDown={!last}
+          onEdit={() => useCanvas.getState().beginEdit(block.id)}
+          onCommit={(text) => {
+            useCanvas.getState().updateNote(canvasId, block.id, text);
+            useCanvas.getState().endEdit();
+          }}
+          onCancel={() => {
+            // a note that never had words leaves with the cancel:
+            // an empty block is a block being written, and one nobody
+            // wrote is not a block (the fold's own contract)
+            if (block.text === "") useCanvas.getState().remove(canvasId, block.id);
+            useCanvas.getState().endEdit();
+          }}
+          onDelete={() => {
+            useCanvas.getState().remove(canvasId, block.id);
+            useCanvas.getState().endEdit();
+          }}
+          onMove={(dir) => useCanvas.getState().move(canvasId, block.id, dir)}
+        />
+      </motion.div>
+    );
+  }
+  return (
+    <motion.div
+      ref={ref}
+      layout
+      {...arrive}
+      exit={{ opacity: 0 }}
+      className={`blk${title ? " titled" : ""}`}
+      data-block={block.id}
+      tabIndex={0}
+      onContextMenu={(e) => {
+        // the faces box owns its own right-click (the grid retargets
+        // its selection and opens the cell menu): two menus at one
+        // press is a bug, so the block's menu answers everywhere else
+        // on the block, and `More` is its always-there route
+        if ((e.target as HTMLElement).closest(".rb")) return;
+        e.preventDefault();
+        onMenu(block.id, e.clientX, e.clientY);
+      }}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key !== "Backspace" && e.key !== "Delete") return;
+        e.preventDefault();
+        useCanvas.getState().remove(canvasId, block.id);
+      }}
+    >
+      <CanvasResult
+        block={block}
+        canvasId={canvasId}
+        status={statusOf(block)}
+        actions={
+          <>
+            <button
+              type="button"
+              className="iconbtn iconbtn-sm"
+              title="Ask"
+              aria-label="Ask"
+              onClick={() => askAbout(block)}
+            >
+              <MessageSquare size={12} />
+            </button>
+            <button
+              type="button"
+              className={`iconbtn iconbtn-sm${menuHere ? " active" : ""}`}
+              title="More"
+              aria-label="More"
+              aria-haspopup="menu"
+              onClick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                onMenu(block.id, r.right, r.bottom + 4);
+              }}
+            >
+              <Ellipsis size={12} />
+            </button>
+          </>
+        }
+      />
+    </motion.div>
+  );
+});
+
 export function CanvasTab({ canvasId }: { canvasId: string }) {
   const doc = useCanvas((s) => s.docs[canvasId]);
   const meta = useCanvas((s) => Object.values(s.canvases).flat().find((c) => c.id === canvasId));
@@ -267,18 +395,6 @@ export function CanvasTab({ canvasId }: { canvasId: string }) {
     }
   }, [blocks, loaded]);
 
-  const askAbout = (b: ResultBlockDoc) => {
-    void import("../stores/agent").then(({ useAgent }) =>
-      useAgent.getState().askAbout({
-        id: b.id,
-        name: titleOf(b),
-        sql: b.sql,
-        columns: b.columns,
-        rowCount: b.rows.length,
-      }),
-    );
-  };
-
   /** the picker's answer: a sibling runs the block's statement read-only and
    * the diff takes the table's place; the compared one again clears it */
   const compare = (b: ResultBlockDoc, profileB: string | null) => {
@@ -334,7 +450,7 @@ export function CanvasTab({ canvasId }: { canvasId: string }) {
     return [picker, ...place];
   };
 
-  const openMenu = (blockId: string, x: number, y: number) => setMenu({ x, y, blockId });
+  const openMenu = useCallback((blockId: string, x: number, y: number) => setMenu({ x, y, blockId }), []);
 
   return (
     <div
@@ -347,105 +463,20 @@ export function CanvasTab({ canvasId }: { canvasId: string }) {
       }}
     >
       <AnimatePresence mode="popLayout" initial={false}>
-        {blocks.map((b, i) => {
+        {blocks.map((b, i) => (
           // a replaced block crossfades where it stood; a new one arrives
-          const arrive = seen.current.has(b.id) ? swapIn : panelIn;
-          const title = titleOf(b);
-          if (b.kind === "note") {
-            return (
-              <motion.div
-                key={`${b.id}:${revOf(b)}`}
-                layout
-                {...arrive}
-                exit={{ opacity: 0 }}
-                className={`cv-item${title ? " titled" : ""}`}
-              >
-                <NoteBlock
-                  block={b}
-                  editing={editingId === b.id}
-                  canMoveUp={i > 0}
-                  canMoveDown={i < blocks.length - 1}
-                  onEdit={() => useCanvas.getState().beginEdit(b.id)}
-                  onCommit={(text) => {
-                    useCanvas.getState().updateNote(canvasId, b.id, text);
-                    useCanvas.getState().endEdit();
-                  }}
-                  onCancel={() => {
-                    // a note that never had words leaves with the cancel:
-                    // an empty block is a block being written, and one nobody
-                    // wrote is not a block (the fold's own contract)
-                    if (b.text === "") useCanvas.getState().remove(canvasId, b.id);
-                    useCanvas.getState().endEdit();
-                  }}
-                  onDelete={() => {
-                    useCanvas.getState().remove(canvasId, b.id);
-                    useCanvas.getState().endEdit();
-                  }}
-                  onMove={(dir) => useCanvas.getState().move(canvasId, b.id, dir)}
-                />
-              </motion.div>
-            );
-          }
-          const status = statusOf(b);
-          return (
-            <motion.div
-              key={`${b.id}:${revOf(b)}`}
-              layout
-              {...arrive}
-              exit={{ opacity: 0 }}
-              className={`blk${title ? " titled" : ""}`}
-              data-block={b.id}
-              tabIndex={0}
-              onContextMenu={(e) => {
-                // the faces box owns its own right-click (the grid retargets
-                // its selection and opens the cell menu): two menus at one
-                // press is a bug, so the block's menu answers everywhere else
-                // on the block, and `More` is its always-there route
-                if ((e.target as HTMLElement).closest(".rb")) return;
-                e.preventDefault();
-                openMenu(b.id, e.clientX, e.clientY);
-              }}
-              onKeyDown={(e) => {
-                if (e.target !== e.currentTarget) return;
-                if (e.key !== "Backspace" && e.key !== "Delete") return;
-                e.preventDefault();
-                useCanvas.getState().remove(canvasId, b.id);
-              }}
-            >
-              <CanvasResult
-                block={b}
-                canvasId={canvasId}
-                status={status}
-                actions={
-                  <>
-                    <button
-                      type="button"
-                      className="iconbtn iconbtn-sm"
-                      title="Ask"
-                      aria-label="Ask"
-                      onClick={() => askAbout(b)}
-                    >
-                      <MessageSquare size={12} />
-                    </button>
-                    <button
-                      type="button"
-                      className={`iconbtn iconbtn-sm${menu?.blockId === b.id ? " active" : ""}`}
-                      title="More"
-                      aria-label="More"
-                      aria-haspopup="menu"
-                      onClick={(e) => {
-                        const r = e.currentTarget.getBoundingClientRect();
-                        openMenu(b.id, r.right, r.bottom + 4);
-                      }}
-                    >
-                      <Ellipsis size={12} />
-                    </button>
-                  </>
-                }
-              />
-            </motion.div>
-          );
-        })}
+          <CanvasRow
+            key={`${b.id}:${revOf(b)}`}
+            block={b}
+            canvasId={canvasId}
+            arrive={seen.current.has(b.id) ? swapIn : panelIn}
+            editing={editingId === b.id}
+            menuHere={menu?.blockId === b.id}
+            first={i === 0}
+            last={i === blocks.length - 1}
+            onMenu={openMenu}
+          />
+        ))}
       </AnimatePresence>
       {caret !== null && (
         // the caret line: one empty note in edit, at the page's last line,

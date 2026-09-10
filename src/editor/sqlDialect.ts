@@ -19,7 +19,7 @@ export const IDENT_FIELDS: ReadonlySet<string> = new Set(["YEAR", "MONTH", "DAY"
  * dialect for every surface that formats SQL (the editor's ⇧⌘F and context
  * menu through formatWithPreset, the Ask row through formatPostgres), so one
  * preset has one behaviour everywhere (LESSONS 11) */
-export function postgresDialect(mod: typeof import("sql-formatter")): DialectOptions {
+export function postgresDialect(mod: typeof import("./formatterChunk")): DialectOptions {
   const { postgresql } = mod;
   return {
     ...postgresql,
@@ -30,9 +30,9 @@ export function postgresDialect(mod: typeof import("sql-formatter")): DialectOpt
   };
 }
 
-/** format one statement with the curated dialect; same lazy import as the
- * editor's path (sql-formatter is an eighth of the bundle) */
+/** format one statement with the curated dialect; same lazy chunk as the
+ * editor's path (formatterChunk.ts, an eighth of the bundle) */
 export async function formatPostgres(src: string, opts: Partial<FormatOptions>): Promise<string> {
-  const mod = await import("sql-formatter");
+  const mod = await import("./formatterChunk");
   return mod.formatDialect(src, { ...opts, dialect: postgresDialect(mod) });
 }

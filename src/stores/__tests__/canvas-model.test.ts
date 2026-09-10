@@ -50,11 +50,14 @@ type ResultBlock = import("../canvas").ResultBlock;
 const { useAgent } = await import("../agent");
 const { useAsk } = await import("../ask");
 const { useConnections } = await import("../connections");
-const { useTabs } = await import("../tabs");
+const { cancelTabSaves, useTabs } = await import("../tabs");
 const { CANVAS_BLOCK_ROWS } = await import("../../agent/tools");
 type Profile = import("../../ipc/types").Profile;
 
-afterEach(cancelCanvasSaves);
+afterEach(() => {
+  cancelCanvasSaves();
+  cancelTabSaves();
+});
 afterAll(() => {
   clearMocks();
   for (const k of shimmed) Reflect.deleteProperty(globalThis, k);

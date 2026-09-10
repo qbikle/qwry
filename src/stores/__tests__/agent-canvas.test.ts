@@ -58,7 +58,7 @@ const { useCanvas, cancelCanvasSaves } = await import("../canvas");
 const { useConnections } = await import("../connections");
 const { useSchema } = await import("../schema");
 const { useSettings } = await import("../settings");
-const { useTabs } = await import("../tabs");
+const { cancelTabSaves, useTabs } = await import("../tabs");
 type Profile = import("../../ipc/types").Profile;
 type Tab = ReturnType<typeof useTabs.getState>["tabs"][number];
 
@@ -73,6 +73,7 @@ afterAll(() => {
   runner.runAsk = realRunAsk;
   runner.suggestFollowUps = realFollowUps;
   cancelCanvasSaves();
+  cancelTabSaves();
   clearMocks();
   for (const k of shimmed) Reflect.deleteProperty(globalThis, k);
 });

@@ -82,6 +82,8 @@
 // typing is never animated and the SQL editor's completion is the precedent.
 
 import {
+  memo,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -148,12 +150,29 @@ interface Hot {
  * click is the pick. A category row wears the path word in mono (it is the
  * token you would type) and the ContextMenu's submenu chevron: a row that
  * opens a level wears the mark every such row in the app wears (rule 1). No
- * count rides its hint slot (rule 11: delete `202` and nothing is lost) */
-function Row({ row, hot, onTake }: { row: MentionRow; hot: boolean; onTake: () => void }) {
+ * count rides its hint slot (rule 11: delete `202` and nothing is lost)
+ *
+ * memo, because the box redraws on every keystroke and most of its rows are
+ * the SAME rows (B5): sectionsFor hands a row back by identity, so a row the
+ * new filter still holds bails out here with its cmdk item, its glyph and the
+ * item's own per-render `data-value` write. `onTake` is stable for the same
+ * reason — a fresh closure per render would defeat the comparison. Nothing
+ * about the box's motion moves: the menuIn preset, the entry, the hot row's
+ * paint and the redraw-in-place are all as they were, and only the rows that
+ * actually changed run. */
+const Row = memo(function Row({
+  row,
+  hot,
+  onTake,
+}: {
+  row: MentionRow;
+  hot: boolean;
+  onTake: (row: MentionRow) => void;
+}) {
   const Kind = MENTION_ICON[row.kind];
   const category = row.path !== undefined;
   return (
-    <Command.Item className={`picker-item${hot ? " hot" : ""}`} value={row.value} onSelect={onTake}>
+    <Command.Item className={`picker-item${hot ? " hot" : ""}`} value={row.value} onSelect={() => onTake(row)}>
       <Kind size={12} />
       {row.kind === "column" ? (
         <span className="mention-path">
@@ -181,7 +200,7 @@ function Row({ row, hot, onTake }: { row: MentionRow; hot: boolean; onTake: () =
       )}
     </Command.Item>
   );
-}
+});
 
 export function MentionPopover({
   ref,
@@ -244,6 +263,12 @@ export function MentionPopover({
     if (row.path !== undefined) onNarrow(row.token);
     else onPick(row.token);
   };
+  // the pick a row is handed, through a ref so it never re-binds: the row
+  // itself is the argument, so one callback serves every row (AskPanel's own
+  // mentionCtxRef pattern)
+  const takeRef = useRef(take);
+  takeRef.current = take;
+  const onTake = useCallback((row: MentionRow) => takeRef.current(row), []);
 
   useImperativeHandle(ref, () => ({
     onKey: (e) => {
@@ -313,7 +338,7 @@ export function MentionPopover({
                   </div>
                 )}
                 {section.rows.map((row) => (
-                  <Row key={row.value} row={row} hot={row.value === hotValue} onTake={() => take(row)} />
+                  <Row key={row.value} row={row} hot={row.value === hotValue} onTake={onTake} />
                 ))}
               </div>
             ))}

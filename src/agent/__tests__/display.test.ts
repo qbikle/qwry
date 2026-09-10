@@ -571,11 +571,25 @@ describe("speed", () => {
     let big = "";
     while (big.length < 4096) big += `${CORPUS.map((c) => c.raw).join("\n\n")}\n\n`;
     big = big.slice(0, 4096);
-    for (let i = 0; i < 50; i++) parseBlocks(big, { hasRun: true }); // warm
-    const t0 = performance.now();
-    for (let i = 0; i < 1000; i++) parseBlocks(big, { hasRun: true });
-    const ms = performance.now() - t0;
-    console.log(`parseBlocks: 1000 x 4k = ${ms.toFixed(1)} ms`);
+    const round = () => {
+      const t0 = performance.now();
+      for (let i = 0; i < 100; i++) parseBlocks(big, { hasRun: true });
+      return (performance.now() - t0) * 10; // the 1000-parse cost this round paid for
+    };
+    round(); // warm
+    // The budget is still 50 ms for 1000 parses; what changed is the reading.
+    // One 1000-parse wall clock times the SEAT as much as the parse: this
+    // unchanged loop read 478 ms once on a shared machine (15x its own
+    // median), so a stopwatch here fails code that did not move. Twenty
+    // hundred-parse rounds and the FASTEST of them is the parse without the
+    // contention: under eight spinners on eight cores the mean went to 97 ms
+    // and the worst round to 316, while the minimum held at 28.3-29.6 ms. It
+    // stays a real ceiling, because no scheduler makes a round faster than
+    // the code in it: a 2x regression puts every round over 50, and a 10x one
+    // puts the fastest at ~300.
+    let ms = Infinity;
+    for (let r = 0; r < 20; r++) ms = Math.min(ms, round());
+    console.log(`parseBlocks: 1000 x 4k = ${ms.toFixed(1)} ms (fastest of 20 rounds)`);
     expect(ms).toBeLessThan(50);
   });
 });

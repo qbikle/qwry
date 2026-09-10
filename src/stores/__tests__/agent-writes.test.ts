@@ -69,12 +69,13 @@ const { useSchema } = await import("../schema");
 const { useSettings, writesAllowed } = await import("../settings");
 const { endTabTx, useConnections, skey } = await import("../connections");
 const { bandFace, bandSpecies } = await import("../../ask/ResultBlock");
-const { useTabs } = await import("../tabs");
+const { cancelTabSaves, useTabs } = await import("../tabs");
 const { runStatementInTab, useResults } = await import("../results");
 
 const real = { ...runner };
 afterAll(() => {
   Object.assign(runner, real);
+  cancelTabSaves();
   clearMocks();
   for (const k of shimmed) Reflect.deleteProperty(globalThis, k);
 });

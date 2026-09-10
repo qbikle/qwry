@@ -21,7 +21,6 @@ import { Home } from "../home/Home";
 import { SchemaTree } from "../sidebar/SchemaTree";
 import { SavedQueries } from "../sidebar/SavedQueries";
 import { TabBar } from "../editor/TabBar";
-import { Palette } from "../palette/Palette";
 import { DangerModal } from "./DangerModal";
 import { CloseGuardModal } from "./CloseGuardModal";
 import { ConnToast } from "./ConnToast";
@@ -46,6 +45,9 @@ const HistoryPanel = lazy(() => import("./HistoryPanel").then((m) => ({ default:
 const ShortcutsModal = lazy(() => import("./ShortcutsModal").then((m) => ({ default: m.ShortcutsModal })));
 const AskPanel = lazy(() => import("../ask/AskPanel").then((m) => ({ default: m.AskPanel })));
 const CanvasTab = lazy(() => import("../canvas/CanvasTab").then((m) => ({ default: m.CanvasTab })));
+// the palette joins them (B5): a modal that is never on the first-paint path
+// carried cmdk, three radix packages and react-remove-scroll in the entry
+const Palette = lazy(() => import("../palette/Palette").then((m) => ({ default: m.Palette })));
 
 /** the sidebar card: DB header → tables → saved queries (shown when connected) */
 function SidebarCard({ profileId, dbname, name }: { profileId: string; dbname: string; name: string }) {
@@ -166,6 +168,9 @@ export function App() {
     return t?.kind === "canvas" ? t.canvas_id : null;
   });
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // the palette's chunk is mounted (closed) by the idle warm-up below, never
+  // by first paint: it is a modal, and nothing on the first screen draws it
+  const [paletteWarm, setPaletteWarm] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [keysOpen, setKeysOpen] = useState(false);
   const [resizing, setResizing] = useState(false);
@@ -417,11 +422,25 @@ export function App() {
             const win = getCurrentWindow();
             void win.show().then(() => win.setFocus());
           });
-          void import("../editor/QueryBox");
-          void import("../grid/ResultsPane");
-          void import("../inspector/Inspector");
-          void import("../browser/TableBrowser");
-          void import("../ask/AskPanel");
+          // and the warm-up waits for an IDLE moment rather than riding this
+          // rAF: five chunks parsing here contend with the first keystroke,
+          // which has 16 ms. `timeout` keeps the promise on a busy machine,
+          // and the setTimeout is for a runtime without the callback.
+          const warm = () => {
+            void import("../editor/QueryBox");
+            void import("../grid/ResultsPane");
+            void import("../inspector/Inspector");
+            void import("../browser/TableBrowser");
+            void import("../ask/AskPanel");
+            // the palette MOUNTS here rather than merely preloading: a lazy
+            // boundary that first suspends on the ⌘K itself held the box back
+            // 320 ms (React throttles a resolved fallback's reveal), against
+            // 35 ms when the module was in the entry. Mounted closed at idle it
+            // draws nothing and costs one commit, and ⌘K is a prop flip again
+            setPaletteWarm(true);
+          };
+          if (typeof requestIdleCallback === "function") requestIdleCallback(warm, { timeout: 2000 });
+          else setTimeout(warm, 200);
         });
       });
     });
@@ -1033,7 +1052,11 @@ export function App() {
         )}
       </div>
 
-      <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      {(paletteWarm || paletteOpen) && (
+        <Suspense fallback={null}>
+          <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+        </Suspense>
+      )}
       {historyOpen && (
         <Suspense fallback={null}>
           <HistoryPanel onClose={() => setHistoryOpen(false)} />

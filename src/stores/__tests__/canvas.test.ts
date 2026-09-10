@@ -54,7 +54,7 @@ const {
 type Block = import("../canvas").Block;
 type DiffSide = import("../canvas").DiffSide;
 type ResultBlock = import("../canvas").ResultBlock;
-const { useTabs } = await import("../tabs");
+const { cancelTabSaves, useTabs } = await import("../tabs");
 const { useConnections } = await import("../connections");
 const { useAgent } = await import("../agent");
 // importing ../canvas above is what registers the port, so it stands already
@@ -71,7 +71,10 @@ const OVER_CAP = 201;
 // a block landed in the last assertion leaves a 400ms write behind it; the
 // suite that runs after this one has torn the mock transport down by then, so
 // the pending write is dropped here rather than left to land on nothing
-afterEach(cancelCanvasSaves);
+afterEach(() => {
+  cancelCanvasSaves();
+  cancelTabSaves();
+});
 
 afterAll(() => {
   clearMocks();

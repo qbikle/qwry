@@ -182,6 +182,19 @@ function persist() {
   }, 600);
 }
 
+/** drop the pending write (and any armed retry) instead of firing it. No
+ * product path wants this — a close flushes — but a suite that pulls the mock
+ * transport, or `window` itself, out from under a live debounce does: the
+ * timer would otherwise land on a backend that is gone and the store would
+ * read the torn-down transport as a FAILED save and retry against it
+ * (canvas.ts's cancelCanvasSaves, the same seam) */
+export function cancelTabSaves(): void {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = null;
+  if (saveRetryTimer) clearTimeout(saveRetryTimer);
+  saveRetryTimer = null;
+}
+
 /** fire any debounced save NOW: window blur / close must not lose the last
  * ≤600ms of typing */
 export function flushTabs(): Promise<void> {
