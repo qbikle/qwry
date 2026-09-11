@@ -18,7 +18,7 @@
 // mock keeps the turn rows it is handed, so a test can relaunch the app over
 // a thread it just wrote and read back exactly what appdb would hold.
 
-import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { baseAgentSettings, minimalSnapshot } from "./fixtures";
 
 // agent.ts pulls in settings.ts, which paints the theme onto the document at
@@ -55,12 +55,19 @@ const agent = await import("../agent");
 const { useAgent, replayOf, runner } = agent;
 const realFollowUps = runner.suggestFollowUps;
 type Exchange = import("../agent").Exchange;
+const { cancelCanvasSaves } = await import("../canvas");
 const { useSchema } = await import("../schema");
 const { useSettings } = await import("../settings");
 type AskRequest = Parameters<typeof runner.runAsk>[0];
 
 const realRunAsk = runner.runAsk;
+// a cut removes the blocks those exchanges wrote, and the canvas schedules its
+// own debounced write for it: dropped here rather than left to land on a
+// transport this suite has already torn down (cancelCanvasSaves' own contract)
+afterEach(() => void cancelCanvasSaves());
+
 afterAll(() => {
+  cancelCanvasSaves();
   runner.runAsk = realRunAsk;
   runner.suggestFollowUps = realFollowUps;
   clearMocks();

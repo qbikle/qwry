@@ -106,20 +106,24 @@ describe("prompt v4", () => {
 // row is owed (EVAL.md section 4). Pinned byte for byte the way A4's WRITES
 // block is: it is the only place the model is told that the answer lands
 // somewhere other than this reply, and a reword that drops a clause changes
-// what the model writes into a person's document.
+// what the model writes into a person's document. C2's own sentence (a block
+// may name its place) is pinned in the same bytes; what that sentence buys is
+// canvas-place.test.ts's.
 describe("the canvas block", () => {
   test("it names the target, the shapes and the one-line reply, byte for byte", () => {
     expect(canvasMessage("Canvas 4")).toBe(
-      '\nCANVAS: the user is reading a canvas called "Canvas 4" and your answer goes INTO it through canvas_write, canvas_replace and canvas_read, not into this\n' +
+      "\nCANVAS: the user is reading a canvas called \"Canvas 4\" and your answer goes INTO it through canvas_write, canvas_replace and canvas_read, not into this\n" +
         "reply. A result block carries one read-only SELECT; the canvas runs it, keeps its rows and prints its own status line under them. It stands on its chart\n" +
         "when the rows have one label column and one to three numeric columns, on its values when it returns one row, and on its table otherwise, so name a face\n" +
         "only to override that. Every result after the first carries a title of at most six words naming what it shows; the first wears the question. A note block\n" +
         "carries markdown: at most one bold lead-in ending in a colon and two to four bullets, each ONE finding with its own figure, a comparison the blocks above\n" +
-        "cannot make for themselves, never a figure a result on this canvas already prints and never a markdown table. An insight question gets two to five blocks,\n" +
-        "the results first and one note last; a direct question gets one result and no note. Write the results first and read their shapes back before you write the\n" +
-        "note. Call canvas_read before writing into a canvas that already holds blocks, and replace a block you wrote yourself when new work supersedes it rather\n" +
-        "than writing a second one beside it. A question that asks to change data is answered in this reply exactly as before, never as a block. When the blocks\n" +
-        "are written, finish HERE with one sentence naming what you wrote and no ```sql block: each result's assumptions ride that block, so no Assumptions line\n" +
+        "cannot make for themselves, never a figure a result on this canvas already prints and never a markdown table. The canvas is a grid of cells, and a block\n" +
+        "may name its own place on it: `at` is the cell its top left takes and `span` is how many cells wide and tall it is, both clamped to the grid rather than\n" +
+        "refused, and a block that names neither lands in the first free place at its kind's own size. An insight question gets two to five blocks, the results\n" +
+        "first and one note last; a direct question gets one result and no note. Write the results first and read their shapes back before you write the note.\n" +
+        "Call canvas_read before writing into a canvas that already holds blocks, and replace a block you wrote yourself when new work supersedes it rather than\n" +
+        "writing a second one beside it. A question that asks to change data is answered in this reply exactly as before, never as a block. When the blocks are\n" +
+        "written, finish HERE with one sentence naming what you wrote and no ```sql block: each result's assumptions ride that block, so no Assumptions line\n" +
         "is needed here.",
     );
   });

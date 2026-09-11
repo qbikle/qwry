@@ -40,7 +40,7 @@
 import { RISK_BLOCK, isRisky } from "./risk";
 import { toks } from "./context";
 import { parseDefinition } from "./definitions";
-import { outlineLine, type CanvasOutlineEntry } from "./tools";
+import { columnsSaid, outlineLine, type CanvasOutlineEntry } from "./tools";
 import type { HistoryPair, KnowledgeKind, KnowledgeRow, Synonym } from "./types";
 
 /** Bumped whenever any string in this file changes. EVAL baselines are tied
@@ -430,6 +430,11 @@ export function historyMessage(
  * block" in the same place and the same way `WRITES:` overrides run_sql's
  * instinct.
  *
+ * C2 (2026-09-11) adds one sentence and one fragment, and only those: the
+ * canvas is a grid now, so a block may name its own `at` and `span`, and the
+ * outline's head carries the column count those are written against. Both ride
+ * the same USER message, so PROMPT_VERSION still does not move.
+ *
  * What is NOT in it: any sentence forbidding a canvas the user did not ask
  * for. There is no `canvas_create` and no tool takes a canvas id, so the rule
  * is enforced by the tool list's own shape and a sentence about it would be
@@ -439,6 +444,7 @@ export function historyMessage(
 export function canvasMessage(
   title: string,
   outline: readonly CanvasOutlineEntry[] = [],
+  columns?: number,
 ): string {
   const head = `
 CANVAS: the user is reading a canvas called "${title}" and your answer goes INTO it through canvas_write, canvas_replace and canvas_read, not into this
@@ -446,11 +452,13 @@ reply. A result block carries one read-only SELECT; the canvas runs it, keeps it
 when the rows have one label column and one to three numeric columns, on its values when it returns one row, and on its table otherwise, so name a face
 only to override that. Every result after the first carries a title of at most six words naming what it shows; the first wears the question. A note block
 carries markdown: at most one bold lead-in ending in a colon and two to four bullets, each ONE finding with its own figure, a comparison the blocks above
-cannot make for themselves, never a figure a result on this canvas already prints and never a markdown table. An insight question gets two to five blocks,
-the results first and one note last; a direct question gets one result and no note. Write the results first and read their shapes back before you write the
-note. Call canvas_read before writing into a canvas that already holds blocks, and replace a block you wrote yourself when new work supersedes it rather
-than writing a second one beside it. A question that asks to change data is answered in this reply exactly as before, never as a block. When the blocks
-are written, finish HERE with one sentence naming what you wrote and no \`\`\`sql block: each result's assumptions ride that block, so no Assumptions line
+cannot make for themselves, never a figure a result on this canvas already prints and never a markdown table. The canvas is a grid of cells, and a block
+may name its own place on it: \`at\` is the cell its top left takes and \`span\` is how many cells wide and tall it is, both clamped to the grid rather than
+refused, and a block that names neither lands in the first free place at its kind's own size. An insight question gets two to five blocks, the results
+first and one note last; a direct question gets one result and no note. Write the results first and read their shapes back before you write the note.
+Call canvas_read before writing into a canvas that already holds blocks, and replace a block you wrote yourself when new work supersedes it rather than
+writing a second one beside it. A question that asks to change data is answered in this reply exactly as before, never as a block. When the blocks are
+written, finish HERE with one sentence naming what you wrote and no \`\`\`sql block: each result's assumptions ride that block, so no Assumptions line
 is needed here.`;
   if (outline.length === 0) return head;
   // the ids are the replace handles, and the lines are what stops the model
@@ -458,5 +466,8 @@ is needed here.`;
   // so this block and canvas_read can never describe the document differently
   // (LESSONS 13). Absent, not "(0 blocks)", on an empty canvas (rule 11)
   const count = `${outline.length} ${outline.length === 1 ? "block" : "blocks"}`;
-  return `${head}\nOUTLINE OF "${title}" (${count}):\n${outline.map(outlineLine).join("\n")}`;
+  // the grid's width rides the same head, because `at` written against the
+  // wrong column count is a guess; a caller with no grid to read leaves it off
+  const wide = columns === undefined ? "" : `, ${columnsSaid(columns)} wide`;
+  return `${head}\nOUTLINE OF "${title}" (${count}${wide}):\n${outline.map(outlineLine).join("\n")}`;
 }

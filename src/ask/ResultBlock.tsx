@@ -93,7 +93,7 @@
 // answer's first block and the model's own six-word title on its other
 // results, so a block with neither carries nothing in that slot (rule 14).
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { BarChart3, Code, Copy, Import, Table, TriangleAlert } from "lucide-react";
 import { EditorState, Prec } from "@codemirror/state";
@@ -111,6 +111,7 @@ import { useAsk } from "../stores/ask";
 import type { StatementState } from "../stores/results";
 import { useSettings } from "../stores/settings";
 import { useTabs } from "../stores/tabs";
+import { kindTools, type BlockTool } from "../canvas/blockTools";
 import { Chart } from "../canvas/Chart";
 import { DiffFace } from "../canvas/DiffFace";
 import type { BlockFace, ChartSpec, Diff } from "../stores/canvas";
@@ -215,8 +216,21 @@ export interface ResultBlockProps {
   chart?: ChartSpec | null;
   /** the comparison standing on this block: the diff face's own rows */
   diff?: Diff | null;
-  /** cluster actions the surface adds after Insert (the canvas: Ask, More) */
-  actions?: ReactNode;
+  /** C2a: the cells this block stands on, when a grid gave it some. The faces
+   * read their SIZE from it rather than from their content: the chart takes
+   * its aspect from the span (bars stand in a wide one, lie down in a tall
+   * one) and the table gives its row count back to the box, which now has a
+   * definite height to scroll inside. Absent in the pane, where the block is
+   * as tall as what it holds */
+  span?: { w: number; h: number };
+  /** the cluster's FIRST action, before Copy: the canvas's grip, the one
+   * surface every kind drags by. Absent where the block cannot be moved */
+  lead?: ReactNode;
+  /** the two the canvas adds after Insert. Two slots and not one node,
+   * because the ORDER of a cluster is `kindTools`'s and not a caller's
+   * (blockTools.ts, AGENT-UX 16s); the pane hands neither */
+  ask?: ReactNode;
+  more?: ReactNode;
 }
 
 /** the sample as the grid's statement shape (statementFromRun's sibling): the
@@ -487,7 +501,10 @@ export function ResultBlock({
   status,
   chart = null,
   diff = null,
-  actions,
+  span,
+  lead,
+  ask,
+  more,
 }: ResultBlockProps) {
   // the table face: a one-row run is values, not a grid (a table of one cell
   // is chrome around nothing); an empty result has no table face at all, so
@@ -607,23 +624,30 @@ export function ResultBlock({
   // the cluster is VS Code's floating toolbar: at the BOX's top-right in the
   // pane, at the BLOCK's in the canvas, where the question line is the row it
   // centres on and the actions act on the whole block (canvas.css .blk)
-  const cluster = (
-    <div className="acts-float">
+  // one table decides which tools this cluster carries and in what order
+  // (blockTools.ts); a tool the block has no content for and one the surface
+  // does not offer are both simply absent, which is how the pane gets three
+  // of the six and the canvas all six without either holding a list
+  const tools: Partial<Record<BlockTool, ReactNode>> = {
+    grip: lead,
+    copy: (
       <button type="button" className="iconbtn iconbtn-sm" title="Copy" aria-label="Copy" onClick={copy}>
         <Copy size={12} />
       </button>
-      {canFlip && (
-        <button
-          type="button"
-          className="iconbtn iconbtn-sm"
-          title={nextLabel}
-          aria-label={nextLabel}
-          onClick={flipTo}
-        >
-          {next === "chart" ? <BarChart3 size={12} /> : next === "sql" ? <Code size={12} /> : <Table size={12} />}
-        </button>
-      )}
-      {sql !== null && (
+    ),
+    flip: canFlip ? (
+      <button
+        type="button"
+        className="iconbtn iconbtn-sm"
+        title={nextLabel}
+        aria-label={nextLabel}
+        onClick={flipTo}
+      >
+        {next === "chart" ? <BarChart3 size={12} /> : next === "sql" ? <Code size={12} /> : <Table size={12} />}
+      </button>
+    ) : null,
+    insert:
+      sql !== null ? (
         <button
           type="button"
           className="iconbtn iconbtn-sm"
@@ -633,8 +657,15 @@ export function ResultBlock({
         >
           <Import size={12} />
         </button>
-      )}
-      {actions}
+      ) : null,
+    ask,
+    more,
+  };
+  const cluster = (
+    <div className="acts-float">
+      {kindTools("result").map((tool) => (
+        <Fragment key={tool}>{tools[tool]}</Fragment>
+      ))}
     </div>
   );
 
@@ -653,7 +684,7 @@ export function ResultBlock({
         changed={pv.changed}
       />
     ) : face === "chart" && chart ? (
-      <Chart spec={chart} />
+      <Chart spec={chart} span={span} />
     ) : face === "diff" && diff ? (
       diff.capped ? null : <DiffFace diff={diff} />
     ) : face === "values" && scalar && run ? (
@@ -667,7 +698,7 @@ export function ResultBlock({
         <ScalarResult run={run} />
       </div>
     ) : stmt ? (
-      <Grid key={exchangeId} statement={stmt} readOnly maxRows={GRID_ROWS_SHOWN} />
+      <Grid key={exchangeId} statement={stmt} readOnly maxRows={span ? undefined : GRID_ROWS_SHOWN} />
     ) : null;
 
   const box = (

@@ -382,16 +382,20 @@ describe("notes", () => {
     expect(blocksOf(id)).toHaveLength(0);
   });
 
-  test("move is a no-op at either end and never loses a block", async () => {
+  // C2: the menu's Move is one ROW of the grid, the same commit a drop makes.
+  // The blocks array is the order they were written in and stops being the
+  // order they are read in the moment two of them share a row
+  test("move is one row, and never above the first", async () => {
     const id = useCanvas.getState().create("staging");
     const a = useCanvas.getState().addNote(id, "a");
     const b = useCanvas.getState().addNote(id, "b");
+    const cellOf = (blockId: string) => blocksOf(id).find((x) => x.id === blockId)!.cell!;
+    expect(cellOf(a).y).toBe(0);
     useCanvas.getState().move(id, a, -1);
+    expect(cellOf(a).y).toBe(0);
+    useCanvas.getState().move(id, b, 1);
+    expect(cellOf(b).y).toBe(1);
     expect(blocksOf(id).map((x) => x.id)).toEqual([a, b]);
-    useCanvas.getState().move(id, a, 1);
-    expect(blocksOf(id).map((x) => x.id)).toEqual([b, a]);
-    useCanvas.getState().move(id, a, 1);
-    expect(blocksOf(id).map((x) => x.id)).toEqual([b, a]);
   });
 });
 

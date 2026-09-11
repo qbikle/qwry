@@ -107,6 +107,9 @@ function fake(
       return block.id;
     },
     outline: () => doc,
+    // the grid the tool clamps `at` and `span` against, and the number
+    // canvas_read prints; the placement itself is canvas-place.test.ts's
+    columns: () => 7,
   };
   const tools = createCanvasTools({
     sessionId: "s1",
@@ -314,6 +317,7 @@ describe("canvas_write", () => {
         },
         replaceBlock: () => null,
         outline: () => [],
+        columns: () => 7,
       },
       run: async () => RUN(),
     });
@@ -461,7 +465,12 @@ describe("the statement_timeout a block's run carries", () => {
       title: "Sales",
       exchangeId: "ex-1",
       question: "q",
-      store: { applyModelBlocks: () => [], replaceBlock: () => null, outline: () => [] },
+      store: {
+        applyModelBlocks: () => [],
+        replaceBlock: () => null,
+        outline: () => [],
+        columns: () => 7,
+      },
       run: async (_sql, _rows, timeoutMs) => {
         ran.push(timeoutMs);
         return RUN();
@@ -500,7 +509,7 @@ describe("canvas_read", () => {
     const out = await f.tools.read();
     expect(out.textForModel).toBe(
       [
-        'Canvas "Sales", 1 block.',
+        'Canvas "Sales", 1 block, 7 columns wide.',
         "9c11  result  Revenue by month · 12 rows: month, revenue · chart face",
       ].join("\n"),
     );
@@ -510,7 +519,7 @@ describe("canvas_read", () => {
 
   test("an empty canvas", async () => {
     const f = fake();
-    expect((await f.tools.read()).textForModel).toBe('Canvas "Sales" is empty.');
+    expect((await f.tools.read()).textForModel).toBe('Canvas "Sales" is empty, 7 columns wide.');
   });
 
   test("the canvas is captured, and nothing on the wire names one", () => {

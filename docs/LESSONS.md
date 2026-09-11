@@ -44,7 +44,13 @@ from the maintainer, say so and cite it; the pushback is wanted.
    died at the mount boundary; an open editor teleported when its cell left
    the window. Focus/position derive from your own indices; `preventScroll`
    on every programmatic focus; one scroll authority per gesture; pending-refs
-   survive remounts.
+   survive remounts. A style a MOTION VALUE owns is the same law: the canvas
+   grid's two gesture frames wrote `transform` on the drag layer and a box on
+   the placeholder by hand, and the next React commit re-applied their resting
+   values - at one width of three, where a commit happened to follow, so it
+   read as a layout bug. Write the value where it lives (the motion value, the
+   ref, the store) or drive the handler that does; an imperative style write
+   survives only on a property neither React nor motion lists.
 8. **Sticky chrome shrinks the viewport; alpha hides from probes.** Keyboard
    nav parked the focused row under the sticky header (`scrollPaddingEnd`
    unset); the gutter bug was a 12%-alpha token over scrolling content:

@@ -59,13 +59,10 @@ const html = (over: Partial<NoteData> = {}, editing = false) =>
     <NoteBlock
       block={note(over)}
       editing={editing}
-      canMoveUp={false}
-      canMoveDown
       onEdit={() => {}}
       onCommit={() => {}}
       onCancel={() => {}}
       onDelete={() => {}}
-      onMove={() => {}}
     />,
   );
 

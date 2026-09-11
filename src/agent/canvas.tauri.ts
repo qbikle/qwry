@@ -28,6 +28,8 @@ import {
   CANVAS_EXCHANGE_MAX,
   RUN_SQL_TIMEOUT_MS,
   blockLine,
+  cellPart,
+  clampPlace,
   gist,
   handleOf,
   outlineText,
@@ -40,6 +42,7 @@ import {
   type CanvasTools,
   type CanvasWriteResult,
   type ModelBlock,
+  type ModelCell,
   type ToolOutcome,
 } from "./tools";
 import type { AgentRun, CanvasFace } from "./types";
@@ -58,6 +61,10 @@ export interface CanvasStore {
     blocks: readonly ModelBlockInput[],
     after?: string,
   ): string[];
+  /** how many columns wide this canvas is laid out, for `at` and for the
+   * outline's head. ADVISORY: a canvas no tab is measuring answers the
+   * fallback, and nothing refuses for it (LESSONS 5) */
+  columns(canvasId: string): number;
   /** Replace one block, keeping its position and the `askedFrom` link the old
    * one carried. Returns the NEW block's id, or null when no block of that id
    * stands: the block that was there is gone, its name released and the
@@ -174,22 +181,42 @@ interface Written {
   input: ModelBlockInput;
   run: AgentRun | null;
   fell?: string;
+  /** what the canvas could not give of the place the model asked for, in the
+   * same voice as `fell`: the geometry was out of reach, the block was not */
+  said: string[];
+  /** where the block stands NOW, read back off the document after it landed */
+  cell?: ModelCell;
 }
 
-/** the same block under the id the document reported for it */
-const withId = (w: Written, id: string): Written => ({ ...w, input: { ...w.input, id } });
+/** the same block under the id and the cell the document reported for it */
+function landed(w: Written, id: string, cells: Map<string, ModelCell>): Written {
+  const cell = cells.get(id);
+  return { ...w, input: { ...w.input, id }, ...(cell ? { cell } : {}) };
+}
+
+/** where each block stands now, off the document. The engine may have pushed a
+ * block down to clear the cells the model asked for, so the reply names where
+ * the block IS and never where it was aimed (LESSONS 13). */
+const cellsOf = (blocks: readonly CanvasOutlineEntry[]): Map<string, ModelCell> =>
+  new Map(blocks.flatMap((b) => (b.cell ? ([[b.id, b.cell]] as [string, ModelCell][]) : [])));
 
 /** One written block's stanza: its line, then a result's own rows under it. */
 function stanzaOf(w: Written): string {
   const b = w.input;
   if (b.kind === "note" || w.run === null) {
-    return blockLine(b.id, b.kind, [gist(b.kind === "note" ? b.text : (b.title ?? ""))]);
+    return blockLine(b.id, b.kind, [
+      gist(b.kind === "note" ? b.text : (b.title ?? "")),
+      cellPart(w.cell),
+      ...w.said,
+    ]);
   }
   const line = blockLine(b.id, "result", [
     gist(b.title ?? b.question ?? rowsPart(w.run.rowCount, w.run.columns)),
     `${b.face} face`,
     keptPart(w.run),
     w.fell,
+    cellPart(w.cell),
+    ...w.said,
   ]);
   return `${line}\n${echoOf(w.run)}`;
 }
@@ -218,16 +245,26 @@ export function createCanvasTools(init: CanvasToolsInit): CanvasTools {
   let appended = 0;
   let replaced = 0;
   const outline = () => store.outline(canvasId);
+  const columns = () => store.columns(canvasId);
   const result = (): CanvasWriteResult => ({ canvasId, blockIds: [...written], replaced });
 
   /** Build the document's input for one block, running a result's statement
    * through the read gate first. A refused statement lands no block and comes
    * back in the gate's own words, first line, exactly as run_sql's does. */
-  async function buildOne(block: ModelBlock, first: boolean): Promise<Written | string> {
+  async function buildOne(
+    block: ModelBlock,
+    first: boolean,
+    cols: number,
+  ): Promise<Written | string> {
     // minted HERE, in one place: Rust never mints a block id (it is a bridge)
     // and the document never mints one for a model block
     const id = crypto.randomUUID();
     const question = first ? init.question : undefined;
+    // the place, as far as this side can know it: the column count is the one
+    // bound a tool holds, and the cells a block would overlap are the
+    // document's own business (the engine pushes them down, never refuses)
+    const { at, span, said } = clampPlace(block, cols);
+    const place = { ...(at ? { at } : {}), ...(span ? { span } : {}) };
     if (block.kind === "note") {
       return {
         input: {
@@ -236,8 +273,10 @@ export function createCanvasTools(init: CanvasToolsInit): CanvasTools {
           text: block.text,
           ...(question ? { question } : {}),
           wroteBy: exchangeId,
+          ...place,
         },
         run: null,
+        said,
       };
     }
     let run: AgentRun;
@@ -258,9 +297,11 @@ export function createCanvasTools(init: CanvasToolsInit): CanvasTools {
         ...(block.note ? { note: block.note } : {}),
         ...(question ? { question } : {}),
         wroteBy: exchangeId,
+        ...place,
       },
       run,
       ...(fell ? { fell } : {}),
+      said,
     };
   }
 
@@ -268,6 +309,7 @@ export function createCanvasTools(init: CanvasToolsInit): CanvasTools {
     canvasId,
     title,
     outline,
+    columns,
 
     async write(args: unknown): Promise<ToolOutcome<CanvasWriteResult>> {
       const a = record(args);
@@ -289,9 +331,12 @@ export function createCanvasTools(init: CanvasToolsInit): CanvasTools {
         if (!at.ok) return fail(at.error);
         after = at.value;
       }
+      // read once, before the first statement runs: a measure that arrives
+      // mid-call would clamp two blocks of one batch against two grids
+      const cols = columns();
       const built: Written[] = [];
       for (const block of blocks) {
-        const one = await buildOne(block, appended === 0 && built.length === 0);
+        const one = await buildOne(block, appended === 0 && built.length === 0, cols);
         if (typeof one === "string") return fail(one);
         built.push(one);
       }
@@ -300,13 +345,14 @@ export function createCanvasTools(init: CanvasToolsInit): CanvasTools {
       const ids = store.applyModelBlocks(canvasId, built.map((b) => b.input), after);
       written.push(...ids);
       appended += ids.length;
+      const cells = cellsOf(outline());
       const head = `Wrote ${ids.length} ${ids.length === 1 ? "block" : "blocks"} to "${title}".`;
       // the handles come from the ids the DOCUMENT reports, so the reply can
       // never name a block the canvas does not hold under that name
       return {
         textForModel: [
           head,
-          ...built.map((b, i) => stanzaOf(ids[i] ? withId(b, ids[i]) : b)),
+          ...built.map((b, i) => stanzaOf(ids[i] ? landed(b, ids[i], cells) : b)),
         ].join("\n"),
         result: result(),
       };
@@ -331,10 +377,10 @@ export function createCanvasTools(init: CanvasToolsInit): CanvasTools {
       if (!parsed.ok) return fail(parsed.error);
       // a replace never wears the question: the document carries the old
       // block's provenance link over, which is its own to carry
-      const one = await buildOne(parsed.value, false);
+      const one = await buildOne(parsed.value, false, columns());
       if (typeof one === "string") return fail(one);
-      const landed = store.replaceBlock(canvasId, at.value, one.input);
-      if (landed === null) {
+      const newId = store.replaceBlock(canvasId, at.value, one.input);
+      if (newId === null) {
         return fail(
           `ERROR: no block '${handleOf(at.value)}' on this canvas. Call canvas_read for the block ids`,
         );
@@ -342,12 +388,12 @@ export function createCanvasTools(init: CanvasToolsInit): CanvasTools {
       // a replace is a write: this exchange is answerable for what stands
       // there now, so a cut of it takes the block with it. The handle is the
       // document's new one, printed on the stanza the model reads next
-      if (!written.includes(landed)) written.push(landed);
+      if (!written.includes(newId)) written.push(newId);
       replaced += 1;
       return {
         textForModel: [
           `Replaced ${handleOf(at.value)} in "${title}".`,
-          stanzaOf(withId(one, landed)),
+          stanzaOf(landed(one, newId, cellsOf(outline()))),
         ].join("\n"),
         result: result(),
       };
@@ -355,9 +401,10 @@ export function createCanvasTools(init: CanvasToolsInit): CanvasTools {
 
     async read(): Promise<ToolOutcome<CanvasOutline>> {
       const blocks = outline();
+      const cols = columns();
       return {
-        textForModel: outlineText(title, blocks),
-        result: { canvasId, title, blocks },
+        textForModel: outlineText(title, blocks, cols),
+        result: { canvasId, title, columns: cols, blocks },
       };
     },
 
@@ -383,6 +430,10 @@ function liveStore(): CanvasStore {
     replaceBlock: (canvasId, blockId, block) =>
       useCanvas.getState().replaceBlock(canvasId, blockId, block),
     outline: (canvasId) => useCanvas.getState().outline(canvasId),
+    // the document's own count, which the surface writes as it measures. A
+    // canvas no tab is laid out on has none yet, and the fallback informs the
+    // model rather than refusing it a place (LESSONS 5)
+    columns: (canvasId) => useCanvas.getState().columnsOf(canvasId),
   };
 }
 

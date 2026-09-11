@@ -32,6 +32,7 @@ Every interactive control belongs to exactly one species. The species are:
 | Menu row | ContextMenu / cmdk styles | highlight = accent fill, `.hot` |
 | List row / card | per-surface (`.trow`, the Threads sheet's row) | hover = bg-hover minimum; `.hot` the transient highlight, `.active` the persistent selection |
 | Switch | `.switch` (tokens.css), rendered via `<Switch>` | macOS toggle for feature/setting rows; hidden native checkbox is the truth (role=switch, :has-derived states, spring knob). Native checkboxes remain the species for selection within content (filter rows, lists, CM search panels) |
+| Resize handle | `.cvg-handle` (grid.css) | the canvas element's ONE corner, bottom-right: a 16px hit box over an 8px L glyph at tier 2. Invisible at rest and revealed with the block's own cluster (`.acts-float`'s register, hover / focus-within / `[data-hot]`), accent while the gesture is live (`[data-gesture="resize"]`). No disabled state: it leaves with the cluster, and the keyboard route is the element's own ⇧-arrows |
 
 A new control joins a species or gets a new row in this table in the same PR.
 Re-authoring a species locally (13 copies of the action button, 23 of the
@@ -91,6 +92,13 @@ REFERENCED, not retyped; a token you don't reference is a magic number with
 a name. Allowed literals: multiples of 4, plus 1–2px for hairlines and micro
 gaps. A deliberate off-grid value carries `/* optical */` on its line; the
 annotation is a design decision, reviewable like any other.
+
+The canvas grid's cell and gutter (108 and 12, `CELL_W_BASE` / `GUTTER` in
+`src/canvas/grid.ts`) hold to this same grid though neither is a `--sp-*`
+token: computed once and written to two CSS custom properties (`--cw`,
+`--gut`) rather than retyped at each use site, an exported constant is as
+much a named token as a CSS variable, and rule 4 binds it the same way
+(AGENT-UX §16o).
 
 ## Rule 5: Icons live on the trio
 

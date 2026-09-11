@@ -484,6 +484,71 @@ for a fact the loop already extracts once.
 `run_sql` and the five measured tools do not move: their schemas, their
 caps, their refusals are byte-frozen, unchanged by this section.
 
+### 5.2 Placement: `at`, `span` and clamping (C2, 2026-09-11)
+
+`canvas_write`'s block schema and `canvas_replace`'s block both gain two
+more optional objects, on every kind the union carries today and on
+`drawing` the day it joins (AGENT-UX §16p):
+
+```json
+"at":   { "type": "object", "properties": { "x": {"type":"integer","minimum":0},
+                                             "y": {"type":"integer","minimum":0} },
+          "required": ["x","y"], "additionalProperties": false,
+          "description": "Where to put it, in grid cells, as canvas_read printed the columns. Omit it and the canvas finds the first free place in reading order." }
+
+"span": { "type": "object", "properties": { "w": {"type":"integer","minimum":1},
+                                             "h": {"type":"integer","minimum":1} },
+          "required": ["w","h"], "additionalProperties": false,
+          "description": "How many cells wide and tall. Omit it and the canvas gives this kind its own default size." }
+```
+
+**Absent equals `place()`**, the same first-fit-in-reading-order the
+model's writes have always landed on. **Present and impossible is clamped,
+never refused**, in the tool result's existing voice (the shape `faceFor`'s
+own fallback already uses, §5.1: "never a refusal and never an empty face,
+the statement was good, only the guess was wrong", DESIGN rule 11):
+
+```
+asked for 6 wide, the canvas is 5 columns, placed 5 wide
+asked for column 7, the canvas is 5 columns, placed at 0,3
+```
+
+Order within one `canvas_write` call: blocks carrying `at` place first, in
+array order, each pushing down whatever it now overlaps exactly as a
+person's drag does (AGENT-UX §16q); the rest place through `place()` into
+what is left, so a call mixing placed and unplaced blocks never lands the
+unplaced ones on a cell an `at` block asked for. `canvas_replace`'s `at`
+means "and move it": omitted, the replaced block keeps the place it
+already had.
+
+**The model must be told the column count, or `at` is a guess.**
+`canvas_read`'s outline gains the count once, in its own opening line, and
+every entry after it its own cell:
+
+```
+Canvas "Q3 revenue", 4 blocks, 10 columns wide.
+a3f1  result  Monthly revenue by channel . 12 rows: month, channel, revenue . chart face . at 0,0 6x4
+7c02  note    Revenue concentrated in two channels: . at 6,0 4x4
+```
+
+`outlineLine` (§5.1) gains this one fragment, so `canvas_read` and the
+`CANVAS:` block's own outline (§5.1) describe a block's place identically
+(LESSONS 13), never two renderers disagreeing about where something sits.
+The column count is read off the live surface at the moment of the call,
+falling back to the document's own advisory `lastColumns` (§9) and then to
+`COLUMNS_FALLBACK`, 7 (the 960 card's own count under the cell law of §16o,
+not the 8 this section first drafted before that arithmetic landed), when
+neither exists; advisory, never a refusal
+(LESSONS 5): nothing reads the column count to decide whether a write is
+LEGAL, only to word `at`'s reply honestly.
+
+**A no-target run's tools and message stay byte-identical.** `at` and
+`span` are two more properties on a schema only a canvas-targeted run is
+ever handed (§5.1's own gate, unmoved): the array a provider receives IS
+the gate, so the five tools a no-target run is offered do not grow these
+fields, and neither `PROMPT_VERSION` nor the no-canvas eval baseline moves
+(the B3 pin this section inherits, §5.1).
+
 ## 6. Prompt rules (frozen text lives in `prompt.ts`)
 
 The system prompt states, verbatim in spirit:
@@ -969,6 +1034,61 @@ right after a canvas tool call returns and recorded by `runInto`'s
 deriving one record from another rendering is the exact bug the tool
 result's own tolerant-parsing comment (§4.6) warns against — so this event
 is the only place `canvasWrites` is ever written.
+
+
+**The document becomes a grid, `v: 2` (C2, 2026-09-11).** `doc_json` stays
+the one opaque blob it always was (above: no new appdb column, no new
+migration); its SHAPE gains a version marker and, on every block, a cell:
+
+```ts
+interface BlockBase { id; askedFrom?; wroteBy?;
+                       cell: { x: number; y: number; w: number; h: number };
+                       autoH?: boolean }
+interface DrawingBlock extends BlockBase { kind: "drawing" }   // the type only this wave; C2b gives it strokes and a surface (AGENT-UX §16p)
+type Block = ResultBlock | NoteBlock | DrawingBlock
+interface CanvasDoc { v?: 2; blocks: Block[]; lastColumns?: number }
+```
+
+`v` absent is a pre-C2 document (`{ blocks: Block[] }`, no block carrying
+`cell`) and is migrated on load, once, inside `parseDoc`'s success path:
+every block keeps its stored order exactly (`x = 0`, `y` the running total
+of what came before it), takes `w = min(columns, 6)` (full width at the
+5-column floor, 6 cells, 732px, anywhere wider, which is just past the
+note's own 680 measure cap so nothing a user already reads gets any wider
+than the law already allowed), and `h` from its kind's own content formula
+(AGENT-UX §16p). A migrated document does **not** persist on that load —
+this section first specified a `persist(canvasId, { touch: false })` write
+to carry it, but `persist` takes no such flag and `load` schedules none:
+`readDoc` migrates in memory, `docs[id]` in the store holds the result from
+that load forward, and the row in appdb keeps A3's own v1 bytes until the
+user's first real change (a move, a resize, a new block) calls `persist`
+for real. Stronger than the write this section first asked for: opening an
+old canvas cannot reorder the `@` completion's `Recent` rung (LESSONS 5's
+own rule that a read must not look like an edit) because nothing is
+written at all, and there is no touch-suppressing flag to keep in sync
+with `persist`'s other callers. Nor does the layout re-derive on every
+open: the same in-memory `CanvasDoc`, cells included, is what `docs[id]`
+answers with on every read until that first real edit, so `outline()`'s
+own `at x,y` names the same thing every time the model asks. A document
+that did not parse is still never written over (unchanged); the migration
+runs only inside that success path, never near the guard that refuses to
+write over a broken one.
+
+`autoH: true` marks a note whose height still follows AGENT-UX §16p's
+formula; the first hand resize clears it, exactly as a drawing's own
+autofit will (C2b). `lastColumns` is ADVISORY, never an invariant (LESSONS
+5): it is the column count the document was last laid out at, so
+`outline()` (§5.2) can word `at` honestly when no tab is open to measure,
+and nothing reads it to decide whether an operation is legal.
+
+**Serialize and deserialize are born as a pair (LESSONS 1).** `writeDoc(doc):
+string` and `parseDoc(json): CanvasDoc | null` replace today's bare
+`JSON.stringify` / `JSON.parse` plus one `Array.isArray` guard with named
+functions and one property test, `parseDoc(writeDoc(d))` deep-equals `d`
+for random v2 documents; `parseDoc` returns `null` only for unparseable
+JSON or a missing `blocks` array, the same two conditions as today. A v1
+document is not one of them, it parses and migrates, so a migration is
+never mistaken for the break that would freeze a canvas forever.
 
 ## 10. Budgets
 

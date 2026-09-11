@@ -228,6 +228,15 @@ function writePreview(sql: string): WritePreview {
 
 export function installTauriShim(): void {
   mockWindows("main");
+  // the recorders, on the window: a probe drives this page over CDP and has no
+  // module handle, and these four arrays are the harness's whole record of
+  // what the product wrote. The frames never look, and neither does the app
+  (window as unknown as { __harness?: unknown }).__harness = {
+    clipboardWrites,
+    canvasUpserts,
+    canvasResults,
+    mcpServed,
+  };
   mockIPC(
     (cmd, payload) => {
       switch (cmd) {

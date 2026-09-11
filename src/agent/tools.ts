@@ -175,9 +175,9 @@ export interface AgentTools {
 //
 // Three tools a run offers only when its exchange has a canvas target, and the
 // pure half of what they do: the union the model may write, the caps, the
-// refusals, the short-id resolution and the outline's one renderer. Nothing
-// here touches a store or Tauri; canvas.tauri.ts runs the SQL and hands the
-// blocks to the document (AGENT-SPEC section 2 rule 2).
+// refusals, the short-id resolution, the placement clamp and the outline's one
+// renderer. Nothing here touches a store or Tauri; canvas.tauri.ts runs the SQL
+// and hands the blocks to the document (AGENT-SPEC section 2 rule 2).
 
 /** The three canvas schemas, from the same file the five come from. Offered
  * ONLY with a target (toolsFor): the tool list is prompt surface (EVAL.md
@@ -232,13 +232,44 @@ export const CANVAS_LINE_CAP = 60;
  * `run ×3` is: the chip counts CALLS, the trace's own unit (AGENT-UX 16). */
 export const CANVAS_CHIP = "canvas";
 
+/** The canvas is a grid of cells (C2, canvas-grid-spec section 2.6), so a
+ * block stands somewhere rather than merely after something. `at` is its
+ * top-left corner and `span` its size, both in CELLS and both optional: a
+ * block that names neither is placed by the canvas at its kind's own size.
+ * The engine's `Cell` (canvas/grid.ts) is these two halves together, and it
+ * is composed here rather than imported, because this half of the agent
+ * imports nothing from the canvas. */
+export interface ModelAt {
+  x: number;
+  y: number;
+}
+export interface ModelSpan {
+  w: number;
+  h: number;
+}
+export type ModelCell = ModelAt & ModelSpan;
+
+/** The placement fields both block kinds carry, written once. */
+export interface ModelPlace {
+  at?: ModelAt;
+  span?: ModelSpan;
+}
+
+/** The column count a canvas answers when nothing is measuring it: no tab is
+ * open on it, or it has never been laid out. ADVISORY, exactly as
+ * `lastColumns` is: it informs the outline and the clamp and refuses nothing
+ * (LESSONS 5). The number is the 960 card's own count under the C2 cell
+ * (base 108, gutter 12, page inset 16), which is the width the harness and a
+ * 14" window with the Ask pane open both stand at. */
+export const COLUMNS_FALLBACK = 7;
+
 /** One block as the MODEL writes it: an INTENT. The document holds a result
  * (columns, rows, status, ms); this holds the statement that will produce one.
  * canvas.tauri.ts is the one place the two meet, exactly as tools.tauri.ts is
  * the one place the wire record and the domain record meet. */
 export type ModelBlock =
-  | { kind: "note"; text: string }
-  | {
+  | ({ kind: "note"; text: string } & ModelPlace)
+  | ({
       kind: "result";
       sql: string;
       /** at most six words; absent on the first block of an answer, which
@@ -248,7 +279,7 @@ export type ModelBlock =
       note?: string;
       /** an explicit override; absent means the rows decide */
       face?: CanvasFace;
-    };
+    } & ModelPlace);
 
 /** What a canvas write reports back to the loop: every block this exchange
  * has put on the canvas, and how many of them stood IN PLACE of one already
@@ -274,11 +305,17 @@ export interface CanvasOutlineEntry {
   columns?: string[];
   face?: CanvasFace;
   modelWritten: boolean;
+  /** C2: where the block stands on the grid, read straight off the document.
+   * Absent on a document the grid has not reached yet, and the outline then
+   * says nothing about geometry rather than guessing at it. */
+  cell?: ModelCell;
 }
 
 export interface CanvasOutline {
   canvasId: string;
   title: string;
+  /** how many columns wide the canvas is, so `at` is a place and not a guess */
+  columns: number;
   blocks: CanvasOutlineEntry[];
 }
 
@@ -295,6 +332,10 @@ export interface CanvasTools {
    * outlineLine, so the message and the tool can never disagree about what
    * stands there (LESSONS 13). Read before the run's first await. */
   outline(): readonly CanvasOutlineEntry[];
+  /** the column count the target is laid out at, read at the same moment the
+   * outline is. Optional so a caller that only reads the document needs no
+   * grid; absent answers COLUMNS_FALLBACK wherever a number is owed. */
+  columns?(): number;
   write(args: unknown): Promise<ToolOutcome<CanvasWriteResult>>;
   replace(args: unknown): Promise<ToolOutcome<CanvasWriteResult>>;
   read(): Promise<ToolOutcome<CanvasOutline>>;
@@ -322,18 +363,87 @@ const overCap = (field: string, length: number, cap: number, advice: string) =>
 
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
 
+const obj = (v: unknown): Record<string, unknown> | null =>
+  typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+
 const FACES: readonly CanvasFace[] = ["chart", "table", "values", "sql"];
 const isFace = (v: unknown): v is CanvasFace => FACES.includes(v as CanvasFace);
+
+/** One whole cell as the model wrote it. A number is floored, because half a
+ * cell is not a place; anything else is not a co-ordinate at all, and the
+ * caller names the field rather than inventing one. */
+const cells = (v: unknown): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? Math.floor(v) : null;
+
+/** `7 columns`, the canvas's own width, said in one place. */
+export const columnsSaid = (columns: number): string =>
+  `${columns} ${columns === 1 ? "column" : "columns"}`;
+
+const PLACE_ADVICE = "Read the grid off canvas_read, or leave it off and the canvas places the block";
+
+/** A block's `at` and `span`: absent, or whole cells. A number OUT OF RANGE is
+ * not refused here, because the canvas clamps it and the reply says so
+ * (clampPlace); a value of the wrong shape is, because there is nothing to
+ * clamp. Below zero is pulled to zero without a sentence: a negative cell is
+ * not a narrower canvas, it is a number the grid has no room for either way. */
+function parsePlace(b: Record<string, unknown>): Parsed<ModelPlace> {
+  const out: ModelPlace = {};
+  if (b.at !== undefined) {
+    const at = obj(b.at);
+    const x = at ? cells(at.x) : null;
+    const y = at ? cells(at.y) : null;
+    if (x === null || y === null) {
+      return bad(`ERROR: \`at\` is \`x\` and \`y\`, whole cells of the grid. ${PLACE_ADVICE}`);
+    }
+    out.at = { x: Math.max(0, x), y: Math.max(0, y) };
+  }
+  if (b.span !== undefined) {
+    const span = obj(b.span);
+    const w = span ? cells(span.w) : null;
+    const h = span ? cells(span.h) : null;
+    if (w === null || h === null) {
+      return bad(`ERROR: \`span\` is \`w\` and \`h\`, whole cells of the grid. ${PLACE_ADVICE}`);
+    }
+    out.span = { w: Math.max(1, w), h: Math.max(1, h) };
+  }
+  return { ok: true, value: out };
+}
+
+/** What the canvas can give of what the model asked for, and the sentence when
+ * the two differ. Never a refusal and never a silent cut: the blocks were
+ * good, only the geometry was out of reach, which is the shape faceFor already
+ * uses for a face the rows cannot wear (DESIGN rule 11, canvas-grid-spec 2.6).
+ * A block whose cell is taken is not clamped at all: the engine pushes what
+ * stands there down, so an overlap is a layout, not an impossibility. */
+export function clampPlace(place: ModelPlace, columns: number): ModelPlace & { said: string[] } {
+  const cols = Math.max(1, Math.floor(columns));
+  const said: string[] = [];
+  const span = place.span ? { ...place.span } : undefined;
+  if (span && span.w > cols) {
+    said.push(`asked for ${span.w} wide, the canvas is ${columnsSaid(cols)}, placed ${cols} wide`);
+    span.w = cols;
+  }
+  const at = place.at ? { ...place.at } : undefined;
+  // with no span the tool does not know the block's width, so the only claim
+  // it can make is that the column itself does not exist; the store's own
+  // resize pulls x back once the kind's default width is known
+  const last = cols - (span?.w ?? 1);
+  if (at && at.x > last) {
+    said.push(`asked for column ${at.x}, the canvas is ${columnsSaid(cols)}, placed at column ${last}`);
+    at.x = last;
+  }
+  return { ...(at ? { at } : {}), ...(span ? { span } : {}), said };
+}
 
 /** One block of the union. An unknown `face` is NOT a refusal: the tool falls
  * back to the face the rows deserve and says so in its reply, because a model
  * that guessed a face wrong still wrote a good statement (DESIGN rule 11). */
 export function parseCanvasBlock(v: unknown): Parsed<ModelBlock> {
-  const b =
-    typeof v === "object" && v !== null && !Array.isArray(v)
-      ? (v as Record<string, unknown>)
-      : null;
+  const b = obj(v);
   if (!b) return bad("ERROR: a block needs `kind`: 'note' or 'result'");
+  const placed = parsePlace(b);
+  if (!placed.ok) return placed;
+  const place = placed.value;
   if (b.kind === "note") {
     const text = typeof b.text === "string" ? b.text : "";
     if (!text.trim()) {
@@ -344,7 +454,7 @@ export function parseCanvasBlock(v: unknown): Parsed<ModelBlock> {
     if (text.length > CANVAS_NOTE_CAP) {
       return overCap("text", text.length, CANVAS_NOTE_CAP, "Write the finding, not the transcript");
     }
-    return { ok: true, value: { kind: "note", text } };
+    return { ok: true, value: { kind: "note", text, ...place } };
   }
   if (b.kind === "result") {
     const sql = str(b.sql);
@@ -365,6 +475,7 @@ export function parseCanvasBlock(v: unknown): Parsed<ModelBlock> {
         ...(title ? { title: title.trim() } : {}),
         ...(note ? { note: note.trim() } : {}),
         ...(isFace(b.face) ? { face: b.face } : {}),
+        ...place,
       },
     };
   }
@@ -453,6 +564,12 @@ export const rowsPart = (rows: number, columns?: readonly string[]): string =>
   `${rows.toLocaleString()} ${rows === 1 ? "row" : "rows"}` +
   (columns?.length ? `: ${columns.join(", ")}` : "");
 
+/** `at 0,2 6×4`: where a block stands and how big it is. One renderer for the
+ * outline and for a write's own reply, so a block's place reads the same in
+ * both (LESSONS 13). Absent on a document with no geometry yet. */
+export const cellPart = (cell?: ModelCell): string | null =>
+  cell ? `at ${cell.x},${cell.y} ${cell.w}×${cell.h}` : null;
+
 /** One block as the outline prints it. A result names its shape because that
  * is what stops the model writing a note about columns that never came back. */
 export function outlineLine(entry: CanvasOutlineEntry): string {
@@ -462,13 +579,22 @@ export function outlineLine(entry: CanvasOutlineEntry): string {
       ? rowsPart(entry.rows, entry.columns)
       : null,
     entry.kind === "result" && entry.face ? `${entry.face} face` : null,
+    cellPart(entry.cell),
   ]);
 }
 
 /** The whole outline, headed the way canvas_read heads it. Empty is one
- * sentence, never a header over nothing (DESIGN rule 11). */
-export function outlineText(title: string, blocks: readonly CanvasOutlineEntry[]): string {
-  if (blocks.length === 0) return `Canvas "${title}" is empty.`;
-  const head = `Canvas "${title}", ${blocks.length} ${blocks.length === 1 ? "block" : "blocks"}.`;
-  return [head, ...blocks.map(outlineLine)].join("\n");
+ * sentence, never a header over nothing (DESIGN rule 11). The head carries the
+ * canvas's width, because `at` written against the wrong column count is a
+ * guess; a caller with no grid to read leaves it off rather than stating a
+ * number it does not have. */
+export function outlineText(
+  title: string,
+  blocks: readonly CanvasOutlineEntry[],
+  columns?: number,
+): string {
+  const wide = columns === undefined ? "" : `, ${columnsSaid(columns)} wide`;
+  if (blocks.length === 0) return `Canvas "${title}" is empty${wide}.`;
+  const count = `${blocks.length} ${blocks.length === 1 ? "block" : "blocks"}`;
+  return [`Canvas "${title}", ${count}${wide}.`, ...blocks.map(outlineLine)].join("\n");
 }

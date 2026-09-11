@@ -1,7 +1,19 @@
-// The canvas, as a tab of the main card (A3 item 6). One column of blocks at
-// the card's own width, 20px in from every edge, 16px apart, and no chrome of
-// its own: no toolbar, no strip, no frame per block. The tab is the strip
-// (DESIGN rule 15: three blocks stand here under 0 always-visible controls).
+// The canvas, as a tab of the main card (A3 item 6, C2a). A GRID of blocks at
+// the card's own width, 16px in from every edge, a 12px gutter between cells,
+// and no chrome of its own: no toolbar, no strip, no frame per block. The tab
+// is the strip (DESIGN rule 15: the blocks stand here under 0 always-visible
+// controls, before the grid and after it).
+//
+// The page's geometry belongs to CanvasGrid: the column count read from the
+// width, the cell frames, the drag and the resize, the placeholder and the
+// live region. This file stays what it was, the surface that knows the KINDS:
+// which block is a result and which a note, what each one's cluster holds,
+// what its menu says and which of them holds the caret. The grip joins every
+// cluster as its first action (the one surface every kind drags by), the
+// title line of a result is its second, and `Move Up` / `Move Down` leave both
+// menus: a place on a grid is a drag or an arrow key, and a row that splices
+// the reading order would move nothing a reader can see (4 rows to 3 on a
+// result, 3 to 1 on a note).
 //
 // The empty canvas is EMPTY: zero strings and zero controls. What it does
 // carry is a CARET, at the page's first line, because a blank card with a
@@ -23,17 +35,18 @@
 // one-row result stands on its VALUES, since a grid of one row is chrome
 // around figures that are their own row; the model's sentence rides read-only
 // above the faces, the status line folds the assumptions in after one
-// lowercase `assumed`, and the cluster is Copy · Flip · Insert · Ask · More
-// (5 hot, 0 at rest). The note is NoteBlock's, the same picture with Copy ·
-// Ask · More. `More` is the block's menu and the one a right-click opens:
-// place actions (Compare With, Move Up, Move Down, Delete) act on the block's
-// position in the document rather than on its content, so they leave the
-// cluster for the menu.
+// lowercase `assumed`, and the cluster is Grip · Copy · Flip · Insert · Ask ·
+// More (6 hot, 0 at rest). The note is NoteBlock's, the same picture with
+// Grip · Copy · Ask · More. `More` is the block's menu and the one a
+// right-click opens: what is left in it acts on the block's place in the
+// document rather than on its content (Compare With, Delete), so it leaves
+// the cluster for the menu.
 //
-// Motion adds no preset (DECISIONS, A3): a block arrives WHOLE on `panelIn`,
-// the card's own entrance, with the blocks under it making room on
-// `spring.layout`; a block the model REPLACED lands where the old one stood
-// on `swapIn`, the flip's own crossfade, so the change reads as a change; a
+// Motion adds no preset (DECISIONS, A3, and C2a keeps it): a block arrives
+// WHOLE on `panelIn`, the card's own entrance, at the cells the engine placed
+// it in, with the elements it displaced making room on `spring.layout`; a
+// block the model REPLACED lands where the old one stood on `swapIn`, the
+// flip's own crossfade, so the change reads as a change; a
 // removed block fades where it stands while the gap closes on the same
 // spring. Nothing streams in word by word: the pane's thinking strip is the
 // one loading UI, and a page that assembles in whole blocks is read as it
@@ -42,8 +55,8 @@
 // further scroll (LESSONS 7: one scroll authority per gesture). Focus never
 // moves into the canvas on a write: the composer keeps the caret.
 
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { motion } from "motion/react";
 import { Ellipsis, MessageSquare } from "lucide-react";
 import { ResultBlock, type ResultFace } from "../ask/ResultBlock";
 import { isScalarRun } from "../ask/ScalarResult";
@@ -62,8 +75,10 @@ import {
   type ResultBlock as ResultBlockDoc,
   type StatusLine,
 } from "../stores/canvas";
+import { CanvasGrid, Grip } from "./CanvasGrid";
 import { compareWithMenu } from "./compareMenu";
-import { NoteBlock } from "./NoteBlock";
+import { NoteBlock, noteName } from "./NoteBlock";
+import type { Cell } from "./grid";
 import "./canvas.css";
 
 /** What a MODEL-written block carries beyond A3's document (B3, the tool
@@ -141,12 +156,20 @@ function CanvasResult({
   block,
   canvasId,
   status,
-  actions,
+  span,
+  ask,
+  more,
 }: {
   block: ResultBlockDoc;
   canvasId: string;
   status: StatusLine | null;
-  actions: ReactNode;
+  /** the cells the element stands on: the chart reads its aspect from them,
+   * and the table reads how many rows it shows from the height they leave */
+  span: { w: number; h: number };
+  /** the two the canvas adds to the cluster; the block orders them with the
+   * rest through `kindTools` (blockTools.ts) */
+  ask: ReactNode;
+  more: ReactNode;
 }) {
   const run = useMemo(
     () => ({
@@ -184,7 +207,10 @@ function CanvasResult({
       }}
       chart={chartOf(block)}
       diff={block.diff ?? null}
-      actions={actions}
+      span={span}
+      lead={<Grip />}
+      ask={ask}
+      more={more}
     />
   );
 }
@@ -200,42 +226,45 @@ const askAbout = (b: ResultBlockDoc) => {
 /** one block's row, memoised by the block it draws. Every write to the
  * document rebuilds its array — a face flip, a note's words, a rename, a menu
  * opening — so the list re-rendered every block whenever any one of them
- * changed; the props here are the block itself, its place in the page and the
- * flags the page owns, so a flip renders the block that flipped (ARCHITECTURE
- * ideology 1). `arrive` is the preset itself and not its spread, so what
- * decides a skip is the preset's own identity; popLayout hands the child a
- * ref, a prop in React 19 (the Ask pane's Body precedent) */
+ * changed; the props here are the block itself, the cells it stands on and
+ * the flags the page owns, so a flip renders the block that flipped
+ * (ARCHITECTURE ideology 1). `arrive` is the preset itself and not its
+ * spread, so what decides a skip is the preset's own identity, and `entering`
+ * is what the grid's own AnimatePresence used to say with `initial={false}`:
+ * the blocks that stood here when the canvas opened do not arrive, the ones
+ * an answer writes do */
 const CanvasRow = memo(function CanvasRow({
-  ref,
   block,
   canvasId,
+  cell,
   arrive,
+  entering,
   editing,
   menuHere,
-  first,
-  last,
   onMenu,
 }: {
-  ref?: Ref<HTMLDivElement>;
   block: Block;
   canvasId: string;
+  cell: Cell;
   arrive: typeof panelIn | typeof swapIn;
+  entering: boolean;
   editing: boolean;
   /** this block's menu is the one standing */
   menuHere: boolean;
-  first: boolean;
-  last: boolean;
   onMenu: (blockId: string, x: number, y: number) => void;
 }) {
-  const title = titleOf(block);
+  const enter = {
+    initial: entering ? arrive.initial : false,
+    animate: arrive.animate,
+    transition: arrive.transition,
+  };
   if (block.kind === "note") {
     return (
-      <motion.div ref={ref} layout {...arrive} exit={{ opacity: 0 }} className={`cv-item${title ? " titled" : ""}`}>
+      <motion.div {...enter} className="cv-item">
         <NoteBlock
           block={block}
           editing={editing}
-          canMoveUp={!first}
-          canMoveDown={!last}
+          lead={<Grip />}
           onEdit={() => useCanvas.getState().beginEdit(block.id)}
           onCommit={(text) => {
             useCanvas.getState().updateNote(canvasId, block.id, text);
@@ -252,18 +281,14 @@ const CanvasRow = memo(function CanvasRow({
             useCanvas.getState().remove(canvasId, block.id);
             useCanvas.getState().endEdit();
           }}
-          onMove={(dir) => useCanvas.getState().move(canvasId, block.id, dir)}
         />
       </motion.div>
     );
   }
   return (
     <motion.div
-      ref={ref}
-      layout
-      {...arrive}
-      exit={{ opacity: 0 }}
-      className={`blk${title ? " titled" : ""}`}
+      {...enter}
+      className="blk"
       data-block={block.id}
       tabIndex={0}
       onContextMenu={(e) => {
@@ -286,36 +311,51 @@ const CanvasRow = memo(function CanvasRow({
         block={block}
         canvasId={canvasId}
         status={statusOf(block)}
-        actions={
-          <>
-            <button
-              type="button"
-              className="iconbtn iconbtn-sm"
-              title="Ask"
-              aria-label="Ask"
-              onClick={() => askAbout(block)}
-            >
-              <MessageSquare size={12} />
-            </button>
-            <button
-              type="button"
-              className={`iconbtn iconbtn-sm${menuHere ? " active" : ""}`}
-              title="More"
-              aria-label="More"
-              aria-haspopup="menu"
-              onClick={(e) => {
-                const r = e.currentTarget.getBoundingClientRect();
-                onMenu(block.id, r.right, r.bottom + 4);
-              }}
-            >
-              <Ellipsis size={12} />
-            </button>
-          </>
+        span={cell}
+        ask={
+          <button
+            type="button"
+            className="iconbtn iconbtn-sm"
+            title="Ask"
+            aria-label="Ask"
+            onClick={() => askAbout(block)}
+          >
+            <MessageSquare size={12} />
+          </button>
+        }
+        more={
+          <button
+            type="button"
+            className={`iconbtn iconbtn-sm${menuHere ? " active" : ""}`}
+            title="More"
+            aria-label="More"
+            aria-haspopup="menu"
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              onMenu(block.id, r.right, r.bottom + 4);
+            }}
+          >
+            <Ellipsis size={12} />
+          </button>
         }
       />
     </motion.div>
   );
 });
+
+/** the element's key: a replaced block keeps its id and its cells, so what
+ * tells a rewrite from a re-render is the content's own signature */
+const keyOf = (block: Block): string => `${block.id}:${revOf(block)}`;
+
+/** what the live region and the element's own label call it: the title it
+ * carries, a note's first line, and the kind's own word when it has neither
+ * (WRITING, identifiers inside chrome) */
+const nameOf = (block: Block): string =>
+  (block.kind === "note" ? noteName(block.text) : titleOf(block)) || (block.kind === "note" ? "Note" : "Result");
+
+/** and what KIND it is, which for a result is the face it stands on: the
+ * geometry line reads `Orders by channel · chart · 4 by 3 at column 1, row 2` */
+const kindOf = (block: Block): string => (block.kind === "note" ? "note" : block.face);
 
 export function CanvasTab({ canvasId }: { canvasId: string }) {
   const doc = useCanvas((s) => s.docs[canvasId]);
@@ -415,17 +455,11 @@ export function CanvasTab({ canvasId }: { canvasId: string }) {
   /** the block's menu, and the one a right-click opens. Compare's picker is a
    * menu and More is a menu, so it is ONE menu: a submenu of the connection's
    * siblings with a mark on the compared one, and picking the marked one
-   * clears the comparison. Move Up is disabled on the first block, never
-   * hidden (DESIGN rule 2) */
-  const menuFor = (b: ResultBlockDoc, i: number): MenuNode[] => {
+   * clears the comparison. `Move Up` and `Move Down` are gone with C2a (a
+   * place on a grid is a drag or an arrow key, and splicing the reading order
+   * moves nothing a reader can see), so the menu is 3 rows where it was 4 */
+  const menuFor = (b: ResultBlockDoc): MenuNode[] => {
     const place: MenuNode[] = [
-      { kind: "item", label: "Move Up", disabled: i === 0, onSelect: () => useCanvas.getState().move(canvasId, b.id, -1) },
-      {
-        kind: "item",
-        label: "Move Down",
-        disabled: i === blocks.length - 1,
-        onSelect: () => useCanvas.getState().move(canvasId, b.id, 1),
-      },
       { kind: "sep" },
       {
         kind: "item",
@@ -452,32 +486,51 @@ export function CanvasTab({ canvasId }: { canvasId: string }) {
 
   const openMenu = useCallback((blockId: string, x: number, y: number) => setMenu({ x, y, blockId }), []);
 
+  // the page's own first commit: the blocks that stood here when the canvas
+  // opened are not arrivals, and only what lands after it wears an entrance
+  const entered = useRef(false);
+  useEffect(() => {
+    entered.current = true;
+  }, []);
+
+  const renderBlock = useCallback(
+    (b: Block, cell: Cell) => (
+      // a replaced block crossfades where it stood; a new one arrives
+      <CanvasRow
+        block={b}
+        canvasId={canvasId}
+        cell={cell}
+        arrive={seen.current.has(b.id) ? swapIn : panelIn}
+        entering={entered.current}
+        editing={editingId === b.id}
+        menuHere={menu?.blockId === b.id}
+        onMenu={openMenu}
+      />
+    ),
+    [canvasId, editingId, menu?.blockId, openMenu],
+  );
+
   return (
     <div
       className="cv-scroll"
       ref={scroll}
       onClick={(e) => {
-        // the card itself, and the tail under the last block, are where a
-        // click writes; a click that landed on a block is the block's
-        if (e.target === e.currentTarget) write();
+        // the card itself, the page under the elements and the tail below it
+        // are where a click writes; a click that landed on a block is the
+        // block's own
+        const t = e.target as HTMLElement;
+        if (t === e.currentTarget || t.classList.contains("cvg")) write();
       }}
     >
-      <AnimatePresence mode="popLayout" initial={false}>
-        {blocks.map((b, i) => (
-          // a replaced block crossfades where it stood; a new one arrives
-          <CanvasRow
-            key={`${b.id}:${revOf(b)}`}
-            block={b}
-            canvasId={canvasId}
-            arrive={seen.current.has(b.id) ? swapIn : panelIn}
-            editing={editingId === b.id}
-            menuHere={menu?.blockId === b.id}
-            first={i === 0}
-            last={i === blocks.length - 1}
-            onMenu={openMenu}
-          />
-        ))}
-      </AnimatePresence>
+      <CanvasGrid
+        canvasId={canvasId}
+        blocks={blocks}
+        columnsHint={(doc as (typeof doc & { lastColumns?: number }) | undefined)?.lastColumns}
+        renderBlock={renderBlock}
+        keyOf={keyOf}
+        nameOf={nameOf}
+        kindOf={kindOf}
+      />
       {caret !== null && (
         // the caret line: one empty note in edit, at the page's last line,
         // outside the document until its first words reach `addNote`
@@ -485,8 +538,6 @@ export function CanvasTab({ canvasId }: { canvasId: string }) {
           <NoteBlock
             block={DRAFT}
             editing
-            canMoveUp={false}
-            canMoveDown={false}
             onEdit={() => {}}
             onCommit={(text) => {
               setCaret(null);
@@ -494,17 +545,15 @@ export function CanvasTab({ canvasId }: { canvasId: string }) {
             }}
             onCancel={() => setCaret(null)}
             onDelete={() => setCaret(null)}
-            onMove={() => {}}
           />
         </div>
       )}
       {menu &&
         (() => {
           // the note's menu is NoteBlock's own; this one is the result's
-          const at = blocks.findIndex((b) => b.id === menu.blockId);
-          const b = at < 0 ? null : blocks[at];
+          const b = blocks.find((x) => x.id === menu.blockId);
           if (!b || b.kind !== "result") return null;
-          return <ContextMenu point={menu} items={menuFor(b, at)} onClose={() => setMenu(null)} />;
+          return <ContextMenu point={menu} items={menuFor(b)} onClose={() => setMenu(null)} />;
         })()}
     </div>
   );

@@ -5,7 +5,7 @@
 // the 640 floor (DESIGN rule 13: growth feeds the bars, never the axis).
 
 import { describe, expect, test } from "bun:test";
-import { barLayout, lineLayout } from "../Chart";
+import { barLayout, lineLayout, standing } from "../Chart";
 import type { ChartSpec } from "../../stores/canvas";
 
 const bars = (labels: string[], series: { name: string; values: number[] }[]): ChartSpec => ({
@@ -109,5 +109,64 @@ describe("lineLayout", () => {
     const one = { ...months, labels: ["2026-08-01"], series: [{ name: "revenue", values: [10] }] };
     const g = lineLayout(one, 640);
     expect(g.xAt(0)).toBe(g.x0 + g.plotW / 2);
+  });
+});
+
+// ---- C2a: the span decides which way the bars go -------------------------
+
+describe("standing bars", () => {
+  const days = bars(
+    ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+    [{ name: "orders", values: [402, 388, 431, 459, 512, 386] }],
+  );
+
+  test("a span three times wider than tall, with labels that fit, stands", () => {
+    expect(standing(days, { w: 6, h: 2 })).toBe(true);
+  });
+
+  test("a span that is not half again as wide as it is tall lies down", () => {
+    expect(standing(days, { w: 4, h: 3 })).toBe(false);
+    expect(standing(channels, { w: 4, h: 3 })).toBe(false);
+  });
+
+  test("labels too wide for their own bars lie down, however wide the span", () => {
+    const long = bars(
+      ["instagram reels", "whatsapp business", "marketplace direct", "referral partners"],
+      [{ name: "orders", values: [318, 247, 118, 58] }],
+    );
+    expect(standing(long, { w: 4, h: 2 })).toBe(false);
+  });
+
+  test("the SPAN decides and nothing else: the same chart stands at six cells and lies at four", () => {
+    // the fit is measured against the BASE cell, so a window that stretches
+    // the cells (at most a quarter) can never flip a chart on its side: only
+    // a resize can, which is the reader's own act
+    expect(standing(channels, { w: 6, h: 2 })).toBe(true);
+    expect(standing(channels, { w: 4, h: 2 })).toBe(false);
+  });
+
+  test("a date label never stands: it is a line", () => {
+    expect(standing(months, { w: 8, h: 2 })).toBe(false);
+  });
+});
+
+describe("a face with a height of its own", () => {
+  test("the rows spread over the face instead of stacking at 24", () => {
+    const g = barLayout(channels, 640, 480);
+    expect(g.pitch).toBe(40); // capped: six rows in 480 would be 80 each
+    expect(g.h).toBe(6 * 40);
+  });
+
+  test("a squeezed face never puts the rows under the bars they hold", () => {
+    const g = barLayout(channels, 640, 60);
+    expect(g.pitch).toBe(16);
+    expect(g.pitch).toBeGreaterThanOrEqual(g.barH);
+  });
+
+  test("the line's plot takes the face's height in place of its fixed 132", () => {
+    expect(lineLayout(months, 640).plotH).toBe(132);
+    const g = lineLayout(months, 640, 300);
+    expect(g.plotH).toBe(300 - 18);
+    expect(g.h).toBe(300);
   });
 });

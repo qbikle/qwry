@@ -558,7 +558,9 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
   // read ONCE, here, before the run's first await (LESSONS 3), and the same
   // string goes to the model and to the trace: nothing sent is summarised away
   // (AGENT-SPEC 8.4). Absent with no target, which is the eval's every run
-  const canvasBlock = req.canvas ? canvasMessage(req.canvas.title, req.canvas.outline()) : "";
+  const canvasBlock = req.canvas
+    ? canvasMessage(req.canvas.title, req.canvas.outline(), req.canvas.columns?.())
+    : "";
   const userMsg = withReplay(
     req,
     askMessage({ ...askArgs, knowledge: know.text, history: past.text }) + writes + canvasBlock,

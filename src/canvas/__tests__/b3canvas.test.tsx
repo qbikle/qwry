@@ -107,11 +107,22 @@ describe("the title line", () => {
 describe("the values face", () => {
   test("every column a pair, the values as the database printed them", () => {
     const out = renderToStaticMarkup(<ScalarResult run={figures} row />);
-    expect(out.match(/class="ans-scalar"/g)?.length).toBe(4);
+    expect(out.match(/class="ans-scalar(?: w2)?"/g)?.length).toBe(4);
     for (const v of ["2,763", "₹4,266,056", "43%", "22%"]) expect(out).toContain(v);
     for (const k of figures.columns) expect(out).toContain(`ans-scalar-k">${k}`);
     // the pairs read in the statement's own column order
     expect(out.indexOf("2,763")).toBeLessThan(out.indexOf("₹4,266,056"));
+  });
+
+  // the row stands on the page's cells (canvas.css .rb-vals), one per pair,
+  // and the store measured its span by the same rule (grid.ts valueCells): the
+  // figure past eight glyphs is the one pair that takes two of them
+  test("a figure past eight glyphs takes two cells, and says so", () => {
+    const out = renderToStaticMarkup(<ScalarResult run={figures} row />);
+    expect(out.match(/class="ans-scalar w2"/g)?.length).toBe(1);
+    expect(out.indexOf('class="ans-scalar w2"')).toBeLessThan(out.indexOf("₹4,266,056"));
+    // and the pane's own pairs never wear it: the cells are the canvas's
+    expect(renderToStaticMarkup(<ScalarResult run={figures} />)).not.toContain("w2");
   });
 
   test("never a grid of one row, and never the pane's stacked pairs", () => {
@@ -162,13 +173,10 @@ describe("the note in edit", () => {
       <NoteBlock
         block={note(text)}
         editing
-        canMoveUp={false}
-        canMoveDown
         onEdit={() => {}}
         onCommit={() => {}}
         onCancel={() => {}}
         onDelete={() => {}}
-        onMove={() => {}}
       />,
     );
 

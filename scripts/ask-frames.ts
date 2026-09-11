@@ -14,11 +14,13 @@
 //              surface at 560 · 780 · 1040 (states a2-hint, a2-hint-edit,
 //              a2-hint-rest, a2-hint-aka). canvas: the A3 canvas, a face of the
 //              MAIN card, so its own states (a3-canvas, a3-chart, a3-chart-line,
-//              a3-diff, a3-empty, a3-menu, a3-note-edit, and B3's
+//              a3-diff, a3-empty, a3-menu, a3-note-edit, B3's
 //              b3-canvas-analysis, b3-canvas-streaming, b3-canvas-empty,
-//              b3-note-edit), its own widths (640 · 960 · 1280) and a 760-tall
-//              card, 800 for the B3 four. `--scroll` means nothing outside the
-//              Ask pane: the canvas is a document, read from its top
+//              b3-note-edit, and C2a's c2-grid, c2-grid-floor, c2-drag,
+//              c2-resize, c2-migrated, c2-dense), its own widths
+//              (640 · 960 · 1280) and a 760-tall card, 800 for the B3 four and
+//              the C2a six. `--scroll` means nothing outside the Ask pane: the
+//              canvas is a document, read from its top
 //   --out      where the PNGs land; default
 //              ~/projects/qwry-agent-lab/docs/research/w2d-frames
 //   --states   subset of answer,empty,busy,picker,failure,disconnected,small,
@@ -55,7 +57,8 @@
 //
 // Output: <out>/<state>-<width>-<theme>[-top].png, 2× device scale, a viewport
 // of (width + 48) × (card + 48) so the card sits in one gutter of app
-// background (688 for the pane's 640, 808 for the canvas's 760, 848 for B3's 800).
+// background (688 for the pane's 640, 808 for the canvas's 760, 848 for the
+// 800 B3 and C2a stand on).
 // Prints the list, exits 1 if any frame is missing or empty.
 //
 // Each frame is one headless Chrome driven over CDP (--remote-debugging-port=0,
@@ -305,9 +308,10 @@ const STRUCTURE_WIDTHS = [560, 780, 1040] as const;
  * their windows are taller */
 const PALETTE_H = 900;
 const STRUCTURE_H = 900;
-/** the canvas root's own states and three widths (fixtures.canvas.ts, and B3's
- * four in fixtures.b3canvas.ts): it is a face of the MAIN card, so it is
- * neither the pane's list nor the pane's widths */
+/** the canvas root's own states and three widths (fixtures.canvas.ts, B3's
+ * four in fixtures.b3canvas.ts and C2a's six in fixtures.c2grid.ts): it is a
+ * face of the MAIN card, so it is neither the pane's list nor the pane's
+ * widths */
 const CANVAS_STATES = [
   "a3-canvas",
   "a3-chart",
@@ -320,14 +324,27 @@ const CANVAS_STATES = [
   "b3-canvas-streaming",
   "b3-canvas-empty",
   "b3-note-edit",
+  "c2-grid",
+  "c2-grid-floor",
+  "c2-drag",
+  "c2-resize",
+  "c2-migrated",
+  "c2-dense",
 ] as const;
-/** the B3 four stand on a taller card: a four-block answer with a chart among
- * them does not fit A3's 760 (fixtures.b3canvas.ts B3_CANVAS_CARD_H) */
-const B3_CANVAS_STATES: readonly string[] = [
+/** the B3 four and the C2a six stand on a taller card: neither a four-block
+ * answer with a chart among them nor a page of cells fits A3's 760
+ * (fixtures.b3canvas.ts B3_CANVAS_CARD_H, fixtures.c2grid.ts C2_GRID_CARD_H) */
+const TALL_CANVAS_STATES: readonly string[] = [
   "b3-canvas-analysis",
   "b3-canvas-streaming",
   "b3-canvas-empty",
   "b3-note-edit",
+  "c2-grid",
+  "c2-grid-floor",
+  "c2-drag",
+  "c2-resize",
+  "c2-migrated",
+  "c2-dense",
 ];
 const CANVAS_WIDTHS = [640, 960, 1280] as const;
 const ALL_THEMES = ["dark", "light"] as const;
@@ -349,15 +366,24 @@ type Theme = (typeof ALL_THEMES)[number];
 
 /** the pane's card is 640 tall inside one --sp-6 gutter on every side; the
  * canvas needs more, since three blocks with a chart among them do not fit,
- * and B3's four-block answer needs 40 more again. The three numbers are
- * AskHarness's own (CANVAS_CARD_H, B3_CANVAS_CARD_H): this script drives the
- * page over CDP rather than importing it, so the window it opens has to be
- * told the height the page will lay out at */
+ * and B3's four-block answer and C2a's page of cells need 40 more again. The
+ * three numbers are AskHarness's own (CANVAS_CARD_H, B3_CANVAS_CARD_H,
+ * c2GridCardH): this script drives the page over CDP rather than importing
+ * it, so the window it opens has to be told the height the page lays out at */
 const CARD_H = 640;
 const CANVAS_CARD_H = 760;
-const B3_CANVAS_CARD_H = 800;
+const TALL_CANVAS_CARD_H = 800;
+/** and the two C2a states whose subject is the LAYOUT are read whole: their
+ * document is 13 rows at the floor, where an 800 card stops at row 6 and the
+ * table and the standing-bars result are both below the crop (c2GridCardH) */
+const DOC_CANVAS_STATES: readonly string[] = ["c2-grid", "c2-grid-floor"];
+const DOC_CANVAS_CARD_H = 1584;
 const canvasCardH = (state: string): number =>
-  B3_CANVAS_STATES.includes(state) ? B3_CANVAS_CARD_H : CANVAS_CARD_H;
+  DOC_CANVAS_STATES.includes(state)
+    ? DOC_CANVAS_CARD_H
+    : TALL_CANVAS_STATES.includes(state)
+      ? TALL_CANVAS_CARD_H
+      : CANVAS_CARD_H;
 const MARGIN = 24;
 
 // ---- args -------------------------------------------------------------------

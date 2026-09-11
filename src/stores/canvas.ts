@@ -30,6 +30,15 @@
 // LESSONS 4: a comparison names both connections inside the document, not
 // from the navigation state, so a diff read a week later still says which two
 // databases produced it.
+//
+// C2 gives the document a LAYOUT. Every block carries a `cell` (x, y, w, h in
+// the grid's own units, `src/canvas/grid.ts`), the document carries `v: 2` and
+// an advisory `lastColumns`, and the engine next door decides every geometry
+// question; this file is where a cell becomes a FACT of the document. It
+// places what lands (`place`), it commits one layout per gesture end and never
+// per pointer move, and it reads A3's ordered list back as rows of cells
+// (`migrateV1`) without writing over that document until the user's own first
+// change: a read must not look like an edit.
 
 import { create } from "zustand";
 import {
@@ -42,12 +51,35 @@ import {
 } from "../ipc/commands";
 import {
   CANVAS_BLOCK_ROWS,
+  COLUMNS_FALLBACK,
   RUN_SQL_TIMEOUT_MS,
   type CanvasOutlineEntry,
+  type ModelPlace,
 } from "../agent/tools";
 import type { AgentRun, CanvasFace } from "../agent/types";
-import { SCALAR_MAX_COLS } from "../ask/ScalarResult";
+import { figureText, SCALAR_MAX_COLS } from "../ask/ScalarResult";
 import { msText } from "../lib/duration";
+import {
+  basePx,
+  COLUMNS_MAX,
+  compact,
+  DEFAULT_SPAN,
+  defaultSpan,
+  minSpan,
+  MIGRATE_W_MAX,
+  move as moveCells,
+  overlaps,
+  place,
+  reflow as reflowCells,
+  resize as resizeCells,
+  SPAN_MAX,
+  valueCells,
+  type Cell,
+  type ContentSize,
+  type GridItem,
+  type Span,
+  type SpanKey,
+} from "../canvas/grid";
 import { setCanvasPort } from "../canvas/port";
 import { useAgent } from "./agent";
 import { useAsk } from "./ask";
@@ -122,6 +154,18 @@ export interface Diff {
 
 interface BlockBase {
   id: string;
+  /** C2: where the element stands, in CELLS (grid.ts's units). Every block of
+   * every document the store has laid out carries one: `parseDoc` fills what a
+   * v1 document never had and every door into the document places what it
+   * lands. Optional in the TYPE and not in the fact, because a hand-built
+   * fixture and an A3 document are both written without one and neither is
+   * broken; `laidOut` is the single place that answers for a block that has
+   * none, so no caller invents a second fallback (DESIGN rule 14) */
+  cell?: Cell;
+  /** C2: the height follows the content and no hand has overridden it. A note
+   * is born with it (its own words set its height); the first hand resize
+   * clears it and the element keeps the size it was given */
+  autoH?: boolean;
   /** the canvas block this exchange was asked from (A3 item 4), so the reply
    * lands under the block it answered. Session memory made durable: the id
    * rides the document, and a block that is gone simply resolves to nothing */
@@ -179,7 +223,16 @@ export interface NoteBlock extends BlockBase {
 export type Block = ResultBlock | NoteBlock;
 
 export interface CanvasDoc {
+  /** absent = v1, the ordered list A3 shipped and `migrateV1` reads as rows of
+   * cells. 2 = the grid. A v1 document is never BROKEN: it parses, it migrates,
+   * and it is not written back until the user's own first change */
+  v?: 2;
   blocks: Block[];
+  /** ADVISORY: the column count this layout was last laid out at, so `outline`
+   * can tell the model how wide the page is when no tab is measuring and a
+   * block that lands headless still lands somewhere sensible. Nothing reads it
+   * to refuse anything (LESSONS 5: cached metadata informs, never refuses) */
+  lastColumns?: number;
 }
 
 /** a canvas in the list: everything but its document */
@@ -267,24 +320,35 @@ export function columnKinds(
 /** a label draws a line instead of bars when EVERY one of them is a date */
 const DATE_LABEL = /^\d{4}-\d{2}(-\d{2})?([T ]|$)/;
 
+/** what a result CARRIES, on a document that may not carry it: `doc_json` is
+ * opaque, a hand edit or a truncated write can drop an array, and a block a
+ * later version writes (C2b's drawing) has neither. Empty is the honest
+ * reading and it gives the block a face and a size; a throw here took the
+ * whole connection's canvas list down with it (LESSONS 5) */
+const rowsOf = (block: Block): (string | null)[][] =>
+  block.kind === "result" && Array.isArray(block.rows) ? block.rows : [];
+const columnsOfBlock = (block: Block): string[] =>
+  block.kind === "result" && Array.isArray(block.columns) ? block.columns : [];
+
 /** the chart the block's rows can carry, or null when there is none: over the
  * row cap, over three numeric columns, with no label column or with two, the
  * face does not exist. Never a message in its place. */
 export function chartOf(block: Block): ChartSpec | null {
   if (block.kind !== "result") return null;
-  const rows = block.rows;
+  const rows = rowsOf(block);
+  const cols = columnsOfBlock(block);
   if (rows.length === 0 || rows.length > CHART_ROW_CAP) return null;
-  const { labels, numbers } = columnKinds(block.columns, rows);
+  const { labels, numbers } = columnKinds(cols, rows);
   if (labels.length !== 1) return null;
   if (numbers.length < 1 || numbers.length > CHART_MAX_SERIES) return null;
   const li = labels[0];
   const text = rows.map((r) => r[li] ?? "");
   return {
     kind: text.every((t) => DATE_LABEL.test(t)) ? "line" : "bars",
-    label: block.columns[li],
+    label: cols[li],
     labels: text,
     series: numbers.map((ci) => ({
-      name: block.columns[ci],
+      name: cols[ci],
       values: rows.map((r) => Number(r[ci] ?? 0)),
     })),
   };
@@ -298,12 +362,13 @@ export function facesOf(block: Block): BlockFace[] {
   const faces: BlockFace[] = [];
   // one place, three tenants: a comparison holds it while it stands, a
   // one-row statement holds it as its figures, and a grid holds it otherwise
+  const rows = rowsOf(block);
   if (block.diff) faces.push("diff");
   // one row of five or more columns is a grid, not a figure row: ScalarResult
   // draws at most SCALAR_MAX_COLS pairs, so offering `values` past that would
   // name a face the run cannot stand on (DESIGN rule 11)
-  else if (block.rows.length === 1 && block.columns.length <= SCALAR_MAX_COLS) faces.push("values");
-  else if (block.rows.length > 0) faces.push("table");
+  else if (rows.length === 1 && columnsOfBlock(block).length <= SCALAR_MAX_COLS) faces.push("values");
+  else if (rows.length > 0) faces.push("table");
   if (chartOf(block)) faces.push("chart");
   if (block.sql) faces.push("sql");
   return faces.length > 0 ? faces : ["table"];
@@ -336,6 +401,243 @@ export function statusOf(block: Block): StatusLine | null {
     assumed,
   };
 }
+
+// ---- the layout (C2) ------------------------------------------------------
+//
+// The engine holds the geometry and the tables (grid.ts: the spans, the
+// minimums, the formulas); this half holds the READING of a block, which is
+// the store's own and nowhere else's: which slot a block occupies and what its
+// content measures. So a default span is one fact in one place, asked for by
+// the model's door and by the surface alike.
+
+/** the average advance of `--text-md`, the one number a line count needs. The
+ * estimate is the DOCUMENT's and not the DOM's: the store knows the markdown,
+ * the harness pins the number, and a height computed on one machine is the
+ * height on every other (the engine turns the lines into cells) */
+const NOTE_ADVANCE = 6.8;
+
+/** the slot a block occupies in the span tables: a note is a note, a result is
+ * the face it STANDS on, and `drawing` is the key C2b fills. The face it
+ * stands on and the face it stores are not always the same name: a one-row
+ * result filed under `table` renders its figures, and a span read from the
+ * stored name would open it four rows tall with its pairs alone in the box.
+ * `facesOf` is the same list the surface picks from, so the size a block opens
+ * at and the face it opens on are read from one fact (LESSONS 13) */
+export function spanKeyOf(block: Block): SpanKey {
+  if (block.kind === "note") return "note";
+  // the one door a kind this build does not draw comes through: C2b's sheet,
+  // or a document written by a later version. It gets a row in the tables
+  // rather than falling out of them (`facesOf` answers [] for it, and the
+  // undefined key that followed read `DEFAULT_SPAN[undefined].w`)
+  const kind: string = block.kind;
+  if (kind !== "result") return "drawing";
+  const faces = facesOf(block);
+  return faces.includes(block.face) ? block.face : faces[0];
+}
+
+/** how many lines a note's markdown renders to at `w` cells of the BASE cell */
+function noteLines(text: string, w: number): number {
+  const per = Math.max(1, Math.floor(basePx(w) / NOTE_ADVANCE));
+  let lines = 0;
+  for (const p of text.split("\n")) lines += Math.max(1, Math.ceil(p.length / per));
+  return Math.max(1, lines);
+}
+
+/** what a block knows about its own content when it asks for a size: the rows
+ * a table holds, the bars a chart draws, the cells a figure row takes (one a
+ * pair, two past eight glyphs), the lines a note renders to. `width` is the
+ * span the note is being measured AT, since the same words are fewer lines
+ * across six cells than across three; it defaults to the one it stands on */
+export function contentSizeOf(block: Block, width?: number): ContentSize {
+  if (block.kind === "note")
+    return { lines: noteLines(block.text ?? "", width ?? block.cell?.w ?? DEFAULT_SPAN.note.w) };
+  const key = spanKeyOf(block);
+  if (key === "values") {
+    const row = rowsOf(block)[0] ?? [];
+    return { cells: valueCells(row.map(figureText)) };
+  }
+  if (key === "chart") {
+    const spec = chartOf(block);
+    return spec?.kind === "bars" ? { bars: spec.labels.length } : {};
+  }
+  const w = width ?? block.cell?.w ?? DEFAULT_SPAN[key].w;
+  const diffRows = block.diff && Array.isArray(block.diff.rows) ? block.diff.rows.length : null;
+  return {
+    rows: diffRows ?? rowsOf(block).length,
+    // the sentence the model wrote above the grid wraps at the block's own
+    // width, the same measure a note's words take
+    lines: block.prose ? noteLines(block.prose, w) : 0,
+  };
+}
+
+/** the size this block opens at, its content read at the width it will stand at */
+export const defaultSpanFor = (block: Block, width?: number): Span =>
+  defaultSpan(spanKeyOf(block), contentSizeOf(block, width));
+
+/** the floor this block stands on: no resize, by hand or by key, goes under it */
+export const minSpanFor = (block: Block): Span => minSpan(spanKeyOf(block), contentSizeOf(block));
+
+/** the span a block opens at on a page this wide: never wider than the canvas
+ * is, and never under its own floor. The engine clamps too; doing it here is
+ * what lets the document say what it asked for (the model's reply) */
+function openingSpan(block: Block, columns: number, width?: number): Span {
+  const span = defaultSpanFor(block, width);
+  const min = minSpanFor(block);
+  return {
+    w: Math.min(Math.max(span.w, min.w), Math.max(1, columns)),
+    h: Math.max(span.h, min.h),
+  };
+}
+
+const itemsOf = (blocks: readonly Block[]): GridItem[] =>
+  blocks.filter((b) => b.cell).map((b) => ({ id: b.id, cell: b.cell as Cell }));
+
+const sameCell = (a: Cell, b: Cell): boolean => a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+
+/** a rect the document can stand on: whole cells, on the page, at least 1 × 1
+ * and never past the span table's own ceiling. A rect that fails any of these
+ * loses its cell and is placed like any other block; carrying it instead put a
+ * height of 1e9 into the engine, which walks its occupancy a row at a time */
+function validCell(cell: Cell | undefined, columns: number): Cell | null {
+  if (!cell) return null;
+  const { x, y, w, h } = cell;
+  if (![x, y, w, h].every((n) => Number.isInteger(n))) return null;
+  if (x < 0 || y < 0 || w < 1 || h < 1 || h > SPAN_MAX.h || x + w > columns) return null;
+  return { x, y, w, h };
+}
+
+/** A3's ordered list as rows of cells: every block full width at first open
+ * (capped at six cells, just past the note's own 680 measure), in its stored
+ * order, with its kind's height. Nothing is lost, because the reading order is
+ * the order and reading order is what compaction preserves. Not persisted: a
+ * document opened and not touched is a document unchanged */
+export function migrateV1(blocks: readonly Block[], columns: number): Block[] {
+  const w = Math.max(1, Math.min(columns, MIGRATE_W_MAX));
+  let y = 0;
+  return blocks
+    .filter((b) => b && typeof b === "object")
+    .map((b) => {
+      // the WIDTH is the page's, not the kind's: every block had the whole
+      // column in A3 and keeps it here. Only the height is read from the block
+      const cell = { x: 0, y, w, h: openingSpan(b, w, w).h };
+      y += cell.h;
+      return { ...b, cell, ...(b.kind === "note" ? { autoH: true } : null) };
+    });
+}
+
+/** the page with its holes closed: what stood under a block that is gone
+ * floats up. A hole BESIDE an element is the user's own placement and stands;
+ * a hole ABOVE one is a gap nothing put there (canvas-grid 4.5) */
+function compacted(blocks: readonly Block[], columns: number): Block[] {
+  const cells = new Map(compact(itemsOf(blocks), columns).map((i) => [i.id, i.cell]));
+  return blocks.map((b) => {
+    const cell = cells.get(b.id);
+    return cell && b.cell && !sameCell(cell, b.cell) ? { ...b, cell } : b;
+  });
+}
+
+/** every block with a rect it can be drawn at, and the ONE place that answers
+ * for a block without one: a whole document with no geometry is A3's list and
+ * migrates; a straggler beside blocks that have theirs is placed where it
+ * fits. A document already laid out comes back untouched, so this is free to
+ * stand at every door */
+export function laidOut(blocks: readonly Block[], columns: number): Block[] {
+  if (blocks.every((b) => b.cell)) return blocks.slice();
+  if (blocks.every((b) => !b.cell)) return migrateV1(blocks, columns);
+  const items = itemsOf(blocks);
+  return blocks.map((b) => {
+    if (b.cell) return b;
+    const cell = place(items, openingSpan(b, columns), columns);
+    items.push({ id: b.id, cell });
+    return { ...b, cell };
+  });
+}
+
+/** how wide the page this document was laid out for is: its own record first
+ * (`lastColumns`, written by whatever laid it out), then the layout it
+ * actually holds, then the fallback. Advisory all the way down: it decides
+ * where a headless write lands and what the outline says, never whether an
+ * operation is allowed (LESSONS 5) */
+function columnsOfDoc(doc: CanvasDoc | undefined): number {
+  if (!doc) return COLUMNS_FALLBACK;
+  if (doc.lastColumns && doc.lastColumns > 0) return Math.min(COLUMNS_MAX, doc.lastColumns);
+  // capped at the widest grid there is, because `validCell`'s own page test is
+  // read from this number: uncapped, the widest block in a document decides
+  // what fits on the page and can never fail (a w of 1e9 answering 1e9 columns)
+  return Math.min(COLUMNS_MAX, Math.max(rightEdgeOf(doc.blocks), COLUMNS_FALLBACK));
+}
+
+/** how wide the layout a document HOLDS is: the furthest right edge any block
+ * claims. What a narrowing is measured against, since the count a document
+ * last RENDERED at is whatever window was open and re-flowing a layout against
+ * a width it never stood at loses the placement the user made (AGENT-UX 16q) */
+function rightEdgeOf(blocks: readonly Block[]): number {
+  let right = 0;
+  for (const b of blocks) {
+    // `doc_json` is opaque: this runs before anything has vetted the array
+    const edge = b?.cell ? b.cell.x + b.cell.w : 0;
+    if (Number.isFinite(edge)) right = Math.max(right, edge);
+  }
+  return right;
+}
+
+// ---- the document on the wire (LESSONS 1: one pair, one test) --------------
+
+/** the document as appdb holds it. Always v2, and always complete: a block
+ * that never met a surface is laid out on the way out, so what we emit is what
+ * we parse */
+export function writeDoc(doc: CanvasDoc): string {
+  const columns = columnsOfDoc(doc);
+  const out: CanvasDoc = {
+    ...doc,
+    v: 2,
+    blocks: laidOut(doc.blocks, columns),
+  };
+  return JSON.stringify(out);
+}
+
+/** the document, read. `null` is BROKEN and nothing else: unparseable JSON or
+ * no blocks array, exactly the two conditions A3 refused to write over. A v1
+ * document is not one of them — it migrates (§7), and a migration mistaken for
+ * a break would freeze every pre-C2 canvas for good */
+export function readDoc(
+  json: string,
+  columns = COLUMNS_FALLBACK,
+): { doc: CanvasDoc; migrated: boolean } | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  const doc = raw as CanvasDoc | null;
+  if (!doc || typeof doc !== "object" || !Array.isArray(doc.blocks)) return null;
+  if (doc.v !== 2) return { doc: { ...doc, v: 2, blocks: migrateV1(doc.blocks, columns) }, migrated: true };
+  // a rect appdb could not have come by honestly (a hand edit, a truncated
+  // write, an overlap) loses its cell and is placed; the rest stand as stored
+  const wide = columnsOfDoc(doc);
+  const items: GridItem[] = [];
+  const seen = new Set<string>();
+  const blocks: Block[] = [];
+  for (const b of doc.blocks) {
+    // two blocks under one id collapse onto one cell in the engine (it keys
+    // its answer by id) and onto one React key on the surface, so the second
+    // one never stands at all: the duplicate is dropped at the door instead
+    if (!b || typeof b !== "object" || seen.has(b.id)) continue;
+    seen.add(b.id);
+    const cell = validCell(b.cell, wide);
+    if (!cell || items.some((i) => overlaps(i.cell, cell))) {
+      blocks.push({ ...b, cell: undefined });
+      continue;
+    }
+    items.push({ id: b.id, cell });
+    blocks.push(b);
+  }
+  return { doc: { ...doc, blocks: laidOut(blocks, wide) }, migrated: false };
+}
+
+export const parseDoc = (json: string, columns = COLUMNS_FALLBACK): CanvasDoc | null =>
+  readDoc(json, columns)?.doc ?? null;
 
 // ---- the diff -------------------------------------------------------------
 
@@ -439,7 +741,7 @@ export type AddOutcome =
  * second formatter on the tool's side would be one string in two places
  * (DESIGN rule 14). The id and `wroteBy` are the tool's: it minted the id and
  * it knows which exchange it is running for. */
-export type ModelBlockInput =
+export type ModelBlockInput = (
   | { id: string; kind: "note"; text: string; question?: string; wroteBy: string }
   | {
       id: string;
@@ -451,7 +753,12 @@ export type ModelBlockInput =
       note?: string;
       question?: string;
       wroteBy: string;
-    };
+    }
+) &
+  // C2: where the model asked for it, already clamped to the column count by
+  // the tool (`clampPlace`). Absent is the common case and means `place()`:
+  // the canvas finds the first free rectangle in reading order
+  ModelPlace;
 
 export type CompareOutcome = { ok: true } | { ok: false; message: string };
 
@@ -521,8 +828,40 @@ interface CanvasState {
    * preview is the commit) */
   updateNote: (canvasId: string, blockId: string, text: string) => void;
   remove: (canvasId: string, blockId: string) => void;
-  /** move a block one place up (-1) or down (+1); a no-op at either end */
+  /** move a block one ROW up (-1) or down (+1), the menu's own act on a grid:
+   * the same `moveTo` a drag ends in, so the two routes share one algorithm
+   * (the rows below make way and the layout floats up) */
   move: (canvasId: string, blockId: string, delta: 1 | -1) => void;
+  /** C2, a gesture's END: the element is pinned where it was dropped, what it
+   * overlaps is pushed down, the layout floats up. ONE setDoc, never one per
+   * pointer move: a block lands whole, and the 400 ms debounce is written for
+   * exactly that */
+  moveTo: (canvasId: string, blockId: string, to: { x: number; y: number }, columns: number) => void;
+  /** C2: the same commit with a new span, held at the kind's own floor. A hand
+   * resize clears `autoH` (the height is the user's now); `auto` is the
+   * surface's own measure of a note and keeps it */
+  resizeTo: (
+    canvasId: string,
+    blockId: string,
+    span: Span,
+    columns: number,
+    opts?: { auto?: boolean },
+  ) => void;
+  /** C2: the page is this many columns wide now. Wider than the layout was
+   * stored at, the stored layout stands (empty columns at the right until
+   * something is moved there); NARROWER, a derived layout is computed in
+   * reading order, is never written to appdb, and the stored one comes back
+   * whole when the window does. The user's first change at a derived count
+   * commits it, which is the only way it ever becomes the document */
+  reflowTo: (canvasId: string, columns: number) => void;
+  /** C2: record the count the page stands at, for the model's outline. In
+   * memory: a read is not an edit */
+  setColumns: (canvasId: string, columns: number) => void;
+  /** C2: how wide this canvas is laid out, for a door with no surface to ask
+   * (the model's write, a block added from Ask while the tab is closed). Its
+   * own record first, then the layout it actually holds, then the fallback:
+   * advisory all the way down, and a refusal nowhere (LESSONS 5) */
+  columnsOf: (canvasId: string) => number;
   setFace: (canvasId: string, blockId: string, face: BlockFace) => void;
   /** the one flip glyph: the next face in the cycle this block actually has */
   flip: (canvasId: string, blockId: string) => void;
@@ -598,6 +937,17 @@ const titleOf = (canvasId: string): string =>
 const nameOf = (profileId: string): string =>
   useConnections.getState().profiles.find((p) => p.id === profileId)?.name ?? profileId;
 
+/** `readDoc`, with the one promise its own doc comment makes: null is broken
+ * and nothing else, a throw included */
+function readSafely(json: string, canvasId: string): { doc: CanvasDoc; migrated: boolean } | null {
+  try {
+    return readDoc(json);
+  } catch (e) {
+    console.error("canvas doc did not read", canvasId, e);
+    return null;
+  }
+}
+
 function firstLine(e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e);
   return raw.split("\n")[0].trim() || "the comparison failed";
@@ -623,24 +973,33 @@ export const useCanvas = create<CanvasState>((set, get) => ({
       const metas: CanvasMeta[] = [];
       const docs: Record<string, CanvasDoc> = {};
       for (const r of rows) {
-        let doc: CanvasDoc | null = null;
-        try {
-          const parsed = JSON.parse(r.doc_json) as CanvasDoc;
-          if (parsed && Array.isArray(parsed.blocks)) doc = parsed;
-        } catch {
-          doc = null;
-        }
+        // the read is the one thing here that touches a stranger's JSON, so it
+        // is the one thing wrapped: a block the reader cannot make sense of
+        // marks ITS canvas broken (the mechanism two lines down), where a
+        // throw took the profile's whole list, the `broken` flag and the
+        // `loaded` mark with it and left load retrying for ever
+        const read = readSafely(r.doc_json, r.id);
         // a canvas we could not read is listed and never written to: an
-        // overwrite would turn an unreadable document into a deleted one
+        // overwrite would turn an unreadable document into a deleted one. A v1
+        // document is NOT one of those: it read perfectly, it is A3's list, and
+        // it migrates (a migration mistaken for a break freezes every pre-C2
+        // canvas for good)
         metas.push({
           id: r.id,
           profileId: r.profile_id,
           title: r.title,
           updatedAt: r.updated_at,
-          ...(doc ? null : { broken: true }),
+          ...(read ? null : { broken: true }),
         });
-        if (doc) docs[r.id] = doc;
-        else console.error("canvas doc did not parse", r.id);
+        if (!read) {
+          console.error("canvas doc did not parse", r.id);
+          continue;
+        }
+        // the migration stands in memory until the user's own first change:
+        // nothing here schedules a write, and `save` only ever writes what a
+        // change has scheduled
+        docs[r.id] = read.doc;
+        native.delete(r.id);
       }
       set((s) => ({
         canvases: { ...s.canvases, [profileId]: metas },
@@ -675,7 +1034,7 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     let name = title ?? DEFAULT_CANVAS_TITLE;
     if (!title) for (let n = 2; taken.has(name); n++) name = `${DEFAULT_CANVAS_TITLE} ${n}`;
     const id = crypto.randomUUID();
-    const doc: CanvasDoc = { blocks: [] };
+    const doc: CanvasDoc = { v: 2, blocks: [] };
     set((s) => ({
       canvases: {
         ...s.canvases,
@@ -701,7 +1060,7 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     const at = fromDoc?.blocks.findIndex((b) => b.id === from!.blockId) ?? -1;
     if (from && fromDoc && at >= 0) {
       block.askedFrom = from.blockId;
-      insert(from.canvasId, block, at + 1);
+      insert(from.canvasId, block, at + 1, fromDoc.blocks[at].cell);
       // the canvas the question came from may have been closed since; the
       // reply still belongs under its block, so the tab comes back with it
       useTabs.getState().openCanvasTab(from.canvasId, titleOf(from.canvasId), false);
@@ -728,12 +1087,40 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     // through another call's
     const doc = get().docs[canvasId];
     if (!doc || blocks.length === 0) return [];
-    const kept = cleared(doc.blocks, blocks[0].wroteBy);
+    const columns = columnsOfDoc(doc);
+    const kept = laidOut(cleared(doc.blocks, blocks[0].wroteBy), columns);
     const at = after ? kept.findIndex((b) => b.id === after) : -1;
     const made = blocks.map(blockFromModel);
-    const put = at >= 0 ? at + 1 : kept.length;
-    setDoc(canvasId, { blocks: [...kept.slice(0, put), ...made, ...kept.slice(put)] });
-    return made.map((b) => b.id);
+    // the model's OWN places go down first, in the order it asked for them, so
+    // a block it placed never loses its cells to one it left to the canvas
+    const asked = made.map((_, i) => i).filter((i) => blocks[i].at);
+    const free = made.map((_, i) => i).filter((i) => !blocks[i].at);
+    let items = itemsOf(kept);
+    for (const i of [...asked, ...free]) {
+      const id = made[i].id;
+      const span = askedSpan(made[i], blocks[i].span, columns);
+      const ask = blocks[i].at;
+      if (!ask) {
+        items = [...items, { id, cell: place(items, span, columns) }];
+        continue;
+      }
+      // a cell it named is honoured whether or not something stands there: what
+      // does is pushed down, so a taken place is a layout and never a refusal
+      const cell = cornerAt(ask, span, columns);
+      items = pinAt([...items, { id, cell }], id, cell, columns);
+    }
+    const cells = new Map(items.map((i) => [i.id, i.cell]));
+    const landed = made.map((b) => ({ ...b, cell: cells.get(b.id) }));
+    const held = kept.map((b) => {
+      const cell = cells.get(b.id);
+      return cell && b.cell && !sameCell(cell, b.cell) ? { ...b, cell } : b;
+    });
+    const put = at >= 0 ? at + 1 : held.length;
+    setDoc(canvasId, {
+      blocks: [...held.slice(0, put), ...landed, ...held.slice(put)],
+      lastColumns: columns,
+    });
+    return landed.map((b) => b.id);
   },
 
   replaceBlock: (canvasId, blockId, block) => {
@@ -749,11 +1136,29 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     }
     const old = kept[at];
     // the new block takes the old one's PLACE and its provenance link, so a
-    // reply still stands under the block it answered (A3 item 4)
+    // reply still stands under the block it answered (A3 item 4). A face never
+    // changes a span and neither does a replacement: only an `at` or a `span`
+    // the model wrote moves it, and the engine resolves what it lands on
     const made = blockFromModel(block);
+    const columns = columnsOfDoc(doc);
     const blocks = [...kept];
-    blocks[at] = old.askedFrom ? { ...made, askedFrom: old.askedFrom } : made;
-    setDoc(canvasId, { blocks });
+    blocks[at] = {
+      ...made,
+      cell: old.cell,
+      ...(old.askedFrom ? { askedFrom: old.askedFrom } : null),
+    };
+    const laid = laidOut(blocks, columns);
+    const held = laid[at].cell as Cell;
+    const span = block.span ? askedSpan(made, block.span, columns) : { w: held.w, h: held.h };
+    const to = block.at ? cornerAt(block.at, span, columns) : { ...held, ...span };
+    const cells = new Map(pinAt(itemsOf(laid), made.id, to, columns).map((i) => [i.id, i.cell]));
+    setDoc(canvasId, {
+      blocks: laid.map((b) => {
+        const cell = cells.get(b.id);
+        return cell && b.cell && !sameCell(cell, b.cell) ? { ...b, cell } : b;
+      }),
+      lastColumns: columns,
+    });
     // the block that stood here is gone: its name goes back to plain text and
     // the exchange that wrote it stops counting it
     useAsk.getState().forgetBlock(old.id);
@@ -770,6 +1175,10 @@ export const useCanvas = create<CanvasState>((set, get) => ({
       // document holds, never what it sent (LESSONS 13)
       line: b.kind === "result" ? b.question || b.title || "" : b.text.split("\n")[0],
       modelWritten: b.wroteBy !== undefined,
+      // C2: the cell the block actually stands on, read straight off the
+      // document. A canvas no surface has laid out yet has none, and the
+      // outline then says nothing about geometry rather than guessing
+      ...(b.cell ? { cell: b.cell } : null),
       ...(b.kind === "result"
         ? { rows: b.rows.length, columns: b.columns, face: faceForModel(b) }
         : null),
@@ -785,7 +1194,14 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     for (const [canvasId, doc] of Object.entries(get().docs)) {
       const gone = doc.blocks.filter((b) => b.wroteBy !== undefined && doomed.has(b.wroteBy));
       if (gone.length === 0) continue;
-      setDoc(canvasId, { blocks: doc.blocks.filter((b) => !gone.includes(b)) });
+      // by ID, never by reference: laying the page out first hands back blocks
+      // that are new objects, and a cut that compared them would remove nothing
+      const cut = new Set(gone.map((b) => b.id));
+      const columns = columnsOfDoc(doc);
+      setDoc(canvasId, {
+        blocks: compacted(laidOut(doc.blocks, columns).filter((b) => !cut.has(b.id)), columns),
+        lastColumns: columns,
+      });
       for (const b of gone) useAsk.getState().forgetBlock(b.id);
     }
   },
@@ -804,7 +1220,8 @@ export const useCanvas = create<CanvasState>((set, get) => ({
   clearOnNextWrite: (exchangeId) => void pendingClear.add(exchangeId),
 
   addNote: (canvasId, text, at) => {
-    const block: NoteBlock = { id: crypto.randomUUID(), kind: "note", text };
+    // `autoH`: a note's height is its own words' until a hand says otherwise
+    const block: NoteBlock = { id: crypto.randomUUID(), kind: "note", text, autoH: true };
     insert(canvasId, block, at ?? get().docs[canvasId]?.blocks.length ?? 0);
     return block.id;
   },
@@ -818,7 +1235,11 @@ export const useCanvas = create<CanvasState>((set, get) => ({
   remove: (canvasId, blockId) => {
     const doc = get().docs[canvasId];
     if (!doc || !doc.blocks.some((b) => b.id === blockId)) return;
-    setDoc(canvasId, { blocks: doc.blocks.filter((b) => b.id !== blockId) });
+    const columns = columnsOfDoc(doc);
+    setDoc(canvasId, {
+      blocks: compacted(laidOut(doc.blocks, columns).filter((b) => b.id !== blockId), columns),
+      lastColumns: columns,
+    });
     // a block that is gone stops resolving: its name in an older bubble goes
     // back to plain text and the question still runs (LESSONS 5)
     useAsk.getState().forgetBlock(blockId);
@@ -831,15 +1252,85 @@ export const useCanvas = create<CanvasState>((set, get) => ({
 
   move: (canvasId, blockId, delta) => {
     const doc = get().docs[canvasId];
-    if (!doc) return;
-    const i = doc.blocks.findIndex((b) => b.id === blockId);
-    const to = i + delta;
-    if (i < 0 || to < 0 || to >= doc.blocks.length) return;
-    const blocks = [...doc.blocks];
-    const [moved] = blocks.splice(i, 1);
-    blocks.splice(to, 0, moved);
-    setDoc(canvasId, { blocks });
+    const columns = columnsOfDoc(doc);
+    const block = laidOut(doc?.blocks ?? [], columns).find((b) => b.id === blockId);
+    const cell = block?.cell;
+    if (!cell) return;
+    const y = cell.y + delta;
+    if (y < 0) return;
+    get().moveTo(canvasId, blockId, { x: cell.x, y }, columns);
   },
+
+  moveTo: (canvasId, blockId, to, columns) => {
+    commitLayout(canvasId, columns, (items) => moveCells(items, blockId, to, columns), { user: true });
+  },
+
+  resizeTo: (canvasId, blockId, span, columns, opts) => {
+    const doc = get().docs[canvasId];
+    const block = doc?.blocks.find((b) => b.id === blockId);
+    if (!block) return;
+    const min = minSpanFor(block);
+    const want: Span = {
+      w: Math.min(Math.max(span.w, Math.min(min.w, columns)), Math.max(1, columns)),
+      h: Math.max(span.h, min.h),
+    };
+    commitLayout(canvasId, columns, (items) => resizeCells(items, blockId, want, columns), {
+      // the surface measuring a note is the DOCUMENT following its own content,
+      // not a hand on the corner: it keeps `autoH` and it does not commit a
+      // migration or a derived layout on its own (§2.3, §4.6)
+      user: !opts?.auto,
+      clearAutoH: opts?.auto ? undefined : blockId,
+    });
+  },
+
+  reflowTo: (canvasId, columns) => {
+    const doc = get().docs[canvasId];
+    if (!doc || !Number.isFinite(columns) || columns < 1) return;
+    const held = native.get(canvasId);
+    // what a narrowing is measured against is the LAYOUT's own right edge, not
+    // the count the document last rendered at: `lastColumns` is raised by every
+    // wider window that opens it, so reading it re-flowed a 7-column layout at
+    // 7 the moment the reader had once seen it at 10 (AGENT-UX 16q)
+    let from = held;
+    if (!from) {
+      const laid = laidOut(doc.blocks, columnsOfDoc(doc));
+      from = { columns: Math.max(1, rightEdgeOf(laid)), blocks: laid };
+    }
+    if (columns >= from.columns) {
+      // the window came back: the stored layout returns intact, and a document
+      // that was never narrowed simply records the count
+      native.delete(canvasId);
+      if (!held) return get().setColumns(canvasId, columns);
+      return setDoc(canvasId, { blocks: from.blocks, lastColumns: columns }, { persist: false });
+    }
+    if (!held) native.set(canvasId, from);
+    const flowed = new Map(reflowCells(itemsOf(from.blocks), columns).map((i) => [i.id, i.cell]));
+    // the derived layout is compared against the page as it STANDS, and a
+    // block the flow lands where it already is keeps its object: a window drag
+    // inside one column band is two custom-property writes and no React render
+    // at a derived width as well as at a stored one (spec 6.3, AGENT-UX 16r)
+    const standing = new Map(doc.blocks.map((b) => [b.id, b]));
+    const blocks = from.blocks.map((b) => {
+      const cell = flowed.get(b.id);
+      if (!cell || !b.cell || sameCell(cell, b.cell)) return b;
+      const now = standing.get(b.id);
+      return now?.cell && sameCell(now.cell, cell) ? now : { ...b, cell };
+    });
+    const settled =
+      doc.lastColumns === columns &&
+      blocks.length === doc.blocks.length &&
+      blocks.every((b, i) => b === doc.blocks[i]);
+    if (settled) return;
+    setDoc(canvasId, { blocks, lastColumns: columns }, { persist: false });
+  },
+
+  setColumns: (canvasId, columns) => {
+    const doc = get().docs[canvasId];
+    if (!doc || !Number.isFinite(columns) || columns < 1 || doc.lastColumns === columns) return;
+    setDoc(canvasId, { blocks: doc.blocks, lastColumns: columns }, { persist: false });
+  },
+
+  columnsOf: (canvasId) => columnsOfDoc(get().docs[canvasId]),
 
   setFace: (canvasId, blockId, face) => {
     patch(canvasId, blockId, (b) =>
@@ -977,6 +1468,7 @@ export const useCanvas = create<CanvasState>((set, get) => ({
       ),
     }));
     clearTimer(canvasId);
+    native.delete(canvasId);
     for (const b of doomed) useAsk.getState().forgetBlock(b.id);
     useAgent.getState().forgetCanvasBlocks(doomed.map((b) => b.id));
     try {
@@ -1008,16 +1500,111 @@ function mapMeta(
   );
 }
 
-function setDoc(canvasId: string, doc: CanvasDoc): void {
-  useCanvas.setState((s) => ({ docs: { ...s.docs, [canvasId]: doc } }));
-  persist(canvasId);
+/** the STORED layout, kept aside while a narrower window renders a derived one
+ * (canvas-grid 4.6): a derived layout is never written to appdb, and the layout
+ * the user made returns whole when the window does. A change at the derived
+ * count commits it and the entry goes, which is what makes an edit an edit. */
+const native = new Map<string, { columns: number; blocks: Block[] }>();
+
+function setDoc(
+  canvasId: string,
+  doc: Partial<CanvasDoc> & { blocks: Block[] },
+  opts?: { persist?: boolean },
+): void {
+  const write = opts?.persist !== false;
+  // a write is a change, and a change is the document: a derived flow and the
+  // migration's rows both stop being provisional here
+  if (write) native.delete(canvasId);
+  useCanvas.setState((s) => ({
+    docs: { ...s.docs, [canvasId]: { ...s.docs[canvasId], ...doc, v: 2 } },
+  }));
+  if (write) persist(canvasId);
 }
 
-function insert(canvasId: string, block: Block, at: number): void {
-  const doc = useCanvas.getState().docs[canvasId] ?? { blocks: [] };
-  const blocks = [...doc.blocks];
-  blocks.splice(Math.max(0, Math.min(at, blocks.length)), 0, block);
-  setDoc(canvasId, { blocks });
+/** one layout commit, whatever the gesture was: the engine decides, the
+ * document records, and appdb hears about it ONCE. Never per pointer move: a
+ * block lands whole, which is the sentence the 400 ms debounce is written for */
+function commitLayout(
+  canvasId: string,
+  columns: number,
+  run: (items: GridItem[]) => GridItem[],
+  opts: { user: boolean; clearAutoH?: string },
+): void {
+  const doc = useCanvas.getState().docs[canvasId];
+  if (!doc || !Number.isFinite(columns) || columns < 1) return;
+  const laid = laidOut(doc.blocks, columns);
+  const at = new Map(run(itemsOf(laid)).map((i) => [i.id, i.cell]));
+  let changed = laid.some((b, i) => b !== doc.blocks[i]);
+  const blocks = laid.map((b) => {
+    const cell = at.get(b.id) ?? b.cell;
+    const clear = opts.clearAutoH === b.id && b.autoH === true;
+    if (!cell) return b;
+    if (!clear && b.cell && sameCell(cell, b.cell)) return b;
+    changed = true;
+    // the height is the user's now, and the surface stops measuring for it
+    return clear ? { ...b, cell, autoH: undefined } : { ...b, cell };
+  });
+  if (!changed) return;
+  // a layout the DOCUMENT made for itself (a note measuring its own words, a
+  // narrower window) stands in memory and rides the next change out: opening a
+  // canvas must never look like editing one
+  setDoc(canvasId, { blocks, lastColumns: columns }, { persist: opts.user });
+}
+
+/** land one element on the cells it was given: pinned there, whatever it
+ * overlaps pushed down, the layout floated up. The drop's own rule, so a
+ * model's `at` and a hand's release resolve a collision the same way */
+function pinAt(items: readonly GridItem[], id: string, cell: Cell, columns: number): GridItem[] {
+  const others = items.filter((i) => i.id !== id);
+  return moveCells([...others, { id, cell }], id, { x: cell.x, y: cell.y }, columns);
+}
+
+/** a place for a block on a page this wide: the corner asked for, held inside
+ * the grid. `y` is never capped, because the canvas grows DOWN */
+const cornerAt = (at: { x: number; y: number }, span: Span, columns: number): Cell => ({
+  x: Math.min(Math.max(0, Math.floor(at.x) || 0), Math.max(0, columns - span.w)),
+  y: Math.max(0, Math.floor(at.y) || 0),
+  ...span,
+});
+
+/** the span the model asked for, as the canvas can hold it: never wider than
+ * the page, never under the kind's floor. Not a refusal - the statement was
+ * good and only the guess was wrong, and the tool says what it gave instead
+ * (canvas-grid-spec 2.6, `faceFor`'s own shape) */
+function askedSpan(block: Block, span: Span | undefined, columns: number): Span {
+  if (!span) return openingSpan(block, columns);
+  const min = minSpanFor(block);
+  const wide = Math.max(1, columns);
+  return {
+    w: Math.min(Math.max(Math.floor(span.w) || 1, Math.min(min.w, wide)), wide),
+    h: Math.max(Math.floor(span.h) || 1, min.h),
+  };
+}
+
+/** one block into a document, at `at` in the reading order and on the first
+ * free cells of the page. `under` is the block an answer was asked from: the
+ * reply lands directly beneath it and what stood there moves down, which is
+ * what "under the block it answered" means once the page is two-dimensional */
+function insert(canvasId: string, block: Block, at: number, under?: Cell): void {
+  const doc = useCanvas.getState().docs[canvasId];
+  const columns = columnsOfDoc(doc);
+  const standing = laidOut(doc?.blocks ?? [], columns);
+  const items = itemsOf(standing);
+  const span = openingSpan(block, columns);
+  const landed = { id: block.id, cell: place(items, span, columns) };
+  const all = under
+    ? pinAt([...items, landed], block.id, { x: under.x, y: under.y + under.h, ...span }, columns)
+    : [...items, landed];
+  const cells = new Map(all.map((i) => [i.id, i.cell]));
+  const blocks = standing.map((b) => {
+    const cell = cells.get(b.id);
+    return cell && b.cell && !sameCell(cell, b.cell) ? { ...b, cell } : b;
+  });
+  blocks.splice(Math.max(0, Math.min(at, blocks.length)), 0, {
+    ...block,
+    cell: cells.get(block.id) ?? landed.cell,
+  });
+  setDoc(canvasId, { blocks, lastColumns: columns });
 }
 
 function patch(canvasId: string, blockId: string, f: (b: Block) => Block): void {
@@ -1067,6 +1654,7 @@ function blockFromModel(b: ModelBlockInput): Block {
       id: b.id,
       kind: "note",
       text: b.text,
+      autoH: true,
       wroteBy: b.wroteBy,
       ...(b.question ? { question: b.question } : null),
     };
@@ -1099,7 +1687,10 @@ function blockOf(ex: Exchange): Block | null {
   const run = ex.answer?.run ?? null;
   const prose = ex.text || ex.answer?.text || "";
   const id = crypto.randomUUID();
-  if (!run) return prose.trim() === "" ? null : { id, kind: "note", text: prose, question: ex.question };
+  if (!run)
+    return prose.trim() === ""
+      ? null
+      : { id, kind: "note", text: prose, autoH: true, question: ex.question };
   // B3: the press keeps at most the document's own 200 rows and the status
   // line says `200 of 1,842 rows`, which is the `· showing 2,000` fragment
   // this replaces: one sentence, one place (capRun)
@@ -1150,7 +1741,7 @@ async function save(canvasId: string): Promise<void> {
       id: meta.id,
       profile_id: meta.profileId,
       title: meta.title,
-      doc_json: JSON.stringify(doc),
+      doc_json: writeDoc(doc),
     });
     if (useCanvas.getState().saveError) useCanvas.setState({ saveError: false });
   } catch (e) {

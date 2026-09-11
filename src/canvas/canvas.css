@@ -1,24 +1,32 @@
-/* The canvas (A3 items 2, 5 and 6): a tab of the main card holding an
-   ordered column of blocks. Two kinds, not five (DESIGN rule 15): a result
-   (the W7 block reused whole, its question the title, the model's sentence
-   above the faces, the assumptions folded into the status line) and a note.
+/* The canvas (A3 items 2, 5 and 6; C2a): a tab of the main card holding a
+   GRID of blocks. Two kinds, not five (DESIGN rule 15): a result (the W7
+   block reused whole, its question the title, the model's sentence above the
+   faces, the assumptions folded into the status line) and a note.
 
    Nothing frames a block. Freeform frames nothing, a hairline box per block
    is one chrome frame times n, and the hover cluster is the block's only
    chrome: 3 boxes at rest become 0, and the .rb keeps its own edge because a
-   grid needs one. Page padding 20, blocks 16 apart, the parts of a block 8
-   apart; a note's measure stops at 680 while its box spans the column
-   (growth feeds content, and a 1250px line is worse content, rule 13).
+   grid needs one. The parts of a block are 8 apart; a note's measure stops at
+   680 however many cells it spans (growth feeds content, and a 1250px line is
+   worse content, rule 13).
+
+   C2a moves the page inset from 20 to 16 and replaces three gaps with one.
+   The inset is the gutter's neighbour now and follows the gutter's own
+   arithmetic: 5 x 108 + 4 x 12 + 2 x 16 + 2 (the card's hairline) = 640, so
+   the 640 floor is five whole cells at the base and every default span is its
+   designed size exactly where rule 13 designs it. The 16 between blocks, the
+   24 above a titled one and the column's own gap become the grid's one
+   12 gutter (3 numbers to 1, grid.css).
 
    B3 finishes that rule at the faces (frames 3 → 1 on a four-block answer):
    only a face whose own content needs a boundary keeps the .rb edge, which is
    the TABLE (a grid's cells need an outer edge) and the SQL (the editor
    register is a panel inset). The chart and the values stand on the page,
    bars having their own shape and four figures over four names their own row.
-   And a block with a TITLE opens a section, 24 above it where the column's
-   own gap is 16, so the model's own titled results read as sections of one
-   document and its untitled note reads as the reading under the question
-   above it. */
+   A block with a TITLE opened a section, 24 above it where the column's own
+   gap was 16; on the grid a section is a PLACE, so the title line stands and
+   the extra 24 goes (the model's titled results read as sections because they
+   hold their own cells, C2a). */
 
 /* the whole surface is a place to write: the tail under the last block is at
    least 64px and takes the same click that the empty canvas does */
@@ -32,10 +40,10 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: var(--sp-5);
+  padding: var(--sp-4);
   display: flex;
   flex-direction: column;
-  gap: var(--sp-4);
+  gap: var(--sp-3);
   cursor: text;
 }
 .cv-scroll::after {
@@ -49,14 +57,6 @@
    shrinks under the blocks above it */
 .cv-item {
   flex-shrink: 0;
-}
-
-/* a titled block opens a section: 24 above it, where the column's own gap is
-   16. The marker rides the FLEX CHILD (the entrance wrapper of a note, the
-   block itself of a result), so one rule reads both kinds and the first block
-   of the page keeps the page's own 20 (DESIGN rule 4's ladder) */
-.cv-scroll > * + .titled {
-  margin-top: var(--sp-2);
 }
 
 /* a block: its own positioning box, so the cluster floats at ITS top-right
@@ -133,17 +133,24 @@
 }
 
 /* the values face: a one-row result's figures, each column a pair of the
-   value in the data register over its column name, the pairs in one row with
-   24 between them and wrapping only past four or under 480 (ScalarResult's
-   `row`). No inset of its own: the page's left edge is the first value's */
+   value in the data register over its column name. The pairs stand on the
+   PAGE's cells (C2a) - one column of the element's own span per pair, two for
+   a figure past eight glyphs, the gutter as the gap - so the width the store
+   measured the row at (grid.ts valueCells) and the row the reader sees are one
+   fact, and the third pair starts where the third cell does. A 96 minimum with
+   a 24 gap packed four pairs into 440px of a 606px element, with the cells 124
+   apart under them. No inset of its own: the page's left edge is the first
+   value's */
 .blk .rb-vals {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 var(--sp-6);
+  display: grid;
+  grid-template-columns: repeat(var(--w, 2), minmax(0, 1fr));
+  gap: 0 var(--gut, var(--sp-3));
 }
 .blk .rb-vals .ans-scalar {
   padding: var(--sp-1) 0;
-  min-width: 96px;
+}
+.blk .rb-vals .ans-scalar.w2 {
+  grid-column: span 2;
 }
 
 /* ---- the chart face (Chart.tsx) ------------------------------------------

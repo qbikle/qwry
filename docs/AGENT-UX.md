@@ -1838,3 +1838,385 @@ The composer beside the empty canvas carries the prefilled pill `@"Canvas
 the register that already announces where a question goes (`Ask about
 auth_new…`, §1). The pill announces and does not take the caret: the page
 has it.
+
+### 16o. The canvas becomes a grid (C2, 2026-09-11)
+
+The 1D list becomes a 2D layout: elements keep their `x, y` in cells rather
+than a single reading-order slot, and every default span, every gap and the
+page's own inset are recomputed against that grid. Picture: the "C1 · the
+grid" section of `~/projects/qwry-agent-lab/docs/ask-sketch-c1.html`
+(`c1-grid`, `c1-drag`, `c1-reflow`, `c1-empty` at 640, 960 and 1280; `c1-draw`
+is C2b's, below); where it and this section disagree, this section wins and
+the sketch gets redrawn, §16's own rule for every sketch it cites. This
+section AMENDS §16's own opening sentence, "an ordered list of blocks of two
+kinds, not five": the document is now blocks placed on a grid, still two
+kinds a person or the model can create, `result` and `note`, plus a third
+that joins the TYPE only this wave, `drawing` (§16p).
+
+**The cell.** The grid's container is `.cv-scroll`'s content box: the card's
+width, less its own 1px border on both sides, less the page's own inset on
+both sides, which moves from 20 to 16 (`canvas.css:35`, one number, 20 to
+16). At the three harness widths that closes at 606, 926 and 1246. Columns
+are `floor((content + 12) / 120)`: 5, 7 and 10. The cell's base width is
+**108, not the 112 the product research first proposed**: 112 reads 5
+columns at 640 only by measuring the card, not the scroller's real content
+box; subtract the card's 2px border from that same arithmetic and the floor
+drops to 4, one column short of where DESIGN rule 13 designs first. 108 is
+chosen backward from that floor: it is the largest base whose pitch (base +
+the 12 gutter, 120) still clears 606px into 5 columns, and it costs nothing
+rule 4 minds, 108 = 27 x 4, on the grid exactly as 112 was.
+
+A cell's rendered width stretches to fill whatever the column count leaves
+over, capped at 1.25 x 108 = 135; past the cap the leftover widens the
+GUTTER instead of a margin, so the grid closes flush on both edges at every
+width (one style write on the container, two custom properties, below,
+§16r). At the three named widths the raw cell never reaches that cap (111.6,
+122.0 and 113.8 at 640, 960 and 1280, 3 to 13 percent over base), so the cap
+guards a narrower window than this wave frames, not a rule its own fixtures
+exercise.
+
+The row unit is **fixed at 108**, the same number as the cell's base width,
+never the rendered column and never a second, smaller unit: a table row, a
+bar's own pitch, a line of prose and a values pair are all set by content
+that does not scale with the window, so a row that stretched would leave
+that content floating in dead space at 1280 and crowd it at 640 (the
+product research's own argument, unmoved by the number changing under it).
+A row unit of 56 (half the column, for a finer height ladder) was weighed
+and refused: two vertical units for one idea is a second unit this file
+never asked for, and 108 already lands every kind's default height inside a
+cell or two of where that finer ladder put it (§16p). The gutter is 12 on
+both axes, one number, retiring the three today's canvas carries (16 between
+blocks, 24 above a titled block, 8 within a block's own parts, `canvas.css:38,
+:58-60`): the 24-above-a-title rule retires with it, a titled block's own
+opening gap is the grid's one gutter like any other row boundary, since the
+block below it is compaction's own next row, not a special case. The part
+gap (8, within one block) is untouched, it was never a layout gap between
+blocks to begin with.
+
+§16n's caret line moves with the inset, from (20, 20) to (16, 16); its own
+rule (one caret, the page's own draft, never a block until words commit it)
+is otherwise unchanged.
+
+### 16p. Species and spans (C2, 2026-09-11)
+
+Kinds a person or the model can put on the grid stay **two**, `result` and
+`note`; a third joins the TYPE only, **`drawing`**: the discriminant enters
+the block union this wave so a later wave adds a renderer without widening
+a union every other file already switches on, but no component, no cluster
+membership and no default span exist for it here. Its whole law, the pen,
+the picker and the strokes, is C2b's (`canvas-grid-spec.md` §4). Every
+default below is computed against the BASE cell (108), never the rendered
+one, so a minimum never changes as the window resizes:
+
+| kind, face | min w x h | default w x h | note |
+|---|---|---|---|
+| note | 1x1 | 3x2 | prose still measures at most 680px regardless of the box's width (§16a item 2, unmoved); h from content, below |
+| result, values, one column (a metric) | 2x1 | 2x1 | the floor every result face shares, set by the cluster, next |
+| result, values, c columns | 2x1 | c x 1 | c = one cell per pair, two past 8 glyphs; pairs stand on cells, below |
+| result, chart | 2x2 | 4x3 | h from the row or label count, below; aspect from the span, below |
+| result, table | 2x2 | 6x4 | h from the row count, below; the one face that still scrolls inside its own box |
+| result, sql / diff | the element's own | the element's own | a face never changes the span, unchanged rule |
+
+A result's floor is 2x1 on every face, set by its own cluster, not by any
+figure: `Grip . Copy . Flip . Insert . Ask . More` is six icons at 148px
+(§16b, §16s), and one cell (108) cannot hold it. A chart or a table's own
+content raises that floor further (2x2, both), but the 2x1 number belongs
+to the cluster alone, and no cell base under 148 changes it, which is also
+why the row unit stays 108 rather than shrinking further: shrinking the
+cell would buy a column a result still could not stand on.
+
+**A values row stands on cells, not a minimum-width-plus-gap rule.** Today's
+96px minimum and 24px gap between pairs (`canvas.css:146`) retire: the face
+becomes a grid of the element's own columns, one pair per cell and a gap of
+12 (the same gutter), a pair whose figure exceeds 8 glyphs spanning two
+cells, pairs filling from the left and any cell past them standing empty
+rather than the pairs spreading out to fill a wider row. Two numbers retire
+to zero.
+
+**The chart's aspect follows its span**, amending §16a's own "bars lie
+down" as an absolute rule: bars stand when the span is wider than tall (w /
+h >= 1.5) and every label fits under its own bar (label width <= plotW / n
+minus 8, measured at the base cell); otherwise they lie down exactly as
+§16a already states. Lying bars distribute their pitch over the face's own
+height, pitch = min(40, faceH / n), the bar itself still 12px; standing
+bars take the face's height as their value axis, three ticks at the left in
+the status register (the line chart's own ticks, unmoved), and print their
+value above each bar rather than at its end. One rule, two numbers (1.5 and
+the label fit): the 4x3 default lies down (aspect 1.34); a 6x2 chart of
+short labels stands.
+
+A face never changes the span: `Flip` cycles table to chart to SQL to
+table inside the box a document already gave the block, exactly as it does
+today (§16a); a face too small for its own content scrolls inside its own
+boundary rather than moving a neighbour on a press that only changes a
+view.
+
+**Heights are read from content, capped**, recomputed for the 120px pitch
+(108 + 12):
+
+- table: `h = clamp(ceil((30 + 26 * rows + 56) / 120), 2, 4)`, 4 rows lands
+  on 2, 10 on 3, 200 on 4 and scrolls inside its own `.rb` as today.
+- chart, bars: `h = clamp(ceil((24 * n + 64) / 120), 2, 3)`, 6 labels on 2,
+  8 on 3; squeezed under 16px a bar the minimum becomes
+  `ceil((16 * n + 64) / 120)` rather than crowding its own labels.
+- chart, line: 3, fixed. The plot fills whatever height it is given, and a
+  date series has no row count to read.
+- values: 1, or `ceil(c / w)` rows of pairs when the width wraps them (c
+  the pairs' own cells, above).
+- note: `h = clamp(ceil((lines * 20 + 8) / 120), 1, 6)`, lines estimated
+  per paragraph as `ceil(chars / ((w * 108 + (w - 1) * 12) / 6.8))` plus one
+  per list item, against the base cell; the store already knows the
+  markdown, not the DOM, so the estimate is deterministic.
+
+A shrink below the content is refused for the note and the values face
+(nothing of theirs clips); the table and the chart own their overflow
+exactly as today. A note whose height still follows this formula carries
+`autoH: true` (AGENT-SPEC §9); the first hand resize clears it, exactly as
+a drawing's own eventual autofit will (C2b).
+
+### 16q. The engine: compaction, reflow and growth (C2, 2026-09-11)
+
+A pure module (`src/canvas/grid.ts`), no React, no DOM, imported by the
+store, the surface and the model's tools alike, and tested without any of
+them. Two operations only, never a third: **push down, then float up.** A
+moved or resized element is pinned where it landed; everything it now
+overlaps is pushed down just enough to clear it, in `(y, x, id)` order; the
+whole layout then compacts upward, the pinned element staying put. Swap was
+counted and refused: it is only defined when two rects share a span, and a
+size grammar makes that the exception rather than the rule, so a swap
+gesture would still need this same push down as its own fallback, and the
+gesture would then carry two rules for one idea. The total order is
+`(y, x, id)`, ids are uuids, so the order is total, not merely consistent,
+and a pass is fully determined by its input alone: no random source, no
+clock, no reliance on an object's own key order.
+
+Compaction moves an element's `y` to the lowest free row; it never moves
+`x`. **The user's `x` is honoured**, at the layout's own column count, so a
+hole BESIDE a wide element can stand (a gap beside a five-wide values row
+is a placed thing, not a bug) while a hole ABOVE one cannot. A floats-left
+rule that also closes gaps at the side (the iOS grammar, product research
+§1) was counted and refused for the opposite reason: a note placed at the
+right with room at its left would slide left under it, and a person who
+left that air placed the note exactly as they placed its row.
+
+**The canvas grows DOWN only.** Nothing on the grid ever scrolls sideways;
+"grows right" is resolved as a WIDER WINDOW adding columns (§16o), never a
+horizontal scroller, the grid fills whatever width its container gives it
+and stops.
+
+**Reflow, when the column count drops.** One layout is stored, at the
+column count it was last edited under. Rendered at that count or wider, the
+stored layout stands untouched: a wider window only adds empty columns at
+the right until something is moved there. The count that decides is the
+LAYOUT's own right edge (`max(x + w)`), never the advisory `lastColumns`,
+which every window that merely opens the document raises to its own width:
+measured against that, a layout authored at 7, opened once at 10 and shown
+again at 7 was re-flowed at the count it was made under and lost the
+placement it was made with. Rendered at FEWER columns, a
+layout is DERIVED and never persisted: every element's `w` is capped at the
+new count, and every element is re-placed in reading order, `(y, x)`, into
+the first free rectangle, scanning rows top to bottom and columns left to
+right; nothing is lost, the stored layout returns intact the moment the
+window widens back, and an EDIT made at a derived count commits it as the
+document's own, at that count: the user touched it, so it is now the
+layout. Honouring `x` at a narrower derived count was tried on the research
+fixture and refused, it leaves holes the flow does not.
+
+**Four properties hold after every operation** (place, move, resize,
+reflow, compact), proven over at least 2,000 random layouts, not merely
+eyeballed: no two rects ever overlap; every rect stays inside the column
+range; compacting twice equals compacting once; and reading order survives
+a reflow-then-widen round trip. Geometry does not survive that round trip,
+and no test claims otherwise: a six-wide element capped to four cannot
+remember it was six.
+
+### 16r. Positioning: absolute plus transforms (C2, 2026-09-11)
+
+Absolute position, one compositor transform per element, never CSS Grid's
+own auto-placement: a drag or a column-count reflow must move its
+neighbours at 60fps with zero layout, and a `transform: translate3d()` on
+an absolutely positioned element is compositor-only where `grid-column` /
+`grid-row` is a layout of the whole grid on every frame of a gesture.
+LESSONS 7 is the same law again, state owns position, never the DOM: an
+element's cell frame is written from the store's own numbers, never read
+back from wherever the browser happened to place it.
+
+Two layers, not one, so the resting position and a drag's live offset
+never fight over one `transform`: a CSS-variable-driven CELL FRAME (its own
+`x, y, w, h` against the container's own cell width and gutter, plus the
+fixed row height), written by React only when the element's cell changes,
+and inside it an imperative DRAG LAYER whose offset is written from a ref
+in the pointer handler and reset to zero on release, React never renders
+during a gesture. One style write on the container re-lays out every
+element at once when the width changes without crossing a column boundary:
+two custom-property writes, zero React commits. A `ResizeObserver`
+measures once per animation frame (a pending ref, never state, coalesced
+through one `requestAnimationFrame`, the shape the chart's own observer
+already uses), and only a COLUMN-COUNT change commits a React render (the
+reflow, §16q); a continuous resize that does not cross a boundary is two
+CSS variable writes and nothing else.
+
+Accepted cost: the rendered cell width is fractional (111.6px at the 640
+floor), so a slot's right edge lands on a subpixel; nothing on the canvas
+frames at rest, so the only place this can show is the table face's own
+hairline, one antialiased edge, measured and accepted rather than rounded
+away into a gutter that would read as a mistake instead.
+
+### 16s. Move, resize, keyboard and selection (C2, 2026-09-11)
+
+Two surfaces move an element, one rule: press where the element names
+itself (DESIGN rule 8's three announcements). Every kind gains a **grip**
+(lucide `GripVertical`) as the FIRST action of its cluster, joining the
+counts of §16b and §16i unchanged in every other member: a result's
+cluster is now `Grip . Copy . Flip . Insert . Ask . More` (six hot, zero at
+rest), a note's `Grip . Copy . Ask . More` (four hot, zero at rest),
+revealed exactly as the rest of the cluster already reveals (opacity plus a
+4px slide, `--dur-quick` / `--ease-std`). A result ALSO drags by its own
+title line (the 24px question row, §16a item 1): a press there is a press
+on chrome, never on data, where a press on a note's body is an edit, and,
+once C2b lands, a press on a drawing's body is a stroke. At rest nothing
+shows (legal under rule 8's reveal clause, a keyboard route standing in,
+below); on hover the grip appears and the cursor is `grab` over it and over
+a result's title line; on press the cursor is `grabbing` and the element
+**lifts**: scale 1.02, `--shadow-pop`, a `--bg-panel` fill and
+`--radius-md` so the shadow has an edge to leave, on `spring.pop`. A press
+moves nothing until the pointer travels past a 4px threshold (the results
+grid's own header-drag precedent), so a click on a title stays a click;
+pointer capture is taken on the first move past that threshold and released
+on `pointerup` or `Escape`, which cancels the whole gesture: the preview is
+dropped, the transform cleared, capture released, nothing written.
+
+`Move Up` and `Move Down` retire from every cluster menu, a result's `More`
+from four rows to three, a note's from three to one: rule 15's first
+question answers it, a place on a grid is now the object's own act, a drag
+or an arrow key, never a menu row naming a direction from outside it.
+`More`'s remaining rows are `Compare With` then `Delete` on a result,
+`Delete...` alone on a note; `⌫` on a focused block still acts the same way
+(§16b).
+
+**One resize handle**, at the bottom-right corner only: a 16x16 hit box
+holding an 8x8 L-glyph (two 2px strokes, tier 2), revealed with the
+cluster, cursor `nwse-resize`. Eight handles and three were both counted
+and refused: one corner moves w and h together, and a drag along a single
+axis already snaps the other to its own cell, so an edge handle adds no
+reach a corner does not already give.
+
+**Snapping and the placeholder.** During either gesture the element
+follows the pointer UN-SPRUNG (a transform written per frame, no spring
+between a finger and the thing it holds), while a **placeholder**,
+`--accent-soft` fill at `--radius-md`, no border (a dashed ghost is a
+button's own species, rule 1; a placeholder answers no click, rule 8's
+inverse), stands on the cells the element will land on, itself moving on
+`spring.layout` whenever the snapped cell changes. The cell lattice (2px
+dots at tier 3, `--fg-faint`, on the gutter crossings) shows ONLY during a
+gesture, fading in on `--dur-quick` at the press and gone at the release:
+the grid is invisible at rest, exactly as every other always-off chrome on
+this canvas already is (§16f). One transient string rides the
+placeholder's own bottom-right corner during a resize and after a keyboard
+resize until focus leaves, `3 x 3` in tabular numerals, the status
+register, the one string this wave's gesture prints, gone the instant the
+gesture ends.
+
+**Keyboard.** The element already takes focus as it does today
+(`tabIndex={0}`); the arrow keys move it one cell, shift plus an arrow
+resizes it by one cell at the bottom-right corner (held at the kind's own
+minimum and the live column count), `⌫` deletes through the SAME confirm
+grammar §16f already states (a result at once, a note or a drawing through
+the confirm, words and strokes having no way back). A move or a resize that
+collides pushes neighbours exactly as the pointer gesture does (§16q), one
+algorithm behind both routes, never two. The focused element's `aria-label`
+carries its title, its kind and its geometry (`Orders by channel . chart .
+4 by 3 at column 1, row 2`), and one polite live region per canvas page
+announces the same fact in sentence case after every key and every pointer
+gesture's end, never during one (`Chart moved to column 4, row 1`, `Chart
+resized to 6 by 4 cells`), the shape AGENT-UX §12 already asks of a live
+region: one per zone, the elements inside adding none of their own.
+
+**The cluster's per-kind membership routes through one `kindTools(kind)`
+function**, never a per-component special case: result and note are two
+rows of one table, not two components, and drawing joins that same table
+the day C2b gives it a cluster.
+
+**Selection stays one: the focused element**, this wave and the next. No
+operation acts on many (`⌫` acts on one, `Ask` names one, `Compare With` is
+a result's own), so a rubber band or a shift-click ladder would be chrome
+for an action that does not exist (rule 15's third question), and the
+engine's own proof (§16q) is a proof about ONE pinned element: a rigid
+multi-element body is a different algorithm with a different proof, and
+shipping both under one banner reviews neither properly (LESSONS 12).
+Multi-select, group move and align are open, named, and not half-built.
+
+### 16t. Motion (C2, 2026-09-11)
+
+No new preset, `springs.ts` is unchanged, A3's own headline holding again: a
+drag lifts on `spring.pop` and follows the pointer un-sprung; the
+placeholder and every pushed neighbour travel on `spring.layout`; the drop
+settles the element onto the placeholder on `spring.layout` while the lift
+comes off on `spring.pop`. A resize writes the box to the pointer per
+frame, no spring, its content re-laying out on the FRAME AFTER, once per
+frame at most (a chart's own `ResizeObserver` already fires after layout);
+neighbours make room on `spring.layout` only when the snapped span actually
+changes; release snaps the box itself on `spring.layout`. A window resize
+that does not cross a column boundary stretches cells INSTANTLY, a layout
+effect, never an animation (§16r); a column-count change re-derives the
+layout (§16q) and every element that moved travels on `spring.layout`, the
+same spring a face flip already rides (§16g). A model-written element still
+lands on `panelIn` at its place (§16i, unchanged), the elements below it
+making room on `spring.layout`; a replaced element still lands where the
+old one stood on `swapIn` (§16j, unchanged). Reduced motion collapses every
+one of these to instant, as every preset already does (§16g): the lift is
+the shadow at once, the placeholder jumps to its cell, the drop is where
+the pointer left it.
+
+### 16u. The migration, what the user sees (C2, 2026-09-11)
+
+A pre-C2 canvas opens onto its own grid the first time with NOTHING moved
+sideways: every block keeps its stored order, still full width (capped at
+6 cells past the 5-column floor, AGENT-SPEC §9), its height rounded up to
+whole cells by its own kind's own formula (§16p): a values row that stood
+at 106px now stands in 108 (barely rounds), a 6-bar chart that stood at
+216px now stands in 228 with its bars a few px further apart, a 4-row
+table that stood at 198px now stands in 228 with page under its box. The
+gaps that separated blocks today (16 between blocks, 24 above a titled one,
+`canvas.css:38, :58-60`) become the grid's own single gutter, 12 (§16o); a
+block's own internal part gap, 8, is unchanged. No element moves sideways
+until the user moves one; on hover a grip joins the cluster's own reveal
+and a corner glyph appears at the bottom right, and that is the whole
+difference a person sees on the same page they left.
+
+### 16v. Counts, and what this wave settles (C2, 2026-09-11)
+
+| count | before (§16a-§16n) | after |
+|---|---|---|
+| block species | 2 | 3 (`drawing`'s type only; no component, no cluster membership, no default span; C2b builds all three) |
+| always-visible chrome per element, at rest | 0 | 0 |
+| hot on a result's cluster | 5 | 6 (the grip) |
+| hot on a note's cluster | 3 | 4 (the grip) |
+| `More` rows: result / note | 4 / 3 | 3 / 1 (`Move Up` / `Move Down` retired) |
+| resize handles per element | 0 | 1 |
+| drag surfaces per element | 0 | 1 (the grip), 2 on a result (plus its title line) |
+| stored layouts per document | 1 (the order) | 1 (`x, y, w, h` plus the column count it was edited at); a narrower render's own layout is derived, never stored |
+| gaps between blocks | 3 numbers (16, 24 above a title, 8 within) | 1 gutter (12) plus the 8 within, unchanged |
+| page inset | 20 | 16 |
+| transient strings during a gesture | 0 | 1 (`3 x 3`) |
+| new spring presets | (none) | 0 |
+| tools offered to a canvas-targeted run | 8 (§5.1 of AGENT-SPEC) | 8 (`at` / `span` are fields on the same three, not a ninth tool, AGENT-SPEC §5.2) |
+
+Settles: the cell (108 and 12, page inset 16) and why 112 does not stand
+unamended; the row unit fixed at 108 against a rendered or a 56px
+alternative; default spans and content-driven heights per kind, recomputed
+for the 120 pitch; push-down-then-float-up compaction and reflow-by-reading
+-order as the only two layout operations; absolute positioning with a
+two-layer transform, never CSS Grid's own placement; the grip-plus-title
+-line move surface, one corner resize handle, the placeholder-and-lattice
+snap picture, and the keyboard route beside it; `Move Up` / `Move Down`
+retiring from every menu; that no new spring preset exists anywhere in this
+wave; the v1 to v2 migration's own arithmetic and what a user sees the
+first time; and `at` / `span` as clamping, never refusing, model fields
+(AGENT-SPEC §5.2).
+
+Does not settle, carried to the maintainer as this wave's own open list:
+standing bars (§16p's chart aspect rule is specified and not yet drawn in a
+fixture); a select tool inside a future drawing (C2b's own open item,
+unchanged); whether "now vs then" gives a block its own re-run (§16h, still
+unmoved); multi-select, group move and align (§16s, explicitly deferred).

@@ -6,12 +6,14 @@
 //
 // Nothing frames it (DECISIONS, A3: a hairline box per block is one chrome
 // frame times n, and Freeform frames nothing). Its cluster is the block's
-// only chrome and rests invisible: **Copy · Ask · More**, 3 hot and 0 at
-// rest, the icon-button species in its 18px tier revealed the way every
-// cluster in the app is revealed (ask.css .acts-float). `More` is the
-// block's menu and the one a right-click opens, so the actions that move the
-// block or destroy it live where place actions live and never in the cluster
-// (DECISIONS, A3: the count settled at 3).
+// only chrome and rests invisible: **Grip · Copy · Ask · More**, 4 hot and 0
+// at rest, the icon-button species in its 18px tier revealed the way every
+// cluster in the app is revealed (ask.css .acts-float). The grip is C2a's and
+// comes FIRST, because the one thing every kind does the same way is move
+// (the canvas hands it in, so a note in a pane would have none). `More` is
+// the block's menu and the one a right-click opens; with the grid under it
+// there is one row left in it, `Delete…`, since a place is now a drag or an
+// arrow key and never a menu row (3 rows to 1).
 //
 // Edit is a mode of the same box, not a second box: the read view already
 // carries the composer's padding under a transparent border, outdented over
@@ -34,8 +36,9 @@
 // ellipsis contract (WRITING rule 2) and goes through the app's danger
 // confirm, because a note is words with no way back.
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Copy, Ellipsis, MessageSquare } from "lucide-react";
+import { kindTools, type BlockTool } from "./blockTools";
 import { AnswerText } from "../ask/AnswerText";
 import { Kbd } from "../design/Kbd";
 import { copyCue } from "../lib/copyCue";
@@ -61,9 +64,9 @@ export interface NoteBlockProps {
   block: CanvasNoteBlock;
   /** the canvas owns which block is being edited: one caret on the document */
   editing: boolean;
-  /** the first block: Move Up is disabled, never hidden (DESIGN rule 2) */
-  canMoveUp: boolean;
-  canMoveDown: boolean;
+  /** the cluster's first action, handed in by the surface that can move this
+   * block: the grid's grip. Absent anywhere the note cannot be moved */
+  lead?: ReactNode;
   /** a click on the words, and the palette's New Note on a fresh one */
   onEdit: () => void;
   /** ⌘↩, or a blur with words left: the source as the textarea holds it */
@@ -73,20 +76,9 @@ export interface NoteBlockProps {
   onCancel: () => void;
   /** the confirm, when there was one, has already been answered */
   onDelete: () => void;
-  onMove: (dir: -1 | 1) => void;
 }
 
-export function NoteBlock({
-  block,
-  editing,
-  canMoveUp,
-  canMoveDown,
-  onEdit,
-  onCommit,
-  onCancel,
-  onDelete,
-  onMove,
-}: NoteBlockProps) {
+export function NoteBlock({ block, editing, lead, onEdit, onCommit, onCancel, onDelete }: NoteBlockProps) {
   const [draft, setDraft] = useState(block.text);
   const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
   const ta = useRef<HTMLTextAreaElement | null>(null);
@@ -113,12 +105,27 @@ export function NoteBlock({
   }, [editing, block.text]);
 
   // the caret takes the end and the box takes the text's own height: a note
-  // in edit is the same shape it was reading (no scrollbar, no jump)
+  // in edit is the same shape it was reading (no scrollbar, no jump). The
+  // WIDTH is the canvas's now (a note stands on cells and a corner can widen
+  // it mid-edit), so the words are measured again whenever it changes, and
+  // never when only the height did: that is the loop this observer would
+  // otherwise be
   useLayoutEffect(() => {
     const el = ta.current;
     if (!editing || !el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
+    const fit = () => {
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight}px`;
+    };
+    fit();
+    let width = el.clientWidth;
+    const ro = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width === width) return;
+      width = entry.contentRect.width;
+      fit();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
   }, [editing, draft]);
 
   useEffect(() => {
@@ -163,10 +170,9 @@ export function NoteBlock({
     );
   };
 
+  // one row, and it stands: `More` is also the right-click's menu and the
+  // keyboard's route to `Delete…`, not a button in a costume
   const menu: MenuNode[] = [
-    { kind: "item", label: "Move Up", disabled: !canMoveUp, onSelect: () => onMove(-1) },
-    { kind: "item", label: "Move Down", disabled: !canMoveDown, onSelect: () => onMove(1) },
-    { kind: "sep" },
     {
       kind: "item",
       label: "Delete…",
@@ -179,6 +185,45 @@ export function NoteBlock({
   const openMenu = (e: { clientX: number; clientY: number; preventDefault: () => void }) => {
     e.preventDefault();
     setMenuAt({ x: e.clientX, y: e.clientY });
+  };
+
+  // the cluster's own four, by the name the table knows them under: the order
+  // and the roster are `kindTools`'s, so a note and a result can never drift
+  // into two orders. The grip is the canvas's, handed in: a note in a pane
+  // has nothing to drag itself over
+  const tools: Partial<Record<BlockTool, ReactNode>> = {
+    grip: lead,
+    copy: (
+      <button
+        type="button"
+        className="iconbtn iconbtn-sm"
+        title="Copy"
+        aria-label="Copy"
+        onClick={() => void copyCue(block.text, "Copied note")}
+      >
+        <Copy size={12} />
+      </button>
+    ),
+    ask: (
+      <button type="button" className="iconbtn iconbtn-sm" title="Ask" aria-label="Ask" onClick={ask}>
+        <MessageSquare size={12} />
+      </button>
+    ),
+    more: (
+      <button
+        type="button"
+        className={`iconbtn iconbtn-sm${menuAt ? " active" : ""}`}
+        title="More"
+        aria-label="More"
+        aria-haspopup="menu"
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          setMenuAt({ x: r.right, y: r.bottom + 4 });
+        }}
+      >
+        <Ellipsis size={12} />
+      </button>
+    ),
   };
 
   if (editing) {
@@ -240,31 +285,9 @@ export function NoteBlock({
         <AnswerText raw={block.text} hasRun={false} live={false} />
       </div>
       <div className="acts-float">
-        <button
-          type="button"
-          className="iconbtn iconbtn-sm"
-          title="Copy"
-          aria-label="Copy"
-          onClick={() => void copyCue(block.text, "Copied note")}
-        >
-          <Copy size={12} />
-        </button>
-        <button type="button" className="iconbtn iconbtn-sm" title="Ask" aria-label="Ask" onClick={ask}>
-          <MessageSquare size={12} />
-        </button>
-        <button
-          type="button"
-          className={`iconbtn iconbtn-sm${menuAt ? " active" : ""}`}
-          title="More"
-          aria-label="More"
-          aria-haspopup="menu"
-          onClick={(e) => {
-            const r = e.currentTarget.getBoundingClientRect();
-            setMenuAt({ x: r.right, y: r.bottom + 4 });
-          }}
-        >
-          <Ellipsis size={12} />
-        </button>
+        {kindTools("note").map((tool) => (
+          <Fragment key={tool}>{tools[tool]}</Fragment>
+        ))}
       </div>
       {menuAt && <ContextMenu point={menuAt} items={menu} onClose={() => setMenuAt(null)} />}
     </div>

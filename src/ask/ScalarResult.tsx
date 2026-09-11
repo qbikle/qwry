@@ -20,6 +20,7 @@
 // Everything is plain selectable text; ⌘C copies what is selected (DESIGN
 // rule 11: no copy button to discover).
 
+import { FIGURE_WIDE_GLYPHS } from "../canvas/grid";
 import type { AgentRun } from "../agent/types";
 import "../grid/grid.css";
 
@@ -49,6 +50,13 @@ export function groupDigits(v: string): string {
   return `${sign}${grouped.format(BigInt(m[1]))}${DECIMAL_SEP}${m[2]}`;
 }
 
+/** the figure as this file PRINTS it: the grid's two chips, or the grouped
+ * number. One derivation (LESSONS 1) - the canvas measures a values row's span
+ * in cells by the same glyphs the reader counts, and the store reads the rule
+ * from here rather than keeping a second copy of the three cases */
+export const figureText = (v: string | null): string =>
+  v === null ? "NULL" : v === "" ? "∅ empty" : groupDigits(v);
+
 function Value({ v }: { v: string | null }) {
   if (v === null) return <span className="vgrid-nullchip">NULL</span>;
   if (v === "") return <span className="vgrid-emptychip">∅ empty</span>;
@@ -62,11 +70,13 @@ const GLANCE_CHARS = 24;
 
 /** one column as a pair: the value in the data register with its column name
  * as the caption. The one-column answer IS this shape, and the canvas's
- * values face is this shape once per column (one derivation, LESSONS 1) */
-function Pair({ name, v }: { name: string; v: string | null }) {
+ * values face is this shape once per column (one derivation, LESSONS 1).
+ * `wide` is the canvas's own: a figure past eight glyphs takes TWO cells of
+ * the page's grid, which is the span the store measured the row at */
+function Pair({ name, v, wide }: { name: string; v: string | null; wide?: boolean }) {
   const long = v !== null && groupDigits(v).length > GLANCE_CHARS;
   return (
-    <div className="ans-scalar">
+    <div className={wide ? "ans-scalar w2" : "ans-scalar"}>
       <span className={`ans-scalar-v${long ? " long" : ""}`}>
         <Value v={v} />
       </span>
@@ -84,7 +94,12 @@ export function ScalarResult({ run, row = false }: { run: AgentRun; row?: boolea
     return (
       <>
         {run.columns.map((name, i) => (
-          <Pair key={`${i}:${name}`} name={name} v={cells[i] ?? null} />
+          <Pair
+            key={`${i}:${name}`}
+            name={name}
+            v={cells[i] ?? null}
+            wide={row && figureText(cells[i] ?? null).length > FIGURE_WIDE_GLYPHS}
+          />
         ))}
       </>
     );

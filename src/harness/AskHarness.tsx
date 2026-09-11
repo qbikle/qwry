@@ -106,6 +106,12 @@
 // among them does not stand in 760; and one pane state (fixtures.b3ask.ts:
 // `b3-ask-summary`), the record a canvas-targeted answer leaves behind.
 //
+// C2a adds six more to the canvas route (fixtures.c2grid.ts: `c2-grid`,
+// `c2-grid-floor`, `c2-drag`, `c2-resize`, `c2-migrated`, `c2-dense`) on the
+// same 800-tall card, since a page of cells runs past any one answer. Two of
+// them are POSED mid-gesture from the engine's own arithmetic, and
+// `c2-migrated` seeds a pre-C2 document so the upgrade's picture is evidence.
+//
 // scripts/ask-frames.ts drives headless Chrome over this route and writes
 // one PNG per state × width × theme. The dev build remains the final eyeball;
 // these frames are the evidence.
@@ -171,6 +177,13 @@ import {
   b3CanvasSeed,
   type B3CanvasState,
 } from "./fixtures.b3canvas";
+import {
+  c2GridCardH,
+  C2_GRID_STATES,
+  c2GridAfterMount,
+  c2GridSeed,
+  type C2GridState,
+} from "./fixtures.c2grid";
 import {
   CANVAS_ASK_STATES,
   canvasAskAfterMount,
@@ -515,8 +528,10 @@ const CANVAS_PROFILES: Profile[] = [
   { ...FIXTURE.profile, id: "harness-analytics", name: "analytics", host: "analytics-db.internal" },
 ];
 
+type AnyCanvasState = CanvasState | B3CanvasState | C2GridState;
+
 interface CanvasParams {
-  state: CanvasState | B3CanvasState;
+  state: AnyCanvasState;
   w: number;
   theme: HarnessTheme;
 }
@@ -524,13 +539,23 @@ interface CanvasParams {
 const isB3Canvas = (state: string): state is B3CanvasState =>
   (B3_CANVAS_STATES as readonly string[]).includes(state);
 
+const isC2Grid = (state: string): state is C2GridState =>
+  (C2_GRID_STATES as readonly string[]).includes(state);
+
+/** the card each wave is read on: A3's three blocks stand in 760, B3's four
+ * with a chart among them need 800, and C2's page of cells is read from its
+ * top at the same 800 except where the LAYOUT is the subject, where the card
+ * holds the whole document (fixtures.c2grid.ts c2GridCardH) */
+const canvasCardH = (state: string): number =>
+  isC2Grid(state) ? c2GridCardH(state) : isB3Canvas(state) ? B3_CANVAS_CARD_H : CANVAS_CARD_H;
+
 function canvasParamsFrom(search: string): CanvasParams {
   const q = new URLSearchParams(search);
   const raw = q.get("state") ?? "";
   const w = Number(q.get("w"));
-  const known = (CANVAS_STATES as readonly string[]).includes(raw) || isB3Canvas(raw);
+  const known = (CANVAS_STATES as readonly string[]).includes(raw) || isB3Canvas(raw) || isC2Grid(raw);
   return {
-    state: known ? (raw as CanvasState | B3CanvasState) : "a3-canvas",
+    state: known ? (raw as AnyCanvasState) : "a3-canvas",
     w: (CANVAS_WIDTHS as readonly number[]).includes(w) ? w : 960,
     theme: q.get("theme") === "light" ? "light" : "dark",
   };
@@ -540,9 +565,13 @@ function canvasParamsFrom(search: string): CanvasParams {
  * seeded true with the document, so CanvasTab's own mount effect finds the
  * list already read and never asks the shim for one */
 function seedCanvas({ state, theme }: CanvasParams) {
-  // the B3 seed's shape is the A3 seed's, whole: one branch on the state name
-  // is the difference between the two waves' documents
-  const seed = isB3Canvas(state) ? b3CanvasSeed(state) : canvasSeed(state);
+  // every wave's seed has the A3 seed's shape, whole: one branch on the state
+  // name is the difference between the three waves' documents
+  const seed = isC2Grid(state)
+    ? c2GridSeed(state)
+    : isB3Canvas(state)
+      ? b3CanvasSeed(state)
+      : canvasSeed(state);
   applySettings({ provider: FIXTURE.provider, model: FIXTURE.model }, theme);
   useConnections.setState({ profiles: CANVAS_PROFILES, activeProfileId: CANVAS_PROFILE_ID });
   useCanvas.setState({
@@ -566,10 +595,15 @@ function CanvasHarness({ state, w, canvasId }: CanvasParams & { canvasId: string
   useEffect(() => {
     let live = true;
     const id = requestAnimationFrame(() => {
-      // both hooks are async and only one of them owns a given state: B3's
-      // poses the arriving block and asserts the empty canvas's caret, the two
-      // things a still cannot hold
-      void (isB3Canvas(state) ? b3CanvasAfterMount(state) : canvasAfterMount(state)).then(() => {
+      // all three hooks are async and only one of them owns a given state:
+      // B3's poses the arriving block and asserts the empty canvas's caret,
+      // C2's poses a pointer mid-gesture, the things a still cannot hold
+      const hook = isC2Grid(state)
+        ? c2GridAfterMount(state)
+        : isB3Canvas(state)
+          ? b3CanvasAfterMount(state)
+          : canvasAfterMount(state);
+      void hook.then(() => {
         if (live) document.documentElement.dataset.harnessReady = "1";
       });
     });
@@ -580,10 +614,7 @@ function CanvasHarness({ state, w, canvasId }: CanvasParams & { canvasId: string
   }, [state]);
   return (
     <div className="harness">
-      <main
-        className="card harness-card"
-        style={{ width: w, height: isB3Canvas(state) ? B3_CANVAS_CARD_H : CANVAS_CARD_H }}
-      >
+      <main className="card harness-card" style={{ width: w, height: canvasCardH(state) }}>
         <CanvasTab canvasId={canvasId} />
       </main>
     </div>

@@ -1260,8 +1260,8 @@ describe("the canvas gate", () => {
       async read() {
         seen.push({ name: "read", args: null });
         return {
-          textForModel: 'Canvas "Canvas 4" is empty.',
-          result: { canvasId: "cv-1", title: "Canvas 4", blocks: [] },
+          textForModel: 'Canvas "Canvas 4" is empty, 7 columns wide.',
+          result: { canvasId: "cv-1", title: "Canvas 4", columns: 7, blocks: [] },
         };
       },
       ...over,
@@ -1377,8 +1377,8 @@ describe("the canvas dispatch", () => {
       async read() {
         seen.push({ name: "read", args: null });
         return {
-          textForModel: 'Canvas "Canvas 4" is empty.',
-          result: { canvasId: "cv-1", title: "Canvas 4", blocks: [] },
+          textForModel: 'Canvas "Canvas 4" is empty, 7 columns wide.',
+          result: { canvasId: "cv-1", title: "Canvas 4", columns: 7, blocks: [] },
         };
       },
     };

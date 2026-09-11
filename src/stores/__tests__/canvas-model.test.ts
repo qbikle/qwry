@@ -470,8 +470,16 @@ describe("outline", () => {
       result({ question: "what stood out in orders last month" }),
       note("**Against July:**\n- COD is 43% of the month."),
     ]);
+    // C2: every line carries the cell the block stands on, read straight off
+    // the document, so `at` is a place the model can name and not a guess
     expect(store().outline("cv")).toEqual([
-      { id: mine, kind: "note", line: "the user's own opening line", modelWritten: false },
+      {
+        id: mine,
+        kind: "note",
+        line: "the user's own opening line",
+        modelWritten: false,
+        cell: { x: 0, y: 0, w: 3, h: 1 },
+      },
       {
         id: ids[0],
         kind: "result",
@@ -480,8 +488,15 @@ describe("outline", () => {
         rows: 2,
         columns: ["channel", "orders"],
         face: "chart",
+        cell: { x: 3, y: 0, w: 4, h: 2 },
       },
-      { id: ids[1], kind: "note", line: "**Against July:**", modelWritten: true },
+      {
+        id: ids[1],
+        kind: "note",
+        line: "**Against July:**",
+        modelWritten: true,
+        cell: { x: 0, y: 1, w: 3, h: 1 },
+      },
     ]);
   });
 
