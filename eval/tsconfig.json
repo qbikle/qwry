@@ -1,0 +1,14 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    // eval/ and scripts/agent-eval.ts never reach the webview: they run under
+    // bun and node, so they get the runtime they actually have rather than the
+    // ES2020 floor src/ targets for the packaged app.
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["bun", "node"],
+    "noEmit": true
+  },
+  "include": ["../eval/**/*.ts", "../scripts/agent-eval.ts", "../scripts/agent-eval-dashboard.ts"],
+  "references": []
+}

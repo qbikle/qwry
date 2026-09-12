@@ -1,8 +1,14 @@
+pub mod agent;
+pub mod agent_canvas;
+pub mod agent_claude;
+pub mod agent_http;
+pub mod agent_mcp;
+pub mod agent_write;
 mod appdb;
 mod commands;
 pub mod driver;
 pub mod import;
-mod secrets;
+pub mod secrets;
 mod state;
 mod tunnel;
 
@@ -148,6 +154,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> 
     let view = SubmenuBuilder::new(app, "View")
         .item(&item("palette", "Command Palette", Some("Cmd+K"))?)
         .item(&item("inspector", "Toggle Inspector", Some("Cmd+I"))?)
+        .item(&item("ask", "Toggle Ask", Some("Cmd+J"))?)
         .item(&item("theme", "Theme…", None)?)
         .separator()
         // muda has no "Plus" key; Cmd+= is the canonical zoom-in accelerator
@@ -336,6 +343,42 @@ pub fn run() {
             commands::saved_upsert,
             commands::saved_delete,
             commands::cancel,
+            agent::agent_connect,
+            agent::agent_describe,
+            agent::agent_peek_values,
+            agent::agent_run_readonly,
+            agent::agent_probe,
+            agent::agent_gate,
+            agent::agent_key_set,
+            agent::agent_key_has,
+            agent::agent_key_delete,
+            agent::agent_thread_create,
+            agent::agent_thread_list,
+            agent::agent_thread_delete,
+            agent::agent_thread_truncate,
+            agent::agent_thread_session_set,
+            agent::agent_turns_shift,
+            agent::agent_turn_add,
+            agent::agent_turn_update,
+            agent::agent_turns_list,
+            agent::agent_answer_put,
+            agent::agent_answers_list,
+            agent_http::agent_http_stream,
+            agent_http::agent_http_abort,
+            agent_claude::agent_claude_spawn,
+            agent_claude::agent_claude_kill,
+            agent_mcp::agent_mcp_serve,
+            agent_mcp::agent_mcp_stop,
+            agent_mcp::agent_mcp_log,
+            agent_canvas::agent_canvas_result,
+            agent_write::agent_write_preview,
+            commands::agent_knowledge_list,
+            commands::agent_knowledge_upsert,
+            commands::agent_knowledge_delete,
+            commands::agent_history_pairs,
+            commands::canvas_list,
+            commands::canvas_upsert,
+            commands::canvas_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

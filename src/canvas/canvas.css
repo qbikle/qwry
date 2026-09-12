@@ -1,0 +1,259 @@
+/* The canvas (A3 items 2, 5 and 6; C2a): a tab of the main card holding a
+   GRID of blocks. Two kinds, not five (DESIGN rule 15): a result (the W7
+   block reused whole, its question the title, the model's sentence above the
+   faces, the assumptions folded into the status line) and a note.
+
+   Nothing frames a block. Freeform frames nothing, a hairline box per block
+   is one chrome frame times n, and the hover cluster is the block's only
+   chrome: 3 boxes at rest become 0, and the .rb keeps its own edge because a
+   grid needs one. The parts of a block are 8 apart; a note's measure stops at
+   680 however many cells it spans (growth feeds content, and a 1250px line is
+   worse content, rule 13).
+
+   C2a moves the page inset from 20 to 16 and replaces three gaps with one.
+   The inset is the gutter's neighbour now and follows the gutter's own
+   arithmetic: 5 x 108 + 4 x 12 + 2 x 16 + 2 (the card's hairline) = 622, which
+   the 640 floor holds with room over, so five whole cells stand there at the
+   base and stretch into the 18 that is left (111.6 each): every default span
+   is its designed size exactly where rule 13 designs it. The 16 between blocks, the
+   24 above a titled one and the column's own gap become the grid's one
+   12 gutter (3 numbers to 1, grid.css).
+
+   B3 finishes that rule at the faces (frames 3 → 1 on a four-block answer):
+   only a face whose own content needs a boundary keeps the .rb edge, which is
+   the TABLE (a grid's cells need an outer edge) and the SQL (the editor
+   register is a panel inset). The chart and the values stand on the page,
+   bars having their own shape and four figures over four names their own row.
+   A block with a TITLE opened a section, 24 above it where the column's own
+   gap was 16; on the grid a section is a PLACE, so the title line stands and
+   the extra 24 goes (the model's titled results read as sections because they
+   hold their own cells, C2a). */
+
+/* the whole surface is a place to write: the tail under the last block is at
+   least 64px and takes the same click that the empty canvas does */
+.cv-scroll {
+  /* a block leaving is parked out of the flow so the gap closes over it on
+     the same spring (AnimatePresence popLayout, AGENT-UX section 16g), and
+     what it is parked against has to be the SCROLLER: parked against the card
+     it would stand at its unscrolled place, which on a scrolled page is
+     somewhere else entirely */
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  cursor: text;
+}
+.cv-scroll::after {
+  content: "";
+  flex: 1;
+  min-height: 64px;
+}
+
+/* a note draws its own .blk (NoteBlock, note.css), so what the column lays
+   out is the entrance wrapper around it: it is the flex child, and it never
+   shrinks under the blocks above it */
+.cv-item {
+  flex-shrink: 0;
+}
+
+/* a block: its own positioning box, so the cluster floats at ITS top-right
+   (the VS Code exemplar) and the surface the buttons stand on is the panel */
+.blk {
+  position: relative;
+  flex-shrink: 0;
+  cursor: default;
+  --acts-surface: var(--bg-panel);
+}
+.blk > * + * {
+  margin-top: var(--sp-2);
+}
+/* the cluster has no place in the flow: it floats over the question line */
+.blk > .acts-float {
+  margin-top: 0;
+  top: 0;
+  height: 24px;
+}
+/* a note with no question line: the cluster takes the answer cluster's own
+   2px above the first line of prose (ask.css .ans-prose > .acts-float) */
+.blk.noq > .acts-float {
+  top: -2px; /* optical */
+}
+.blk:hover > .acts-float,
+.blk:focus-within > .acts-float,
+.blk[data-hot] > .acts-float {
+  opacity: 1;
+  transform: none;
+}
+/* the question line: the trace-kind face (.ans-lead's register), one line,
+   ellipsized, 24px tall so the cluster centres on it */
+.blk-q {
+  height: 24px;
+  line-height: 24px;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.blk .ans-text {
+  max-width: 680px;
+}
+/* the status line reads as one sentence of fragments here, never a flex row
+   of them: the run's facts, then the assumptions after one lowercase lead,
+   their labels at tier 1 and the lead and the numbers at tier 2 (a chip on
+   the canvas toggles nothing, and a chip that answers no click is a control
+   costume on a non-control: DESIGN rule 8's inverse) */
+.blk .ans-status {
+  display: block;
+  line-height: 16px;
+}
+.blk .ans-status .asm {
+  color: var(--fg);
+}
+
+/* ---- the faces that stand on the page (B3) --------------------------------
+   The table keeps the .rb edge (a grid's cells need an outer boundary) and so
+   does the SQL (the editor register is a panel inset). The chart and the
+   values have their own shape and lose it: what frames them is the block, the
+   title above and the status line below. Scoped to .blk, so the pane's own
+   block is untouched, DOM for DOM. */
+.blk .rb.chart,
+.blk .rb.values {
+  border: none;
+  border-radius: 0;
+  background: none;
+  /* the bars' value labels ride at the plot's own right edge (cv-chart svg) */
+  overflow: visible;
+}
+
+/* the values face: a one-row result's figures, each column a pair of the
+   value in the data register over its column name. The pairs stand on the
+   PAGE's cells (C2a) - one column of the element's own span per pair, two for
+   a figure past eight glyphs, the gutter as the gap - so the width the store
+   measured the row at (grid.ts valueCells) and the row the reader sees are one
+   fact, and the third pair starts where the third cell does. A 96 minimum with
+   a 24 gap packed four pairs into 440px of a 606px element, with the cells 124
+   apart under them. No inset of its own: the page's left edge is the first
+   value's */
+.blk .rb-vals {
+  display: grid;
+  grid-template-columns: repeat(var(--w, 2), minmax(0, 1fr));
+  gap: 0 var(--gut, var(--sp-3));
+}
+.blk .rb-vals .ans-scalar {
+  padding: var(--sp-1) 0;
+}
+.blk .rb-vals .ans-scalar.w2 {
+  grid-column: span 2;
+}
+
+/* ---- the chart face (Chart.tsx) ------------------------------------------
+   An SVG sized to the face after layout. Labels ride in the status register
+   (UI font, tier 2) right-aligned to meet their bars; the value at every
+   bar's end is data (mono, tabular, tier 1), which is what retires the value
+   axis (rule 14). With the frame gone the inset goes with it: the label
+   gutter starts at the page's own left edge and 4px of air holds the plot off
+   the title and the status line. */
+.cv-chart {
+  display: block;
+  padding: var(--sp-1) 0;
+}
+.cv-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.cv-chart text {
+  font-size: var(--text-xs);
+}
+.cv-chart .lbl {
+  fill: var(--fg-muted);
+  font-family: var(--font-ui);
+}
+.cv-chart .val {
+  fill: var(--fg);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- the diff face (DiffFace.tsx) ----------------------------------------
+   The results grid's register, drawn statically (200 rows is the cap, so
+   there is nothing here for the virtualizer): the raised header, a 52px
+   row-number gutter (the grid's ROWNUM_W), 26px rows, mono cells. Each
+   numeric cell is A · B · Δ with the separators as decoration. */
+.cv-diff {
+  display: grid;
+  align-content: start;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--grid-fs, var(--text-sm));
+  font-variant-numeric: tabular-nums;
+}
+/* the rows are the grid's own: a row that were its own grid would size its
+   columns to its own content, and columns that move from row to row are not
+   a grid */
+.cv-diff .dg-r {
+  display: contents;
+}
+.cv-diff .dg-n,
+.cv-diff .dg-c {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid var(--border);
+}
+.cv-diff .dg-r:last-child > * {
+  border-bottom: none;
+}
+.cv-diff .dg-h {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 30px;
+  background: var(--bg-raised);
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-strong);
+}
+.cv-diff .dg-n {
+  justify-content: flex-end;
+  padding-right: var(--sp-2);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border-strong);
+}
+.cv-diff .dg-c {
+  padding: 0 10px; /* optical */ /* the grid cell's own inset */
+}
+.cv-diff .dg-tri i {
+  font-style: normal;
+  color: var(--fg-faint);
+  margin: 0 5px; /* optical */
+}
+/* a row only one side has: the label wears the warn glyph and the tier, and
+   the side that lacks it reads ∅ (the grid's own empty marker) */
+.cv-diff .dg-r.warn .dg-key {
+  gap: 5px; /* optical */
+  color: var(--warn);
+}
+.cv-diff .dg-r.warn svg {
+  flex-shrink: 0;
+  color: var(--warn);
+}
+.cv-diff .dg-none {
+  color: var(--warn);
+  font-weight: 400;
+}

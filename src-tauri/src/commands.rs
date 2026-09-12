@@ -209,6 +209,24 @@ pub async fn connect(
     profile_id: String,
     statement_timeout_ms: Option<u64>,
 ) -> Result<SessionId> {
+    open_session(&app, state.inner(), &profile_id, statement_timeout_ms, false).await
+}
+
+/// Open one session on a profile and register it. `connect` and the agent's
+/// `agent_connect` are the same act down to the tunnel, the control lane, the
+/// notice/death callbacks and the tx listener; they differ only in
+/// `force_read_only`, which starts an agent session
+/// `default_transaction_read_only=on` whatever the profile says (AGENT-SPEC
+/// §2.3). Keeping one body means an agent session can never drift into being
+/// a second, lesser kind of connection.
+pub(crate) async fn open_session(
+    app: &AppHandle,
+    state: &AppState,
+    profile_id: &str,
+    statement_timeout_ms: Option<u64>,
+    force_read_only: bool,
+) -> Result<SessionId> {
+    let profile_id = profile_id.to_string();
     let profile = state
         .appdb
         .list_profiles()?
@@ -259,6 +277,7 @@ pub async fn connect(
             Some(("127.0.0.1", tunnel.local_port)),
             tunnel.control_port.map(|p| ("127.0.0.1", p)),
             statement_timeout_ms,
+            force_read_only,
             on_notice,
             on_close,
         )
@@ -270,11 +289,18 @@ pub async fn connect(
             None,
             None,
             statement_timeout_ms,
+            force_read_only,
             on_notice,
             on_close,
         )
         .await?
     };
+    // an agent session is gated BEFORE it is registered: the raw-SQL commands
+    // below check the flag, so no window exists where the id could be used
+    // to run ungated SQL on it
+    if force_read_only {
+        session.set_agent_gated();
+    }
     // driver-tracked transaction state → frontend tx chip
     {
         let app = app.clone();
@@ -326,31 +352,7 @@ pub async fn test_connection(
         None => secrets::get_password(&profile.id)?.unwrap_or_default(),
     };
     let start = std::time::Instant::now();
-    let session = if crate::tunnel::tunnel_host(&profile).is_some() {
-        let tunnel = state.ensure_tunnel(&profile).await?;
-        // no control lane: the probe runs one SELECT and never cancels
-        driver::postgres::connect(
-            &profile,
-            &password,
-            Some(("127.0.0.1", tunnel.local_port)),
-            None,
-            None,
-            Box::new(|_, _| {}),
-            Box::new(|_| {}),
-        )
-        .await?
-    } else {
-        driver::postgres::connect(
-            &profile,
-            &password,
-            None,
-            None,
-            None,
-            Box::new(|_, _| {}),
-            Box::new(|_| {}),
-        )
-        .await?
-    };
+    let session = ephemeral_session(state.inner(), &profile, &password, None).await?;
     let tls = session.is_tls();
     let out = session.execute_simple("SELECT version()").await?;
     let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -440,6 +442,19 @@ pub async fn disconnect(state: State<'_, AppState>, session_id: String) -> Resul
     Ok(())
 }
 
+/// The agent's sessions accept SQL only through the AST-gated agent commands:
+/// `default_transaction_read_only` does not stop pg_sleep, pg_terminate_backend
+/// or lo_import, so a raw-SQL entry point on such a session would be a side
+/// door around the gate (AGENT-SPEC section 8.1).
+fn refuse_agent_session(session: &driver::postgres::PgSession) -> Result<()> {
+    if session.is_agent_gated() {
+        return Err(driver::DriverError::Internal(
+            "this session belongs to Ask and only runs gated agent queries".into(),
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn execute(
     state: State<'_, AppState>,
@@ -449,6 +464,7 @@ pub async fn execute(
     let session = state
         .session(&session_id)
         .ok_or(driver::DriverError::NoSession)?;
+    refuse_agent_session(&session)?;
     session.execute_simple(&sql).await
 }
 
@@ -462,6 +478,7 @@ pub async fn execute_stream(
     let session = state
         .session(&session_id)
         .ok_or(driver::DriverError::NoSession)?;
+    refuse_agent_session(&session)?;
     let mut sink = move |ev: QueryEvent| on_event.send(ev).is_ok();
     session.execute_stream(&sql, &mut sink).await
 }
@@ -853,4 +870,97 @@ pub async fn cancel(state: State<'_, AppState>, session_id: String) -> Result<()
         .session(&session_id)
         .ok_or(driver::DriverError::NoSession)?;
     session.cancel().await
+}
+
+/// One session on a profile that nothing else can reach: connected through the
+/// profile's tunnel when it has one, never registered in `state.sessions`, and
+/// dropped (which aborts its connection) by the caller. The connection editor's
+/// probe and the agent's write dry run are the same act, so they are the same
+/// code: a session with no id cannot be cancelled, so every caller bounds it
+/// with a statement timeout instead. No control lane for the same reason.
+pub(crate) async fn ephemeral_session(
+    state: &AppState,
+    profile: &Profile,
+    password: &str,
+    statement_timeout_ms: Option<u64>,
+) -> Result<driver::postgres::PgSession> {
+    let addr = if crate::tunnel::tunnel_host(profile).is_some() {
+        let tunnel = state.ensure_tunnel(profile).await?;
+        Some(("127.0.0.1", tunnel.local_port))
+    } else {
+        None
+    };
+    driver::postgres::connect(
+        profile,
+        password,
+        addr,
+        None,
+        statement_timeout_ms,
+        false,
+        Box::new(|_, _| {}),
+        Box::new(|_| {}),
+    )
+    .await
+}
+
+/// What the user told Ask about this connection: hints on tables and columns,
+/// the names its people use, and this database's own terms (A2). Oldest first,
+/// which is the order the prompt's capped KNOWLEDGE block drops from.
+#[tauri::command]
+pub async fn agent_knowledge_list(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> Result<Vec<crate::appdb::KnowledgeRow>> {
+    state.appdb.agent_knowledge_list(&profile_id)
+}
+
+/// Upsert one knowledge row by id: editing a hint where it stands rewrites the
+/// row, it does not add a second fact about the same object.
+#[tauri::command]
+pub async fn agent_knowledge_upsert(
+    state: State<'_, AppState>,
+    row: crate::appdb::KnowledgeRow,
+) -> Result<()> {
+    state.appdb.agent_knowledge_upsert(&row)
+}
+
+/// Delete one knowledge row: an emptied hint line, a dropped synonym, a
+/// cleared definition.
+#[tauri::command]
+pub async fn agent_knowledge_delete(state: State<'_, AppState>, id: String) -> Result<()> {
+    state.appdb.agent_knowledge_delete(&id)
+}
+
+/// This connection's answered questions and the SQL that answered them,
+/// newest first, for the prompt's EARLIER ANSWERS block.
+#[tauri::command]
+pub async fn agent_history_pairs(
+    state: State<'_, AppState>,
+    profile_id: String,
+    limit: i64,
+) -> Result<Vec<crate::appdb::AgentHistoryPair>> {
+    state.appdb.agent_history_pairs(&profile_id, limit)
+}
+
+// ---- canvases (A3) --------------------------------------------------------
+
+#[tauri::command]
+pub async fn canvas_list(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> Result<Vec<crate::appdb::CanvasRow>> {
+    state.appdb.canvas_list(&profile_id)
+}
+
+#[tauri::command]
+pub async fn canvas_upsert(
+    state: State<'_, AppState>,
+    row: crate::appdb::CanvasRow,
+) -> Result<()> {
+    state.appdb.canvas_upsert(&row)
+}
+
+#[tauri::command]
+pub async fn canvas_delete(state: State<'_, AppState>, id: String) -> Result<()> {
+    state.appdb.canvas_delete(&id)
 }

@@ -1,0 +1,1355 @@
+// The turn loop (AGENT-SPEC section 4): code prefilter, curated context, a
+// tool turn, a run turn, then the post step that turns the model's last text
+// into an answer the UI can show.
+//
+// Provider-neutral by construction (section 7): tool arguments are untrusted
+// text, every failure goes BACK to the model as text rather than throwing, and
+// a turn cap ends every path. Nothing here imports Tauri or a store at runtime;
+// the app supplies AgentTools and a Provider, the eval harness supplies its own
+// (EVAL.md section 3), and both run this same file.
+
+import {
+  CANVAS_CHIP,
+  CANVAS_TOOL_NAMES,
+  PEEK_MAX,
+  PROBE_MAX,
+  PROSE_STRIKES,
+  TOOL_NAMES,
+  isProseRefusal,
+  toolsFor,
+  type AgentTools,
+  type CanvasTools,
+  type CanvasWriteResult,
+} from "./tools";
+import type { Tier } from "./providers/registry";
+import type {
+  AgentEvent,
+  ImagePart,
+  ImageRoute,
+  Msg,
+  Provider,
+  ProviderId,
+  StopReason,
+  ToolCall,
+  ToolResult,
+} from "./providers/types";
+import type {
+  AgentRun,
+  Assumption,
+  CanvasToolName,
+  HistoryPair,
+  KnowledgeCounts,
+  KnowledgeRow,
+  SanityFragment,
+  TokenUsage,
+  ToolName,
+  TraceStep,
+  Verdict,
+} from "./types";
+import type { SchemaSnapshot } from "../stores/schema";
+import {
+  buildMeta,
+  candidateNames,
+  candidates,
+  indexFor,
+  mustIncludeFor,
+  questionTokens,
+  recallOf,
+  synonymMap,
+  synonymsFired,
+} from "./context";
+import { type Mention, mentionContext, mentionDrawings, mentionTags } from "./mentions";
+import { imageRouteFor, imageWireFor } from "./providers/presets";
+import { isRisky } from "./risk";
+import { probeNoun } from "./probeNoun";
+import {
+  PROMPT_VERSION,
+  SMALL_SYSTEM_PROMPT,
+  SYSTEM_PROMPT,
+  askMessage,
+  canvasMessage,
+  historyMessage,
+  knowledgeMessage,
+  repairMessage,
+  smallAskMessage,
+  writesMessage,
+  type HistoryBlock,
+  type KnowledgeBlock,
+} from "./prompt";
+import { buildAssumptions, extractSql } from "./extract";
+import { answerText } from "./display";
+
+/** Thread-level cap (AGENT-SPEC section 4.5). `claude -p` takes a per
+ * invocation `--max-turns`, so the thread total is subtracted there. */
+export const MAX_TURNS = 12;
+
+/** Repairs the small tier gets after its one shot (section 4.7). */
+export const SMALL_REPAIRS = 2;
+
+/** The turn cap's own sentence (AGENT-UX 7, LESSONS 13). `turns` is the
+ * number the USER watched: an `ownsLoop` provider reports its child's own
+ * `num_turns` and this loop's counter is used only where there is no child.
+ * The bug the lesson is written from is that counter reaching the sentence:
+ * `stopped after 1 turns` for a run that spent twelve. Singular at one,
+ * because a plural on a 1 reads as a placeholder nobody filled in. */
+export const turnCapMessage = (turns: number): string =>
+  `stopped after ${turns} ${turns === 1 ? "turn" : "turns"}`;
+
+/** The two sentences a refused change gets (A4, AGENT-UX 7 and 13.7). Error
+ * register: lowercase lead, no period. They differ because the ways out
+ * differ: a connection with edits off has a switch to offer, production has
+ * none, and offering one there would be a dead end (LESSONS 9). */
+export const WRITES_OFF = "edits are off for this connection";
+export const WRITES_OFF_PROD = "edits are off on production";
+
+export type AskPhase = "context" | "thinking" | "tools" | "running" | "post" | "done";
+
+/** The five ways an Ask ends badly. Each maps to an affordance in AGENT-UX 7,
+ * so a new kind means a new affordance, not a new message: `writesoff` (A4)
+ * is the model proposing a change on a connection whose edits are off, where
+ * nothing ran and the way out is Settings, never Fix It. */
+export type AskErrorKind = "provider" | "sql" | "turncap" | "cancelled" | "writesoff";
+
+export type AskEvent =
+  | { type: "status"; phase: AskPhase }
+  /** `name` is the chip's species and stays one of the five: a canvas call
+   * and an off-list tool alike wear the run chip, which is the species of the
+   * call that produced the answer (AGENT-UX 16). `label` is what the strip
+   * reads, so a canvas call says `canvas` there and the trace step, which is
+   * where the true name is law, carries `canvas_write` itself. */
+  | { type: "toolStart"; id: string; name: ToolName; label: string; args: string }
+  | {
+      type: "toolEnd";
+      id: string;
+      name: ToolName;
+      ms: number;
+      isError: boolean;
+      /** the call's arguments and result text, so a finished chip can open in
+       * the trace drawer before the answer lands */
+      args: string;
+      result: string;
+    }
+  | { type: "text"; delta: string }
+  | {
+      /** the text block a tool call just ended: pre-tool narration, trace
+       * material and never answer text (AGENT-UX 2.3). The answer slot starts
+       * over; the block stays in the turn's raw text for the trace. */
+      type: "narration";
+      text: string;
+    }
+  | { type: "thinking"; delta: string }
+  | { type: "usage"; usage: TokenUsage }
+  | {
+      /** B3: blocks of THIS exchange reached the canvas. Every block the
+       * exchange has written so far, in write order, read off the seam where
+       * they landed and never parsed back out of the model-facing text
+       * (LESSONS 13, tools.ts's own warning): the store assigns this record
+       * rather than appending to one, so a cut and a re-run have one
+       * authority to read. */
+      type: "canvasWrite";
+      canvasId: string;
+      blockIds: string[];
+      /** how many of them stood IN PLACE of a block already there, so the
+       * status line can read `3 blocks · 1 replaced`. A count, always sent:
+       * the fragment it feeds is what goes absent at zero, not the number
+       * the exchange records (DESIGN rule 11 binds the line, not the record) */
+      replaced: number;
+    }
+  | { type: "answer"; answer: AskAnswer }
+  | {
+      type: "error";
+      kind: AskErrorKind;
+      message: string;
+      /** a rate-limited provider stated a wait (AGENT-UX 7) */
+      retryAfterMs?: number;
+    };
+
+export interface AskAnswer {
+  verdict: Verdict;
+  sql: string | null;
+  /** the rows the grid shows; null when nothing ran */
+  run: AgentRun | null;
+  assumptions: Assumption[];
+  sanity: SanityFragment[];
+  trace: TraceStep[];
+  /** the model's LAST text block: what the answer slot shows, streamed
+   * already but kept for persistence. Earlier blocks of the same turn (the
+   * narration before a tool call) live only in the trace's turn rows. */
+  text: string;
+  turns: number;
+  ms: number;
+  usage: TokenUsage;
+  promptVersion: string;
+  /** what the prefilter chose, and whether it contained the gold tables when
+   * a bench question supplied them (EVAL.md section 1) */
+  candidates: string[];
+  recall: boolean | null;
+  risky: boolean;
+}
+
+export interface AskRequest {
+  question: string;
+  snapshot: SchemaSnapshot;
+  tools: AgentTools;
+  provider: Provider;
+  model: string;
+  tier: Tier;
+  signal: AbortSignal;
+  onEvent?: (ev: AskEvent) => void;
+  /** thread continuity for `ownsLoop` providers; stateless ones ignore it.
+   * `session` is the provider session to open or resume (the thread id until
+   * a cut re-mints it); `replay` is the compact transcript of the exchanges a
+   * cut KEPT, prefixed to this run's user message so the first call after a
+   * cut starts from a session that remembers nothing. Never in the system
+   * prompt: PROMPT_VERSION and the eval's prompt bytes must not move. */
+  thread?: { id: string; session?: string; firstCall: boolean; replay?: string };
+  /** what the user tagged with `@`, already resolved by the caller against
+   * the connection it belongs to (W6). The tagged tables lead the candidate
+   * block and every tag is spelled out under it; the question itself is sent
+   * with its `@` tokens exactly as typed. Absent on the eval path, where the
+   * message must stay byte-identical to the measured one. */
+  mentions?: Mention[];
+  /** A4 item 7: the row `Ask to Edit` attached, as `column = value` lines
+   * under a line naming the table and the primary key. It rides in the SAME
+   * `TAGGED BY THE USER:` block the `@` tags use, under them: it is one more
+   * thing the user pointed at, and a second header would be a second grammar
+   * for one idea (DESIGN rule 15). Absent on the eval path. */
+  rowContext?: string;
+  /** C2b: the pictures this question carries, which today is one drawing's
+   * PNG, rendered by the caller from the document at the moment it sends
+   * (stores/agent `runInto`, off `mentions.ts` `mentionDrawings`). They ride
+   * the FIRST user message and no other: a picture is what the question was
+   * asked about, not context the repair turns re-send. Absent on every
+   * question that tagged no drawing and on the whole eval path, so the
+   * measured bytes and PROMPT_VERSION stand.
+   *
+   * Present is not the same as SENT. The loop reads the run's own route
+   * (providers `imageRouteFor`, the wire plus whether this run has a canvas
+   * target) and puts them on the message only where that route is
+   * `"message"`; on `claude -p` the model fetches the picture through
+   * `canvas_read` instead, and the TAGGED line says so. Either way the trace
+   * prints what happened, so nothing is dropped in silence. */
+  images?: ImagePart[];
+  /** B3: the canvas this exchange writes into, resolved by the caller before
+   * its first await (LESSONS 3) and captured in the tool, so no tool takes a
+   * canvas id and writing outside the target has no wire representation.
+   * Absent on every run without a target and on the whole eval path, which is
+   * what keeps the tools array and the user message byte-identical to v4
+   * (EVAL section 4). It is the ONE gate: the array a provider is handed IS
+   * the offer, so a message can never describe tools it does not offer. */
+  canvas?: CanvasTools;
+  /** what the connection allows the model to propose (A4). Absent on the
+   * eval path and nowhere else: the app passes it for every run, edits on or
+   * off, because the loop's job when they are off is to REFUSE a write the
+   * model wrote rather than hand it to a tool that would refuse it in the
+   * gate's words (AGENT-SPEC 8.9). */
+  writes?: WriteMode;
+  /** what the app composed for a code entry point (A2 items 5 and 6): the
+   * tab a `Explain with Ask` sent, the expectation a failed check drifted
+   * from. It rides under the same header as the `@` tags because it is the
+   * same fact, what this question came with (DESIGN rule 15). */
+  context?: string;
+  /** what this connection knows that the schema does not say (A2 item 4):
+   * hints on its tables and columns, definitions of its own words, synonyms
+   * that reach a table the prefilter would have missed. Absent on the eval
+   * path, which passes no profile. */
+  knowledge?: readonly KnowledgeRow[];
+  /** questions this connection already answered, newest first */
+  history?: readonly HistoryPair[];
+  /** word to `table` or `table.column`, merged OVER the static SYN map.
+   * Defaults to the map the knowledge rows themselves make, so the block and
+   * the prefilter can never read two different maps (LESSONS 13). */
+  synonyms?: Readonly<Record<string, string>>;
+  /** injectable clock so the harness can be deterministic */
+  now?: () => number;
+  maxTurns?: number;
+  /** bench only: gold SQL, so the answer can carry prefilter recall */
+  goldSql?: string | null;
+}
+
+/** A4: the connection's edits permission, resolved by the caller before its
+ * first await (LESSONS 3), and the gate that reads the statement. */
+export interface WriteMode {
+  /** the connection's switch, already resolved against production, where the
+   * switch has no row at all (AGENT-UX 13.1) */
+  on: boolean;
+  /** the connection is production: the refusal names it and offers no
+   * Settings, because there is none to offer there */
+  prod?: boolean;
+  /** the write gate (Rust, a pure AST call with no session): is this exactly
+   * ONE INSERT / UPDATE / DELETE (AGENT-SPEC 8.7)? Anything else, a SELECT
+   * and a pair of statements alike, is false and takes the read path it
+   * always took, where the read gate answers it in its own words. */
+  isWrite: (sql: string) => Promise<boolean>;
+}
+
+class Cancelled extends Error {
+  constructor() {
+    super("cancelled");
+    this.name = "Cancelled";
+  }
+}
+
+/** Reject as soon as the signal aborts, and always drop the listener: an Ask
+ * that ran to completion must not leave a handler on a long-lived controller. */
+async function raceAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw new Cancelled();
+  let onAbort: (() => void) | null = null;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        onAbort = () => reject(new Cancelled());
+        signal.addEventListener("abort", onAbort, { once: true });
+      }),
+    ]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
+}
+
+const firstLine = (e: unknown): string => {
+  const msg = e instanceof Error ? e.message : String(e);
+  return msg.split("\n")[0].trim() || "unknown error";
+};
+
+/** A4: which sentence a refused change gets. Production has no switch to
+ * point at, so it never offers one (AGENT-UX 13.7, LESSONS 9). */
+const writeRefusal = (w: WriteMode): string => (w.prod ? WRITES_OFF_PROD : WRITES_OFF);
+
+/** The `TAGGED BY THE USER:` block's lines: what the `@` tags resolved to,
+ * then the row Record View attached (A4 item 7), then what a code entry point
+ * composed (A2 items 5 and 6). One block, because all three are the same fact
+ * (the user pointed at this), and an empty result keeps the header off the
+ * message entirely. */
+/** What the trace's own row prints for a route. The wire's name where the
+ * message carried it, the TOOL's name where the model has to fetch it, and
+ * the word the drawer already reads as `not carried` where nothing went
+ * (TraceDrawer `imagesSaid`). */
+const routeSaid = (route: ImageRoute, id: ProviderId): string =>
+  route === "message" ? imageWireFor(id) : route === "tool" ? "canvas_read" : "none";
+
+const taggedContext = (
+  mentions: readonly Mention[],
+  route: ImageRoute,
+  ...attached: readonly (string | undefined)[]
+): string =>
+  [mentionContext(mentions, route), ...attached.map((a) => (a ?? "").trim())]
+    .filter(Boolean)
+    .join("\n");
+
+/** Whitespace-insensitive statement identity. Case is preserved on purpose:
+ * `'Paid'` and `'paid'` are different queries. */
+const sameSql = (a: string, b: string) =>
+  a.trim().replace(/;+$/, "").replace(/\s+/g, " ") ===
+  b.trim().replace(/;+$/, "").replace(/\s+/g, " ");
+
+// ---- tool dispatch ---------------------------------------------------------
+
+const isName = (n: string): n is ToolName => (TOOL_NAMES as readonly string[]).includes(n);
+
+const isCanvasName = (n: string): n is CanvasToolName =>
+  (CANVAS_TOOL_NAMES as readonly string[]).includes(n);
+
+const asRecord = (v: unknown): Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+
+const strings = (v: unknown): string[] | null =>
+  Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === "string" && x.trim())
+    ? (v as string[])
+    : null;
+
+/** The chip the thinking strip shows while this call runs (AGENT-UX 2):
+ * status register, lowercase, the object named. */
+function chipLabel(name: ToolName | CanvasToolName, args: Record<string, unknown>): string {
+  switch (name) {
+    case "list_tables":
+      return "tables";
+    case "describe_tables": {
+      const names = strings(args.names) ?? [];
+      const extra = names.length > 1 ? ` +${names.length - 1}` : "";
+      return `describe ${names[0] ?? ""}${extra}`.trim();
+    }
+    case "peek_values":
+      return `peek ${typeof args.column === "string" ? args.column : ""}`.trim();
+    case "run_sql":
+      return "run";
+    case "probe": {
+      const noun = probeNoun(strings(args.sqls) ?? []);
+      return noun === null ? "probe" : `probe ${noun}`;
+    }
+    // one label for all three, so the strip coalesces `canvas ×2` the way it
+    // coalesces `run ×3`: the chip counts CALLS, and which call it was is the
+    // trace step's own fact, one click away (AGENT-UX 16, DESIGN rule 14)
+    case "canvas_write":
+    case "canvas_replace":
+    case "canvas_read":
+      return CANVAS_CHIP;
+  }
+}
+
+/** What a tool result says when it produced a picture this connection cannot
+ * carry. The Rust door's own sentence (agent_canvas.rs), because it is the
+ * same fact: only the MCP bridge puts an image on a tool result, and an
+ * adapter that cannot carry one drops nothing in silence. */
+const IMAGE_NOT_CARRIED = "the picture cannot travel on this connection, so this reply carries the text alone";
+
+/** Hand-written mirror of tools.schema.json. The schema file is the wire
+ * contract every provider renders; this is the gate that turns a model's
+ * approximation of it into either a call or an error the model can read. */
+async function callTool(
+  tools: AgentTools,
+  name: ToolName,
+  args: Record<string, unknown>,
+): Promise<{ text: string; isError: boolean; result: unknown }> {
+  switch (name) {
+    case "list_tables": {
+      const out = await tools.listTables();
+      return { text: out.textForModel, isError: !!out.error, result: out.result };
+    }
+    case "describe_tables": {
+      const names = strings(args.names);
+      if (!names) {
+        return {
+          text: "ERROR: describe_tables needs `names`, an array of table names",
+          isError: true,
+          result: null,
+        };
+      }
+      const out = await tools.describeTables(names.slice(0, 40));
+      return { text: out.textForModel, isError: !!out.error, result: out.result };
+    }
+    case "peek_values": {
+      const table = args.table;
+      const column = args.column;
+      if (typeof table !== "string" || typeof column !== "string" || !table || !column) {
+        return {
+          text: "ERROR: peek_values needs `table` and `column`",
+          isError: true,
+          result: null,
+        };
+      }
+      const raw = typeof args.limit === "number" ? Math.trunc(args.limit) : 20;
+      const limit = Math.max(1, Math.min(raw, PEEK_MAX));
+      const out = await tools.peekValues(table, column, limit);
+      return { text: out.textForModel, isError: !!out.error, result: out.result };
+    }
+    case "run_sql": {
+      const sql = args.sql;
+      if (typeof sql !== "string" || !sql.trim()) {
+        return { text: "ERROR: run_sql needs `sql`, one statement", isError: true, result: null };
+      }
+      const out = await tools.runSql(sql);
+      return { text: out.textForModel, isError: !!out.error, result: out.result };
+    }
+    case "probe": {
+      const sqls = strings(args.sqls);
+      if (!sqls) {
+        return {
+          text: "ERROR: probe needs `sqls`, an array of 1 to 6 statements",
+          isError: true,
+          result: null,
+        };
+      }
+      const out = await tools.probe(sqls.slice(0, PROBE_MAX));
+      return { text: out.textForModel, isError: !!out.error, result: out.result };
+    }
+  }
+}
+
+/** The canvas family, dispatched exactly as the five are: the arguments are
+ * untrusted text, every refusal goes BACK to the model as `ERROR: <first
+ * line>`, and the structured half carries the block ids the loop reports. One
+ * implementation, reached from here on the driven path and from the MCP bridge
+ * on the `claude -p` one (canvas-agent-spec section 1.7). */
+async function callCanvasTool(
+  canvas: CanvasTools,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<{ text: string; isError: boolean; result: unknown }> {
+  switch (name) {
+    case "canvas_write": {
+      const out = await canvas.write(args);
+      return { text: out.textForModel, isError: !!out.error, result: out.result };
+    }
+    case "canvas_replace": {
+      const out = await canvas.replace(args);
+      return { text: out.textForModel, isError: !!out.error, result: out.result };
+    }
+    case "canvas_read": {
+      // the args go THROUGH: the schema advertises `block_id`, and a door that
+      // advertises a key it then ignores is worse than one that has none
+      const out = await canvas.read(args);
+      // a drawing's PNG rides an MCP image block on the `claude -p` path and
+      // has no seat at all on this one, where a tool result is text. So the
+      // model is told, in the Rust door's own words, rather than handed a
+      // reply that quietly lost half of itself (maintainer call 3)
+      const text = out.image ? `${out.textForModel}\n${IMAGE_NOT_CARRIED}` : out.textForModel;
+      return { text, isError: !!out.error, result: out.result };
+    }
+    default:
+      return { text: `ERROR: unknown tool '${name}'`, isError: true, result: null };
+  }
+}
+
+/** The ids a canvas call reports, or null when it reported none (a read, a
+ * refusal). Read off the structured half, never off the text. */
+const writesOf = (result: unknown): CanvasWriteResult | null =>
+  typeof result === "object" && result !== null && "blockIds" in result
+    ? (result as CanvasWriteResult)
+    : null;
+
+/** One canvas write, as the event the store records. The one place the tool's
+ * result becomes that event, so the driven path and the MCP bridge cannot
+ * report it two ways. */
+const canvasWriteEvent = (w: CanvasWriteResult): AskEvent => ({
+  type: "canvasWrite",
+  canvasId: w.canvasId,
+  blockIds: w.blockIds,
+  replaced: w.replaced,
+});
+
+const EMPTY_KNOWLEDGE: KnowledgeBlock = { text: "", hints: [], definitions: [], synonyms: [] };
+const EMPTY_HISTORY: HistoryBlock = { text: "", questions: [] };
+
+/** The knowledge step's label, as numbers: a kind that contributed nothing is
+ * absent, never a zero (DESIGN rule 11). Read off the blocks that were built,
+ * so the label and the body are one reading (LESSONS 13). */
+function knowledgeCounts(know: KnowledgeBlock, past: HistoryBlock): KnowledgeCounts {
+  return {
+    ...(know.hints.length ? { hints: know.hints.length } : {}),
+    ...(know.definitions.length ? { definitions: know.definitions.length } : {}),
+    ...(know.synonyms.length ? { synonyms: know.synonyms.length } : {}),
+    ...(past.questions.length ? { history: past.questions.length } : {}),
+  };
+}
+
+/** The user message a run actually sends. A cut thread's first call carries
+ * the kept exchanges as a prefix, because its provider session is brand new
+ * (store: cutPending). Everything else, the eval path included, sends the
+ * message askMessage() built, byte for byte. */
+function withReplay(req: AskRequest, userMsg: string): string {
+  const replay = req.thread?.replay;
+  return replay ? `${replay}\n\n${userMsg}` : userMsg;
+}
+
+// ---- the loop --------------------------------------------------------------
+
+export async function runAsk(req: AskRequest): Promise<AskAnswer> {
+  const now = req.now ?? (() => Date.now());
+  const emit = (ev: AskEvent) => req.onEvent?.(ev);
+  const maxTurns = req.maxTurns ?? MAX_TURNS;
+  // the names this run offers, which is what an unknown-tool refusal lists:
+  // with no target it is the five, in the order tools.schema.json has them
+  const offered: readonly string[] = req.canvas
+    ? [...TOOL_NAMES, ...CANVAS_TOOL_NAMES]
+    : TOOL_NAMES;
+  const started = now();
+  const trace: TraceStep[] = [];
+  const usage: TokenUsage = { input: 0, output: 0 };
+
+  // 4.1 prefilter + 4.2 context: code, milliseconds, zero tokens
+  emit({ type: "status", phase: "context" });
+  const meta = buildMeta(req.snapshot);
+  const mentions = req.mentions ?? [];
+  const rows = req.knowledge ?? [];
+  const synonyms = req.synonyms ?? synonymMap(rows);
+  const fired = synonymsFired(req.question, synonyms);
+  const picked = candidates(
+    req.question,
+    meta,
+    undefined,
+    mustIncludeFor(meta, mentions),
+    synonyms,
+  );
+  const risky = isRisky(req.question);
+  // the small tier's one call stays the minimal message it was measured as:
+  // a fired synonym reaches it as a must-include candidate, the text that
+  // explains one does not (AGENT-SPEC 4.2)
+  const small = req.tier === "small";
+  const knowledgeAt = now();
+  const know = small
+    ? EMPTY_KNOWLEDGE
+    : knowledgeMessage({
+        rows,
+        // every name a pick answers to, against the one the model sees: a
+        // stored target is qualified and a pick is bare when it can be
+        names: candidateNames(meta, picked),
+        tokens: questionTokens(req.question, synonyms),
+        fired,
+      });
+  const past = small ? EMPTY_HISTORY : historyMessage(req.question, req.history ?? []);
+  // its own time, not the run's so far: every trace row states what that row
+  // cost (AGENT-UX 5, LESSONS 13)
+  const knowledgeMs = Math.round(now() - knowledgeAt);
+  // C2b: how a tagged drawing's picture is travelling on THIS run, read once
+  // (providers `imageRouteFor`) and read by all three things that must agree
+  // about it — the line the model is sent, the message the adapter renders
+  // and the row the trace prints. A wire that carries a picture only through
+  // `canvas_read` carries none at all on a run with no canvas target, and a
+  // render the caller could not make is the same "none" (maintainer call 3,
+  // LESSONS 9: nothing is dropped in silence)
+  const drawings = mentionDrawings(mentions);
+  const wired = imageRouteFor(req.provider.id, !!req.canvas);
+  const imageRoute: ImageRoute =
+    drawings.length === 0 || (wired === "message" && !req.images?.length) ? "none" : wired;
+  const askArgs = {
+    question: req.question,
+    index: indexFor(meta, picked),
+    totalTables: meta.tables.length,
+    risky,
+    context: taggedContext(mentions, imageRoute, req.rowContext, req.context),
+  };
+  // A4: last, after the risk block when both fire (the risk block instructs
+  // the next turn's probes, this one the final fence). Absent whenever edits
+  // are off, which is what keeps the eval's bytes and every baseline row
+  // exactly where v4 left them (EVAL 4)
+  const writes = req.writes?.on ? writesMessage() : "";
+  // B3: last of all, after the risk block and after WRITES. The outline is
+  // read ONCE, here, before the run's first await (LESSONS 3), and the same
+  // string goes to the model and to the trace: nothing sent is summarised away
+  // (AGENT-SPEC 8.4). Absent with no target, which is the eval's every run
+  const canvasBlock = req.canvas
+    ? canvasMessage(req.canvas.title, req.canvas.outline(), req.canvas.columns?.())
+    : "";
+  const userMsg = withReplay(
+    req,
+    askMessage({ ...askArgs, knowledge: know.text, history: past.text }) + writes + canvasBlock,
+  );
+  trace.push({
+    step: "context",
+    ms: Math.round(now() - started),
+    candidates: picked,
+    // the message WITHOUT the two knowledge blocks: they are the next step's
+    // body, and a block in two slots is the same fact twice (DESIGN rule 14).
+    // With no profile this is the whole message, which is what the eval sends
+    text: withReplay(req, askMessage(askArgs) + writes + canvasBlock),
+    // absent, not empty: a question that tagged nothing has no tagged line
+    ...(mentions.length > 0 ? { mentions: mentionTags(mentions) } : {}),
+    // and the pictures beside them, with the route they actually left on. A
+    // question that tagged no drawing says nothing here; one whose picture
+    // could not travel says `not carried`, and one on the `claude -p` wire
+    // says `canvas_read`, because that is where the model has to go for it.
+    // The whole of "an adapter that cannot carry an image says so in the
+    // trace" (maintainer call 3), off the one route the message was built
+    // from, never a second derivation
+    ...(drawings.length > 0
+      ? { images: { count: drawings.length, wire: routeSaid(imageRoute, req.provider.id) } }
+      : {}),
+  });
+  const knowledgeText = [know.text, past.text].filter(Boolean).join("\n\n");
+  if (knowledgeText) {
+    trace.push({
+      step: "knowledge",
+      ms: knowledgeMs,
+      text: knowledgeText,
+      counts: knowledgeCounts(know, past),
+    });
+  }
+
+  const base = {
+    trace,
+    usage,
+    promptVersion: PROMPT_VERSION,
+    candidates: picked,
+    recall: recallOf(picked, req.goldSql, meta),
+    risky,
+  };
+  // the count the USER watched work (LESSONS 13). An `ownsLoop` provider ran
+  // the turns itself and reports its own `num_turns` off its result line; a
+  // provider this loop drives reports none, and then the loop's counter IS
+  // what the user watched. Set once per invocation, read by every finish, so
+  // the turn-cap sentence, the trace's verdict and the footer are one number
+  // in three slots and never three readings of two counters (DESIGN rule 14).
+  const child: { turns: number | null } = { turns: null };
+  const finish = (
+    verdict: Verdict,
+    extra: { sql: string | null; run: AgentRun | null; text: string; turns: number } & {
+      assumptions?: Assumption[];
+      sanity?: SanityFragment[];
+      /** the wait a rate-limited provider stated, forwarded to the UI */
+      retryAfterMs?: number;
+      /** the affordance this failure gets when the verdict alone does not
+       * name it: a refused change is a `failed` verdict carrying SQL, which
+       * would otherwise read as the repair loop's own (A4, AGENT-UX 7) */
+      errorKind?: AskErrorKind;
+    },
+  ): AskAnswer => {
+    trace.push({ step: "verdict", ms: Math.round(now() - started), verdict });
+    const answer: AskAnswer = {
+      ...base,
+      verdict,
+      sql: extra.sql,
+      run: extra.run,
+      text: extra.text,
+      turns: child.turns ?? extra.turns,
+      assumptions: extra.assumptions ?? [],
+      sanity: extra.sanity ?? [],
+      ms: Math.round(now() - started),
+    };
+    // `proposed` is neither: a statement that cleared the write gate and has
+    // not run is the answer to the question asked (A4, AGENT-UX 13.2)
+    if (verdict.status !== "answered" && verdict.status !== "proposed") {
+      // the ONE error emit per verdict: a failed verdict that carries SQL is
+      // a SQL failure (Fix It over the last statement), one without SQL is
+      // the provider's (Retry). The store keeps the last error it sees, so a
+      // second emit here would relabel every SQL failure as a provider one.
+      const kind: AskErrorKind =
+        extra.errorKind ??
+        (verdict.status === "cancelled"
+          ? "cancelled"
+          : verdict.status === "turn_cap"
+            ? "turncap"
+            : verdict.sql !== null
+              ? "sql"
+              : "provider");
+      emit({
+        type: "error",
+        kind,
+        message:
+          verdict.status === "failed"
+            ? verdict.message
+            : verdict.status === "turn_cap"
+              ? turnCapMessage(verdict.turns)
+              : "cancelled",
+        ...(extra.retryAfterMs !== undefined ? { retryAfterMs: extra.retryAfterMs } : {}),
+      });
+    }
+    emit({ type: "status", phase: "done" });
+    emit({ type: "answer", answer });
+    return answer;
+  };
+
+  if (small) {
+    return runSmall(req, { meta, picked, now, emit, trace, usage, finish, maxTurns, imageRoute });
+  }
+
+  // the drawing a question was asked about rides its FIRST user message and
+  // no other: the repair turns are about a statement, not about a picture
+  const messages: Msg[] = [
+    { role: "user", content: userMsg, ...(imageRoute === "message" ? { images: req.images } : {}) },
+  ];
+  const peeked: { column: string; id: string }[] = [];
+  const sanity: SanityFragment[] = [];
+  // a box, not a `let`: the assignment happens inside the Promise.all callback
+  // and control-flow narrowing does not follow a variable across that boundary
+  const runs: { last: { sql: string; run: AgentRun } | null } = { last: null };
+  let turns = 0;
+  // consecutive run_sql calls the gate refused as prose (W7): the model
+  // answered in words, handed the words to run_sql, and would re-explain
+  // itself once per refusal until the turn cap. Reset by any run_sql the
+  // gate read as a statement, broken or not
+  let proseStrikes = 0;
+  let text = "";
+  // where the current text block starts inside `text`: a tool call closes the
+  // block before it, and only the block after the last call is the answer
+  let answerFrom = 0;
+  const lastBlock = () => text.slice(answerFrom);
+  // the last block that still says something once fences, the Assumptions
+  // line and tables are stripped: a final block that is only the SQL (the
+  // model wrote its prose, ran once more, then closed with the statement)
+  // keeps that prose in the answer instead of an empty slot
+  let lastProse = "";
+  const noteProse = (block: string) => {
+    if (answerText(block).trim()) lastProse = block;
+  };
+  /** what the model actually said, for an ending that is not the post step:
+   * the open block when it says something, else the last block that did */
+  const proseSaid = () => (answerText(lastBlock()).trim() ? lastBlock() : lastProse);
+  /** the prose spiral's exit (W7): the model had already given its answer in
+   * words, so the exchange is ANSWERED with those words and no statement */
+  const proseAnswer = () => {
+    const said = proseSaid();
+    return finish({ status: "answered", sql: null, rowCount: null }, {
+      sql: null,
+      run: null,
+      text: said,
+      turns,
+      assumptions: buildAssumptions({ text: said, sql: null, question: req.question }),
+      sanity: sanityLine(peeked, sanity),
+    });
+  };
+
+  // the `claude -p` path runs the canvas tools inside the child, over the MCP
+  // bridge: Rust emits one call and parks a oneshot, this side answers it with
+  // the very text the driven path returns (canvas-agent-spec 2.2). The
+  // listener's life is the exchange's, started before any child exists and
+  // stopped in the finally that ends the run, so a stale registration is
+  // unreachable rather than merely unlikely
+  const bridge =
+    req.provider.ownsLoop && req.canvas?.serve
+      ? req.canvas.serve((w) => emit(canvasWriteEvent(w)))
+      : null;
+
+  try {
+    while (turns < maxTurns) {
+      if (req.signal.aborted) throw new Cancelled();
+      turns++;
+      emit({ type: "status", phase: "thinking" });
+      const turnStart = now();
+
+      const calls: ToolCall[] = [];
+      const owned: ToolResult[] = [];
+      const openedAt = new Map<string, number>();
+      let thinking = "";
+      let stop: StopReason | null = null;
+      let failure: { kind: string; message: string; retryAfterMs?: number } | null = null;
+      noteProse(lastBlock());
+      text = "";
+      answerFrom = 0;
+
+      const stream = req.provider.chat({
+        system: SYSTEM_PROMPT,
+        messages,
+        // B3: the ONE gate. The HTTP adapters render this array, and the
+        // `claude -p` adapter serves exactly these names off its MCP token, so
+        // neither can offer a canvas tool to a run with no target
+        tools: toolsFor(!!req.canvas),
+        model: req.model,
+        signal: req.signal,
+        thread: req.thread
+          ? {
+              id: req.thread.id,
+              session: req.thread.session,
+              firstCall: req.thread.firstCall && turns === 1,
+              turnsRemaining: maxTurns - turns + 1,
+            }
+          : undefined,
+      });
+
+      for await (const ev of stream as AsyncIterable<AgentEvent>) {
+        if (req.signal.aborted) throw new Cancelled();
+        if ("text" in ev) {
+          text += ev.text;
+          emit({ type: "text", delta: ev.text });
+        } else if ("thinking" in ev) {
+          thinking += ev.thinking;
+          emit({ type: "thinking", delta: ev.thinking });
+        } else if ("toolCall" in ev) {
+          if (text.length > answerFrom) {
+            const block = lastBlock();
+            noteProse(block);
+            if (block.trim()) emit({ type: "narration", text: block });
+            answerFrom = text.length;
+          }
+          calls.push(ev.toolCall);
+          openedAt.set(ev.toolCall.id, now());
+          const raw = ev.toolCall.name;
+          const named = isName(raw) || isCanvasName(raw);
+          emit({
+            type: "toolStart",
+            id: ev.toolCall.id,
+            name: isName(raw) ? raw : "run_sql",
+            label: named ? chipLabel(raw, asRecord(safeParse(ev.toolCall.args))) : raw,
+            args: ev.toolCall.args,
+          });
+        } else if ("toolResult" in ev) {
+          owned.push(ev.toolResult);
+          const name = isName(ev.toolResult.name) ? ev.toolResult.name : "run_sql";
+          const ms = Math.round(now() - (openedAt.get(ev.toolResult.id) ?? now()));
+          emit({
+            type: "toolEnd",
+            id: ev.toolResult.id,
+            name,
+            ms,
+            isError: !!ev.toolResult.isError,
+            args: calls.find((c) => c.id === ev.toolResult.id)?.args ?? "",
+            result: ev.toolResult.result,
+          });
+        } else if ("usage" in ev) {
+          usage.input += ev.usage.input;
+          usage.output += ev.usage.output;
+          if (ev.usage.cacheRead !== undefined) {
+            usage.cacheRead = (usage.cacheRead ?? 0) + ev.usage.cacheRead;
+          }
+          if (ev.usage.cacheWrite !== undefined) {
+            usage.cacheWrite = (usage.cacheWrite ?? 0) + ev.usage.cacheWrite;
+          }
+          emit({ type: "usage", usage: ev.usage });
+        } else if ("done" in ev) {
+          stop = ev.done.stopReason;
+          // the child's own count when it reports one: every status naming a
+          // turn count names the turns the user watched, never this loop's
+          // counter (W7, LESSONS 13)
+          if (ev.done.turns !== undefined) child.turns = ev.done.turns;
+        } else {
+          failure = ev.error;
+          break;
+        }
+      }
+
+      trace.push({
+        step: "turn",
+        ms: Math.round(now() - turnStart),
+        index: turns - 1,
+        text,
+        thinking: thinking || undefined,
+        usage: { ...usage },
+      });
+
+      if (failure) {
+        if (failure.kind === "cancelled") throw new Cancelled();
+        return finish({ status: "failed", sql: null, message: failure.message }, {
+          sql: null,
+          run: null,
+          text: lastBlock(),
+          turns,
+          retryAfterMs: failure.retryAfterMs,
+        });
+      }
+      if (req.signal.aborted) throw new Cancelled();
+
+      // `ownsLoop`: the provider ran the tools itself. Record what it did and
+      // never re-execute (AGENT-SPEC section 7).
+      if (req.provider.ownsLoop) {
+        for (const res of owned) {
+          const call = calls.find((c) => c.id === res.id);
+          // the name is recorded as the provider reported it: a tool outside
+          // the five must show up in the trace by its own name, never be
+          // laundered into the run_sql count
+          trace.push({
+            step: "tool",
+            ms: 0,
+            id: res.id,
+            name: res.name,
+            args: call?.args ?? "",
+            result: res.result,
+            isError: !!res.isError,
+          });
+        }
+      } else if (calls.length > 0) {
+        emit({ type: "status", phase: "tools" });
+        messages.push({ role: "assistant", content: text, toolCalls: calls });
+        const results = await raceAbort(
+          Promise.all(
+            calls.map(async (call): Promise<ToolResult> => {
+              const t = now();
+              const parsed = safeParse(call.args);
+              let out: { text: string; isError: boolean; result: unknown };
+              // the canvas family only when this exchange has a target, and
+              // the refusal lists the names ACTUALLY offered, so a no-target
+              // run's text is the one it always was
+              const onCanvas = req.canvas && isCanvasName(call.name) ? req.canvas : null;
+              const unknownTool = () => ({
+                text: `ERROR: unknown tool '${call.name}'. Valid tools: ${offered.join(", ")}`,
+                isError: true,
+                result: null,
+              });
+              if (!isName(call.name) && !onCanvas) {
+                out = unknownTool();
+              } else if (parsed === undefined) {
+                out = {
+                  text: `ERROR: arguments were not valid JSON: ${call.args.slice(0, 200)}`,
+                  isError: true,
+                  result: null,
+                };
+              } else if (onCanvas) {
+                try {
+                  out = await callCanvasTool(onCanvas, call.name, asRecord(parsed));
+                } catch (e) {
+                  out = { text: `ERROR: ${firstLine(e)}`, isError: true, result: null };
+                }
+                // the ids reach the store from the seam that minted them, not
+                // from the text the model read (LESSONS 13)
+                const wrote = writesOf(out.result);
+                if (wrote && wrote.blockIds.length > 0) emit(canvasWriteEvent(wrote));
+              } else if (isName(call.name)) {
+                const args = asRecord(parsed);
+                try {
+                  out = await callTool(req.tools, call.name, args);
+                } catch (e) {
+                  out = { text: `ERROR: ${firstLine(e)}`, isError: true, result: null };
+                }
+                if (call.name === "peek_values" && typeof args.column === "string") {
+                  peeked.push({ column: args.column, id: call.id });
+                }
+                if (call.name === "run_sql" && !out.isError && out.result) {
+                  runs.last = { sql: String(args.sql), run: out.result as AgentRun };
+                }
+                if (call.name === "probe" && Array.isArray(out.result)) {
+                  for (const p of out.result as { fragment: SanityFragment | null }[]) {
+                    if (p.fragment) sanity.push({ ...p.fragment, stepId: call.id });
+                  }
+                }
+              } else {
+                // the guard above admits only the five and, with a target, the
+                // three, so this is unreachable; it answers in the same words
+                // rather than inventing a second refusal for one case
+                out = unknownTool();
+              }
+              // the chip's `name` is its SPECIES: a canvas call and an
+              // off-list tool alike wear the run chip. The trace's is the
+              // name the model actually wrote, because the drawer is where
+              // that is law and nothing sent is laundered (AGENT-SPEC 8.4)
+              const name = isName(call.name) ? call.name : "run_sql";
+              const traced = isCanvasName(call.name) ? call.name : name;
+              const ms = Math.round(now() - t);
+              trace.push({
+                step: "tool",
+                ms,
+                id: call.id,
+                name: traced,
+                args: call.args,
+                result: out.text,
+                isError: out.isError,
+              });
+              emit({
+                type: "toolEnd",
+                id: call.id,
+                name,
+                ms,
+                isError: out.isError,
+                args: call.args,
+                result: out.text,
+              });
+              return { id: call.id, name: call.name, result: out.text, isError: out.isError };
+            }),
+          ),
+          req.signal,
+        );
+        messages.push({ role: "tool", results });
+        for (const r of results) {
+          // a canvas result block's statement goes through the same read gate,
+          // so prose sent to one spirals the same way and is broken the same
+          // way (W7; canvas-agent-spec 1.5)
+          if (r.name !== "run_sql" && !isCanvasName(r.name)) continue;
+          proseStrikes = r.isError && isProseRefusal(r.result) ? proseStrikes + 1 : 0;
+        }
+        if (proseStrikes >= PROSE_STRIKES) return proseAnswer();
+        continue;
+      }
+
+      // the adapter cut a prose spiral off mid-conversation (W7): its own
+      // strike count is the authority, this loop never saw the refusals
+      if (stop === "proseLoop") return proseAnswer();
+
+      // an `ownsLoop` provider that exhausted its own turn budget did not
+      // finish the conversation; the model's last text is not an answer
+      if (stop === "turnCap") {
+        return finish({ status: "turn_cap", sql: runs.last?.sql ?? null, turns: child.turns ?? turns }, {
+          sql: runs.last?.sql ?? null,
+          run: runs.last?.run ?? null,
+          text: lastBlock(),
+          turns,
+          sanity: sanityLine(peeked, sanity),
+        });
+      }
+
+      if (stop === "toolCalls" && calls.length === 0) {
+        // the provider said it wanted tools and named none: nothing to run, so
+        // treat the text as final rather than looping on an empty turn
+        stop = "stop";
+      }
+
+      // 4.6 post: the model is done talking, so the answer is assembled here
+      emit({ type: "status", phase: "post" });
+      const last = lastBlock();
+      // a SQL-only closing block rides behind the last prose: the display
+      // strip shows the prose, the fence and the Assumptions line still parse
+      const answer = answerText(last).trim() || !lastProse ? last : `${lastProse}\n\n${last}`;
+      // the fence normally closes the last block; a model that stated the SQL
+      // before running it and said only "done" after keeps its statement
+      let found = extractSql(answer);
+      if (found.how === "raw" || found.how === "none") {
+        const whole = extractSql(text);
+        if (whole.how !== "raw" && whole.how !== "none") found = whole;
+      }
+      const { sql } = found;
+      if (!sql) {
+        return finish({ status: "answered", sql: null, rowCount: null }, {
+          sql: null,
+          run: null,
+          text: answer,
+          turns,
+          assumptions: buildAssumptions({ text: answer, sql: null, question: req.question }),
+          sanity: sanityLine(peeked, sanity),
+        });
+      }
+
+      // A4: the statement the model settled on is a CHANGE, so it is never
+      // executed here. Edits on, it ends the exchange as a proposal the user
+      // runs in a query tab (AGENT-UX 13.2); edits off, it ends as the one
+      // failure whose way out is Settings, never a run_sql the read gate
+      // would refuse in gate words the question cannot act on (AGENT-SPEC
+      // 8.9). Everything the gate does not read as exactly one INSERT /
+      // UPDATE / DELETE falls through to the path it always took.
+      if (req.writes && (await raceAbort(req.writes.isWrite(sql), req.signal))) {
+        const shared = {
+          sql,
+          run: null,
+          text: answer,
+          turns,
+          assumptions: buildAssumptions({ text: answer, sql, question: req.question }),
+          sanity: sanityLine(peeked, sanity),
+        };
+        return req.writes.on
+          ? finish({ status: "proposed", sql }, shared)
+          : finish(
+              { status: "failed", sql, message: writeRefusal(req.writes) },
+              { ...shared, errorKind: "writesoff" },
+            );
+      }
+
+      const prior = runs.last;
+      let run = prior && sameSql(prior.sql, sql) ? prior.run : null;
+      if (!run) {
+        emit({ type: "status", phase: "running" });
+        const t = now();
+        const out = await raceAbort(req.tools.runSql(sql), req.signal);
+        trace.push({
+          step: "tool",
+          ms: Math.round(now() - t),
+          id: `final-${turns}`,
+          name: "run_sql",
+          args: JSON.stringify({ sql }),
+          result: out.textForModel,
+          isError: !!out.error,
+        });
+        if (out.error || !out.result) {
+          if (turns < maxTurns) {
+            messages.push({ role: "assistant", content: text });
+            messages.push({ role: "user", content: repairMessage(out.error ?? out.textForModel) });
+            continue;
+          }
+          return finish(
+            { status: "failed", sql, message: out.error ?? out.textForModel },
+            { sql, run: null, text: answer, turns },
+          );
+        }
+        run = out.result;
+      }
+
+      return finish({ status: "answered", sql, rowCount: run.rowCount }, {
+        sql,
+        run,
+        text: answer,
+        turns,
+        assumptions: buildAssumptions({ text: answer, sql, question: req.question }),
+        sanity: sanityLine(peeked, sanity),
+      });
+    }
+
+    return finish({ status: "turn_cap", sql: runs.last?.sql ?? null, turns: child.turns ?? turns }, {
+      sql: runs.last?.sql ?? null,
+      run: runs.last?.run ?? null,
+      text: lastBlock(),
+      turns,
+      sanity: sanityLine(peeked, sanity),
+    });
+  } catch (e) {
+    if (e instanceof Cancelled) {
+      return finish({ status: "cancelled", sql: runs.last?.sql ?? null }, {
+        sql: runs.last?.sql ?? null,
+        run: runs.last?.run ?? null,
+        text: lastBlock(),
+        turns,
+        sanity: sanityLine(peeked, sanity),
+      });
+    }
+    return finish({ status: "failed", sql: null, message: firstLine(e) }, {
+      sql: null,
+      run: null,
+      text: lastBlock(),
+      turns,
+      sanity: sanityLine(peeked, sanity),
+    });
+  } finally {
+    bridge?.();
+  }
+}
+
+/** "checked payment_status values" first, then whatever the probes showed.
+ * Each fragment names the call that produced it; a column peeked twice keeps
+ * its first call. */
+function sanityLine(
+  peeked: { column: string; id: string }[],
+  probes: SanityFragment[],
+): SanityFragment[] {
+  const seen = new Set<string>();
+  const out: SanityFragment[] = [];
+  for (const { column, id } of peeked) {
+    if (seen.has(column)) continue;
+    seen.add(column);
+    out.push({ text: `checked ${column} values`, warn: false, stepId: id });
+  }
+  return [...out, ...probes];
+}
+
+function safeParse(text: string): unknown {
+  if (!text.trim()) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+// ---- small tier (section 4.7) ---------------------------------------------
+
+interface SmallCtx {
+  meta: ReturnType<typeof buildMeta>;
+  picked: string[];
+  /** how a tagged drawing's picture travels on this run, decided once by the
+   * caller so the small tier's one message and the trace's one row read the
+   * same answer the mid tier's do */
+  imageRoute: ImageRoute;
+  now: () => number;
+  emit: (ev: AskEvent) => void;
+  trace: TraceStep[];
+  usage: TokenUsage;
+  maxTurns: number;
+  finish: (
+    verdict: Verdict,
+    extra: { sql: string | null; run: AgentRun | null; text: string; turns: number } & {
+      assumptions?: Assumption[];
+      sanity?: SanityFragment[];
+      retryAfterMs?: number;
+      errorKind?: AskErrorKind;
+    },
+  ) => AskAnswer;
+}
+
+/** Code prefilter, curated schema, ONE model call producing SQL, execute, and
+ * at most two repairs. No tools: tool loops collapse below about 7B, and the
+ * repair loop was the biggest measured lever on this tier. */
+async function runSmall(req: AskRequest, ctx: SmallCtx): Promise<AskAnswer> {
+  const { now, emit, trace, usage, finish } = ctx;
+  let text = "";
+  let sql: string | null = null;
+  try {
+    const t = now();
+    const described = await raceAbort(req.tools.describeTables(ctx.picked), req.signal);
+    trace.push({
+      step: "tool",
+      ms: Math.round(now() - t),
+      id: "small-schema",
+      name: "describe_tables",
+      args: JSON.stringify({ names: ctx.picked }),
+      result: described.textForModel,
+      isError: !!described.error,
+    });
+
+    // the picture rides the small tier's one message too, where the wire
+    // takes one: this path passes `tools: []`, so an image is the whole of
+    // what a drawing can contribute, and dropping it here while the trace
+    // printed the wire it left on would be the same silent loss on a second
+    // path (maintainer call 3)
+    const messages: Msg[] = [
+      {
+        role: "user",
+        content: withReplay(req, smallAskMessage(described.textForModel, req.question)),
+        ...(ctx.imageRoute === "message" ? { images: req.images } : {}),
+      },
+    ];
+    const attempts = Math.min(SMALL_REPAIRS + 1, ctx.maxTurns);
+    let lastError = "no SQL code block found in response";
+
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      if (req.signal.aborted) throw new Cancelled();
+      emit({ type: "status", phase: "thinking" });
+      const turnStart = now();
+      text = "";
+      let failure: { kind: string; message: string; retryAfterMs?: number } | null = null;
+      const stream = req.provider.chat({
+        system: SMALL_SYSTEM_PROMPT,
+        messages,
+        tools: [],
+        model: req.model,
+        signal: req.signal,
+      });
+      for await (const ev of stream as AsyncIterable<AgentEvent>) {
+        if (req.signal.aborted) throw new Cancelled();
+        if ("text" in ev) {
+          text += ev.text;
+          emit({ type: "text", delta: ev.text });
+        } else if ("thinking" in ev) {
+          emit({ type: "thinking", delta: ev.thinking });
+        } else if ("usage" in ev) {
+          usage.input += ev.usage.input;
+          usage.output += ev.usage.output;
+          emit({ type: "usage", usage: ev.usage });
+        } else if ("error" in ev) {
+          failure = ev.error;
+          break;
+        }
+      }
+      trace.push({
+        step: "turn",
+        ms: Math.round(now() - turnStart),
+        index: attempt,
+        text,
+        usage: { ...usage },
+      });
+      if (failure) {
+        if (failure.kind === "cancelled") throw new Cancelled();
+        return finish({ status: "failed", sql: null, message: failure.message }, {
+          sql: null,
+          run: null,
+          text,
+          turns: attempt + 1,
+          retryAfterMs: failure.retryAfterMs,
+        });
+      }
+
+      sql = extractSql(text).sql;
+      // A4: this tier is told to write a SELECT and gets no WRITES block, so
+      // a change here is the model going off script. It is still never run:
+      // the same gate, the same two endings as the hybrid path (AGENT-SPEC
+      // 8.9), because which tier answered is not a reason to run a write
+      if (sql && req.writes && (await raceAbort(req.writes.isWrite(sql), req.signal))) {
+        const shared = { sql, run: null, text, turns: attempt + 1 };
+        return req.writes.on
+          ? finish({ status: "proposed", sql }, shared)
+          : finish(
+              { status: "failed", sql, message: writeRefusal(req.writes) },
+              { ...shared, errorKind: "writesoff" },
+            );
+      }
+      if (sql) {
+        emit({ type: "status", phase: "running" });
+        const t1 = now();
+        const out = await raceAbort(req.tools.runSql(sql), req.signal);
+        trace.push({
+          step: "tool",
+          ms: Math.round(now() - t1),
+          id: `small-run-${attempt}`,
+          name: "run_sql",
+          args: JSON.stringify({ sql }),
+          result: out.textForModel,
+          isError: !!out.error,
+        });
+        if (!out.error && out.result) {
+          return finish({ status: "answered", sql, rowCount: out.result.rowCount }, {
+            sql,
+            run: out.result,
+            text,
+            turns: attempt + 1,
+            assumptions: buildAssumptions({ text: null, sql, question: req.question }),
+          });
+        }
+        lastError = out.error ?? out.textForModel;
+      }
+      if (attempt < attempts - 1) {
+        messages.push({ role: "assistant", content: text });
+        messages.push({ role: "user", content: repairMessage(lastError) });
+      }
+    }
+
+    return finish({ status: "failed", sql, message: lastError }, {
+      sql,
+      run: null,
+      text,
+      turns: attempts,
+    });
+  } catch (e) {
+    if (e instanceof Cancelled) {
+      return finish({ status: "cancelled", sql }, { sql, run: null, text, turns: 1 });
+    }
+    return finish({ status: "failed", sql, message: firstLine(e) }, {
+      sql,
+      run: null,
+      text,
+      turns: 1,
+    });
+  }
+}

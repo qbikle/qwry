@@ -1,0 +1,140 @@
+/* Threads sheet (ThreadsSheet.tsx): the pane's second slide-over, the same
+   species and geometry as the trace drawer. The twelve lines of .trace's
+   inset / transform / visibility contract are repeated here on purpose: the
+   drawer's CSS is fenced to its own builder, and a class the two would share
+   needs an edit there (ledgered in ROADMAP_log). Reduced motion is the global
+   kill in tokens.css (the visibility delay stays so a closed sheet still
+   leaves the tab order). */
+.threads {
+  position: absolute;
+  inset: 40px 0 0 0; /* below the header strip */
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  z-index: 10; /* above the grid's sticky header and gutter (grid.css tops out at 9) */
+  transform: translateX(100%);
+  visibility: hidden;
+  transition:
+    transform var(--dur-slow) var(--ease-std),
+    visibility 0s linear var(--dur-slow);
+  outline: none; /* programmatic focus target (like .ask-panel); the controls inside keep their rings */
+}
+.threads.open {
+  transform: none;
+  visibility: visible;
+  transition: transform var(--dur-slow) var(--ease-std);
+}
+/* header strip: fixed height (rule 2); back · title · Delete All… */
+.threads-head {
+  height: 36px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-2);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-sm);
+  color: var(--fg);
+}
+/* soft-danger species (rule 1): danger-soft fill + danger text for a
+   destructive action inside a busy strip where filled .danger would shout
+   (qb-cancel, tp-del-btn). Hover deepens the tint, press scales; the ring
+   and the disabled face come from tokens.css */
+.soft-danger {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 var(--sp-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--dur-quick),
+    transform var(--dur-quick);
+}
+.soft-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 24%, transparent);
+}
+.soft-danger:active:not(:disabled) {
+  transform: scale(0.97);
+}
+/* the list holds keyboard focus (a listbox; .hot is the roving highlight),
+   so its own ring moves onto the hot row rather than boxing the whole list
+   (the selector outranks tokens.css's [tabindex]:focus-visible, whose ring
+   the pane clipped to a 2px line under the header) */
+.threads-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--sp-2);
+}
+.threads .threads-list:focus-visible {
+  outline: none;
+}
+.threads .threads-list:focus-visible .trow.hot {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* list-row species (rule 1): hover = bg-hover, .hot the keyboard/pointer
+   highlight, .active the current thread; press = a bg step */
+.trow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 36px;
+  padding: 0 var(--sp-1) 0 var(--sp-2);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  cursor: pointer;
+}
+.trow:hover,
+.trow.hot {
+  background: var(--bg-hover);
+}
+.trow:active {
+  background: var(--bg-active);
+}
+.trow.active {
+  background: var(--accent-soft);
+}
+.trow-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--text-sm);
+}
+/* status register, tier 2 */
+.trow-time {
+  flex-shrink: 0;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+/* the delete occupies its layout at every row so titles and times never
+   shift; it is revealed by hover, the hot row or its own focus (rule 2:
+   visibility, never display). Hover paints it as the danger it is */
+.trow .trow-del {
+  visibility: hidden;
+}
+.trow:hover .trow-del,
+.trow.hot .trow-del,
+.trow .trow-del:focus-visible {
+  visibility: visible;
+}
+.trow .trow-del:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+/* empty-state register */
+.threads-empty {
+  padding: var(--sp-2);
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}

@@ -2,10 +2,10 @@
 // Perf checkpoint vs Glide Data Grid happens at the end of P2 (see ROADMAP).
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { copyCue } from "../lib/copyCue";
+import { copyCue, copyCueShow } from "../lib/copyCue";
 import { invoke } from "@tauri-apps/api/core";
 import { useResults, type StatementState } from "../stores/results";
-import { ctidGuardPairs, editKey, TRUNCATED_LOCATOR_MSG, useEdits } from "../stores/edits";
+import { ctidGuardPairs, editKey, TRUNCATED_LOCATOR_MSG, useEdits, type PendingEdit } from "../stores/edits";
 import * as ipc from "../ipc/commands";
 import type { EditabilityMap } from "../ipc/types";
 import { formatCells, parseTsv, type CopyFormat } from "./clipboard";
@@ -55,6 +55,19 @@ const ROWNUM_W = 52;
 const MIN_COL_W = 64;
 const MAX_COL_W = 480;
 const CHAR_W = 7.3; // SF Mono 12px approximation
+
+/** readOnly grids never subscribe to the edit singletons: these frozen
+ * constants stand in so every downstream lookup stays a no-op */
+const EMPTY_PENDING: Record<string, PendingEdit> = Object.freeze({});
+const EMPTY_FLASH: Set<string> = new Set();
+/** readOnly alignment sniff when the host supplies no column types: the same
+ * decimal/scientific shape the selection-stats effect tests wire text with */
+const NUM_SHAPE = /^-?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+/** format_type spellings a host may hand `colTypes` (NUMERIC_TYPES holds the
+ * short forms tokio-postgres reports for the editability map) */
+const NUMERIC_TYPES_LONG = new Set([
+  "smallint", "integer", "bigint", "real", "double precision", "decimal",
+]);
 
 const NUMERIC_TYPES = new Set([
   "int2", "int4", "int8", "float4", "float8", "numeric", "oid", "money",
@@ -116,12 +129,18 @@ const Cell = memo(function Cell(p: {
   num: boolean;
   isDefault: boolean;
   title: string | undefined;
+  /** Ask's write preview (A4): this cell is one the statement moves, and `old`
+   * is the value it holds today. The pair reads `old -> new` in the ONE cell
+   * (DESIGN rule 14) and wears the staged-edit fill without its dashed
+   * outline, which is the editable affordance and this cell answers no click */
+  changed: boolean;
+  old: string | null;
 }) {
   return (
     <div
       data-r={p.r}
       data-c={p.c}
-      className={`vgrid-cell${p.v === null ? " null" : ""}${p.selected ? " active" : ""}${p.focused ? " focus" : ""}${p.dirty ? " dirty" : ""}${p.flash ? " flash" : ""}${p.warn ? " ctid-warn" : ""}${p.hit ? " find-hit" : ""}${p.curHit ? " find-cur" : ""}${p.num ? " num" : ""}`}
+      className={`vgrid-cell${p.v === null ? " null" : ""}${p.selected ? " active" : ""}${p.focused ? " focus" : ""}${p.dirty ? " dirty" : ""}${p.flash ? " flash" : ""}${p.warn ? " ctid-warn" : ""}${p.hit ? " find-hit" : ""}${p.curHit ? " find-cur" : ""}${p.num ? " num" : ""}${p.changed ? " chg" : ""}`}
       style={{
         transform: `translate(${p.x}px, ${p.y}px)`,
         width: p.width,
@@ -129,6 +148,18 @@ const Cell = memo(function Cell(p: {
       }}
       title={p.title}
     >
+      {/* a changed cell states both values, old first: the arrow and the old
+          value at tier 2, the new one at tier 1 */}
+      {p.changed && (
+        <>
+          <span className="vgrid-old">
+            {p.old === null ? <span className="vgrid-nullchip">NULL</span> : p.old}
+          </span>
+          <span className="vgrid-arrow" aria-hidden="true">
+            →
+          </span>
+        </>
+      )}
       {/* the grid must never lie: real NULL renders as a chip element, '' as a
           dim marker: the literal text "NULL" stays visually distinct */}
       {p.isDefault ? (
@@ -177,13 +208,22 @@ function saveStoredWidths(sig: string, widths: number[]) {
 }
 // ---------------------------------------------------------------------------
 
-function estimateWidths(st: StatementState): number[] {
+function estimateWidths(
+  st: StatementState,
+  changed?: ReadonlyMap<string, string | null>,
+): number[] {
   return st.columns.map((col, ci) => {
     let max = col.name.length;
     const sample = Math.min(st.rows.length, 100);
     for (let r = 0; r < sample; r++) {
       const v = st.rows[r][ci];
-      if (v) max = Math.max(max, Math.min(v.length, 64));
+      // a preview cell reads `old -> new` in the ONE cell (A4), so the column
+      // has to hold both: a width measured from the new value alone clips the
+      // arrow and the column reads as a lie
+      const k = `${r}:${ci}`;
+      let len = v ? v.length : 0;
+      if (changed?.has(k)) len += (changed.get(k) ?? "NULL").length + 3;
+      if (len) max = Math.max(max, Math.min(len, 64));
     }
     return Math.max(MIN_COL_W, Math.min(MAX_COL_W, Math.round(max * CHAR_W + 24)));
   });
@@ -467,14 +507,49 @@ const browseScrollLeft = new Map<string, number>();
 
 export function Grid({
   statement,
-  insertable = false,
+  insertable: insertableProp = false,
+  readOnly = false,
+  colTypes,
+  filterText: hostFilterText,
+  maxRows,
+  changed,
 }: {
   statement: StatementState;
   insertable?: boolean;
+  /** standalone grid (Ask answers): renders `statement` from props alone and
+   * never reads or writes useEdits / useBrowser / useResults / useGridFilter /
+   * useFind / useGridStats / useInspector, which are all indexed by the ACTIVE
+   * RESULTS TAB (LESSONS 4: a standalone grid publishing to them paints one
+   * dataset's coordinates over another). Off: editing, insert, delete, undo,
+   * paste, FK navigation, inspector targeting, find, quick-filter store,
+   * selection stats, scroll memory, infinite-scroll hook. Kept: selection,
+   * copy + export, client sort chain, hide/show columns, value distribution
+   * (client mode), record view, keyboard nav, NULL/∅ chips, numeric
+   * alignment. readOnly wins over insertable. */
+  readOnly?: boolean;
+  /** pg type names per DATA column when the host knows them (type glyphs,
+   * numeric right-align); readOnly only. Absent → value-sniffed numeric
+   * alignment, no glyphs. */
+  colTypes?: (string | undefined)[];
+  /** host-owned quick-filter text; readOnly only (the store is the results
+   * status bar's) */
+  filterText?: string;
+  /** readOnly only: the grid sizes ITSELF to the header plus up to this many
+   * view rows, plus its own horizontal scrollbar when one shows, instead of
+   * filling its container. A host-fixed slot cannot know the scrollbar's
+   * thickness (0 overlay, 15 classic), and a slot sized without it hid the
+   * last promised row behind the bar (the Ask card's one-row grid). */
+  maxRows?: number;
+  /** readOnly only (A4, Ask's write preview): the value a cell holds TODAY,
+   * keyed `row:col` the way `statement.truncated` is. A cell in this map reads
+   * `old -> new` in the one cell; every other cell is untouched */
+  changed?: ReadonlyMap<string, string | null>;
 }) {
+  const insertable = insertableProp && !readOnly;
   const scrollRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
+    if (readOnly) return;
     if (!insertable) return;
     // the grid is keyed by tab, so the active tab at mount IS this grid's tab
     const tabId = useResults.getState().active;
@@ -491,6 +566,7 @@ export function Grid({
     // query tabs: BOTH axes survive the tab-switch remount (the data under
     // the grid didn't change, only the mount did). Browse keeps its own
     // horizontal-only rule above (a reload means new order, top is honest).
+    if (readOnly) return;
     if (insertable) return;
     const tabId = useResults.getState().active;
     const el = scrollRef.current;
@@ -523,8 +599,13 @@ export function Grid({
   useEffect(() => {
     if (widthsInitialized.current) return;
     // hand-set widths for this column shape win over content estimation,
-    // and apply immediately, before any rows have streamed in
-    const stored = loadStoredWidths(colSig(statement.columns), statement.columns.length);
+    // and apply immediately, before any rows have streamed in. A preview's
+    // cells hold two values where every stored width holds one, so the stored
+    // pass is skipped there rather than handed a width that would clip
+    const stored =
+      changed && changed.size > 0
+        ? null
+        : loadStoredWidths(colSig(statement.columns), statement.columns.length);
     if (stored) {
       widthsInitialized.current = true;
       setWidths(stored);
@@ -532,9 +613,9 @@ export function Grid({
     }
     if (statement.rows.length > 0) {
       widthsInitialized.current = true;
-      setWidths(estimateWidths(statement));
+      setWidths(estimateWidths(statement, changed));
     }
-  }, [statement]);
+  }, [statement, changed]);
 
   const cols = statement.columns;
   const rows = statement.rows;
@@ -551,22 +632,48 @@ export function Grid({
   const colAtRef = useRef<(view: number) => number>((v) => v);
 
   // editability map fetched once the statement is done
-  const editMap = useEdits((s) => s.maps[statement.index]);
-  const pending = useEdits((s) => s.pending);
-  const flash = useEdits((s) => s.flash);
+  // (readOnly: frozen constants; the maps are keyed by the results tab's
+  // statement index, which a standalone grid's `index: 0` would collide with)
+  const editMap = useEdits((s) => (readOnly ? undefined : s.maps[statement.index]));
+  const pending = useEdits((s) => (readOnly ? EMPTY_PENDING : s.pending));
+  const flash = useEdits((s) => (readOnly ? EMPTY_FLASH : s.flash));
   const ensureMap = useEdits((s) => s.ensureMap);
   useEffect(() => {
+    if (readOnly) return;
     if (statement.done && !statement.error) ensureMap(statement.index);
-  }, [statement.done, statement.error, statement.index, ensureMap]);
+  }, [readOnly, statement.done, statement.error, statement.index, ensureMap]);
 
-  // pg type per result column (from the editability map; undefined until it loads)
+  // pg type per result column (from the editability map; undefined until it
+  // loads; a readOnly host supplies them directly or not at all)
   const colType = (i: number): string | undefined =>
-    editMap && editMap !== "loading" && editMap !== "unavailable"
-      ? editMap.columns[i]?.type_name
-      : undefined;
+    readOnly
+      ? colTypes?.[i]
+      : editMap && editMap !== "loading" && editMap !== "unavailable"
+        ? editMap.columns[i]?.type_name
+        : undefined;
+
+  // readOnly without types: right-align a column when its first 50 non-null
+  // values all carry the numeric wire shape (memoised per rows identity)
+  const sniffedNumeric = useMemo(() => {
+    if (!readOnly) return null;
+    return statement.columns.map((_, c) => {
+      let seen = 0;
+      for (let r = 0; r < statement.rows.length && seen < 50; r++) {
+        const v = statement.rows[r][c];
+        if (v === null || v === undefined) continue;
+        seen++;
+        if (!NUM_SHAPE.test(v)) return false;
+      }
+      return seen > 0;
+    });
+  }, [readOnly, statement.columns, statement.rows]);
 
   const isNumericCol = (i: number) => {
     const t = colType(i);
+    if (readOnly) {
+      if (t) return NUMERIC_TYPES.has(t) || NUMERIC_TYPES_LONG.has(t.toLowerCase());
+      return sniffedNumeric?.[i] ?? false;
+    }
     return !!t && NUMERIC_TYPES.has(t);
   };
 
@@ -608,13 +715,52 @@ export function Grid({
   );
   colAtRef.current = colAt;
 
+  // readOnly fill (AGENT-UX section 2 item 4): a standalone grid whose natural
+  // widths fit its slot stretches the LAST view column to the right edge; one
+  // that does not fit scrolls as everywhere else. `widths` stay the natural
+  // ones (persisted by hand-resize); the stretch is layout only. The results
+  // pane never observes: slotW stays 0 and layoutWidths IS colWidths.
+  // A filled grid fits by construction, so its horizontal overflow is locked:
+  // the last header's resize handle hangs 3px past the edge and a rounded
+  // clientWidth can sit above the true one, and either alone was a phantom
+  // scrollbar that ate the last row (classic bars) or a sideways wobble
+  // (overlay bars). hBar is the horizontal scrollbar's layout thickness,
+  // measured off the same element; maxRows adds it to the grid's own height.
+  const [slotW, setSlotW] = useState(0);
+  const [hBar, setHBar] = useState(0);
+  useLayoutEffect(() => {
+    if (!readOnly) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const measure = () => {
+      setSlotW(el.clientWidth);
+      setHBar(el.offsetHeight - el.clientHeight);
+    };
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    measure();
+    return () => ro.disconnect();
+  }, [readOnly]);
+  const fill = useMemo((): { widths: number[]; filled: boolean } => {
+    if (!readOnly || slotW === 0 || viewColLen === 0) return { widths: colWidths, filled: false };
+    let sum = 0;
+    for (let i = 0; i < viewColLen; i++) sum += colWidths[colAt(i)];
+    const spare = slotW - ROWNUM_W - sum;
+    if (spare < 0) return { widths: colWidths, filled: false };
+    const last = colAt(viewColLen - 1);
+    return { widths: colWidths.map((w, i) => (i === last ? w + spare : w)), filled: true };
+  }, [readOnly, slotW, colWidths, viewColLen, colAt]);
+  const layoutWidths = fill.widths;
+
   // quick-filter over LOADED rows (view-level, same contract as client sort;
   // browser excluded: filtering one server page would lie). Perf shape:
   // lowercase per-row haystacks are built ONCE per rows identity (not per
   // keystroke: the naive scan re-lowercased rows×cols every keypress), and a
   // query that extends the previous one only re-tests the previous matches.
   // Cells are joined with NUL (untypeable) so a match can never span cells.
-  const rawFilter = useGridFilter((st) => st.text);
+  // readOnly: the host's text rides the same variable so the remap effect
+  // below resets selection on a filter change in both modes
+  const rawFilter = useGridFilter((st) => (readOnly ? (hostFilterText ?? "") : st.text));
   const filterText = insertable ? "" : rawFilter.trim().toLowerCase();
   const haystackRef = useRef<{ rows: typeof rows; hay: string[] } | null>(null);
   const prevFilterRef = useRef<{ rows: typeof rows; text: string; idx: number[] } | null>(null);
@@ -698,7 +844,7 @@ export function Grid({
 
   // inline new-row draft (table browser only): declared before the
   // virtualizers because the band's height feeds their scroll padding
-  const draftRow = useBrowser((s) => s.draftRow);
+  const draftRow = useBrowser((s) => (readOnly ? null : s.draftRow));
   const showDraft = insertable && draftRow !== null;
   const draftH = showDraft ? DRAFT_H : 0;
 
@@ -720,14 +866,14 @@ export function Grid({
     horizontal: true,
     count: viewColLen,
     getScrollElement: () => scrollRef.current,
-    estimateSize: (i) => colWidths[colAtRef.current(i)],
+    estimateSize: (i) => layoutWidths[colAtRef.current(i)],
     overscan: 4,
     // cells paint ROWNUM_W right of their virtual offsets (sticky gutter)
     scrollPaddingEnd: ROWNUM_W,
   });
   useEffect(() => {
     colVirt.measure();
-  }, [colWidths, colOrder, hiddenCols, colVirt]);
+  }, [layoutWidths, colOrder, hiddenCols, colVirt]);
 
   const sel = useSelection(viewLen, viewColLen);
 
@@ -753,29 +899,39 @@ export function Grid({
   }, [rows]);
   // publish the match count for the status bar's "n of m" readout
   useEffect(() => {
+    if (readOnly) return;
     useGridFilter.getState().setMatches(filterIdx ? filterIdx.length : null);
-  }, [filterIdx]);
+  }, [readOnly, filterIdx]);
   // FindBar computes hits over data columns: it needs the hidden set so a
   // "current hit" can't sit in a column the grid can't scroll to
   useEffect(() => {
+    if (readOnly) return;
     useGridFilter.getState().setHiddenCols(hiddenCols);
-  }, [hiddenCols]);
-  useEffect(() => () => useGridFilter.getState().setHiddenCols(new Set()), [statement.index]);
+  }, [readOnly, hiddenCols]);
+  useEffect(() => {
+    if (readOnly) return;
+    return () => useGridFilter.getState().setHiddenCols(new Set());
+  }, [readOnly, statement.index]);
   // leaving this grid (tab switch / new result) resets the filter: carrying
   // it into a different result set would silently hide rows there
-  useEffect(() => () => useGridFilter.getState().clear(), [statement.index]);
+  useEffect(() => {
+    if (readOnly) return;
+    return () => useGridFilter.getState().clear();
+  }, [readOnly, statement.index]);
 
   // find-in-results highlighting (⌘F): hit set + current hit for this grid
-  const findSet = useFind((s) => (s.open ? s.hitSet : null));
-  const findCur = useFind((s) => (s.open && s.hits.length > 0 ? s.hits[s.idx] : null));
+  const findSet = useFind((s) => (!readOnly && s.open ? s.hitSet : null));
+  const findCur = useFind((s) =>
+    !readOnly && s.open && s.hits.length > 0 ? s.hits[s.idx] : null,
+  );
 
   // prefix x-offsets of view columns (reorder-aware) for pointer hit-tests
   const viewOffsets = useMemo(() => {
     const off = new Array<number>(viewColLen + 1);
     off[0] = 0;
-    for (let i = 0; i < viewColLen; i++) off[i + 1] = off[i] + colWidths[colAt(i)];
+    for (let i = 0; i < viewColLen; i++) off[i + 1] = off[i] + layoutWidths[colAt(i)];
     return off;
-  }, [viewColLen, colWidths, colAt]);
+  }, [viewColLen, layoutWidths, colAt]);
   const viewColFromX = useCallback(
     (x: number): number | null => {
       if (viewColLen === 0) return null;
@@ -916,7 +1072,7 @@ export function Grid({
   // focused cell drives the inspector, debounced so holding an arrow key
   // doesn't re-render (and re-parse) the inspector on every step
   useEffect(() => {
-    if (!sel.focus) return;
+    if (readOnly || !sel.focus) return;
     const t = setTimeout(() => {
       useInspector.getState().setTarget({
         stmtIndex: statement.index,
@@ -935,6 +1091,9 @@ export function Grid({
   /** open the inline editor for a VIEW cell (sort/reorder-aware) */
   const startEdit = useCallback(
     (viewR: number, viewC: number, seed?: string) => {
+      // readOnly: no flashReadOnlyReason either (that slot is the RESULTS
+      // status bar's)
+      if (readOnly) return;
       const r = rowAt(viewR);
       const c = colAt(viewC);
       const meta = colEditMeta(c);
@@ -989,7 +1148,7 @@ export function Grid({
       });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [editMap, pending, rows, statement.index, statement.truncated, rowAt, colAt],
+    [readOnly, editMap, pending, rows, statement.index, statement.truncated, rowAt, colAt],
   );
 
   const saveEdit = useCallback(
@@ -1106,7 +1265,7 @@ export function Grid({
       // status-bar message slot. Fidelity contract: formatCells joins TSV rows
       // with \n and adds no header, so stitching per-slice outputs with \n is
       // byte-identical to one full formatCells call.
-      if (format === "tsv" && totalRows * dataCs.length >= COPY_ASYNC_CELLS) {
+      if (!readOnly && format === "tsv" && totalRows * dataCs.length >= COPY_ASYNC_CELLS) {
         const runId = copyRun.current;
         copyBuildRun.current = runId;
         const parts: string[] = [];
@@ -1170,7 +1329,7 @@ export function Grid({
         (ok) => ok && truncFlash(),
       );
     },
-    [sel.rect, cols, rows, editMap, rowAt, colAt, statement.truncated, rowViewOf, colViewOf],
+    [readOnly, sel.rect, cols, rows, editMap, rowAt, colAt, statement.truncated, rowViewOf, colViewOf],
   );
 
   /** export loaded rows (or the selection when it spans >1 cell) to a file
@@ -1211,6 +1370,12 @@ export function Grid({
         const text = formatCells(outCols, outRows, format, { table, ctidCols });
         await invoke("write_text_file", { path, contents: text });
       } catch (e) {
+        // a standalone grid has no results pane to report into: the cue toast
+        // carries the failure instead (LESSONS 9: never silent)
+        if (readOnly) {
+          copyCueShow("export failed");
+          return;
+        }
         useResults.setState({
           globalError: {
             message: `export failed: ${(e as { message?: string }).message ?? String(e)}`,
@@ -1221,13 +1386,14 @@ export function Grid({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sel.rect, cols, rows, viewLen, viewColLen, editMap, rowAt, colAt],
+    [readOnly, sel.rect, cols, rows, viewLen, viewColLen, editMap, rowAt, colAt],
   );
 
   // status-bar selection stats: computed here because the view→data maps
   // live here. Wire text throughout: numeric-ness is per-value (strict
   // decimal/scientific shape; a numeric-typed col can still hold NULLs).
   useEffect(() => {
+    if (readOnly) return;
     const rect = sel.rect;
     const publish = useGridStats.getState().set;
     if (!rect || (rect.r0 === rect.r1 && rect.c0 === rect.c1)) {
@@ -1264,7 +1430,10 @@ export function Grid({
     publish({ cells, nonNull, numeric, sum, min, max, tooBig: false });
   }, [sel.rect, rows, rowAt, colAt]);
   // grid unmounts (tab switch, new result) → stale stats must not linger
-  useEffect(() => () => useGridStats.getState().set(null), []);
+  useEffect(() => {
+    if (readOnly) return;
+    return () => useGridStats.getState().set(null);
+  }, [readOnly]);
 
   // preventDefault on mousedown kills native text selection but also focus:
   // refocus the container manually so keyboard nav keeps working.
@@ -1406,7 +1575,7 @@ export function Grid({
   const setSelectionValue = useCallback(
     (value: string | null, useDefault = false) => {
       const rect = sel.rect;
-      if (!rect) return;
+      if (readOnly || !rect) return;
       const batch = [];
       for (let c = rect.c0; c <= rect.c1; c++) {
         const dataC = colAt(c);
@@ -1427,13 +1596,13 @@ export function Grid({
       useEdits.getState().setEditsBatch(batch);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sel.rect, editMap, rows, statement.index, rowAt, colAt],
+    [readOnly, sel.rect, editMap, rows, statement.index, rowAt, colAt],
   );
 
   /** revert every staged edit inside the selection: one undo step */
   const revertSelection = useCallback(() => {
     const rect = sel.rect;
-    if (!rect) return;
+    if (readOnly || !rect) return;
     const st = useEdits.getState();
     const batch = [];
     for (let c = rect.c0; c <= rect.c1; c++) {
@@ -1455,7 +1624,7 @@ export function Grid({
     }
     st.setEditsBatch(batch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel.rect, rows, statement.index, rowAt, colAt]);
+  }, [readOnly, sel.rect, rows, statement.index, rowAt, colAt]);
 
   const selectionHasPending = useMemo(() => {
     const rect = sel.rect;
@@ -1472,7 +1641,7 @@ export function Grid({
   /** ⌘D: the selection's top row fills every row below it (per column) */
   const fillDown = useCallback(() => {
     const rect = sel.rect;
-    if (!rect || rect.r1 === rect.r0) return;
+    if (readOnly || !rect || rect.r1 === rect.r0) return;
     const batch = [];
     for (let c = rect.c0; c <= rect.c1; c++) {
       const dataC = colAt(c);
@@ -1494,14 +1663,14 @@ export function Grid({
     }
     useEdits.getState().setEditsBatch(batch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel.rect, pending, rows, statement.index, rowAt, colAt, editMap]);
+  }, [readOnly, sel.rect, pending, rows, statement.index, rowAt, colAt, editMap]);
 
   /** ⌘V: paste a TSV block (Excel/Sheets) anchored at the selection's
    * top-left, or a single value into the whole selection: STAGED, so ⌘S
    * previews the generated SQL before anything touches the DB */
   const pasteIntoSelection = useCallback((text: string) => {
     const rect = sel.rect;
-    if (!rect || !text) return;
+    if (readOnly || !rect || !text) return;
     const batch = [];
     const isBlock = /[\t\r\n]/.test(text);
     if (isBlock) {
@@ -1554,7 +1723,7 @@ export function Grid({
     }
     useEdits.getState().setEditsBatch(batch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel.rect, rows, viewColLen, statement.index, rowAt, colAt, editMap]);
+  }, [readOnly, sel.rect, rows, viewColLen, statement.index, rowAt, colAt, editMap]);
 
   const selectionHasEditable = useMemo(() => {
     const rect = sel.rect;
@@ -1613,6 +1782,15 @@ export function Grid({
           cancelDraft();
         }
         return;
+      }
+      if (readOnly) {
+        // every editing key yields without preventDefault: ⌘Z / ⇧⌘Z stay the
+        // window's commit-undo, Space (record view) and navigation go on
+        const k = e.key.toLowerCase();
+        if (meta && (k === "v" || k === "z" || k === "d")) return;
+        if (!meta && (e.key === "Delete" || e.key === "Backspace" || e.key === "Enter" || e.key === "F2"))
+          return;
+        if (!meta && !e.ctrlKey && !e.altKey && e.key.length === 1 && e.key !== " ") return;
       }
       if (meta && e.key.toLowerCase() === "c") {
         e.preventDefault();
@@ -1722,7 +1900,7 @@ export function Grid({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [copySelection, sel, viewLen, viewColLen, rowVirt, colVirt, startEdit, editing, record, draftPop, fillDown, pasteIntoSelection, setSelectionValue, showDraft, cancelDraft],
+    [readOnly, copySelection, sel, viewLen, viewColLen, rowVirt, colVirt, startEdit, editing, record, draftPop, fillDown, pasteIntoSelection, setSelectionValue, showDraft, cancelDraft],
   );
 
   // a result row is deletable iff exactly one source table has a locator
@@ -1735,7 +1913,7 @@ export function Grid({
 
   const deleteSelectedRows = useCallback(async () => {
     const rect = sel.rect;
-    if (!rect || deletableTableOid == null) return;
+    if (readOnly || !rect || deletableTableOid == null) return;
     const map = editMap as EditabilityMap;
     const pkCols = map.pk_cols[deletableTableOid];
     if (!pkCols?.length) return;
@@ -1827,7 +2005,7 @@ export function Grid({
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel.rect, deletableTableOid, editMap, rows, statement.index, statement.truncated, rowAt]);
+  }, [readOnly, sel.rect, deletableTableOid, editMap, rows, statement.index, statement.truncated, rowAt]);
 
   // planner row estimates for the "Referenced by" submenu: fired when the
   // context menu opens (labels read them by src key). EXPLAIN uses per-value
@@ -1885,6 +2063,7 @@ export function Grid({
 
   /** FK navigation for the focused cell: forward jump + reverse lookup */
   const fkMenuItems = (): MenuNode[] => {
+    if (readOnly) return [];
     const f = sel.focus;
     const map = editMap && editMap !== "loading" && editMap !== "unavailable" ? editMap : null;
     if (!f || !map || !snapshot) return [];
@@ -1998,7 +2177,9 @@ export function Grid({
     e.preventDefault();
     e.stopPropagation();
     const col = colAt(viewCol); // widths are stored per UNDERLYING column
-    resizing.current = { col, startX: e.clientX, startW: colWidths[col] };
+    // the drag starts from the width on screen (a readOnly fill included), so
+    // the persisted width is the one the hand set, not the natural one
+    resizing.current = { col, startX: e.clientX, startW: layoutWidths[col] };
     resizeX.current = e.clientX;
     const onMove = (me: MouseEvent) => {
       resizeX.current = me.clientX;
@@ -2273,15 +2454,22 @@ export function Grid({
     [editing?.r, editing?.c, editing?.kind, fkPickTargetFor],
   );
 
+  // readOnly with maxRows: header + the promised rows + the horizontal bar's
+  // own thickness, so every promised row clears the bar (see the fill block)
+  const selfH =
+    readOnly && maxRows !== undefined ? HEADER_H + Math.min(viewLen, maxRows) * ROW_H + hBar : undefined;
+
   return (
     <div
       ref={containerRef}
       className="vgrid"
+      style={selfH !== undefined ? { height: selfH } : undefined}
       tabIndex={0}
       onKeyDown={onKeyDown}
       // ⌘V arrives as a native paste event (the app menu owns the accelerator,
       // so a keydown handler would never see it)
       onPaste={(e) => {
+        if (readOnly) return;
         // a paste INTO the draft band (or any embedded control) bubbles up
         // here: swallowing it killed the input paste AND staged the clipboard
         // over the grid selection
@@ -2323,9 +2511,11 @@ export function Grid({
       <div
         ref={scrollRef}
         className="vgrid-scroll"
+        style={fill.filled ? { overflowX: "hidden" } : undefined}
         onScroll={(e) => {
           const el = e.currentTarget;
           if (
+            !readOnly &&
             nearEndHook.current &&
             el.scrollTop + el.clientHeight > el.scrollHeight - 800
           ) {
@@ -2854,6 +3044,8 @@ export function Grid({
                   num={isNumericCol(dataC)}
                   isDefault={isDefault}
                   title={(meta && !meta.editable ? meta.reason : warn) ?? undefined}
+                  changed={changed?.has(`${dataR}:${dataC}`) ?? false}
+                  old={changed?.get(`${dataR}:${dataC}`) ?? null}
                 />
               );
             }),
@@ -3006,12 +3198,16 @@ export function Grid({
               ),
             },
             { kind: "sep" },
-            {
-              kind: "item",
-              label: "Find in Results…",
-              hint: <Kbd chord="cmd+f" />,
-              onSelect: () => useFind.getState().openFind(),
-            },
+            ...(readOnly
+              ? []
+              : ([
+                  {
+                    kind: "item",
+                    label: "Find in Results…",
+                    hint: <Kbd chord="cmd+f" />,
+                    onSelect: () => useFind.getState().openFind(),
+                  },
+                ] as MenuNode[])),
             {
               kind: "item",
               label: "Open as Record",
@@ -3089,6 +3285,7 @@ export function Grid({
       {record !== null && (
         <RecordView
           statement={statement}
+          readOnly={readOnly}
           viewRows={record.rows}
           rowAt={rowAt}
           colAt={colAt}

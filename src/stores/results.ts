@@ -4,8 +4,9 @@ import type { ColumnMeta, DriverError, QueryEvent } from "../ipc/types";
 import { headToken } from "../editor/statements";
 import { terminatedSessions } from "./sessionFlags";
 import { dropTabQueryScroll } from "../grid/scrollMemory";
-import { useConnections } from "./connections";
-import { useTabs } from "./tabs";
+import { skey, useConnections } from "./connections";
+import { isTabVisible, useTabs } from "./tabs";
+import { copyCueShow } from "../lib/copyCue";
 
 export interface StatementState {
   index: number;
@@ -586,7 +587,10 @@ void import("@tauri-apps/api/event").then(({ listen }) =>
     if (!entry) return; // primary/spare sessions have no chip
     conns.setTxTab(entry[0], e.payload.state !== "idle");
   }),
-);
+  // a subscription that cannot be made is reported, never left to reject
+  // unhandled: the tx chip is what goes quiet, and silence is what a failure
+  // must never be (LESSONS 9)
+).catch((e) => console.error("tx-state listen failed", e));
 
 // server NOTICEs → the tab whose session raised them (session ids are unique
 // per tab session, so routing is exact; notices from unknown sessions
@@ -613,4 +617,83 @@ void import("@tauri-apps/api/event").then(({ listen }) =>
       };
     });
   }),
-);
+).catch((e) => console.error("pg-notice listen failed", e));
+
+// ---- Ask's one door into a query tab (A4, AGENT-UX section 13.6) ----------
+// Ask proposes a change and never runs one itself: the statement runs HERE,
+// in the connection's active query tab, through the same `run` above that ⌘↩
+// drives, so the tab's own ceremony (the no-WHERE confirm with its planner
+// estimates, the staged-edit confirm, the prod safe-mode chip) is the
+// ceremony a proposal gets, unchanged and over the window rather than the
+// pane. Wrapped in BEGIN when the tab holds no transaction, so what the tab
+// already knows how to do, Commit and Rollback, is the rollback plan
+// (DESIGN rule 15). One exported function, nothing else: a second run path
+// for writes is exactly the founding sin DESIGN rule 1 exists to prevent.
+
+/** What the TAB reported, which is the only account of the run there is:
+ * `rows` is its own affected count, never the dry run's `exact_rows`, which
+ * a concurrent writer can have made stale (LESSONS 13). */
+export interface TabRunOutcome {
+  /** the statement reached the database: every confirm said yes */
+  ran: boolean;
+  /** rows affected, as the tab counted them; null when nothing ran or the
+   * statement errored */
+  rows: number | null;
+  /** `skey(profile, tab)` of the tab it ran in, so a reader can watch THAT
+   * tab's transaction rather than whichever tab is active later */
+  tabKey: string;
+  /** the first line of the tab's error; null when it ran clean */
+  error: string | null;
+}
+
+/** Run ONE statement in the connection's active query tab. A table tab, a
+ * tab of another connection or no tab at all means a query tab is opened for
+ * it, carrying the statement as its text, and the cue says so (the W7 Insert
+ * precedent, LESSONS 9: a silent no-op reads as broken). */
+export async function runStatementInTab(
+  profileId: string,
+  sql: string,
+  tabName?: string,
+): Promise<TabRunOutcome> {
+  const conn = useConnections.getState();
+  // the strip belongs to the ACTIVE connection: a tab opened while another
+  // one is on screen would land in that one's workspace (LESSONS 4)
+  if (conn.activeProfileId !== profileId) {
+    return { ran: false, rows: null, tabKey: "", error: "the connection is no longer active" };
+  }
+  const statement = sql.trim();
+  if (!statement) return { ran: false, rows: null, tabKey: "", error: "no statement" };
+
+  const tabs = useTabs.getState();
+  const active = tabs.tabs.find((t) => t.id === tabs.activeId);
+  const usable =
+    active && active.kind === "query" && isTabVisible(active, tabs.pinned, profileId);
+  let created = false;
+  if (!usable) {
+    tabs.newTab(statement, tabName);
+    created = true;
+  }
+  const tabId = useTabs.getState().activeId;
+  if (!tabId) return { ran: false, rows: null, tabKey: "", error: "no query tab" };
+  const tabKey = skey(profileId, tabId);
+
+  // the tab's own transaction is the rollback plan: one is opened only when
+  // the tab has none, so a statement never lands inside somebody else's
+  const text = useConnections.getState().txTabs[tabKey] ? statement : `BEGIN;\n${statement}`;
+  await useResults.getState().run(text, 0, { profileId });
+
+  const tab = useResults.getState().byTab[tabId];
+  // `run` returns early and writes nothing when a confirm says no or the tab
+  // is already busy: the statement it executed is the only proof it ran
+  const ran = tab?.executedSql === text;
+  const failed = tab?.statements.find((st) => st.error) ?? null;
+  const error = failed?.error?.message ?? tab?.globalError?.message ?? null;
+  const last = tab?.statements[tab.statements.length - 1];
+  if (ran && created) copyCueShow("Ran in a new tab");
+  return {
+    ran,
+    rows: ran && !error ? (last?.affected ?? last?.rowCount ?? null) : null,
+    tabKey,
+    error: error ? error.split("\n")[0].trim() : null,
+  };
+}

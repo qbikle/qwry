@@ -1,12 +1,13 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
-import { Lock, LockOpen, PanelRight, SwatchBook } from "lucide-react";
-import { panelIn, swapIn } from "../design/springs";
+import { Lock, LockOpen, MessageSquare, PanelRight, SwatchBook } from "lucide-react";
+import { panelIn, slideOffset, spring, swapIn } from "../design/springs";
 import { useUI } from "../stores/ui";
 import "../stores/heal"; // side effects: wake/focus/death self-heal triggers
 import { ThemePicker } from "./ThemePicker";
 import { useConnections } from "../stores/connections";
-import { useInspector } from "../stores/inspector";
+import { PANE_FLOOR, PANE_MAX, useSidePane, type PaneMode } from "../stores/sidePane";
+import { useAsk } from "../stores/ask";
 import { openFilePaths, openSqlFileDialog, saveActiveToFile, useTabs } from "../stores/tabs";
 import { blankProfile, ConnectionRail } from "../sidebar/ConnectionRail";
 import { editorFormat, editorRunText, editorTimeTraveling } from "../editor/editorBus";
@@ -20,7 +21,6 @@ import { Home } from "../home/Home";
 import { SchemaTree } from "../sidebar/SchemaTree";
 import { SavedQueries } from "../sidebar/SavedQueries";
 import { TabBar } from "../editor/TabBar";
-import { Palette } from "../palette/Palette";
 import { DangerModal } from "./DangerModal";
 import { CloseGuardModal } from "./CloseGuardModal";
 import { ConnToast } from "./ConnToast";
@@ -43,6 +43,11 @@ const TableBrowser = lazy(() => import("../browser/TableBrowser").then((m) => ({
 const ExplainView = lazy(() => import("../explain/ExplainView").then((m) => ({ default: m.ExplainView })));
 const HistoryPanel = lazy(() => import("./HistoryPanel").then((m) => ({ default: m.HistoryPanel })));
 const ShortcutsModal = lazy(() => import("./ShortcutsModal").then((m) => ({ default: m.ShortcutsModal })));
+const AskPanel = lazy(() => import("../ask/AskPanel").then((m) => ({ default: m.AskPanel })));
+const CanvasTab = lazy(() => import("../canvas/CanvasTab").then((m) => ({ default: m.CanvasTab })));
+// the palette joins them (B5): a modal that is never on the first-paint path
+// carried cmdk, three radix packages and react-remove-scroll in the entry
+const Palette = lazy(() => import("../palette/Palette").then((m) => ({ default: m.Palette })));
 
 /** the sidebar card: DB header → tables → saved queries (shown when connected) */
 function SidebarCard({ profileId, dbname, name }: { profileId: string; dbname: string; name: string }) {
@@ -63,25 +68,88 @@ export function App() {
   const profiles = useConnections((s) => s.profiles);
   const activeProfileId = useConnections((s) => s.activeProfileId);
   const connState = useConnections((s) => s.connState);
-  const inspectorOpen = useInspector((s) => s.open);
-  const inspectorWidth = useInspector((s) => s.width);
+  // the one right pane: Inspector and Ask are its modes (AGENT-UX section 1).
+  // Both mode holders stay mounted inside the card (the inspector keeps its
+  // cell, the composer its draft); the card collapses to width 0 and the
+  // mode not showing is visibility-hidden once its exit settles, never
+  // unmounted.
+  const paneOpen = useSidePane((s) => s.open);
+  const paneMode = useSidePane((s) => s.mode);
+  const paneWidth = useSidePane((s) => s.width);
   const inspectorFixedRef = useRef<HTMLDivElement>(null);
-  const preInspectorFocus = useRef<HTMLElement | null>(null);
-  // the inspector card never unmounts (collapses to width 0). A close from
-  // ANY path (rail button, palette, ⌘I with a dead prev element) must pull
-  // focus out of the now-invisible panel, or ⌘F and typing land in a hidden
-  // input (the app-lies class). Mirrors escStack's restore fallback chain.
+  const askFixedRef = useRef<HTMLDivElement>(null);
+  const prePaneFocus = useRef<HTMLElement | null>(null);
+  // the mode swap animates (the locked sketch's motion note): Ask sits LEFT
+  // of the Inspector, the titlebar order, so on a switch the leaving holder
+  // slides 32px toward its own side and fades while the arriving one slides
+  // in from its side; both stay mounted and overlap, and the card's width
+  // never moves for the swap (the clamp, when there is one, rides the card's
+  // own CSS width transition alongside). `exiting` names the holder still on
+  // its way out: it keeps visibility until its spring settles, then the
+  // data-mode rule hides it so its controls leave the tab order. A switch
+  // that also opens or closes the card is instant: the width reveal is the
+  // motion there. Read off the store's own change (state, prev) so the render
+  // that moves the mode already carries the right transition
+  const [swap, setSwap] = useState<{ exiting: PaneMode | null; instant: boolean }>({
+    exiting: null,
+    instant: true,
+  });
+  useEffect(
+    () =>
+      useSidePane.subscribe((s, prev) => {
+        if (s.mode === prev.mode) return;
+        const instant = !prev.open || !s.open;
+        setSwap({ exiting: instant ? null : prev.mode, instant });
+      }),
+    [],
+  );
   useEffect(() => {
-    if (inspectorOpen) return;
-    const el = inspectorFixedRef.current;
-    if (!el || !el.contains(document.activeElement)) return;
-    const prev = preInspectorFocus.current;
-    preInspectorFocus.current = null;
+    if (!swap.exiting) return;
+    // a settled spring clears this itself (onAnimationComplete); the timer is
+    // the net under a completion that never fires, so a hidden holder never
+    // keeps its tab stops
+    const id = window.setTimeout(() => setSwap((x) => ({ ...x, exiting: null })), 800);
+    return () => window.clearTimeout(id);
+  }, [swap.exiting]);
+  const settled = (mode: PaneMode) => {
+    if (mode !== paneMode) setSwap((x) => (x.exiting === mode ? { ...x, exiting: null } : x));
+  };
+  const holderPose = (mode: PaneMode, side: "left" | "right") =>
+    mode === paneMode ? { x: 0, opacity: 1 } : { x: slideOffset(side), opacity: 0 };
+  const holderTransition = swap.instant ? { duration: 0 } : spring.slide;
+  // focus never rests in a holder that is no longer visible. A close from
+  // ANY path (titlebar, palette, a chord with a dead prev element) pulls
+  // focus out of the now-invisible pane, or ⌘F and typing land in a hidden
+  // input (the app-lies class); mirrors escStack's restore fallback chain. A
+  // mode switch from a store path (a grid cell opening the inspector over
+  // Ask) hands focus to the mode that took the stage.
+  useEffect(() => {
+    const showing = !paneOpen
+      ? null
+      : paneMode === "inspector"
+        ? inspectorFixedRef.current
+        : askFixedRef.current;
+    const ae = document.activeElement;
+    const inHidden = [inspectorFixedRef.current, askFixedRef.current].some(
+      (el) => !!el && el !== showing && el.contains(ae),
+    );
+    if (!inHidden) return;
+    if (showing) {
+      if (paneMode === "ask") {
+        showing.querySelector<HTMLElement>(".ask-panel")?.focus({ preventScroll: true });
+        useAsk.getState().requestFocus();
+      } else {
+        showing.focus({ preventScroll: true });
+      }
+      return;
+    }
+    const prev = prePaneFocus.current;
+    prePaneFocus.current = null;
     const fallback =
       document.querySelector<HTMLElement>(".main-card .cm-content") ??
       document.querySelector<HTMLElement>(".main-card");
     (prev && document.contains(prev) ? prev : fallback)?.focus({ preventScroll: true });
-  }, [inspectorOpen]);
+  }, [paneOpen, paneMode]);
   const explainOpen = useExplain((s) => s.open);
   // scalar selectors only: selecting the tab OBJECT re-rendered the entire
   // shell tree on every editor keystroke (setSql replaces the active tab
@@ -93,7 +161,16 @@ export function App() {
     return t?.kind === "table" ? t.table : null;
   });
   const isTableTab = activeTabKind === "table";
+  // a canvas tab shows its document where the editor and the grid would be
+  // (A3 item 1): the canvas is a face of the main card, not a pane
+  const canvasId = useTabs((s) => {
+    const t = s.tabs.find((tb) => tb.id === s.activeId);
+    return t?.kind === "canvas" ? t.canvas_id : null;
+  });
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // the palette's chunk is mounted (closed) by the idle warm-up below, never
+  // by first paint: it is a modal, and nothing on the first screen draws it
+  const [paletteWarm, setPaletteWarm] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [keysOpen, setKeysOpen] = useState(false);
   const [resizing, setResizing] = useState(false);
@@ -140,8 +217,8 @@ export function App() {
   // drag writes go straight to a CSS var: the store (and its localStorage
   // persist) previously ran once PER MOUSEMOVE and re-rendered the whole shell
   useEffect(() => {
-    document.documentElement.style.setProperty("--inspector-w", `${inspectorWidth}px`);
-  }, [inspectorWidth]);
+    document.documentElement.style.setProperty("--pane-w", `${paneWidth}px`);
+  }, [paneWidth]);
 
   // editor font size flows through a CSS var, no CodeMirror remount
   useEffect(() => {
@@ -264,20 +341,58 @@ export function App() {
     if (ok) void setSessionWrites(pid, tabId, true);
   };
 
-  const startInspectorResize = (e: React.MouseEvent) => {
+  // the mode that takes the stage takes focus: the inspector's shell (so ⌘F
+  // scopes there), Ask's composer (state-owned, the panel is lazy)
+  const focusPane = (mode: PaneMode) => {
+    if (mode === "ask") useAsk.getState().requestFocus();
+    else requestAnimationFrame(() => inspectorFixedRef.current?.focus({ preventScroll: true }));
+  };
+  // ⌘I / ⌘J / titlebar / menu: the radio press. Opening captures where focus
+  // was; switching keeps that capture (the pre-pane context is what a close
+  // restores); closing hands focus back
+  const togglePane = (mode: PaneMode) => {
+    const p = useSidePane.getState();
+    if (p.open && p.mode === mode) {
+      p.close();
+      const prev = prePaneFocus.current;
+      prePaneFocus.current = null;
+      if (prev && document.contains(prev)) prev.focus({ preventScroll: true });
+      return;
+    }
+    if (!p.open) prePaneFocus.current = document.activeElement as HTMLElement | null;
+    p.show(mode);
+    focusPane(mode);
+  };
+  /** the palette's `Ask`: opens or switches (never closes) and focuses the composer */
+  const openAsk = () => {
+    const p = useSidePane.getState();
+    if (!p.open) prePaneFocus.current = document.activeElement as HTMLElement | null;
+    p.show("ask");
+    focusPane("ask");
+  };
+
+  const startPaneResize = (e: React.MouseEvent) => {
     e.preventDefault();
     setResizing(true); // suppress the width transition while dragging
-    let w = useInspector.getState().width;
+    const card = (e.currentTarget as HTMLElement).parentElement;
+    if (!card) return;
+    const { mode } = useSidePane.getState();
+    let w = useSidePane.getState().width;
     const onMove = (me: MouseEvent) => {
-      w = Math.max(220, Math.min(640, window.innerWidth - me.clientX));
-      document.documentElement.style.setProperty("--inspector-w", `${w}px`);
+      // the card's right edge is the anchor; the showing mode's floor and
+      // ceiling bound the drag
+      const right = card.getBoundingClientRect().right;
+      w = Math.max(PANE_FLOOR[mode], Math.min(PANE_MAX[mode], right - me.clientX));
+      document.documentElement.style.setProperty("--pane-w", `${w}px`);
       // the inspector's narrow mode reads the STORE width. Without this the
       // hints would only hide/show on release, not live during the drag
-      if (w < 280 !== useInspector.getState().width < 280) useInspector.getState().setWidth(w);
+      if (mode === "inspector" && w < 280 !== useSidePane.getState().width < 280) {
+        useSidePane.getState().setWidth(w);
+      }
     };
     const onUp = () => {
       setResizing(false);
-      useInspector.getState().setWidth(w); // one store write, on release
+      useSidePane.getState().setWidth(w); // one store write, on release
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
@@ -307,10 +422,25 @@ export function App() {
             const win = getCurrentWindow();
             void win.show().then(() => win.setFocus());
           });
-          void import("../editor/QueryBox");
-          void import("../grid/ResultsPane");
-          void import("../inspector/Inspector");
-          void import("../browser/TableBrowser");
+          // and the warm-up waits for an IDLE moment rather than riding this
+          // rAF: five chunks parsing here contend with the first keystroke,
+          // which has 16 ms. `timeout` keeps the promise on a busy machine,
+          // and the setTimeout is for a runtime without the callback.
+          const warm = () => {
+            void import("../editor/QueryBox");
+            void import("../grid/ResultsPane");
+            void import("../inspector/Inspector");
+            void import("../browser/TableBrowser");
+            void import("../ask/AskPanel");
+            // the palette MOUNTS here rather than merely preloading: a lazy
+            // boundary that first suspends on the ⌘K itself held the box back
+            // 320 ms (React throttles a resolved fallback's reveal), against
+            // 35 ms when the module was in the entry. Mounted closed at idle it
+            // draws nothing and costs one commit, and ⌘K is a prop flip again
+            setPaletteWarm(true);
+          };
+          if (typeof requestIdleCallback === "function") requestIdleCallback(warm, { timeout: 2000 });
+          else setTimeout(warm, 200);
         });
       });
     });
@@ -420,9 +550,26 @@ export function App() {
             if (editorTimeTraveling.current) break;
             void useResults.getState().run(useConnections.getState().sql, 0);
             break;
-          case "cancel":
-            void useResults.getState().cancel();
+          case "cancel": {
+            // ⌘. inside the Ask card cancels a streaming turn there; the
+            // editor's queries keep the chord everywhere else. The agent
+            // store is loaded only when the card actually has focus, so the
+            // editor path stays instant
+            const pane = useSidePane.getState();
+            const inAsk =
+              pane.open && pane.mode === "ask" && !!document.activeElement?.closest(".ask-fixed");
+            if (inAsk) {
+              void import("../stores/agent").then(({ useAgent }) => {
+                const a = useAgent.getState();
+                const tid = a.activeProfileId ? a.activeThread[a.activeProfileId] : null;
+                if (tid && a.busy[tid]) a.cancel();
+                else void useResults.getState().cancel();
+              });
+            } else {
+              void useResults.getState().cancel();
+            }
             break;
+          }
           case "explain":
             void useExplain.getState().run(editorRunText.current?.()?.text);
             break;
@@ -437,7 +584,10 @@ export function App() {
             setPaletteOpen((o) => !o);
             break;
           case "inspector":
-            useInspector.getState().toggle();
+            togglePane("inspector");
+            break;
+          case "ask":
+            togglePane("ask");
             break;
           case "theme":
             useUI.getState().openThemePicker();
@@ -501,6 +651,9 @@ export function App() {
     // palette action → history panel (palette has no access to App state)
     const onOpenHistory = () => setHistoryOpen(true);
     window.addEventListener("qwry:open-history", onOpenHistory);
+    // palette `Ask` → open the card and focus its composer
+    const onOpenAsk = () => openAsk();
+    window.addEventListener("qwry:open-ask", onOpenAsk);
 
     const onKey = (e: KeyboardEvent) => {
       // CodeMirror (or another component) already handled it: don't double-fire
@@ -606,10 +759,14 @@ export function App() {
       // else routes to find-in-results over the loaded grid rows.
       if (e.metaKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
         const t = e.target as HTMLElement | null;
-        // a CLOSED inspector never claims scope, even if focus lingers there
+        const pane = useSidePane.getState();
+        // a hidden inspector never claims scope, even if focus lingers there
         const inInspector =
-          useInspector.getState().open && !!t?.closest?.(".inspector-fixed");
-        if (!inInspector && useResults.getState().statements.length > 0) {
+          pane.open && pane.mode === "inspector" && !!t?.closest?.(".inspector-fixed");
+        // Ask never claims the results FindBar: its grids are standalone and
+        // a find there would highlight another dataset's cells
+        const inAsk = pane.open && pane.mode === "ask" && !!t?.closest?.(".ask-fixed");
+        if (!inInspector && !inAsk && useResults.getState().statements.length > 0) {
           e.preventDefault();
           useFind.getState().openFind();
         }
@@ -631,23 +788,16 @@ export function App() {
           }
         });
       }
+      // ⌘I / ⌘J: the pane's radio. The chord of the showing mode closes the
+      // pane, the other switches it; focus follows the explicit open so ⌘F
+      // scopes to the mode on stage, and close hands focus back
       if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "i") {
         e.preventDefault();
-        // focus follows the explicit open so ⌘F scopes to the inspector;
-        // close hands focus back to wherever the user was
-        const insp = useInspector.getState();
-        if (!insp.open) {
-          preInspectorFocus.current = document.activeElement as HTMLElement | null;
-          insp.toggle();
-          requestAnimationFrame(() =>
-            inspectorFixedRef.current?.focus({ preventScroll: true }),
-          );
-        } else {
-          insp.toggle();
-          const prev = preInspectorFocus.current;
-          preInspectorFocus.current = null;
-          if (prev && document.contains(prev)) prev.focus({ preventScroll: true });
-        }
+        togglePane("inspector");
+      }
+      if (e.metaKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "j") {
+        e.preventDefault();
+        togglePane("ask");
       }
       if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "i") {
         // table browser: open (or toggle away) the inline new-row band
@@ -706,6 +856,7 @@ export function App() {
       disposed = true;
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("qwry:open-history", onOpenHistory);
+      window.removeEventListener("qwry:open-ask", onOpenAsk);
       unlistenClosed?.();
       unlistenClose?.();
       unlistenMenu?.();
@@ -759,10 +910,21 @@ export function App() {
         >
           <SwatchBook size={14} />
         </button>
+        {/* the pane's radio: the lit icon is the showing mode; pressing it
+            again closes, pressing the other switches */}
         <button
-          className={`v2-tool iconbtn iconbtn-lg${inspectorOpen ? " active" : ""}`}
+          className={`v2-tool iconbtn iconbtn-lg${paneOpen && paneMode === "ask" ? " active" : ""}`}
+          title="Ask ⌘J"
+          aria-pressed={paneOpen && paneMode === "ask"}
+          onClick={() => togglePane("ask")}
+        >
+          <MessageSquare size={14} />
+        </button>
+        <button
+          className={`v2-tool iconbtn iconbtn-lg${paneOpen && paneMode === "inspector" ? " active" : ""}`}
           title="Inspector ⌘I"
-          onClick={() => useInspector.getState().toggle()}
+          aria-pressed={paneOpen && paneMode === "inspector"}
+          onClick={() => togglePane("inspector")}
         >
           <PanelRight size={14} />
         </button>
@@ -803,6 +965,10 @@ export function App() {
                     <Suspense fallback={null}>
                       <TableBrowser />
                     </Suspense>
+                  ) : canvasId ? (
+                    <Suspense fallback={null}>
+                      <CanvasTab canvasId={canvasId} />
+                    </Suspense>
                   ) : (
                     <Suspense fallback={null}>
                       <section className="editor-pane">
@@ -835,16 +1001,24 @@ export function App() {
             </motion.main>
 
             <aside
-              className={`inspector-card card${inspectorOpen ? "" : " collapsed"}${resizing ? " resizing" : ""}`}
-              style={{ width: inspectorOpen ? "var(--inspector-w)" : 0 }}
+              className={`side-card card${paneOpen ? "" : " collapsed"}${resizing ? " resizing" : ""}`}
+              data-mode={paneMode}
+              style={{ width: paneOpen ? "var(--pane-w)" : 0 }}
             >
-              <div className="inspector-resize" onMouseDown={startInspectorResize} />
-              {/* fixed-width content so it slides in from the right as the card
-                  widens (the main card reflows in lockstep) */}
-              <div
-                className="inspector-fixed"
-                style={{ width: "var(--inspector-w)", outline: "none" }}
+              <div className="side-resize" onMouseDown={startPaneResize} />
+              {/* fixed-width mode holders so content slides in from the right
+                  as the card widens (the main card reflows in lockstep); a
+                  mode switch slides the holders past each other (Ask on the
+                  left, Inspector on the right) and the one that left is
+                  hidden by data-mode once settled, never unmounted */}
+              <motion.div
+                className={`inspector-fixed${swap.exiting === "inspector" ? " exiting" : ""}`}
+                style={{ width: "var(--pane-w)", outline: "none" }}
                 ref={inspectorFixedRef}
+                initial={false}
+                animate={holderPose("inspector", "right")}
+                transition={holderTransition}
+                onAnimationComplete={() => settled("inspector")}
                 // click-to-focus so ⌘F scopes here: JsonTree rows are plain
                 // divs and WKWebView won't focus ancestors on click; explicit
                 // focus is the only engine-proof path. Inputs keep their own.
@@ -858,13 +1032,31 @@ export function App() {
                 <Suspense fallback={null}>
                   <Inspector />
                 </Suspense>
-              </div>
+              </motion.div>
+              {/* the panel inside owns its own focus discipline */}
+              <motion.div
+                className={`ask-fixed${swap.exiting === "ask" ? " exiting" : ""}`}
+                style={{ width: "var(--pane-w)" }}
+                ref={askFixedRef}
+                initial={false}
+                animate={holderPose("ask", "left")}
+                transition={holderTransition}
+                onAnimationComplete={() => settled("ask")}
+              >
+                <Suspense fallback={null}>
+                  {activeProfile && <AskPanel profile={activeProfile} connected={connected} />}
+                </Suspense>
+              </motion.div>
             </aside>
           </>
         )}
       </div>
 
-      <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      {(paletteWarm || paletteOpen) && (
+        <Suspense fallback={null}>
+          <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+        </Suspense>
+      )}
       {historyOpen && (
         <Suspense fallback={null}>
           <HistoryPanel onClose={() => setHistoryOpen(false)} />

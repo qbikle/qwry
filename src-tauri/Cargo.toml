@@ -43,3 +43,25 @@ csv = "1.3"
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
 
+# ---- agent (AGENT-SPEC; deps decided in W0, DECISIONS 2026-09-05) ----------
+# AST gate (§8.1): libpg_query 17, the grammar the server itself parses, so a
+# legal query is never falsely rejected. Build needs libclang (bindgen).
+pg_query = "6.2.0"
+# provider HTTP relay (agent_http.rs). reqwest is already in the tree through
+# tauri-plugin-updater on rustls; `stream` + `json` add no second TLS stack.
+reqwest = { version = "0.13.4", features = ["stream", "json"] }
+# in-process streamable-HTTP MCP server for the `claude -p` provider
+# (agent_mcp.rs): rmcp's tower Service on bare hyper via TowerToHyperService,
+# no axum. Versions match the W0 spike that compiled and served `initialize`.
+rmcp = { version = "3.2.0", features = ["server", "transport-streamable-http-server", "macros"] }
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["service", "tokio"] }
+tokio-util = "0.7"
+# SIGTERM-then-SIGKILL on the `claude -p` child (agent_claude.rs): tokio's
+# Child::kill is SIGKILL only, and a CLI killed outright never flushes.
+libc = "0.2"
+# hyper request/response plumbing around rmcp's tower Service (agent_mcp.rs):
+# the 401/403 gate must build the same body type rmcp's service returns.
+http = "1"
+http-body-util = "0.1"
+bytes = "1"

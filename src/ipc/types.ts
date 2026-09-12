@@ -371,3 +371,314 @@ export type QueryEvent =
       hint: string | null;
     }
   | { type: "finished"; total_ms: number };
+
+// ---- agent (mirrors src-tauri/src/agent*.rs) ------------------------------
+// Snake_case, like the rest of this file: these are the wire records, not the
+// loop's domain types. src/agent/types.ts carries the camelCase twins the loop
+// and store work in; src/agent/tools.tauri.ts owns the one conversion between
+// them. AGENT-SPEC sections 5, 7, 9.
+
+/** one executed read-only statement (agent.rs AgentRun). Cell values are wire
+ * text; null = SQL NULL. `capped` = the surplus beyond max_rows was never
+ * sent, so `rows.length` is not the whole answer. */
+export interface AgentRun {
+  columns: string[];
+  rows: (string | null)[][];
+  row_count: number;
+  capped: boolean;
+  ms: number;
+}
+
+/** distinct non-null values of one column; `more` drives the model-facing
+ * "… (more exist)" marker */
+export interface PeekResult {
+  /** the exact DISTINCT timed out; the values are a bounded sample of random
+   * pages and other values may exist (agent.rs peek_values) */
+  sampled: boolean;
+  values: string[];
+  more: boolean;
+}
+
+/** one probe query's outcome; `run` and `error` are mutually exclusive */
+export interface ProbeResult {
+  sql: string;
+  run: AgentRun | null;
+  error: string | null;
+}
+
+/** AST-gate outcome (AGENT-SPEC 8.1). `reason` is the refusal text, already
+ * phrased for the model and for the Fix It affordance. */
+export interface GateVerdict {
+  allowed: boolean;
+  reason: string | null;
+  /** the shape of the one statement the WRITE gate allowed (A4 item 2); null
+   * in read mode and on every refusal */
+  write: WriteShape | null;
+}
+
+/** low-cardinality values for one column, from pg_stats (cap 20), plus the
+ * column's own COMMENT as of this call: a comment added since the last
+ * introspect is newer than the cached snapshot's */
+export interface ColumnValues {
+  column: string;
+  values: string[];
+  more: boolean;
+  comment: string | null;
+}
+
+/** per-table values block; the DDL text the model reads is composed in TS from
+ * the cached schema snapshot plus these */
+export interface TableValues {
+  schema: string;
+  name: string;
+  comment: string | null;
+  columns: ColumnValues[];
+}
+
+/** why a provider call failed (agent_http.rs HttpErrorKind) */
+export type AgentHttpErrorKind =
+  | "auth"
+  | "rate"
+  | "unreachable"
+  | "provider"
+  | "cancelled";
+
+/** one relayed piece of a provider response. `start` arrives before any body,
+ * so a non-2xx can be rejected before an SSE frame is parsed; `body` carries
+ * raw UTF-8 response bytes, unframed. */
+export type HttpChunk =
+  | { type: "start"; status: number; headers: [string, string][] }
+  | { type: "body"; text: string }
+  | {
+      type: "error";
+      kind: AgentHttpErrorKind;
+      message: string;
+      retry_after_ms: number | null;
+    };
+
+/** the relay finished; any status, including non-2xx (the status is data) */
+export interface HttpDone {
+  request_id: string;
+  status: number;
+  ms: number;
+  bytes: number;
+}
+
+/** how a `claude -p` invocation ended; `code` is null when it was signalled */
+export interface ClaudeExit {
+  run_id: string;
+  code: number | null;
+  stderr_tail: string;
+  ms: number;
+}
+
+/** where a thread's `claude -p` child points its --mcp-config. The token goes
+ * in headers.Authorization as `Bearer <token>` and dies with the thread. */
+export interface McpEndpoint {
+  url: string;
+  token: string;
+}
+
+/** one tool call a `claude -p` child made over the MCP server (agent_mcp.rs
+ * McpCall). That provider owns its own loop, so this is the only record of
+ * what the model actually reached for; `bytes` is the text it was handed. */
+export interface McpCall {
+  tool: string;
+  ms: number;
+  bytes: number;
+  is_error: boolean;
+}
+
+/** one canvas tool call a `claude -p` child made, as the app receives it on
+ * the `canvas-tool-call` event (agent_canvas.rs CanvasToolCall). The MCP
+ * server holds no canvas logic: it parks the call for 20 s and the app
+ * answers it with `agentCanvasResult`. `token` is the caller's bearer token
+ * and `session_id` its database session, so a listener keys its canvas tools
+ * on whichever it registered them under; `args_json` is what the model wrote,
+ * unparsed, since every cap and refusal text belongs to the tool. */
+export interface CanvasToolCall {
+  call_id: string;
+  token: string;
+  session_id: string;
+  name: string;
+  args_json: string;
+}
+
+/** the image half of an answer to a `canvas-tool-call` (agent_canvas.rs
+ * ImagePayload): RAW base64 with no `data:` prefix, and the media type apart
+ * from it, which is the shape rmcp's ImageContent puts on the wire. Only a
+ * drawing produces one, and only `canvas_read({ block_id })` answers with one.
+ * The SIZE cap lives on the Rust side alone, because that is the side that
+ * puts the string on the wire: an image over it is dropped and the reply the
+ * model reads gains one line saying so, so this side never has to hold a
+ * second copy of the number (agent_canvas.rs TOOL_IMAGE_B64_MAX). */
+export interface CanvasToolImage {
+  b64: string;
+  mime: string;
+}
+
+/** one Ask thread (appdb agent_threads). `id` is the row's identity and the
+ * MCP session's name; `session_key` is what `claude -p` resumes. They are the
+ * same uuid until a cut re-mints the key. Rust always sends it (the column
+ * reads as `id` while NULL); optional here so a fixture row can leave it out
+ * and mean the same thing. */
+export interface AgentThread {
+  id: string;
+  profile_id: string;
+  title: string;
+  created_at: string;
+  session_key?: string;
+}
+
+/** one recorded turn (appdb agent_turns). The *_json columns hold the loop's
+ * own structures verbatim so the trace can replay them. */
+export interface AgentTurn {
+  id: number;
+  thread_id: string;
+  idx: number;
+  role: string;
+  content: string;
+  tool_calls_json: string | null;
+  tool_results_json: string | null;
+  usage_json: string | null;
+  model: string;
+  provider: string;
+  prompt_version: string;
+  ms: number;
+  created_at: string;
+}
+
+/** AgentTurn minus the columns the store assigns (id, created_at) */
+export interface AgentTurnInput {
+  thread_id: string;
+  idx: number;
+  role: string;
+  content: string;
+  tool_calls_json?: string | null;
+  tool_results_json?: string | null;
+  usage_json?: string | null;
+  model: string;
+  provider: string;
+  prompt_version: string;
+  ms: number;
+}
+
+/** what a re-run rewrites on an assistant turn already on record (Restart,
+ * Fix It, a chip toggle). Thread, index and role never move: the exchange
+ * answers the same question in the same place. */
+export interface AgentTurnPatch {
+  id: number;
+  content: string;
+  tool_calls_json?: string | null;
+  tool_results_json?: string | null;
+  usage_json?: string | null;
+  model: string;
+  provider: string;
+  prompt_version: string;
+  ms: number;
+}
+
+/** the answer a turn produced (appdb agent_answers); status is one of
+ * "answered" | "failed" | "turn_cap" | "cancelled" */
+export interface AgentAnswer {
+  turn_id: number;
+  sql: string | null;
+  row_count: number | null;
+  assumptions_json?: string | null;
+  sanity_json?: string | null;
+  status: string;
+}
+
+/** which gate judges a statement (agent.rs GateMode). The tool path is always
+ * "read"; "write" is reached only by an answer's final sql fence */
+export type GateMode = "read" | "write";
+
+/** the three verbs the write gate allows; the block's headline and its Run
+ * label are both written from one of them */
+export type WriteVerb = "INSERT" | "UPDATE" | "DELETE";
+
+/** what the write gate learned about the statement it allowed (agent.rs
+ * WriteShape): enough for the headline, for the dry run's derived before
+ * sample and for the RETURNING decision. The row COUNT is deliberately absent:
+ * only the dry run can know it, and the block prints the number the server
+ * reported (LESSONS 13) */
+export interface WriteShape {
+  verb: WriteVerb;
+  /** qualified exactly as the statement wrote it: schema.table when it named a
+   * schema, the bare name when it did not. The gate holds no connection, so it
+   * cannot resolve a search_path and never guesses one */
+  table: string;
+  has_where: boolean;
+  has_returning: boolean;
+}
+
+/** one sampled grid of a dry run (agent_write.rs SampleRows). Cell values are
+ * wire text; null = SQL NULL. `before` and `after` carry the same columns in
+ * the same order, unless the model wrote its own RETURNING: that clause is
+ * kept as written, and then `after` names only what it named */
+export interface SampleRows {
+  columns: string[];
+  rows: (string | null)[][];
+}
+
+/** what one proposed statement would do, learned by doing it inside a
+ * transaction that always rolls back (agent_write.rs WritePreview).
+ * `exact_rows` is the server's own count for the statement, never an EXPLAIN
+ * estimate and never `rows.length`; the samples hold at most six rows each,
+ * the result block's own grid window (`WRITE_SAMPLE_ROWS`) */
+export interface WritePreview {
+  verb: WriteVerb;
+  table: string;
+  has_where: boolean;
+  exact_rows: number;
+  /** the rows as they stand; empty for an INSERT, which has none */
+  before: SampleRows;
+  /** the rows the statement returned; empty for a DELETE, which leaves none */
+  after: SampleRows;
+  /** code facts, one token each: "missing_where", "many_rows" */
+  warnings: string[];
+}
+
+/** what a hint, a synonym or a definition is (appdb agent_knowledge; the kind
+ * is checked in SQL, so an unknown one is a write error) */
+export type KnowledgeKind = "hint" | "definition" | "synonym";
+
+/** one thing the user told Ask about this connection (appdb agent_knowledge).
+ * `target` is the object a hint or a synonym hangs on (`table` or
+ * `table.column`) and null for a definition, whose `term = meaning` line is
+ * the row's own text: a definition has no object to hang on. Rust always sends
+ * the timestamps; optional here so a fixture row and an upsert can leave them
+ * out, as the store assigns them. */
+export interface KnowledgeRow {
+  id: string;
+  profile_id: string;
+  kind: KnowledgeKind;
+  target: string | null;
+  text: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/** one question this connection already answered and the SQL that answered it
+ * (appdb agent_history_pairs), for the prompt's EARLIER ANSWERS block */
+export interface AgentHistoryPair {
+  question: string;
+  sql: string;
+  created_at: string;
+}
+
+/** One canvas document (appdb `canvases`, A3). `doc_json` is the block list
+ * the canvas store wrote; Rust stores it and hands it back verbatim, so the
+ * block shape lives in `src/stores/canvas.ts` alone. The timestamps are
+ * SQLite's: an upsert may leave them out and never backdates a row. */
+export interface CanvasRow {
+  id: string;
+  profile_id: string;
+  title: string;
+  doc_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** what a write sends: the row's own timestamps are the database's */
+export type CanvasInput = Omit<CanvasRow, "created_at" | "updated_at">;

@@ -1,0 +1,2084 @@
+/* Ask pane (AGENT-UX). Geometry and hierarchy follow the locked sketch
+   (qwry-agent-lab/docs/ask-sketch-v2.html: floor 320, default 392, max 560,
+   one chrome); every literal below is a token or carries an optical note
+   (DESIGN.md rule 4). Class prefixes: ask- (shell), ans- (answer anatomy),
+   tchip (thinking-strip chips), chip (assumption / suggestion pills), trace-
+   (drawer), picker- (model picker). */
+
+/* ---- shell ------------------------------------------------------------- */
+.ask-panel {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  outline: none; /* programmatic focus target; controls inside keep their rings */
+  overflow: hidden;
+}
+
+/* header strip: fixed height (rule 2); a title and two icon buttons, nothing
+   else (rule 12), so it is the same strip at every width (rule 13) */
+.ask-head {
+  height: 40px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 0 var(--sp-2) 0 var(--sp-3);
+  border-bottom: 1px solid var(--border);
+}
+.ask-title {
+  margin-right: auto;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ask-grow {
+  margin-left: auto;
+}
+
+/* identifiers inside chrome wear data clothes (WRITING.md) */
+.ask-id {
+  font-family: var(--font-mono);
+  color: var(--fg);
+}
+
+/* ---- model picker (composer pill + popover) ----------------------------- */
+/* Chip / pill species (rule 1): pill radius, border, hover bg-hover; the
+   disabled face comes from tokens.css (button:disabled) */
+.picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px; /* optical */
+  height: 24px;
+  padding: 0 6px 0 8px; /* optical */ /* caret hugs the right edge */
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--fg);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  max-width: 180px;
+  transition:
+    border-color var(--dur-quick),
+    background var(--dur-quick);
+}
+.picker:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+.picker:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.picker.active {
+  border-color: var(--accent);
+}
+.picker-model {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.picker svg {
+  color: var(--fg-muted);
+  flex-shrink: 0;
+}
+/* tier badge: the one .badge, tinted per tier (data-state register,
+   lowercase): mid = .badge-accent, large = .badge-ok, small = the warn tint */
+.picker-tier {
+  text-transform: lowercase;
+  flex-shrink: 0;
+}
+.picker-tier.small {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+/* the popover is an AnchoredOverlay (portaled, escStack-registered, clamped):
+   the wrapper owns left/top at the pill's top-left corner, and this
+   zero-height anchor lets the box grow UPWARD from it (the clamp measures
+   the anchor's width for the right edge and nothing for the height, so the
+   primitive's downward flip never fires) */
+.picker-anchor {
+  position: relative;
+  width: 280px;
+  height: 0;
+}
+.picker-pop {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 280px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: var(--sp-1);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+  transform-origin: bottom left;
+}
+/* group heading: the provider's name, and only an exception's qualifier
+   (a runtime's URL, · no key, · not running) after it */
+.picker-group {
+  padding: 6px 8px 2px; /* optical */ /* group heading proportion */
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* menu row species (rule 1): .hot = the keyboard/pointer highlight (the menu
+   is focusless, like ContextMenu), .active = the chosen model */
+.picker-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--row-y) var(--sp-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  text-align: left;
+}
+.picker-item.hot {
+  background: var(--bg-hover);
+}
+.picker-item:active:not(:disabled) {
+  background: var(--bg-active);
+}
+.picker-item.active {
+  color: var(--accent);
+}
+.picker-item svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+/* the check column stays reserved so labels align with and without a check */
+.picker-check {
+  display: inline-block;
+  width: var(--icon-sm);
+  flex-shrink: 0;
+}
+.picker-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.picker-item .ask-grow {
+  margin-left: auto;
+}
+.picker-ctx {
+  flex-shrink: 0;
+  color: var(--fg-muted);
+  font-size: var(--text-2xs);
+}
+.picker-foot {
+  margin-top: var(--sp-1);
+  padding: 6px 8px; /* optical */
+  border-top: 1px solid var(--border);
+  font-size: var(--text-xs);
+}
+
+/* ---- thread scroller ---------------------------------------------------- */
+/* exchanges sit 28px apart: a bubble at the right and an answer at the left
+   need more air between them than the 20px the flat echo had (round 3). The
+   28px rides the exchanges' margins (the edit-mode section, below), not a
+   gap here, so a fold can close two bubbles up */
+.ask-scroll {
+  position: relative; /* a folding exchange parks its leaving anatomy against the scroller (the fold, below) */
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--sp-3) var(--sp-3) var(--sp-2);
+  display: flex;
+  flex-direction: column;
+}
+/* while an assumption set is pending the retry pill floats over the
+   scroller's last rows (.ask-retry): the scroller reserves the pill's
+   footprint (28px face + its gap above the composer + the same gap above the
+   pill) so the footer, its Trace link included, scrolls clear of it and
+   nothing under the pill is unreachable (LESSONS 8: floating chrome shrinks
+   the viewport) */
+.ask-scroll[data-pill] {
+  padding-bottom: calc(28px + var(--sp-2) + var(--sp-2));
+}
+.ask-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.ask-scroll::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--radius-xs);
+}
+
+/* ---- answer block (AGENT-UX section 2) ---------------------------------- */
+.ans {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+/* the anatomy under the bubble is one node (AnswerBlock Body) so a fold can
+   let it leave as one; its sections appear with opacity, never height
+   (section 2) */
+.ans-body {
+  position: relative; /* the tail parks against it on a Restart (below) */
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+/* everything under the thinking strip is one node (AnswerBlock .ans-tail), so
+   a Restart can let the answer it forgets leave as one, parked where it stood,
+   while the fresh tail takes the flow. It repeats the column and its gap and
+   nothing else: the sections still fade in one at a time, as they land */
+.ans-tail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.ans-body > *:not(.ans-tail),
+.ans-tail > * {
+  animation: ans-in var(--dur-slow) var(--ease-std);
+}
+@keyframes ans-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+/* the question echo (section 2 item 1): the user's words in a bubble at the
+   right edge, the answer's anatomy staying left (the sketch's variant B: the
+   active-chip tint, one soft corner toward the answer). The bubble row (W4)
+   holds the action cluster, then the bubble, both bottom-aligned so the
+   cluster centres on the bubble's last line. The fill and border ride a
+   pseudo so they can fade in BEHIND text that is already there: on send the
+   text travels from the composer into the bubble (AskPanel's .ask-ghost, a
+   shared-layout position spring) and the container follows; the text itself
+   never fades or scales. isolation keeps the pseudo's negative z-index under
+   the text and above nothing else */
+.ans-echo-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-end;
+}
+.ans-echo {
+  position: relative;
+  isolation: isolate;
+  /* the bubble yields the cluster's room at every width (rule 2, stable
+     chrome: the reveal never moves the bubble): three 18px buttons 4px
+     apart, the 8px gap, 6px to spare. 86% wins nowhere in the pane's range,
+     so the cap is written as what it is */
+  max-width: calc(100% - 76px);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid transparent; /* the ring the pseudo paints; keeps the geometry honest */
+  border-radius: 16px 16px 6px 16px; /* optical */ /* the small corner points at the answer */
+  font-weight: 450;
+  font-size: var(--text-md);
+  line-height: 1.45;
+  color: var(--fg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: default; /* a click is Jump Back; an I-beam would promise a caret */
+}
+.ans-echo::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  animation: ans-in var(--dur-slow) var(--ease-std);
+  transition: border-color var(--dur-quick) var(--ease-std);
+}
+/* on hover the ring steps up: the click answers on the thing clicked (rule 8) */
+.ans-echo-row:has(.ans-echo:hover) .ans-echo:not(.folded)::before {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+/* the frame between a click and the mode (AnswerBlock `arm`): the bubble
+   remounts under the edit id and its fill must not blink through the fade */
+.ans-echo.arming::before {
+  animation: none;
+}
+/* folded (edit mode, an exchange after the edited one): the anatomy is gone,
+   the bubble stands at the one disabled value, nothing to hover, nothing to
+   click, the words still selectable. !important because the newest bubble
+   carries a layoutId and motion leaves an inline `opacity: 1` on it after
+   the lift (the W2c chip precedent): without it the latest exchange folds at
+   full strength beside its dimmed neighbours (probed under normal motion,
+   scratchpad w4-fold-opacity-probe.ts; reduced motion clears the inline
+   value, so the stills alone never showed it) */
+.ans-echo.folded {
+  opacity: var(--o-disabled) !important;
+}
+/* the action cluster (EchoActions): Copy · Restart · Jump Back left of the
+   bubble, Jump Back nearest it. Its right padding is the gap to the bubble,
+   so a pointer crossing from bubble to buttons never leaves the hover zone;
+   its bottom padding is the bubble's padding plus its ring, so the 18px
+   buttons centre on the last line. Revealed on the bubble's hover, its own,
+   focus within it (opacity and a 4px slide out of the bubble on the strip
+   chips' register; never visibility, which drops the buttons from the tab
+   order) and under the harness's forced face (.ans[data-hot]); the row's
+   empty left half reveals nothing (rule 8) */
+.ans-echo-acts {
+  display: flex;
+  flex-shrink: 0;
+  gap: var(--sp-1);
+  padding: 0 var(--sp-2) calc(var(--sp-2) + 1px) 0; /* optical */ /* the bubble's padding plus its ring */
+  opacity: 0;
+  transform: translateX(4px);
+  transition:
+    opacity var(--dur-quick) var(--ease-std),
+    transform var(--dur-quick) var(--ease-std);
+}
+.ans-echo-row:has(.ans-echo:hover) .ans-echo-acts,
+.ans-echo-acts:hover,
+.ans-echo-acts:focus-within,
+.ans[data-hot] .ans-echo-acts {
+  opacity: 1;
+  transform: none;
+}
+/* the composer's ghost (AskPanel): for the frame between ↩ and the exchange
+   landing, the draft's text rendered over the textarea glyph for glyph (same
+   font, size, 20px lines, wrapping width) inside the bubble's own padding and
+   ring, so the ghost's box is the bubble's box at the composer and the echo
+   resumes from it with no jump. Positioned in .ask-input: --sp-2 / --sp-3 in
+   from its padding box is the textarea's text origin minus the bubble's
+   padding and border (.ask-input pads 8 / 12, .ask-box a 1px border then
+   8 / 12), and 100% less --sp-5 is the textarea's width plus that padding and
+   ring. Clipped at the textarea's own four-line height; a longer draft shows
+   its tail through the inner offset AskPanel writes */
+.ask-ghost {
+  position: absolute;
+  top: var(--sp-2);
+  left: var(--sp-3);
+  width: calc(100% - var(--sp-5));
+  max-height: calc(96px + var(--sp-4) + 2px);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid transparent;
+  overflow: hidden;
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  line-height: 20px;
+  color: var(--fg);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  pointer-events: none;
+}
+.ask-ghost > span {
+  display: block;
+}
+
+/* ---- @ mention chips (Mention.tsx, W6) ----------------------------------- */
+/* one face, two homes: the composer's backdrop (.ask-ta-back) paints the
+   draft's resolved runs, the question echo wears the same pill in the bubble,
+   and the lift ghost carries it between them. A marked run of text, never a
+   control (rule 8's inverse): accent-soft fill, the bubble's hover ring, 4px
+   corners, no hover, no font of its own (the textarea's own metrics rule the
+   caret, and a backdrop set in mono would drift off them; the @ and the
+   quotes are the data costume). The box outdents 2px each side over its own
+   margin, so the glyph run stays where the textarea put it and a pill
+   appearing or leaving never moves a letter; a pill the line breaks keeps
+   rounded ends on both fragments. In the bubble the same fill stacks on the
+   bubble's tint and reads one step deeper, the way .chip.active reads over
+   any surface: one declaration, two readings.
+   W7 steps the ring from 22% to the bubble's 40% hover ring: at 22% over the
+   soft fill the edge read as a find-match's wash rather than a chip's edge,
+   and the pill is a chip in the draft and in the bubble both. The fill, the
+   corners and the outdent are untouched, so no glyph moves */
+.mention {
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: var(--radius-xs);
+  margin: 0 -2px;
+  padding: 0 2px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+/* the pill's kind (B2 item 4, reversing W7's icon-less pill): the glyph stands
+   IN the `@`'s cell. The `@` keeps its advance and goes transparent, the icon
+   is centred on it at --icon-sm in --accent (.chip.active svg: the app's icon
+   inside an accent-soft chip), so not one letter moves, no gap is spent and
+   the caret's positions stay the textarea's. The quotes of a quoted name stay
+   painted: they are the user's own glyphs, not the costume.
+   The cell keeps `display: inline`, and that is the whole reason it works: an
+   inline-block would open a break opportunity between the `@` and a quoted
+   name's `"` that a textarea's own wrap does not have (UAX 14 gives AL x QU
+   no break), so the backdrop would wrap a line earlier than the textarea and
+   every pill after it would drift off the letters it paints behind. An inline
+   box is also its own abspos containing block, which is what centres the icon
+   on the glyph for free */
+.mention-at {
+  position: relative;
+  color: transparent;
+}
+.mention-at svg {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  color: var(--accent);
+}
+
+/* ---- edit mode (W4): the travel's composer side and the fold's stack ----- */
+/* the edit ghost (AskPanel `travel`): the send ghost run backwards. `in`
+   mounts under the bubble's edit id as the bubble leaves, so the words spring
+   from the bubble's box to the textarea's text origin while the bubble's fill
+   and ring, carried on the pseudo, fade out behind them; when the spring
+   settles the textarea paints its own text and the ghost leaves. `out` stands
+   one frame over the composer as the box the returning bubble springs from,
+   bare: the bubble's own fill fades in as it lands. The pseudo paints the
+   ring one pixel outside the box, so the clip moves from overflow to a
+   clip-path one pixel out; a question taller than the textarea's four lines
+   still clips at them */
+.ask-ghost[data-edit] {
+  isolation: isolate;
+  overflow: visible;
+  clip-path: inset(-1px);
+  border-radius: 16px 16px 6px 16px; /* optical */ /* the bubble's corners */
+}
+.ask-ghost[data-edit="in"]::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  animation: ans-out var(--dur-slow) var(--ease-std) forwards;
+}
+@keyframes ans-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+/* the fold, one gesture in the app's two registers: what stays travels on
+   spring.layout, what goes fades on --dur-slow. An exchange after the edited
+   one keeps its bubble (.ans-echo.folded), which dims here and springs into
+   the stack (AnswerBlock: the bubble's layoutDependency is the mode, so the
+   spring runs on the fold and the unfold and never on an ordinary
+   re-render); its anatomy (.ans-body) leaves parked where it stood
+   (AnimatePresence popLayout, against the scroller) on the section fade run
+   backwards, the stack settling over it. Neighbouring folded exchanges close
+   up from the thread's 28px to 8px with no transition of their own: the
+   spring carries the bubbles to the closed geometry, and a margin easing
+   beside it would be a second motion for one move */
+.ask-scroll > .ans + .ans {
+  margin-top: 28px;
+}
+.ask-scroll > .ans:has(> .ans-echo-row > .ans-echo.folded) + .ans:has(> .ans-echo-row > .ans-echo.folded) {
+  margin-top: var(--sp-2);
+}
+.ask-scroll .ans-echo {
+  transition: opacity var(--dur-slow) var(--ease-std);
+}
+.ans-body[data-leaving] {
+  animation: ans-out var(--dur-slow) var(--ease-std) forwards;
+  pointer-events: none;
+}
+/* the edited exchange itself: its bubble went to the composer and its anatomy
+   is parked and fading, so for that fade the article has no box of its own
+   and the flow reads as if it were already gone (AnswerBlock drops it when
+   the fade ends). The first article's successor keeps the first's zero
+   margin */
+.ask-scroll > .ans[data-leaving] {
+  display: contents;
+}
+.ask-scroll > .ans[data-leaving]:first-child + .ans {
+  margin-top: 0;
+}
+/* thinking strip: FIXED height (rule 2); chips scroll sideways past the
+   edges, never wrap. The scrollbar is hidden (the masks say there is more,
+   the wheel and the newest-chip follow move it); scroll is never animated */
+.ans-strip {
+  height: 24px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px; /* optical */
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  scrollbar-width: none;
+}
+.ans-strip::-webkit-scrollbar {
+  display: none;
+}
+/* edge masks follow the scroll position (ThinkingStrip): the left fades once
+   older chips sit under it, the right while newer chips wait past it, so a
+   cut never reads as a broken pill and a fade always means reachable chips */
+.ans-strip.fade-l {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 24px);
+  mask-image: linear-gradient(to right, transparent, #000 24px);
+}
+.ans-strip.fade-r {
+  -webkit-mask-image: linear-gradient(to left, transparent, #000 24px);
+  mask-image: linear-gradient(to left, transparent, #000 24px);
+}
+.ans-strip.fade-l.fade-r {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 24px,
+    #000 calc(100% - 24px),
+    transparent
+  );
+  mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+}
+/* tool chip: a status pill while running, a button once it can open the trace */
+.tchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px; /* optical */ /* dot-label gap */
+  height: 20px;
+  padding: 0 var(--sp-2);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--bg-raised);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  flex-shrink: 0;
+  transition:
+    background var(--dur-quick),
+    color var(--dur-quick);
+}
+.tchip.clickable {
+  cursor: pointer;
+}
+.tchip.clickable:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.tchip.clickable:active {
+  transform: scale(0.97);
+}
+.tchip-id {
+  font-family: var(--font-mono);
+  color: var(--fg);
+}
+.tchip.run {
+  color: var(--accent);
+}
+.tchip.error {
+  color: var(--danger);
+}
+.tchip-spin {
+  width: 9px; /* optical */
+  height: 9px; /* optical */
+  border: 1.5px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: tchip-spin 0.8s linear infinite; /* optical */ /* progress spinner, like tb-spin */
+}
+@keyframes tchip-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.tchip-ok {
+  width: 9px; /* optical */
+  height: 9px; /* optical */
+  border-radius: 50%;
+  background: var(--ok);
+}
+/* a call the user stopped mid-flight: the spinner's ring, still */
+.tchip-stop {
+  width: 9px; /* optical */
+  height: 9px; /* optical */
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+}
+.tchip.error .tchip-ok {
+  background: var(--danger);
+}
+/* the waiting word (AGENT-UX section 2 item 2; round 3, ask 3): status
+   register, muted base, a lighter band swept across the letters by
+   ThinkingStrip (a Web Animation on background-position, the token's
+   easing). Parked at 120% the band sits off the text, so this rule as it
+   stands IS the reduced-motion face. Text, never a chip; never wraps */
+.tchip-wait {
+  flex-shrink: 0;
+  font-size: var(--text-sm);
+  color: transparent;
+  background-image: linear-gradient(
+    100deg,
+    var(--fg-muted) 0%,
+    var(--fg-muted) 40%,
+    var(--fg) 50%,
+    var(--fg-muted) 60%,
+    var(--fg-muted) 100%
+  );
+  background-size: 260% 100%;
+  background-position: 120% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* the answer slot as blocks (AnswerText, W5): prose, lead-ins, lists,
+   quotes, code blocks and the model's own tables, each in the pane's
+   register for it. The slot is one section of the anatomy and fades in as
+   one (.ans-body > *); the blocks inside never animate on their own, so a
+   streaming answer grows the way prose grows by its next word */
+.ans-text {
+  line-height: 1.5;
+  color: var(--fg);
+  user-select: text;
+}
+/* the live region exists before its text does (AGENT-UX section 12). Empty,
+   it leaves the flex flow so the column gap reserves nothing for it (rule 2)
+   yet stays in the accessibility tree: never display or visibility, which
+   would drop the region and lose the first announcement. animation: none
+   here re-arms the section fade for the moment the first delta lands. */
+.ans-text:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  animation: none;
+}
+/* 8px between blocks, a lead-in 4px above its group; the gap rides every
+   block as its own top margin so no element's UA margin can out-rank it */
+.ans-text > * {
+  margin: var(--sp-2) 0 0;
+}
+.ans-text > :first-child {
+  margin-top: 0;
+}
+.ans-text > .ans-lead + * {
+  margin-top: var(--sp-1);
+}
+/* only prose keeps the model's line breaks; a list item or a lead-in is one
+   line of text however it was wrapped in the source */
+.ans-text p {
+  white-space: pre-wrap;
+}
+.ans-text b {
+  font-weight: 650;
+}
+/* identifiers wear data's clothes (WRITING.md), one step under the prose */
+.ans-text code {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+/* figures: tabular numerals at 600 in the block's own tier, one face for a
+   quantity wherever it sits in the slot and never bold on its own (the face
+   is the emphasis, so a bold that is only a figure arrives as a figure; bold
+   stays 650 above it). The sketch drew 500 and the build tried both: at 500
+   a figure is found on inspection, at 600 it lands at a glance, 320 and 560,
+   both themes (w5-frames/build/cmp-fig-*.png). Inside a bolded phrase a
+   figure keeps the phrase's weight, as it keeps the lead-in's */
+.ans-text .fig {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.ans-text b .fig {
+  font-weight: inherit;
+}
+/* lead-in: the trace-kind face (.trace-kind, the picker's group heading: one
+   species), a label over its group and never a heading; the colon stays as
+   written, an identifier inside keeps its mono and its case, and a figure
+   keeps the label's weight but takes tier 1, the thinking chip's two tones */
+.ans-lead {
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  line-height: 16px;
+}
+.ans-lead code {
+  font-size: inherit;
+  text-transform: none;
+}
+.ans-lead .fig {
+  font-weight: inherit;
+  color: var(--fg);
+}
+/* lists: the marker in tier 2 (an ordinal in tabular numerals), a 16px
+   indent, items 4px apart, no clamp (a clipped answer lies, LESSONS 9) */
+.ans-text ul,
+.ans-text ol {
+  padding-left: var(--sp-4);
+}
+.ans-text li + li {
+  margin-top: var(--sp-1);
+}
+.ans-text li::marker {
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+/* quote: a hairline left rule and the text in tier 2 */
+.ans-text blockquote {
+  padding-left: var(--sp-3);
+  border-left: 1px solid var(--fg-muted);
+  color: var(--fg-muted);
+}
+/* a non-SQL code block: the editor register (the trace body's face at tier
+   1), wrapping, no highlighting */
+.ans-text pre {
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-app);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* the link: the one thing in the text that answers a pointer (rule 8), so
+   it announces at rest (accent, a hairline underline at 40%), responds on
+   hover (the underline fills) and acknowledges a press (the .linkish fill);
+   the keyboard ring is the app's one ring (tokens.css) on an element it does
+   not list */
+.ans-text a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  text-underline-offset: 2px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  transition: text-decoration-color var(--dur-quick) var(--ease-std);
+}
+.ans-text a:hover {
+  text-decoration-color: var(--accent);
+}
+.ans-text a:active {
+  background: var(--accent-soft);
+}
+.ans-text a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* the grid slot of the answer TEXT (AnswerText, W5): the model's own markdown
+   table, drawn by the readOnly Grid when no run is on screen to restate. A
+   run's rows live in the result block below (W7, .rb), which draws its own
+   box; this one is the table's */
+.ans-grid {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+/* one row, one column: the value in the data register with the column name
+   as its caption (ScalarResult). Plain selectable text; ⌘C copies the
+   selection (rule 11: nothing to discover). NULL and '' wear the grid's own
+   chips (grid.css), so the two result shapes never disagree about a value */
+.ans-scalar {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--sp-2) 0;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.ans-scalar-v {
+  font-family: var(--font-mono);
+  font-size: 22px; /* optical */ /* the answer's one number, above the text ramp */
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+/* a value too long to read at a glance (ScalarResult GLANCE_CHARS) wears the
+   stacked form's register instead of shouting a URL at 22px */
+.ans-scalar-v.long {
+  font-size: var(--text-md);
+  font-weight: 500;
+  line-height: var(--lh-data);
+  white-space: pre-wrap;
+}
+.ans-scalar-k {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+/* one row, two to four columns: name over value. A single column until the
+   slot is 480px wide, then a row of equal columns no narrower than 140px,
+   the pairs flowing into it (W2c gate S3: three pairs stacked beside empty
+   pane at 560; DESIGN rule 13, growth feeds content). The wrapper is the
+   container the query reads; the dl is the grid */
+.ans-kv-slot {
+  container-type: inline-size;
+}
+.ans-kv {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-2);
+  margin: 0;
+  padding: var(--sp-1) 0;
+  user-select: text;
+  -webkit-user-select: text;
+}
+@container (min-width: 480px) {
+  .ans-kv {
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    column-gap: var(--sp-4);
+  }
+}
+.ans-kv-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ans-kv-k {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+.ans-kv-v {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  line-height: var(--lh-data);
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* status register line: rows · ms, and the sanity line */
+.ans-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px; /* optical */
+  min-height: 16px;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+.ans-status .frag {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  margin: 0 -2px;
+  border-radius: var(--radius-xs);
+  color: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+.ans-status .frag:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.ans-status .frag:active {
+  background: var(--bg-active);
+}
+/* a warning fragment is tier 1 with the glyph; the rest sits at tier 2 */
+.ans-status .frag.warn {
+  color: var(--fg);
+}
+.ans-status .frag.warn svg {
+  color: var(--warn);
+}
+/* B3: the canvas an answer went to, worn as the link that shows its tab
+   (`4 blocks · Canvas 4`). The footer's own treatment for a link inside a
+   status strip (.ans-foot .linkish), plus the strip's line-height, because a
+   button brings its own and a taller one would push the 16px row; a title
+   longer than the line ellipsizes rather than running past the pane, the way
+   the footer's meta does (DESIGN rule 13: data owns its own overflow) */
+.ans-status .linkish {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  line-height: inherit;
+}
+
+/* ---- result block (W7 item 1, ResultBlock) -------------------------------
+   Fenced: owned by the result-block builder.
+   One bordered box with two faces, replacing the grid slot AND the collapsed
+   `SQL ▸ first line` row (DESIGN rule 15: the row was a strip naming a fact
+   the grid already stood for). The grid gives up its own corners to the box;
+   the SQL face is the editor register on the panel, wrapped, so the floor
+   never scrolls it sideways. The height is the face's own and springs
+   between them (ResultBlock), which is why the box clips. */
+.rb {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--bg-panel);
+}
+/* the two faces share one box: popLayout parks the leaving face absolutely
+   against this wrapper while the arriving one takes the flow, so the wrapper
+   measures the face that is arriving and the block springs to it. `isolation`
+   closes the grid's own z ladder (its sticky header sits at 7) inside this
+   box, so the cluster, a later sibling, paints over the header instead of
+   under it (the .ans-echo precedent) */
+.rb-faces {
+  position: relative;
+  isolation: isolate;
+}
+/* a face on its way out is not pressable: a grid fading away answers no click
+   (DESIGN rule 8, LESSONS 9) */
+.rb-face[data-motion-pop-id] {
+  pointer-events: none;
+}
+/* the SQL face: a read-only CodeMirror view in the app's own grammar and
+   highlight; its text stays selectable inside a user-select:none body */
+.rb-sql {
+  user-select: text;
+  -webkit-user-select: text;
+}
+/* a one-row run keeps its face (22px mono, the caption under) and takes the
+   block's 8 / 12 padding: the SQL face needs the box, and a border that came
+   and went with the flip would be a jump. A box around a value is not a table
+   around a value. The vertical 8 is the value's own (.ans-scalar); the pairs
+   of a two-to-four column run take the same */
+.rb-scalar {
+  padding: 0 var(--sp-3);
+}
+.rb-scalar .ans-kv {
+  padding: var(--sp-2) 0;
+}
+
+/* the floating action cluster (VS Code's editor toolbar), shared by the block
+   and the answer's prose: absolute at its container's top-right with no
+   layout of its own, the container's own surface fading in from the left
+   under the buttons over 16px so the letters beneath dissolve instead of cut.
+   A boxed cluster inside the block was rejected as a frame inside a frame.
+   Rest is opacity 0 and a 4px slide out of the top edge on the bubble
+   cluster's register, never visibility: the buttons keep their place in the
+   tab order, which is the cluster's keyboard route (DESIGN rule 8, section
+   12). `--acts-surface` is the container's to declare */
+.acts-float {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 30px; /* optical */ /* the grid header's own band (Grid HEADER_H) */
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 0 var(--sp-1) 0 var(--sp-4);
+  background: linear-gradient(to right, transparent, var(--acts-surface) var(--sp-4));
+  opacity: 0;
+  transform: translateY(-4px);
+  transition:
+    opacity var(--dur-quick) var(--ease-std),
+    transform var(--dur-quick) var(--ease-std);
+}
+/* the surface is whatever the buttons actually stand on: the grid's header is
+   raised, a value, the SQL and the prose sit on the panel */
+.rb {
+  --acts-surface: var(--bg-panel);
+}
+.rb.table:has(.vgrid) {
+  --acts-surface: var(--bg-raised);
+}
+.rb:hover > .acts-float,
+.rb[data-hot] > .acts-float,
+.acts-float:focus-within {
+  opacity: 1;
+  transform: none;
+}
+
+/* the prose and its cluster (AnswerActions, W7 item 2): the slot is the
+   cluster's positioning box, so Copy · Save Query stand at the answer text's
+   top-right and the hover that reveals them is the prose's own, never the
+   footer's or the chips'. The letters they cover dissolve into the panel, the
+   surface the prose sits on */
+.ans-prose {
+  position: relative;
+  --acts-surface: var(--bg-panel);
+}
+/* empty (the live region before its first delta) the slot is no box at all, so
+   the column reserves nothing for it and .ans-text:empty takes the region out
+   of the flow exactly as it did when it was the section itself (rule 2);
+   `animation: none` re-arms the section fade for the commit the first text
+   lands in */
+.ans-prose:has(> .ans-text:empty) {
+  display: contents;
+  animation: none;
+}
+/* 24px over the answer's first 20px line, 2px above it: the band the block
+   wears is the grid header's, and prose has no header to match */
+.ans-prose > .acts-float {
+  top: -2px; /* optical */
+  height: 24px;
+}
+.ans-prose:hover > .acts-float,
+.ans-prose[data-hot] > .acts-float {
+  opacity: 1;
+  transform: none;
+}
+
+/* assumption chips + follow-ups: one wrapping row; the assumption row leads
+   with an inline `Assumed` label at tier 2 (AGENT-UX section 3) */
+.ans-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px; /* optical */
+}
+.ans-chips-lbl {
+  margin-right: 2px;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+/* Chip / pill toggle species (rule 1): radius-pill, border, active = accent-soft.
+   A long label wraps inside the pill and grows it downward from the 24px
+   minimum; it never clips or scrolls (rule 13: the row wraps, the chip too) */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px; /* optical */
+  min-height: 24px;
+  padding: 3px 10px; /* optical */ /* pill proportion */
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  line-height: 1.35;
+  white-space: normal;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-quick),
+    border-color var(--dur-quick),
+    color var(--dur-quick);
+}
+.chip svg {
+  flex-shrink: 0;
+}
+.chip:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.chip:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.chip.active {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--fg);
+}
+/* motion writes an inline opacity on every layoutId element (the follow-up
+   and starter chips, for the shared-layout crossfade), which outranks
+   tokens.css's button:disabled; the one disabled face has to win here or a
+   disabled chip looks pressable (rule 2, LESSONS 9) */
+.chip:disabled {
+  opacity: var(--o-disabled) !important;
+}
+.chip.active svg {
+  color: var(--accent);
+}
+/* suggestion chip: a question not yet asked. It wears the base chip's own
+   solid hairline now (W7) and adds only its text tier and pill proportion: the
+   dashed ghost is the add/create species and a question the model wrote is not
+   an invitation to create one. Hover takes the hairline to accent, which is
+   the whole state change now that nothing here is dashed */
+.chip.q {
+  padding: var(--sp-1) 10px; /* optical */
+  color: var(--fg);
+}
+.chip.q:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: transparent;
+}
+.chip.q svg {
+  color: var(--accent);
+}
+
+/* footer: avatar · turns · time · model · Trace, one line at the 320 floor
+   (rule 13). The avatar is the block's provenance mark (AGENT-UX section 9);
+   the status fragment gives way before the Trace link does */
+.ans-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 20px;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+.ans-foot .qa-avatar {
+  flex-shrink: 0;
+}
+.ans-foot-meta {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ans-foot .ask-grow {
+  margin-left: auto;
+}
+.ans-foot .linkish {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* ---- FailureBlock (AGENT-UX section 7): error register, editable SQL, actions
+   Fenced: owned by the trace + failure builder. */
+.ans-fail {
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--danger-soft);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+.ans-fail-title {
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--danger);
+}
+.ans-fail-msg {
+  margin-top: 2px;
+  color: var(--fg);
+  user-select: text;
+}
+/* Postgres DETAIL / HINT lines: the key wears the title's uppercase at tier 2,
+   the text stays tier 1 (it is the part that fixes the query) */
+.ans-fail-detail {
+  display: flex;
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+  color: var(--fg);
+  user-select: text;
+}
+.ans-fail-detail-k {
+  flex-shrink: 0;
+  min-width: 36px;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  line-height: 1.7; /* optical */ /* caps sit on the sentence baseline */
+}
+/* the editable SQL: a CodeMirror field (JsonField precedent); the editor's
+   own theme carries the mono, size and inner padding, the box carries the
+   border and the focus treatment. The box is also the positioning box for
+   Insert (W7 fix, DESIGN rule 15's first question): the statement Insert
+   puts at the caret is the one inside this border, so the action stands on
+   the field in the result block's own floating cluster instead of taking a
+   fourth slot in the button row, where four buttons wrapped to two lines at
+   the 320 floor and stood on one at 392 (rule 13) */
+.ans-fix {
+  position: relative;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-app);
+  overflow: hidden;
+  transition: border-color var(--dur-quick);
+  --acts-surface: var(--bg-app);
+}
+.ans-fix:focus-within {
+  border-color: var(--accent);
+}
+.ans-fixsql .cm-editor {
+  user-select: text;
+  -webkit-user-select: text;
+}
+/* the field has no header band for the cluster to sit in, so the band IS the
+   statement's first line: 8px down for the editor's own padding, 20px tall
+   over an 18.6px line, so the fade dissolves the end of line one and never
+   reaches line two */
+.ans-fix > .acts-float {
+  top: var(--sp-2);
+  height: 20px;
+}
+.ans-fix:hover > .acts-float,
+.ans-fix:focus-within > .acts-float,
+.ans-fix[data-hot] > .acts-float {
+  opacity: 1;
+  transform: none;
+}
+.ans-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+/* ---- end FailureBlock ---- */
+
+/* ---- docked composer: two rows, no hint line (rule 11) ------------------ */
+/* positioned so the retry pill can float over its top edge */
+.ask-input {
+  position: relative;
+  flex-shrink: 0;
+  padding: var(--sp-2) var(--sp-3) var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+/* the retry pill (RetryPill.tsx): Action button species in pill shape,
+   floating at the composer's top-right corner over the thread's last rows.
+   Never in the flow: it moves nothing and never covers the send button; the
+   scroller pads its own end by the pill's footprint while a set is pending
+   (.ask-scroll[data-pill]) so the footer scrolls clear. Above the grid's
+   sticky chrome (grid.css tops out at 9); the trace drawer follows it in the
+   DOM and wins the tie */
+.ask-retry {
+  position: absolute;
+  right: var(--sp-3);
+  bottom: calc(100% + var(--sp-2));
+  z-index: 10;
+  height: 28px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-pop);
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* the box stacks the textarea over its control row (model pill · send) */
+.ask-box {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-app);
+  transition: border-color var(--dur-quick);
+}
+.ask-box:focus-within {
+  border-color: var(--accent);
+}
+.ask-ta {
+  position: relative; /* above the backdrop (.ask-ta-back): the textarea's glyphs stay tier 1 */
+  z-index: 1;
+  width: 100%;
+  min-height: 20px;
+  max-height: 96px;
+  padding: 0;
+  border: none;
+  background: none;
+  outline: none; /* .ask-box:focus-within carries the focus treatment */
+  resize: none;
+  line-height: 20px;
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  user-select: text;
+  -webkit-user-select: text;
+}
+.ask-ta::placeholder {
+  color: var(--fg-muted);
+}
+/* tokens.css paints a ring on every textarea:focus-visible; here the box's
+   focus-within border is the one focus face (rule 2: one treatment, not two) */
+.ask-ta:focus-visible {
+  outline: none;
+}
+/* not connected: the one disabled look (rule 2); the placeholder says why */
+.ask-ta:disabled {
+  opacity: var(--o-disabled);
+  cursor: default;
+}
+/* the draft's @ chips (W6, AskPanel): the textarea is the truth of the text,
+   the caret and the selection; the backdrop over it repeats that text in the
+   same font, size, 20px lines and width (the .ask-ghost technique) and, since
+   B2 gave the pill a kind icon, PAINTS it, one .mention pill (Mention.tsx)
+   around each tag that resolves while the textarea's own glyphs go
+   transparent. The wrap is a flex box so the textarea sizes it with no
+   line-box slack under an inline-block; the backdrop clips and takes the
+   textarea's scrollTop from AskPanel. While a ghost carries the words it
+   hides too, so the glyphs exist once */
+.ask-ta-wrap {
+  position: relative;
+  display: flex;
+  /* the outdent's room (W7): a pill at position 0 of the draft outdents 2px
+     to the left of the text origin and the backdrop's own overflow cut it
+     there, so the wrap pads 2px on both sides and takes them straight back in
+     margin. Its content box, and with it the textarea, does not move; only
+     the backdrop's clip edge does */
+  padding: 0 2px;
+  margin: 0 -2px;
+}
+/* the backdrop fills the wrap's PADDING box (inset:0) and pays the 2px back
+   as its own padding, so its glyph run starts where the textarea's does and
+   the clip edge stands 2px outside it: the same padding on both, or the pills
+   drift off the letters they paint behind */
+.ask-ta-back {
+  position: absolute;
+  inset: 0;
+  padding: 0 2px;
+  overflow: hidden;
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  line-height: 20px;
+  color: var(--fg);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  pointer-events: none;
+}
+.ask-ta-back.ghosted {
+  visibility: hidden;
+}
+/* the two swap jobs for B2's kind icon (Mention.tsx): the icon lives in the
+   backdrop, and the textarea's own opaque `@` printed straight over it, so
+   the backdrop paints the glyphs in tier 1 and the textarea keeps the text,
+   the caret and the selection and paints none of it. The `.ask-ta.ghosted`
+   rule is gone: the base does what it did, so the lift and the edit ghost
+   need no class of their own to blank the text they carry.
+   The sibling is the condition, not decoration: AskPanel renders the backdrop
+   only while the connection is up, and the canvas note editor wears `.ask-ta`
+   with no backdrop at all, so a bare `.ask-ta { color: transparent }` would
+   have blanked a disconnected draft and every note under edit. Selection
+   needs nothing here: tokens.css's one ::selection is already translucent, so
+   the band reads under the glyphs the backdrop paints above it (rule 15) */
+.ask-ta-back + .ask-ta {
+  color: transparent;
+  caret-color: var(--fg);
+}
+.ask-ctl {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 28px;
+}
+/* the send / stop button: icon-button species box (28px tier) with the one
+   accent fill; .stop drops to the raised surface */
+.ask-send {
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--accent-fg);
+  transition:
+    background var(--dur-quick),
+    color var(--dur-quick),
+    filter var(--dur-quick);
+}
+.ask-send:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-fg);
+  filter: brightness(1.08);
+}
+.ask-send:active:not(:disabled) {
+  background: var(--accent);
+  transform: scale(0.97);
+}
+.ask-send.stop,
+.ask-send.stop:hover:not(:disabled) {
+  background: var(--bg-raised);
+  color: var(--fg);
+  filter: none;
+}
+.ask-send.stop:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+/* the `+` context pill (B2 item 3): the Dashed ghost species (DESIGN rule 1),
+   .rail-add's own face at the composer's 22px tier, leftmost in the control
+   row 8px before the model pill, so the row reads add · model · send. It is
+   the MOUSE route to the `@` completion, which is why it wears the create
+   costume and not a chip's: nothing is chosen on it, a picker opens. Hover
+   firms the dash to a solid accent edge, lifts the glyph to tier 1 and fills
+   bg-hover; pressed is the species' own scale; focus-visible is tokens.css's
+   ring on every button, and disabled follows the textarea (rule 2's five).
+   It never shows the chosen contexts: the pills in the text already do
+   (rule 14) */
+.ask-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-quick),
+    color var(--dur-quick),
+    background var(--dur-quick);
+}
+.ask-add:hover:not(:disabled) {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.ask-add:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.ask-add:disabled {
+  opacity: var(--o-disabled);
+  cursor: default;
+}
+
+/* ---- @ completion popover (MentionPopover, W6) -------------------------- */
+/* the picker's box (.picker-pop, .picker-anchor: border-strong, radius-md,
+   shadow-pop, 4px padding, grown upward from a zero-height anchor) at the
+   composer box's width, its edges on the box's outer edges 4px above it. No
+   title, no footer and no empty row; W7's group headings stay struck, and the
+   labelled hairlines B2 adds (.mention-sep) name BOUNDARIES in a list that
+   mixes recency with kinds, not the kind each row already wears (rule 14).
+   The anchor is portaled and fixed at the box's top-left on the anchored
+   popups' rung (overlay.css's 40), under the overlay stack (50+) it never
+   joins */
+.mention-anchor {
+  position: fixed;
+  z-index: 40;
+}
+/* the box is a FIXED 320px (B2), W7's cap made the height: chrome is sized to
+   its tallest state and the content swaps inside it (DESIGN rule 2), so the
+   hot row and the top edge hold still across every filter, every completed
+   category and every section count, and the list scrolls inside (.picker-pop
+   is the scroller, its own 4px padding included). A sparse filter leaves the
+   panel standing below its rows: Raycast's own cost, shown honestly in
+   b2-popover-category and rare once matching is by subsequence */
+.mention-pop {
+  width: 100%;
+  height: 320px;
+  max-height: none;
+  /* flat on the composer's own panel, not the picker's raised tone (W7): the
+     box stands on the composer and one surface says so */
+  background: var(--bg-panel);
+}
+/* a section is a hairline with its LABEL AT ITS LEFT, never a heading row of
+   its own (the Raycast exemplar): a 20px band, the label in the app's one
+   small-label register (.picker-group / .tkind: --text-2xs, 700, uppercase,
+   .04em) in TIER 2, then an 8px gap and a 1px --border hairline (the picker
+   foot's inside hairline, not the box's own border-strong) running to the
+   row's right edge. Tier 2 and not faint because `Recent` is load-bearing:
+   four different kinds stand under it and only the word says why (rule 3).
+   Nothing sits above the first section, so the categories open the box */
+.mention-sep {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 20px;
+  padding: 0 var(--sp-2);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+.mention-sep::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+/* a category row's chevron: the ContextMenu's own .ctx-arrow slot, since a row
+   that opens a level wears the mark every such row in the app wears (rule 1).
+   The glyph's size and tier are the row's (--icon-sm, tier 2, above) */
+.mention-arrow {
+  display: flex;
+  flex: none;
+}
+/* the row's kind (MentionPopover KIND_ICON) at the trio's small size in tier
+   2: metadata beside the name, never the accent the picker's check wears */
+.mention-pop .picker-item svg {
+  color: var(--fg-muted);
+}
+/* the picker's menu rows at one fixed height, so a mono identifier row and a
+   text row are one row (the sketch gate: 26 against 27 was a jitter) */
+.mention-pop .picker-item {
+  height: 28px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+/* identifiers wear data's clothes (WRITING): mono, ellipsized at the end like
+   a title in the Threads sheet */
+.mention-name,
+.mention-path {
+  min-width: 0;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.mention-name,
+.mention-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* a column row is two spans: the table part owns the overflow and ellipsizes
+   at its end, the column with its dot in front is never cut, because a title
+   discriminates at its start and a dotted path at its end, and two columns
+   of one table must stay two rows at the floor (DECISIONS W6) */
+.mention-path {
+  display: flex;
+}
+.mention-pre {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mention-col {
+  flex: none;
+}
+/* the hint slot carries data only (a table's row estimate, a column's type):
+   the picker's hint face in mono, tabular, never cut */
+.mention-pop .picker-ctx {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- empty states ------------------------------------------------------- */
+/* configured, no thread: the three starters docked above the composer and
+   nothing else (rule 11). margin-top:auto on the row, not justify-content,
+   so a short pane still scrolls to the first chip. Positioned because the
+   three rotate (useStarters) and the two triples crossfade (AskPanel's
+   Starters, AnimatePresence popLayout): motion parks the leaving row
+   absolutely at its measured offset inside THIS box while the arriving row
+   takes the flow; opacity is motion's, never a CSS animation here (an
+   animation outranks the inline opacity it writes) */
+.ask-starters {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  padding: var(--sp-3);
+}
+.ask-starters-row {
+  margin-top: auto;
+}
+/* the leaving row (motion stamps it while it fades) is not pressable: a chip
+   on its way out asks nothing (rule 8, LESSONS 9) */
+.ask-starters-row[data-motion-pop-id] {
+  pointer-events: none;
+}
+.ask-starters .ans-chips {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+}
+.ask-starters .chip.q {
+  width: 100%;
+  justify-content: flex-start;
+}
+/* no model configured: the setup card, centred (SetupCard.tsx) */
+.ask-empty {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  padding: var(--sp-6);
+  text-align: center;
+}
+.ask-empty-text {
+  margin: 0;
+  max-width: 280px;
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+.ask-setup {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  text-align: left;
+}
+.ask-setup-label {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+.ask-setup select,
+.ask-setup input {
+  width: 100%;
+  height: 28px;
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-app);
+  color: var(--fg);
+  font-size: var(--text-sm);
+}
+.ask-setup-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+/* the field grows, the action keeps the field's 28px height */
+.ask-setup-row input {
+  flex: 1;
+  min-width: 0;
+}
+.ask-setup-row .btnish {
+  flex-shrink: 0;
+  height: 28px;
+}
+.ask-setup input.ask-id {
+  font-size: var(--text-xs);
+}
+/* one slot for the Keychain sentence and, on failure, the error: feedback
+   never moves the form (rule 2, LESSONS 9) */
+.ask-setup-note {
+  min-height: 14px;
+  font-size: var(--text-2xs);
+  line-height: 1.4;
+  color: var(--fg-muted);
+}
+.ask-setup-note.error {
+  color: var(--danger);
+}
+
+/* ---- ModelsSettings (Settings › Models) -----------------------------------
+   Fenced: owned by the picker + settings builder. Lives INSIDE SettingsModal
+   in the settings-section / settings-row skin; only the provider list needs
+   its own grid: name · field · status. */
+.ask-models {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) auto;
+  gap: var(--sp-2) var(--sp-3);
+  align-items: center;
+  font-size: var(--text-sm);
+}
+.ask-models-row {
+  display: contents;
+}
+.ask-models-name {
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ask-models-field {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+/* the settings input skin (.settings-timeout input), stretched */
+.ask-models-input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+}
+.ask-models-input.ask-id {
+  font-family: var(--font-mono);
+}
+.ask-models-input:focus {
+  outline: none; /* the border carries focus, like .ask-box */
+  border-color: var(--accent);
+}
+.ask-models-field .linkish {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+/* status register: dot + lowercase fragment; the column reserves its widest
+   face so a probe answer never reflows the list (rule 2) */
+.ask-models-st {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-width: 72px;
+  font-size: var(--text-2xs);
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+.ask-models-st.ok {
+  color: var(--ok);
+}
+.ask-models-st.err {
+  color: var(--danger);
+}
+.ask-models-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.ask-models-note {
+  margin-top: var(--sp-2);
+  line-height: 1.4;
+}
+/* ---- end ModelsSettings ---- */
+
+/* ---- TraceDrawer (slides over the thread, inside the card) ---------------
+   Fenced: owned by the trace + failure builder. Reduced motion is handled by
+   the global kill in tokens.css (transition-duration collapses; the
+   visibility delay stays so the closed drawer still leaves the tab order). */
+.trace {
+  position: absolute;
+  inset: 40px 0 0 0; /* below the header strip */
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  z-index: 10; /* above the grid's sticky header and gutter (grid.css tops out at 9) */
+  transform: translateX(100%);
+  /* hidden once the slide-out ends so its controls leave the tab order */
+  visibility: hidden;
+  transition:
+    transform var(--dur-slow) var(--ease-std),
+    visibility 0s linear var(--dur-slow);
+  outline: none; /* programmatic focus target (like .ask-panel); the controls inside keep their rings */
+}
+.trace.open {
+  transform: none;
+  visibility: visible;
+  transition: transform var(--dur-slow) var(--ease-std);
+}
+.trace-title {
+  color: var(--fg);
+}
+.trace-head {
+  height: 36px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-2);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-sm);
+}
+.trace-head .ask-grow {
+  margin-left: auto;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+.trace-steps {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--sp-2) var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.trace-step {
+  border-radius: var(--radius-sm);
+}
+/* list row species: hover = bg-hover */
+.trace-step-h {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  height: 28px;
+  padding: 0 var(--sp-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  text-align: left;
+}
+.trace-step-h:hover:not(.static) {
+  background: var(--bg-hover);
+}
+.trace-step-h:active:not(.static) {
+  background: var(--bg-active);
+}
+/* a chip of a run still streaming: its arguments and result arrive with the
+   answer, so the row is a list row, not a control (DESIGN rule 8) */
+.trace-step-h.static {
+  cursor: default;
+}
+/* the one row whose label this chrome wrote rather than read off the run (the
+   knowledge step's counts): it wraps instead of ellipsizing, so the row grows
+   with it while the kind and the ms stay centred on it. Every other label is a
+   statement or a tool name, data that ellipsizes (DESIGN rule 13) */
+.trace-step-h.wrap {
+  height: auto;
+  min-height: 28px;
+  padding-top: var(--sp-1);
+  padding-bottom: var(--sp-1);
+}
+/* the kind column carries the widest kind whole: `KNOWLEDGE` measures 73px in
+   this face and touched its label at 56 (A2). It widens on every trace, not
+   only the ones with a knowledge step, and the 20px comes out of the label,
+   which ellipsizes as every trace label does; the ms column does not move.
+   `memory` would have fitted the old 56 and names the same four things, but
+   the body under the step is headed `KNOWLEDGE:` and a step is called what its
+   body is called (DESIGN rule 14's cousin: one name per thing) */
+.trace-kind {
+  width: 76px;
+  flex-shrink: 0;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+.trace-kind.model {
+  color: var(--syn-keyword);
+}
+.trace-kind.tool {
+  color: var(--accent);
+}
+.trace-kind.verdict {
+  color: var(--ok);
+}
+.trace-lbl {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* a summary cut in half is not a summary: the knowledge step's counts wrap at
+   the 320 floor the way the context step's tagged line below does, and only
+   they do (AGENT-UX section 5) */
+.trace-lbl.wrap {
+  white-space: normal;
+}
+.trace-lbl code {
+  font-family: var(--font-mono);
+}
+.trace-lbl .trace-err {
+  color: var(--danger);
+}
+.trace-ms {
+  flex-shrink: 0;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+.trace-step-b {
+  margin: 0 0 var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-app);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--lh-data);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+/* the context step's tagged line (W6): what the user tagged, in the status
+   register between the row and its block, never inside the block, which
+   stays exactly what was sent; identifiers mono at tier 1, the lead at tier
+   2. It wraps as the chips row does (a cut tag is not a summary) and a long
+   identifier breaks anywhere; absent when nothing was tagged (rule 11) */
+.trace-tag {
+  padding: 0 var(--sp-2) var(--sp-1);
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+.trace-tag code {
+  font-family: var(--font-mono);
+  color: var(--fg);
+}
+/* sub-labels inside a body (thinking / text, args / result): the kind
+   label's costume, smaller, tier 2 */
+.trace-sub {
+  margin-top: var(--sp-2);
+  font-family: var(--font-ui);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  user-select: none;
+}
+.trace-sub:first-child {
+  margin-top: 0;
+}
+/* status-register line for what the drawer cannot show yet or at all */
+.trace-empty {
+  padding: var(--sp-1) var(--sp-2);
+  color: var(--fg-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+}
+.trace-note {
+  flex-shrink: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border-top: 1px solid var(--border);
+  color: var(--fg-muted);
+  font-size: var(--text-2xs);
+  line-height: 1.4;
+}
+/* ---- end TraceDrawer ---- */
+
+/* ---- AnswerBlock anatomy (ThinkingStrip) -----------------------------------
+   Fenced: owned by the answer-anatomy builder. */
+/* per-block provenance (AGENT-UX section 9): the connection's 8px dot leads
+   the footer's status line (the titlebar conn-dot at the same size) */
+.ans-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+/* ---- end AnswerBlock anatomy ---- */
+
+/* ---- A4 writes (the preview face, its headline and its band) --------------
+   Fenced: owned by the writes builder.
+   A change the model proposed and nothing has run. The result block wears its
+   THIRD face over the dry run's sampled rows rather than standing a block of
+   its own beside it (DESIGN rule 15's second question): 0 new species, one new
+   band. Nothing here explains a preview (rule 11): the headline names the
+   verb, the table and the count, the grid shows the rows, the button says what
+   it will do. */
+
+/* the headline: the block's own status line, standing ABOVE it, because a
+   proposal announces before it shows and a preview has no `rows · ms` under it.
+   The thinking chip's two tones (the verb muted, the table lit in mono, the
+   count muted); a true warning lifts its fragments to tier 1 under ONE glyph,
+   the sanity line's own rule (AGENT-UX 4). Each `·` rides INSIDE the fragment
+   it precedes, so a wrap at the 320 floor never ends a line on a hanging
+   separator: the wrap is the status line's own behaviour, never a cut */
+.rb-head code {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg);
+}
+.rb-head > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+.rb-head .sep {
+  color: var(--fg-muted);
+}
+.rb-head .warn,
+.rb-head .lit {
+  color: var(--fg);
+}
+.rb-head .warn svg {
+  color: var(--warn);
+  flex-shrink: 0;
+}
+
+/* the faces and the band as ONE measured box: the block's height springs to
+   this node, so a band leaving on the Run springs the box shut over it */
+.rb-inner {
+  position: relative;
+}
+/* the cluster stands on the grid's raised header on this face too, so it
+   dissolves into the surface it actually covers (the table face's rule) */
+.rb.preview:has(.vgrid) {
+  --acts-surface: var(--bg-raised);
+}
+/* the block's own bottom band: the change's actions at the right, the
+   confirm's place (.danger-actions), on the panel. They act on the statement,
+   so they stand on the block (rule 15's first question) and never hide: rule 8
+   lets a control hide only when the surface works without finding it, and a
+   destructive action nobody can see is a hidden affordance. One band, two
+   faces (B1): the Run, then the tab's `Rollback` · `Commit` while the
+   transaction that run opened is still open. Both faces are one row of the
+   action-button species at the same right edge, so the swap moves nothing */
+.rb-act {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+/* a changed cell states both values inside the ONE cell (rule 14: never a
+   before grid beside an after grid): the old value and the arrow at tier 2,
+   the new one at tier 1, over the grid's own staged-edit fill, because this IS
+   an uncommitted edit. It never takes that costume's dashed outline, which is
+   the editable affordance, and this cell answers no click (rule 8's inverse).
+   NULL keeps the grid's chip on the old side, so the two surfaces never
+   disagree about a value */
+.rb .vgrid-cell.chg {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+.rb .vgrid-old {
+  color: var(--fg-muted);
+}
+.rb .vgrid-arrow {
+  color: var(--fg-muted);
+  margin: 0 var(--sp-1);
+}
+
+/* Settings › Models, the edits row (item 1): ONE row, the switch at the right
+   and the consequence stacked under the label in the same row (the slider
+   row's hint precedent), never a note under the row. The sentence earns its
+   pixels by naming the risk and the rollback plan; a production connection has
+   no row at all, so nothing here states a norm */
+.ask-writes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+/* ---- end A4 writes ---- */
+
+@media (prefers-reduced-motion: reduce) {
+  .ans-body > *,
+  .ans-tail > *,
+  .ans-body[data-leaving],
+  .ans-echo::before {
+    animation: none;
+  }
+}
+
+/* ---- qbot's slot (B4) --------------------------------------------------- */
+/* The empty state is qbot and the three starters, nothing else (rule 11;
+   AGENT-UX section 1 amended). qbot stands in the free space above the row,
+   in the PANEL's flow: the slot is a flex sibling of .ask-starters and not a
+   child of it, because it outlives the empty state. The row unmounts with the
+   first exchange (a picked chip carries the echo's layoutId, and two nodes
+   cannot share one), while the slot leaves on its own inside AskPanel's
+   AnimatePresence, parked where it stood while the thread takes the flow.
+   The box is the sketch's: the slot pays the sp-3 above the row and
+   .ask-starters pays the rest, so a slot inside .ask-starters and this one
+   centre qbot on the same line. The row's own margin-top:auto becomes a
+   no-op, the slot having taken the free space. Both container axes are
+   contained: qbot's height reads 100cqw here, and nothing inside the slot
+   decides the slot's size (qbot.css) */
+.qbot-slot {
+  flex: 1 1 0;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--sp-3) var(--sp-3) 0;
+  pointer-events: none; /* not a control, and rule 8's inverse gives it no affordance */
+  container-type: size;
+}
+.qbot-slot ~ .ask-starters {
+  flex: 0 1 auto;
+  padding-top: 0;
+}
+/* a window too short for him: qbot goes rather than showing half of himself,
+   and the starters never move for him (the slot keeps its zero height) */
+@container (max-height: 119px) {
+  svg.qbot {
+    visibility: hidden;
+  }
+}

@@ -1,0 +1,27 @@
+[
+  {
+    "id": "h-01", "tier": 5, "tags": ["analytics", "legacy", "dirty", "judgment"],
+    "question": "Monthly activation cohorts for 2025: for each signup month (formatted YYYY-MM) of users created in 2025, return the month, the number of signups, and the percentage of those users whose FIRST wardrobe product was added within 30 days of their signup, rounded to 1 decimal place.",
+    "gold_sql": "WITH first_add AS (SELECT added_by, min(added_at) AS fa FROM wardrobe_products_v2 GROUP BY added_by) SELECT to_char(u.created_at, 'YYYY-MM') AS month, count(*) AS signups, round(100.0 * count(*) FILTER (WHERE f.fa >= u.created_at AND f.fa < u.created_at + interval '30 days') / count(*), 1) AS pct FROM users u LEFT JOIN first_add f ON f.added_by = u.id WHERE u.created_at >= '2025-01-01' AND u.created_at < '2026-01-01' GROUP BY 1"
+  },
+  {
+    "id": "h-02", "tier": 5, "tags": ["analytics", "legacy"],
+    "question": "Paid-order economics per currency: for each currency, return the currency, the number of paid orders, the number of distinct buyers, the average order value rounded to 2 decimal places, and the percentage of buyers who placed 2 or more paid orders rounded to 1 decimal place.",
+    "gold_sql": "WITH per_user AS (SELECT currency, user_id, count(*) AS n, sum(total_amount) AS amt FROM order_v2 WHERE payment_status = 'paid' GROUP BY currency, user_id) SELECT currency, sum(n) AS orders, count(*) AS buyers, round(sum(amt) / sum(n), 2) AS aov, round(100.0 * count(*) FILTER (WHERE n >= 2) / count(*), 1) AS repeat_pct FROM per_user GROUP BY currency"
+  },
+  {
+    "id": "h-03", "tier": 5, "tags": ["analytics", "judgment"],
+    "question": "Weekly signup growth for 2025: return the week start (date_trunc week, cast to a date), the number of signups that week, and the week-over-week percentage change in signups rounded to 1 decimal place (NULL for the first week).",
+    "gold_sql": "WITH weekly AS (SELECT date_trunc('week', created_at)::date AS wk, count(*) AS n FROM users WHERE created_at >= '2025-01-01' AND created_at < '2026-01-01' GROUP BY 1) SELECT wk, n, round(100.0 * (n - lag(n) OVER (ORDER BY wk)) / lag(n) OVER (ORDER BY wk), 1) AS wow_pct FROM weekly"
+  },
+  {
+    "id": "h-04", "tier": 5, "tags": ["analytics", "legacy"],
+    "question": "Virtual try-on to purchase funnel: among users who have used virtual try-on (only try-ons linked to a non-null user id), how many are there, how many went on to place an order (any status) at or after the time of their first try-on, and what is that conversion percentage rounded to 1 decimal place? Return the three numbers.",
+    "gold_sql": "WITH fv AS (SELECT user_id, min(created_at) AS f FROM virtual_try_on_v2 WHERE user_id IS NOT NULL GROUP BY user_id) SELECT count(*) AS vton_users, count(*) FILTER (WHERE EXISTS (SELECT 1 FROM order_v2 o WHERE o.user_id = fv.user_id AND o.created_at >= fv.f)) AS converted, round(100.0 * count(*) FILTER (WHERE EXISTS (SELECT 1 FROM order_v2 o WHERE o.user_id = fv.user_id AND o.created_at >= fv.f)) / count(*), 1) AS pct FROM fv"
+  },
+  {
+    "id": "h-05", "tier": 5, "tags": ["analytics", "legacy"],
+    "question": "Does audience size correlate with contribution? Split all non-deleted users into two segments by follower count, labeled exactly '100+' (at least 100 followers) and '<100' (fewer). Return the segment label, the number of users in it, and the average number of wardrobe products added per user rounded to 1 decimal place (users with no products count as 0).",
+    "gold_sql": "WITH fl AS (SELECT following_id AS uid, count(*) AS nf FROM follows GROUP BY following_id), ad AS (SELECT added_by AS uid, count(*) AS na FROM wardrobe_products_v2 GROUP BY added_by) SELECT CASE WHEN coalesce(fl.nf, 0) >= 100 THEN '100+' ELSE '<100' END AS segment, count(*) AS users, round(avg(coalesce(ad.na, 0)), 1) AS avg_products FROM users u LEFT JOIN fl ON fl.uid = u.id LEFT JOIN ad ON ad.uid = u.id WHERE u.is_deleted = false GROUP BY 1"
+  }
+]

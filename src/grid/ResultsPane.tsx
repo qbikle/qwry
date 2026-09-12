@@ -3,9 +3,8 @@ import { overlayOpen } from "../app/overlay/escStack";
 import { useGridStats } from "../stores/gridStats";
 import { useGridFilter } from "../stores/gridFilter";
 import { RotateCw } from "lucide-react";
-import { skey, useConnections } from "../stores/connections";
+import { endTabTx, skey, useConnections } from "../stores/connections";
 import { useTabs } from "../stores/tabs";
-import * as ipc from "../ipc/commands";
 import { ListFilter, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useEdits } from "../stores/edits";
@@ -16,6 +15,7 @@ import { FindBar } from "./FindBar";
 import { lastErrorKind } from "./flashReason";
 import { Grid } from "./Grid";
 import { Kbd } from "../design/Kbd";
+import { msText } from "../lib/duration";
 import "./grid.css";
 
 export function ResultsPane({ browser = false }: { browser?: boolean }) {
@@ -149,9 +149,9 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
         {stmt.columns.length > 0 && <RowCount stmt={stmt} browser={browser} />}
         <SelectionStatsChip />
         <TxChip />
-        {stmt.ms != null && <span>{stmt.ms.toFixed(1)} ms</span>}
+        {stmt.ms != null && <span>{msText(stmt.ms)}</span>}
         {totalMs != null && statements.length > 1 && (
-          <span>total {totalMs.toFixed(1)} ms</span>
+          <span>total {msText(totalMs)}</span>
         )}
         <PendingEditsStatus />
       </div>
@@ -264,7 +264,7 @@ function ZeroRows({
     <div className="grid-zero">
       <div className="grid-zero-title">0 rows</div>
       <div className="grid-zero-sub">
-        {stmt.ms != null && `completed in ${stmt.ms.toFixed(1)} ms`}
+        {stmt.ms != null && `completed in ${msText(stmt.ms)}`}
         {browser && (
           <>
             {stmt.ms != null && " · "}
@@ -368,21 +368,11 @@ function TxChip() {
     return hit ? hit[0].split("::")[0] : null;
   });
   if (!txPid) return null;
+  // the tab's ONE way to end a transaction (stores/connections `endTabTx`),
+  // which Ask's own band presses too: one act, one implementation
   const rollback = async () => {
-    const { tabSessions, setTxTab } = useConnections.getState();
     const tabId = useTabs.getState().activeId;
-    if (!tabId) return;
-    const key = skey(txPid, tabId);
-    const sid = tabSessions[key];
-    if (!sid) return;
-    try {
-      // straight on the session: running it through run() would wipe the
-      // result grid the user is probably inspecting mid-transaction
-      await ipc.execute(sid, "ROLLBACK");
-      setTxTab(key, false);
-    } catch {
-      /* session died: the closed event resets tx state */
-    }
+    if (tabId) await endTabTx(skey(txPid, tabId), "rollback");
   };
   return (
     <span className="status-tx">

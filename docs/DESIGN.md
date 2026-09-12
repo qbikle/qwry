@@ -27,11 +27,12 @@ Every interactive control belongs to exactly one species. The species are:
 | Chip / pill toggle | recipe (no base class yet) | radius-pill, border, active = accent-soft; `.chipish` extraction ledgered |
 | Dashed ghost (add/create) | existing dashed pattern | bg none, dashed border-strong → hover accent |
 | Link button | `.linkish` | accent text + hover accent-soft fill; NEVER feedback-free |
-| Soft-danger button | recipe | danger-soft fill + danger text, for cancel/delete inside busy toolbars where filled `.danger` would shout (qb-cancel, tp-del-btn); full state matrix mandatory |
+| Soft-danger button | recipe; `.soft-danger` (threads.css) is its first class-based instance | danger-soft fill + danger text, for cancel/delete inside busy toolbars where filled `.danger` would shout (qb-cancel, tp-del-btn, `.soft-danger`); full state matrix mandatory |
 | Stepper (joined pair) | segmented-pair recipe | shared border, hairline divider, radius split, ghost-until-hover (CopySplit, rv-step) |
 | Menu row | ContextMenu / cmdk styles | highlight = accent fill, `.hot` |
-| List row / card | per-surface | hover = bg-hover minimum |
+| List row / card | per-surface (`.trow`, the Threads sheet's row) | hover = bg-hover minimum; `.hot` the transient highlight, `.active` the persistent selection |
 | Switch | `.switch` (tokens.css), rendered via `<Switch>` | macOS toggle for feature/setting rows; hidden native checkbox is the truth (role=switch, :has-derived states, spring knob). Native checkboxes remain the species for selection within content (filter rows, lists, CM search panels) |
+| Resize handle | `.cvg-handle` (grid.css) | the canvas element's ONE corner, bottom-right: a 16px hit box over an 8px L glyph at tier 2. Invisible at rest and revealed with the block's own cluster (`.acts-float`'s register, hover / focus-within / `[data-hot]`), accent while the gesture is live (`[data-gesture="resize"]`). No disabled state: it leaves with the cluster, and the keyboard route is the element's own ⇧-arrows |
 
 A new control joins a species or gets a new row in this table in the same PR.
 Re-authoring a species locally (13 copies of the action button, 23 of the
@@ -92,12 +93,21 @@ a name. Allowed literals: multiples of 4, plus 1–2px for hairlines and micro
 gaps. A deliberate off-grid value carries `/* optical */` on its line; the
 annotation is a design decision, reviewable like any other.
 
+The canvas grid's cell and gutter (108 and 12, `CELL_W_BASE` / `GUTTER` in
+`src/canvas/grid.ts`) hold to this same grid though neither is a `--sp-*`
+token: computed once and written to two CSS custom properties (`--cw`,
+`--gut`) rather than retyped at each use site, an exported constant is as
+much a named token as a CSS variable, and rule 4 binds it the same way
+(AGENT-UX §16o).
+
 ## Rule 5: Icons live on the trio
 
 `--icon-sm: 12` (dense lists, tree, menus) · `--icon-md: 14` (toolbars,
 buttons) · `--icon-lg: 16` (headers, empty states). One size per surface;
 a list that mixes sizes is broken by definition. Documented exceptions:
-avatars/logos (22/40/44/64) and the grid's 11px type glyphs (data register).
+avatars/logos (22/40/44/64), the 8px connection dot (the titlebar's and the
+Ask footer's provenance mark: a mark, not an icon) and the grid's 11px type
+glyphs (data register).
 Baseline nudges (`translate: 0 1px` and friends) live INSIDE a component's
 own definition, never at use-sites; each one carries `/* optical */`.
 
@@ -129,7 +139,10 @@ Any wave touching visible chrome ships screenshot evidence from the running
 app (or the WKWebView harness): geometry and beauty are verified in pixels,
 not inferred from CSS. This extends LESSONS #8 from bugs to aesthetics:
 consolidating or renaming chrome IS a visual change and ships under the same
-rule.
+rule. For a resizable pane the evidence is frames at its floor, default and
+max width of a LIVE state (a real answer with real long content, never a
+placeholder or a failure block standing in for one), in both themes; one
+width or one theme is not evidence (rule 13).
 
 ## Rule 10: The lint gate
 
@@ -139,3 +152,115 @@ modifier order, wrong-codepoint glyphs (↵ ⏎), and em dashes in UI strings
 (WRITING.md). `/* optical */` (CSS) and `// em-ok` / config allowlists are
 the only escape hatches. Warning mode during migration; `--enforce` after.
 Then it gates every wave like tsc does.
+
+## Rule 11: Every string earns its pixels
+
+The test is deletion: read the surface with the string gone, and if nothing
+is lost, the string was dead. Chrome never explains a standard interaction
+(↩ sends, ⇧↩ newlines, ⌘. cancels, Esc closes, click opens) and never states
+what is always true (read-only, "every answer shows its SQL", "answers come
+with the SQL"). The norm is silent; only the exception speaks (`small` on a
+model pill, `PROD` on the titlebar, `· not running` on a provider). Teaching
+lives where teaching is asked for: tooltips, menus, the Keyboard Shortcuts
+sheet, a first-run setup card. Precedent: the W2 Ask hint line, `↩ ask · ⇧↩
+newline · read-only · every answer shows its SQL`, one full row of the pane
+at every width, satisfying every rule the reviewers had; and the empty-state
+slogan ("Answers come with the SQL…"), the same defect in prose costume. A
+string that survives only because a rule permits it has not passed this one.
+
+## Rule 12: A strip states one thing
+
+A header answers "where am I": a title, at most one qualifier, and the zone's
+own actions as at most two icon buttons. Controls that configure an action
+sit beside that action (the model picker beside Send, never in the header); a
+status that belongs to the window stays in the window's chrome (PROD is the
+titlebar chip); provenance appears once per zone (the answer footer's connection dot,
+not the header AND the footer). A strip holding two ideas is two strips, or
+one idea too many, and the strip's fixed height (rule 2) is not a licence to
+fill it. Precedent: the W2 Ask header, `icon · Ask · avatar · name · db ·
+READ-ONLY · model pill · tier · Threads · New`: ten things in 40px, and the
+badge clipped to `READ-ONL` at the floor because the strip had nothing left
+to give. The Inspector's header, a text title and two icon buttons, was the
+pattern in the same window all along.
+
+The composer's control row is one strip holding what travels with the
+question and nothing else: the `+` context pill, the model pill and Send,
+three controls in 149 of 272px at the 320 floor (`Haiku 4.5` on the pill;
+246 at its 180px cap). A control that edits the question or configures its
+answer sits there; anything else does not, and a fourth control rewrites
+this sentence with its count. Precedent: B2's `+` pill, the mouse route to
+the `@` completion, seated leftmost beside the model pill rather than on
+the text's first line, where it would have cost the textarea, the backdrop
+and the lift ghost an indent.
+
+## Rule 13: Floor first
+
+Chrome is designed at the floor width and then given room, never the reverse.
+The sketch shows floor, default and max side by side with real long content
+(a nine-row grid, a sixty-character question, wrapping chips); the chrome is
+identical across the three; nothing clips, wraps or ellipsizes at the floor
+except content that owns its own overflow (grid cells, the collapsed SQL
+preview, the thinking strip's left fade); growth feeds content (grid, text,
+chips), never new chrome. A control the max width can show and the floor
+cannot is a control that does not exist. Frames at the three widths of a live
+state are the evidence (rule 9). Precedent: the W2 sketch, drawn once at 392:
+at 320 the header badge clipped and the grid header cut a column name, under
+380 the footer wrapped to two lines. Every one of those was visible the
+moment a second width was drawn.
+
+## Rule 14: Data once
+
+A fact renders in exactly one slot. Results on the result block's table face,
+the query on its SQL face, interpretations in the assumption chips, timing in
+the status line,
+provenance in the footer's connection dot; prose never repeats any of them. Answer prose
+is interpretation in the shape the question asks for, a direct question one
+sentence, an insight question an optional one-line lead-in and two to four
+bullets of one finding each (AGENT-UX §2 item 3), what the numbers mean, not
+what they are; the model's text is chrome here, because the anatomy already
+carries the data. The rule binds chrome to chrome too: a name in the header
+and again in the footer, a row count above the grid and again below it, are
+two slots for one fact and one of them goes. Precedent: the W2 answer prose,
+which restated the grid as a markdown table, the SQL in a fence and the
+assumptions as a bullet list, rendered raw under a grid, a SQL row and chips
+that already showed all three. The anatomy was right; the prose was the
+duplicate, and the display strip that removes it is the fix.
+
+## Rule 15: Consolidate before you add
+
+Before any new control, strip or row: three questions, asked in this order.
+Can it live on the object it acts on, rather than on a strip that names the
+object from outside? Can it become a second face of a block that already
+exists, rather than a second block standing beside it? Is the always-visible
+chrome count, counted the way rule 13 counts it, lower after the change than
+before? A "no" to all three is the only licence to add; a "yes" to any one
+means the answer is a face on something that already stands, not a new
+fixture. State the test as a number, chrome strips for one live answer,
+before and after: a design that cannot say the number has not made its case.
+
+Exemplar: VS Code's floating editor toolbar. Its actions sit at the code
+block's own top-right corner, hidden until the pointer or the keyboard
+reaches the block, and act on that block alone; the file carries no
+permanent bar above every block to hold them, and no block explains what its
+own buttons do. The actions live on the object they act on, not beside it.
+
+Rules are floors, taste is the ceiling: a rule states the least a design
+must clear, not the one shape that clears it. When a design beats a rule as
+written, the fix is not a quiet exception: cite the rule, say in the same
+breath why the new shape serves the rule's own goal better than the rule's
+own words do, and amend the rule in the same PR. A rule its own author would
+rewrite on sight is not yet the rule.
+
+Precedent: W7 folded the results grid's header and the collapsed SQL row
+into one block wearing two faces, reached by three actions in a hover
+cluster at the block's own top-right corner (the VS Code exemplar, not a
+toolbar bolted above it): one live answer's always-visible chrome went from
+2 strips to 0.
+
+Precedent: the same wave added `Continue` to the failure block's button row
+without asking the three questions, and four buttons wrapped to two lines at
+320 while standing on one at 392, chrome that changes shape with the width
+(rule 13). Question one answered it: `Insert` acts on the statement in the
+field above the row, so it moved onto the field as that field's own hover
+cluster and the row went back to one line at the floor. A row that wraps at
+320 is the symptom; the missing first question is the cause.

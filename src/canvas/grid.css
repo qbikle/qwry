@@ -1,0 +1,255 @@
+/* The canvas as a grid (C2a): cells of 108 with a 12 gutter, the column count
+   read from the width, the cell stretching to fill and the leftover going to
+   the gutters so the page closes flush on both edges. The ROW is fixed at 108
+   and never stretches: a table row is 26, a bar 12, a line of text 20, and a
+   height that grew with the window would leave every one of them in dead air
+   at 1280 and clipping at 640.
+
+   Every element is absolutely positioned and its geometry is one calc() over
+   the container's --cw / --gut / --ch and its own --x / --y / --w / --h. So a
+   window resize that does not cross a column boundary is TWO custom-property
+   writes on one node and zero React renders, and a drag is one transform on
+   one composited layer (spec 1.6).
+
+   Two layers per element, so the resting place and the gesture never fight
+   over one transform: .cvg-slot is the cell frame, written by React when the
+   document changes; .cvg-drag is the gesture's, written imperatively from the
+   pointer handler and sprung back on the drop.
+
+   Nothing here is visible at rest: 0 controls per element and 0 per page. The
+   lattice, the placeholder and the size label belong to a gesture and leave
+   with it; the grip and the corner handle are revealed with the cluster, on
+   the block's own hover (ask.css .acts-float's register). */
+
+.cvg {
+  position: relative;
+  /* the page is as tall as its last element and never taller: the canvas
+     grows DOWN only, and the scroller's tail is what takes the click under it.
+     It never shrinks under the card either (the tail would squeeze it), which
+     is the .cv-item rule the column had */
+  flex-shrink: 0;
+  height: max(0px, calc(var(--rows) * (var(--ch) + var(--gut)) - var(--gut)));
+}
+
+/* the cells, shown only while a gesture is live: 2px dots at tier 3 on the
+   gutter crossings, so the grid the element is snapping to is visible exactly
+   as long as it is being used. The tile is one pitch and the dot rides its
+   centre, which background-position puts at (cw + gut/2), the middle of the
+   first gutter */
+.cvg-lattice {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* the cells of the PAGE, not only of the rows: an empty grid is 0 tall and
+     a press on it is exactly when a person needs to see where a cell is, so a
+     placement press hands it the page's own remaining height (CanvasGrid
+     `lattice`). It never exceeds what the scroller already shows, so nothing
+     it paints can grow the page it is painted on */
+  height: var(--lattice-h, 100%);
+  pointer-events: none;
+  opacity: 0;
+  background-image: radial-gradient(circle at center, var(--fg-faint) 1px, transparent 1px);
+  background-size: calc(var(--cw) + var(--gut)) calc(var(--ch) + var(--gut));
+  background-position: calc(var(--cw) / 2) calc(var(--ch) / 2);
+  transition: opacity var(--dur-quick) var(--ease-std);
+}
+.cvg[data-gesture] .cvg-lattice,
+.cvg[data-place] .cvg-lattice {
+  opacity: 1;
+}
+
+/* the cell frame: width, height and place from the container's pitch. The
+   fractional --cw lands slot edges on subpixels, which nothing at rest draws
+   a frame on (A3: 3 hairline boxes became 0) */
+.cvg-slot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: calc(var(--w) * var(--cw) + (var(--w) - 1) * var(--gut));
+  height: calc(var(--h) * var(--ch) + (var(--h) - 1) * var(--gut));
+  transform: translate3d(
+    calc(var(--x) * (var(--cw) + var(--gut))),
+    calc(var(--y) * (var(--ch) + var(--gut))),
+    0
+  );
+}
+/* the gesture's own layer, and the lift: a press raises the element on
+   spring.pop (the scale is a motion value, written outside React) while the
+   shadow needs an edge to fall from, so the panel fill and the radius come in
+   under it over --dur-quick */
+.cvg-drag {
+  position: relative;
+  height: 100%;
+  border-radius: var(--radius-md);
+  transition:
+    background var(--dur-quick) var(--ease-std),
+    box-shadow var(--dur-quick) var(--ease-std);
+}
+/* the element a gesture holds paints over its neighbours and over the
+   placeholder, which the page draws first (it is a fill under the cells, not
+   a card over them) */
+.cvg-slot[data-gesture] {
+  z-index: 2;
+}
+.cvg-slot[data-lift] .cvg-drag {
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-pop);
+}
+
+/* a RESULT fills the cells it was given: the title line, the prose and the
+   status line take their own heights and the FACE takes what is left, which
+   is what makes a span a number of table rows and a bar chart's own height
+   (the table scrolls inside .rb, as it does in the pane).
+
+   A NOTE does the opposite and is left alone: its words set its height and
+   the document follows them (the store's autoH, measured here), so stretching
+   its box to the cells would put a ring around air in edit and a cursor's
+   worth of nothing under the words at rest */
+.cvg-slot .blk:not(.blk-note) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.cvg-slot .blk:not(.blk-note) > .rb {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+}
+.cvg-slot .rb-inner {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.cvg-slot .rb-faces {
+  flex: 1 1 0;
+  min-height: 0;
+}
+.cvg-slot .rb-face {
+  height: 100%;
+}
+/* the chart takes the face's own height; its 4px of air goes, because the
+   block's parts are already 8 apart here and the plot then measures exactly
+   what the cells gave it */
+.cvg-slot .cv-chart {
+  padding: 0;
+}
+.cvg-slot .cv-chart,
+.cvg-slot .cv-diff,
+.cvg-slot .rb-sql,
+.cvg-slot .rb-sql .cm-editor {
+  height: 100%;
+}
+/* a note never clips and never scrolls: its height follows its words (the
+   store's autoH), and words past the frame stand outside it rather than
+   disappearing inside it */
+.cvg-slot .note-body {
+  overflow: visible;
+}
+
+/* the grip: the first action of every cluster and the one surface every kind
+   drags by. It answers a press, not a click, so the cursor is the whole
+   announcement and the keyboard route is the element's own arrows */
+.cvg-grip {
+  cursor: grab;
+  touch-action: none;
+}
+/* a result also drags by its title line: a press on a title is a press on
+   chrome, where a press on a note's words is an edit */
+.cvg-slot .blk-q {
+  cursor: grab;
+}
+.cvg-slot[data-lift] .cvg-grip,
+.cvg-slot[data-lift] .blk-q {
+  cursor: grabbing;
+}
+
+/* one corner handle, bottom-right: a 16px hit box over an 8px L at tier 2.
+   Eight handles were counted and refused (one corner moves both axes and a
+   drag along one snaps the other), and it is revealed with the cluster, never
+   drawn at rest */
+.cvg-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: nwse-resize;
+  touch-action: none;
+  opacity: 0;
+  transition: opacity var(--dur-quick) var(--ease-std);
+}
+.cvg-handle::after {
+  content: "";
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--fg-muted);
+  border-bottom: 2px solid var(--fg-muted);
+  border-bottom-right-radius: 2px;
+}
+.cvg-slot:hover .cvg-handle,
+.cvg-slot:focus-within .cvg-handle,
+.cvg-slot:has([data-hot]) .cvg-handle {
+  opacity: 1;
+}
+.cvg-slot[data-gesture="resize"] .cvg-handle {
+  opacity: 1;
+}
+.cvg-slot[data-gesture="resize"] .cvg-handle::after {
+  border-color: var(--accent);
+}
+
+/* the placeholder: the cells the element will take, an accent-soft fill with
+   no border. A dashed ghost is a button species (rule 1) and a placeholder
+   answers no click (rule 8's inverse), so it is a fill and nothing else */
+.cvg-ghost {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  pointer-events: none;
+  opacity: 0;
+}
+.cvg[data-gesture] .cvg-ghost {
+  opacity: 1;
+}
+/* the one transient string of a gesture: the span, in the status register,
+   riding the placeholder's own bottom-right corner. The cells are invisible
+   at rest, so the box alone cannot say its count */
+.cvg-size {
+  position: absolute;
+  right: var(--sp-2);
+  bottom: var(--sp-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+}
+
+/* the caret line (C2b call 6): a note being written, standing in the cell the
+   click landed in and in the document nowhere until its first words. It is the
+   one slot whose height is its CONTENT's: an empty note is a caret, and a cell
+   of air under it would be a box drawn around nothing (the note's own rule,
+   .note-box) */
+.cvg-draft {
+  height: auto;
+}
+
+/* the page's one live region (AGENT-UX section 12: one per zone), written
+   once per gesture end and never during one */
+.cvg-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

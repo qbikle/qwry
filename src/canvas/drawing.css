@@ -1,0 +1,144 @@
+/* The drawing unit (C2b): the canvas's third species, and the only one made
+   of ink. Nothing frames it at rest and it carries 0 always-visible controls,
+   like the two kinds beside it: the cluster is its whole chrome, revealed the
+   way every cluster in the app is revealed, and the picker lives INSIDE that
+   cluster rather than on a strip of the page (a global toolbar would show six
+   tools to a canvas that may hold no drawing).
+
+   The ink ladder is defined here and nowhere else in this file's half of the
+   app: three steps of ONE hue, the chart's own accent, so a drawing beside a
+   chart is drawn in the chart's colour and a theme flip repaints both.
+   Strokes name the steps (--ink-0/1/2) and never a literal, so the SVG needs
+   no repaint of its own.
+
+   The steps are the accent at reduced ALPHA and not a mix toward the paper,
+   which is where the chart's ladder (Chart.tsx) and this one part company on
+   purpose: a bar is a FILL, and a fill tinted toward the panel still reads as
+   a bar because it is 40px wide; ink is a 1px line and 13px words, and a tint
+   toward the paper takes its hue with it and leaves grey-blue mush on a light
+   panel (the frames c2-draw-small-*-light caught exactly that). Alpha keeps
+   the hue at every step, and the two lower steps stand at 78% and 56% rather
+   than 45% and 22%: de-emphasis, never disappearance (DESIGN rule 3).
+
+   The ladder stands on the ROOT and not on `.blk-draw`, because the PNG the
+   model is sent is resolved off a live node (a custom property does not
+   resolve inside an SVG loaded as an image, strokes.ts `inkPalette`) and the
+   common case for a model asked about a canvas is a canvas whose tab nobody
+   has opened: with the ladder scoped to the element, a drawing with no
+   element on the page would have had no colours to render in. Three custom
+   properties inherited by a document that mostly ignores them cost nothing;
+   a feature that works only in the foreground tab costs the feature. */
+
+:root {
+  --ink-0: var(--accent);
+  --ink-1: color-mix(in srgb, var(--accent) 78%, transparent);
+  --ink-2: color-mix(in srgb, var(--accent) 56%, transparent);
+}
+
+/* the page wraps every element that draws its own .blk in the entrance
+   animation's own div (.cv-item: a note and a drawing both), and that wrapper
+   carries no height. So the grid's `.cvg-slot .blk:not(.blk-note)
+   { height: 100% }` resolved against `auto` and the sheet's `flex: 1 1 0`
+   came out ZERO: every stroke rendered, and every stroke was clipped to a
+   0-tall viewport. A NOTE wants precisely that, since its height is its own
+   words; a drawing wants the cells the document gave it, which is what this
+   passes through. The `:has` is the switch's own precedent (tokens.css). */
+.cv-item:has(> .blk-draw) {
+  height: 100%;
+}
+
+/* the sheet: the cells the element was given, in element pixels at 1:1. The
+   grid gives .blk (not a note) height and a column direction, so the sheet
+   takes what is left after nothing, which is all of it */
+.dw-sheet {
+  display: block;
+  width: 100%;
+  flex: 1 1 0;
+  min-height: 0;
+  /* the WebView must not claim the gesture: a pen stroke is not a pan */
+  touch-action: none;
+  cursor: crosshair;
+  /* ink drawn past the frame STANDS outside it rather than disappearing
+     inside it, the rule the note already follows on this grid (grid.css
+     .note-body). A scroller here would be a second scroll authority inside a
+     page that already pans (LESSONS 7), and the element grows itself to hold
+     what was drawn anyway */
+  overflow: visible;
+}
+.blk-draw > .dw-sheet {
+  margin-top: 0;
+}
+
+/* the drawing is the ONE kind whose cluster does not answer a bare hover
+   (AGENT-UX 16x): a pointer crossing a sheet mid-stroke is not a request to
+   see the picker, and a cluster that flashed on every incidental pass over
+   ink a person is actively drawing would teach the wrong lesson about what a
+   hover means here. Focus-within and [data-hot] still reveal it (canvas.css),
+   so the keyboard route and the harness both stand */
+.blk-draw:hover:not(:focus-within):not([data-hot]) > .acts-float {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+/* an empty sheet is a STATE and the state is shown: paper, at the block
+   radius, until the first stroke lands. A drawing with no ink and no surface
+   is an element a reader cannot see, and 0 strings is not 0 pixels. One
+   surface, 0 controls and 0 strings: the count AGENT-UX 16aa carries */
+.blk-draw[data-empty] .dw-sheet {
+  background: var(--bg-raised);
+  border-radius: var(--radius-md);
+}
+
+/* the in-flight stroke: one path, written with setAttribute from the pointer
+   handler and never through React */
+.dw-live {
+  fill: none;
+  stroke-linejoin: round;
+}
+
+/* a text label being typed: the words stand where they will stand, in the
+   ink they will wear, with nothing around them. The caret is the whole
+   announcement (the note's own contract: a ring around nothing is a rounded
+   box with a thinner line) */
+.dw-label {
+  position: absolute;
+  min-width: 24px;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: none;
+  font-family: var(--font-ui);
+  color: var(--ink-0);
+}
+
+/* the cap, said where it is hit. Absent until it is: the element is silent
+   while there is room, and a drawing that quietly stopped taking ink is a
+   drawing that reads as broken (LESSONS 9) */
+.dw-full {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+  pointer-events: none;
+}
+
+/* the ink swatch a menu row carries in its hint slot: the mark idiom the
+   compare picker already uses, wearing a colour instead of a check because
+   the thing being chosen IS the colour */
+.dw-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-pill);
+}
+
+/* and the weight, at its own thickness: a rule at 1, 2 or 4, which says the
+   number without printing it */
+.dw-rule {
+  display: inline-block;
+  width: 16px;
+  border-radius: var(--radius-pill);
+  background: var(--fg);
+}

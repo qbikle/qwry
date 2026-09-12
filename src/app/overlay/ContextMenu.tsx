@@ -17,6 +17,12 @@ export type MenuNode =
   | {
       kind: "item";
       label: string;
+      /** the SHAPE this row hands you, drawn at the label's own size. A menu
+       *  row in this app carries a label, a hint and an arrow and no icon
+       *  column; the drawing's picker is the one exception, because its rows
+       *  name marks and a mark is better drawn than described (AGENT-UX 16x).
+       *  Absent everywhere else, so no other menu grows a gutter */
+      glyph?: ReactNode;
       /** identifier hints stay strings (mono, data register); shortcut hints
        *  pass <Kbd chord=…/> (UI font, glyph register): WRITING.md split */
       hint?: ReactNode;
@@ -192,6 +198,7 @@ export function ContextMenu({
                     else activate(it);
                   }}
                 >
+                  {it.kind === "item" && it.glyph && <span className="ctx-glyph">{it.glyph}</span>}
                   <span className="ctx-label">{it.label}</span>
                   {it.kind === "item" && it.hint && (
                     <span className="ctx-hint">{it.hint}</span>
@@ -340,6 +347,7 @@ function SubPanel({
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => !it.disabled && onActivate(it)}
             >
+              {it.glyph && <span className="ctx-glyph">{it.glyph}</span>}
               <span className="ctx-label">{it.label}</span>
               {it.hint && <span className="ctx-hint">{it.hint}</span>}
             </div>
