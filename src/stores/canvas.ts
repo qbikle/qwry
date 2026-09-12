@@ -61,6 +61,7 @@ import { figureText, SCALAR_MAX_COLS } from "../ask/ScalarResult";
 import { msText } from "../lib/duration";
 import {
   basePx,
+  cellsForPx,
   COLUMNS_MAX,
   compact,
   DEFAULT_SPAN,
@@ -80,6 +81,16 @@ import {
   type Span,
   type SpanKey,
 } from "../canvas/grid";
+import {
+  bboxOf,
+  inkPalette,
+  paperColour,
+  parseStrokes,
+  toPng,
+  writeStrokes,
+  type Stroke,
+} from "../canvas/strokes";
+import type { DrawTool } from "../canvas/blockTools";
 import { setCanvasPort } from "../canvas/port";
 import { useAgent } from "./agent";
 import { useAsk } from "./ask";
@@ -220,7 +231,26 @@ export interface NoteBlock extends BlockBase {
   question?: string;
 }
 
-export type Block = ResultBlock | NoteBlock;
+/** C2b: ink on paper, the canvas's third species. Not a face of a note: a
+ * face is a view of one content, and ink is not a view of prose (a note
+ * wearing a text face and an ink face would hide the words behind the
+ * strokes, one content in two slots with one always hidden). The strokes are
+ * in the element's own CSS pixels at 1:1, never normalized, so a cell that
+ * stretches wider than it is tall cannot turn a circle into an ellipse
+ * (`src/canvas/strokes.ts`). */
+export interface DrawingBlock extends BlockBase {
+  kind: "drawing";
+  strokes: Stroke[];
+  /** the accent-ladder step, the weight and the tool the NEXT stroke takes:
+   * the element's own memory, so a drawing reopened is the pen it was put
+   * down as. Optional, because a drawing the model or a fixture writes has
+   * none and the picker's own defaults answer for it */
+  ink?: number;
+  weight?: number;
+  tool?: DrawTool;
+}
+
+export type Block = ResultBlock | NoteBlock | DrawingBlock;
 
 export interface CanvasDoc {
   /** absent = v1, the ordered list A3 shipped and `migrateV1` reads as rows of
@@ -402,6 +432,36 @@ export function statusOf(block: Block): StatusLine | null {
   };
 }
 
+/** what a drawing answers to: its first text label, which is the one thing on
+ * it a person wrote in words. Empty when it carries none, and the surface then
+ * names it by its ordinal (`Drawing 2`) exactly as it names an untitled note:
+ * one derivation, read by the outline, the live region and the `@` pill alike
+ * (LESSONS 4) */
+export function drawingName(block: Block): string {
+  if (block.kind !== "drawing") return "";
+  for (const s of block.strokes) if (s.k === "text") return s.v;
+  return "";
+}
+
+/** a span's pixel box at the BASE cell, the measure a drawing's own floor is
+ * read against. The two axes share `basePx` because the base cell is square
+ * (grid.ts CELL_W_BASE === CELL_H); only the RENDERED width stretches, and a
+ * box computed here is for a sheet no window is stretching */
+const boxOf = (span: { w: number; h: number }): { w: number; h: number } => ({
+  w: basePx(span.w),
+  h: basePx(span.h),
+});
+
+/** the line the outline ellipsizes, one form per kind: a result's own title
+ * line, a note's first words, a drawing's first label. The model wrote at most
+ * one of the three and reads back what the DOCUMENT holds, never what it sent
+ * (LESSONS 13) */
+function outlineLineOf(block: Block): string {
+  if (block.kind === "result") return block.question || block.title || "";
+  if (block.kind === "drawing") return drawingName(block);
+  return block.text.split("\n")[0];
+}
+
 // ---- the layout (C2) ------------------------------------------------------
 //
 // The engine holds the geometry and the tables (grid.ts: the spans, the
@@ -425,12 +485,11 @@ const NOTE_ADVANCE = 6.8;
  * at and the face it opens on are read from one fact (LESSONS 13) */
 export function spanKeyOf(block: Block): SpanKey {
   if (block.kind === "note") return "note";
-  // the one door a kind this build does not draw comes through: C2b's sheet,
-  // or a document written by a later version. It gets a row in the tables
-  // rather than falling out of them (`facesOf` answers [] for it, and the
-  // undefined key that followed read `DEFAULT_SPAN[undefined].w`)
-  const kind: string = block.kind;
-  if (kind !== "result") return "drawing";
+  // C2b's sheet, and the door a kind a LATER version writes comes through
+  // too: it gets a row in the tables rather than falling out of them
+  // (`facesOf` answers [] for it, and the undefined key that followed read
+  // `DEFAULT_SPAN[undefined].w`)
+  if (block.kind !== "result") return "drawing";
   const faces = facesOf(block);
   return faces.includes(block.face) ? block.face : faces[0];
 }
@@ -451,6 +510,9 @@ function noteLines(text: string, w: number): number {
 export function contentSizeOf(block: Block, width?: number): ContentSize {
   if (block.kind === "note")
     return { lines: noteLines(block.text ?? "", width ?? block.cell?.w ?? DEFAULT_SPAN.note.w) };
+  // a drawing is a SHEET: its size is not read from a row count, it is read
+  // from the ink already on it, which is `minSpanFor`'s half of the job
+  if (block.kind === "drawing") return {};
   const key = spanKeyOf(block);
   if (key === "values") {
     const row = rowsOf(block)[0] ?? [];
@@ -474,8 +536,21 @@ export function contentSizeOf(block: Block, width?: number): ContentSize {
 export const defaultSpanFor = (block: Block, width?: number): Span =>
   defaultSpan(spanKeyOf(block), contentSizeOf(block, width));
 
-/** the floor this block stands on: no resize, by hand or by key, goes under it */
-export const minSpanFor = (block: Block): Span => minSpan(spanKeyOf(block), contentSizeOf(block));
+/** the floor this block stands on: no resize, by hand or by key, goes under it.
+ * A drawing's floor GROWS with its ink, so a shrink stops at the strokes'
+ * bounds and no stroke is ever cut off by a corner or an arrow key: the cells
+ * are counted against the BASE cell, so the floor does not move when the
+ * window does (canvas-grid 3.2, 3.5) */
+export function minSpanFor(block: Block): Span {
+  const min = minSpan(spanKeyOf(block), contentSizeOf(block));
+  if (block.kind !== "drawing") return min;
+  const ink = bboxOf(block.strokes);
+  if (!ink) return min;
+  return {
+    w: Math.max(min.w, cellsForPx(ink.x + ink.w)),
+    h: Math.max(min.h, cellsForPx(ink.y + ink.h)),
+  };
+}
 
 /** the span a block opens at on a page this wide: never wider than the canvas
  * is, and never under its own floor. The engine clamps too; doing it here is
@@ -625,13 +700,19 @@ export function readDoc(
     // one never stands at all: the duplicate is dropped at the door instead
     if (!b || typeof b !== "object" || seen.has(b.id)) continue;
     seen.add(b.id);
+    // `doc_json` is opaque and a hand edit or a truncated write can leave a
+    // NaN in a stroke, or no stroke array at all: the ink is read back through
+    // its own parser at the same door the cell is, and BEFORE the rect is
+    // judged, so one bad stroke costs that stroke and never the canvas
+    // (LESSONS 5)
+    const block = b.kind === "drawing" ? { ...b, strokes: parseStrokes(b.strokes) } : b;
     const cell = validCell(b.cell, wide);
     if (!cell || items.some((i) => overlaps(i.cell, cell))) {
-      blocks.push({ ...b, cell: undefined });
+      blocks.push({ ...block, cell: undefined });
       continue;
     }
     items.push({ id: b.id, cell });
-    blocks.push(b);
+    blocks.push(block);
   }
   return { doc: { ...doc, blocks: laidOut(blocks, wide) }, migrated: false };
 }
@@ -824,6 +905,29 @@ interface CanvasState {
    * (canvas-agent-spec 2.4 rule 2) */
   clearOnNextWrite: (exchangeId: string) => void;
   addNote: (canvasId: string, text: string, at?: number) => string;
+  /** C2b: a sheet, at the end of the document. The palette's `New Drawing` and
+   * a click on the empty grid are its two doors; the MODEL has neither, because
+   * a drawing is a person's hand and `tools.schema.json`'s union does not move
+   * (canvas-grid 3.1) */
+  addDrawing: (canvasId: string, at?: number) => string;
+  /** C2b: one stroke lands, or the picker's memory moves. ONE setDoc per
+   * stroke and never one per pointer move, the rule every gesture on this page
+   * follows: a stroke lands whole and the 400 ms debounce is written for it */
+  updateDrawing: (
+    canvasId: string,
+    blockId: string,
+    patch: { strokes?: Stroke[]; ink?: number; weight?: number; tool?: DrawTool },
+  ) => void;
+  /** C2b: one drawing's ink as a PNG, or null when that block is not a
+   * drawing or holds none. ONE renderer for both doors: the `Ask` button
+   * beside the element and `canvas_read({ block_id })` from a model read the
+   * same picture, so what a person attaches and what the bridge sends can
+   * never be two different drawings (LESSONS 13). The document owns the
+   * strokes, which is why this stands here and not on the surface. */
+  drawingImage: (
+    canvasId: string,
+    blockId: string,
+  ) => Promise<{ mime: "image/png"; b64: string } | null>;
   /** commit an edited note; empty text deletes it (the fold precedent: the
    * preview is the commit) */
   updateNote: (canvasId: string, blockId: string, text: string) => void;
@@ -899,6 +1003,10 @@ interface CanvasState {
   /** the palette's `New Note`: the keyboard route onto an empty canvas, whose
    * only other door is a click on the card (A3 item 6) */
   newNote: () => void;
+  /** C2b: the palette's `New Drawing`, the same route for a sheet. A drawing
+   * has no words to begin with, so it lands armed and empty rather than in an
+   * edit: the sheet IS the edit */
+  newDrawing: () => void;
 }
 
 const metaOf = (s: CanvasState, canvasId: string): CanvasMeta | null => {
@@ -1173,7 +1281,7 @@ export const useCanvas = create<CanvasState>((set, get) => ({
       // the line the outline ellipsizes: a result's own title line, a note's
       // first words. The model wrote one of the two and reads back what the
       // document holds, never what it sent (LESSONS 13)
-      line: b.kind === "result" ? b.question || b.title || "" : b.text.split("\n")[0],
+      line: outlineLineOf(b),
       modelWritten: b.wroteBy !== undefined,
       // C2: the cell the block actually stands on, read straight off the
       // document. A canvas no surface has laid out yet has none, and the
@@ -1224,6 +1332,63 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     const block: NoteBlock = { id: crypto.randomUUID(), kind: "note", text, autoH: true };
     insert(canvasId, block, at ?? get().docs[canvasId]?.blocks.length ?? 0);
     return block.id;
+  },
+
+  addDrawing: (canvasId, at) => {
+    const block: DrawingBlock = { id: crypto.randomUUID(), kind: "drawing", strokes: [] };
+    insert(canvasId, block, at ?? get().docs[canvasId]?.blocks.length ?? 0);
+    return block.id;
+  },
+
+  updateDrawing: (canvasId, blockId, next) => {
+    patch(canvasId, blockId, (b) =>
+      b.kind !== "drawing"
+        ? b
+        : {
+            ...b,
+            // the canonical form goes in, so what the element holds and what
+            // appdb holds are the same array and a reload draws the same ink
+            // (LESSONS 1)
+            ...(next.strokes ? { strokes: writeStrokes(next.strokes) } : null),
+            ...(next.ink !== undefined ? { ink: next.ink } : null),
+            ...(next.weight !== undefined ? { weight: next.weight } : null),
+            ...(next.tool !== undefined ? { tool: next.tool } : null),
+          },
+    );
+  },
+
+  drawingImage: async (canvasId, blockId) => {
+    const block = get().docs[canvasId]?.blocks.find((b) => b.id === blockId);
+    // not a drawing, or a sheet nobody has written on: the block's own line
+    // already says it is empty and a picture of nothing says it again
+    if (!block || block.kind !== "drawing" || block.strokes.length === 0) return null;
+    if (typeof document === "undefined") return null;
+    // the element as it STANDS is the truth when it stands: the sheet knows
+    // the paper it was given. A canvas in a tab nobody opened has no element,
+    // and then the box is the span the document holds, measured against the
+    // BASE cell — the same measure `minSpanFor` reads the ink against, so a
+    // picture made with no tab open frames exactly what a tab would open on
+    const sheet = document.querySelector<SVGSVGElement>(
+      `[data-block="${CSS.escape(blockId)}"] .dw-sheet`,
+    );
+    const host: Element = sheet ?? document.documentElement;
+    // a sheet that measures ZERO on either axis is a sheet whose box has not
+    // resolved (the bug this wave's frames caught: an element wrapper with no
+    // height collapsed `flex: 1 1 0` and clipped every stroke away). It falls
+    // back to the span rather than sending the model an empty picture, which
+    // is the one failure of this door that would look like an answer
+    const live = sheet && sheet.clientWidth > 0 && sheet.clientHeight > 0 ? sheet : null;
+    const box = live
+      ? { w: live.clientWidth, h: live.clientHeight }
+      : boxOf(block.cell ?? DEFAULT_SPAN.drawing);
+    const blob = await toPng(block.strokes, box, inkPalette(host), paperColour(host));
+    const url = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error ?? new Error("the drawing could not be read"));
+      reader.readAsDataURL(blob);
+    });
+    return { mime: "image/png", b64: url.slice(url.indexOf(",") + 1) };
   },
 
   updateNote: (canvasId, blockId, text) => {
@@ -1444,6 +1609,20 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     }
     // the empty note IS the edit: committing it empty takes it away again
     get().beginEdit(get().addNote(id, ""));
+  },
+
+  newDrawing: () => {
+    const pid = useConnections.getState().activeProfileId;
+    if (!pid) return;
+    let id = get().currentFor(pid);
+    if (!id) {
+      id = get().create(pid);
+      useTabs.getState().openCanvasTab(id, titleOf(id), true);
+    }
+    // an empty sheet STANDS where an empty note leaves: paper is a place to
+    // draw and the element says so (drawing.css data-empty), where an empty
+    // note is a caret and nothing at all
+    get().addDrawing(id);
   },
 
   deleteCanvas: async (canvasId) => {
@@ -1824,7 +2003,9 @@ setCanvasPort({
   },
   newCanvas: () => useCanvas.getState().newCanvas(),
   newNote: () => useCanvas.getState().newNote(),
+  newDrawing: () => useCanvas.getState().newDrawing(),
   newCanvasFor: (profileId) => useCanvas.getState().openForQuestion(profileId),
+  drawingImage: (canvasId, blockId) => useCanvas.getState().drawingImage(canvasId, blockId),
   removeByExchange: (exchangeIds) => useCanvas.getState().removeByExchange(exchangeIds),
   clearOnNextWrite: (exchangeId) => useCanvas.getState().clearOnNextWrite(exchangeId),
   assumeOn: (exchangeId, labels) => useCanvas.getState().assumeOn(exchangeId, labels),

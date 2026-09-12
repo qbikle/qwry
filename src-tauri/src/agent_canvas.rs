@@ -17,15 +17,22 @@
 //! exchange (`providers/claudecode.ts`). A revoked token drops its parked
 //! calls (`drop_parked`), and a call nobody answers ends at the timeout with
 //! text the model can act on rather than a hung tool call.
+//!
+//! C2b adds the one thing an answer can carry besides text: a drawing's PNG,
+//! which `canvas_read({ block_id })` returns beside the block's line. Rust
+//! still holds zero canvas semantics. It does not know what a drawing is, it
+//! renders nothing, and it reads no strokes: it takes base64 and a media type
+//! from the app and decides only whether that can go on the wire, which is a
+//! wire fact and therefore this side's (`TOOL_IMAGE_B64_MAX`, `carry`).
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 
-use crate::agent_mcp::ToolText;
+use crate::agent_mcp::{ToolAnswer, ToolImage, ToolReply};
 use crate::driver::Result;
 
 /// How long the MCP side waits for the app to apply one canvas tool call.
@@ -55,6 +62,29 @@ const TIMED_OUT: &str = "ERROR: the canvas did not answer. Say your findings her
 /// happened.
 const CLOSED: &str = "ERROR: the canvas is closed. Say your findings here instead";
 
+/// The most base64 one tool result may carry. 5 MB of base64 is about 3.7 MB
+/// of PNG: half of what the Messages API takes for one image, and far over a
+/// drawing rendered at 2x and clamped to a 1568px long edge, which measures in
+/// the hundreds of kilobytes. The cap is here rather than in the app because
+/// this side is the one that puts the string on the wire, and a door must not
+/// be handed something unbounded by the window on the other side of it.
+pub const TOOL_IMAGE_B64_MAX: usize = 5_000_000;
+
+/// The media types Claude Code documents an MCP image content block may wear
+/// (agent-sdk custom tools, verified 2026-09-11). A type off this list never
+/// reaches the child: an image it cannot decode is a turn spent learning that.
+pub const TOOL_IMAGE_MIMES: [&str; 4] = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+
+/// The image half of the app's answer, as the webview sends it: raw base64 and
+/// its media type, the two apart, never a `data:` URI. The app builds the PNG
+/// (the canvas owns the strokes and the renderer); this side decides only
+/// whether it can travel.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ImagePayload {
+    pub b64: String,
+    pub mime: String,
+}
+
 /// One canvas tool call, as the app receives it. `token` is the caller's MCP
 /// bearer token and `session_id` its database session: the app registers its
 /// canvas tools under one of them, and this payload is the only place it can
@@ -75,7 +105,7 @@ pub struct CanvasToolCall {
 /// drop exactly its own calls without walking the app's state.
 struct Parked {
     token: String,
-    tx: tokio::sync::oneshot::Sender<ToolText>,
+    tx: tokio::sync::oneshot::Sender<ToolAnswer>,
 }
 
 /// Process-wide, like the MCP token registry beside it: a call arrives on a
@@ -93,7 +123,7 @@ pub async fn call(
     session_id: &str,
     name: String,
     args_json: String,
-) -> ToolText {
+) -> ToolAnswer {
     let payload = CanvasToolCall {
         call_id: uuid::Uuid::new_v4().to_string(),
         token: token.to_string(),
@@ -119,7 +149,7 @@ async fn park(
     emit: impl FnOnce(&CanvasToolCall),
     payload: CanvasToolCall,
     wait: Duration,
-) -> ToolText {
+) -> ToolAnswer {
     let call_id = payload.call_id.clone();
     let (tx, rx) = tokio::sync::oneshot::channel();
     // the guard lives in its own scope: a std lock held across an await makes
@@ -152,11 +182,59 @@ async fn park(
     }
 }
 
+/// `7.2 MB`, rounded UP. The one size this file prints is a size being
+/// turned away, and a cap message must never understate what it refused.
+fn mb(bytes: usize) -> String {
+    format!("{:.1} MB", (bytes as f64 / 100_000.0).ceil() / 10.0)
+}
+
+/// What one answer's image becomes on the wire, and what the model is told
+/// when it becomes nothing. Never a refusal and never a silence: the text the
+/// tool built still stands whole, and a picture that could not travel is one
+/// LINE inside it, so the model reads why it is looking at an outline instead
+/// of a drawing (LESSONS 5, LESSONS 9).
+fn carry(image: Option<ImagePayload>) -> (Option<ToolImage>, Option<String>) {
+    let Some(image) = image else {
+        return (None, None);
+    };
+    if !TOOL_IMAGE_MIMES.contains(&image.mime.as_str()) {
+        // the type is printed back, clipped: it arrives from the webview and
+        // an unbounded one would be a whole turn of the model's context
+        let said: String = image.mime.chars().take(40).collect();
+        return (
+            None,
+            Some(format!(
+                "the image is {said}, which an image block cannot carry, so this reply carries the text alone"
+            )),
+        );
+    }
+    if image.b64.len() > TOOL_IMAGE_B64_MAX {
+        return (
+            None,
+            Some(format!(
+                "the image came to {}, over the {} cap, so this reply carries the text alone",
+                mb(image.b64.len()),
+                mb(TOOL_IMAGE_B64_MAX)
+            )),
+        );
+    }
+    (
+        Some(ToolImage {
+            b64: image.b64,
+            mime: image.mime,
+        }),
+        None,
+    )
+}
+
 /// Complete one parked call. `false` means nothing was waiting: the call
 /// timed out or its thread closed while the app was applying it, and a late
 /// answer has nowhere to go. The blocks it wrote stand, which is the same
 /// state a person reaches by typing a note the model never read.
-fn complete(call_id: &str, text: String, is_error: bool) -> bool {
+///
+/// An answer flagged as an error carries no image: a failure is text the
+/// repair loop reads, and there is nothing to picture in one.
+fn complete(call_id: &str, text: String, is_error: bool, image: Option<ImagePayload>) -> bool {
     let Ok(mut map) = parked().lock() else {
         return false;
     };
@@ -164,7 +242,16 @@ fn complete(call_id: &str, text: String, is_error: bool) -> bool {
         return false;
     };
     drop(map);
-    let answer = if is_error { Err(text) } else { Ok(text) };
+    let answer = if is_error {
+        Err(text)
+    } else {
+        let (image, said) = carry(image);
+        let text = match said {
+            Some(line) => format!("{text}\n{line}"),
+            None => text,
+        };
+        Ok(ToolReply { text, image })
+    };
     entry.tx.send(answer).is_ok()
 }
 
@@ -189,10 +276,17 @@ pub fn drop_parked(token: &str) -> usize {
 /// The app's answer to one `canvas-tool-call`: the text the model sees, in
 /// the shape the tool built it. `is_error` flags it the way a failed tool
 /// call is flagged, so the repair loop reads it as a failure and not as a
-/// result (AGENT-SPEC §5).
+/// result (AGENT-SPEC §5). `image` is C2b's one addition: a drawing's PNG,
+/// which `canvas_read({ block_id })` answers with beside the block's line,
+/// and which nothing else on the canvas produces.
 #[tauri::command]
-pub async fn agent_canvas_result(call_id: String, text: String, is_error: bool) -> Result<()> {
-    complete(&call_id, text, is_error);
+pub async fn agent_canvas_result(
+    call_id: String,
+    text: String,
+    is_error: bool,
+    image: Option<ImagePayload>,
+) -> Result<()> {
+    complete(&call_id, text, is_error, image);
     Ok(())
 }
 
@@ -233,13 +327,13 @@ mod tests {
         let out = park(
             |c| {
                 assert_eq!(c.name, "canvas_write");
-                assert!(complete(&c.call_id, "Wrote 2 blocks to \"Sales\".".into(), false));
+                assert!(complete(&c.call_id, "Wrote 2 blocks to \"Sales\".".into(), false, None));
             },
             payload("tok-round-trip", "canvas_write"),
             Duration::from_secs(5),
         )
         .await;
-        assert_eq!(out, Ok("Wrote 2 blocks to \"Sales\".".to_string()));
+        assert_eq!(out, Ok(ToolReply::text("Wrote 2 blocks to \"Sales\".")));
     }
 
     /// A refusal comes back flagged, so `call_tool` marks it `isError` and the
@@ -252,6 +346,7 @@ mod tests {
                     &c.call_id,
                     "ERROR: a note block needs `text`, and it cannot be empty. Deleting a block is the user's own action".into(),
                     true,
+                    None,
                 );
             },
             payload("tok-error", "canvas_write"),
@@ -275,7 +370,7 @@ mod tests {
             "ERROR: the canvas did not answer. Say your findings here instead"
         );
         assert!(!parked().lock().expect("lock").contains_key(&id));
-        assert!(!complete(&id, "late".into(), false));
+        assert!(!complete(&id, "late".into(), false, None));
     }
 
     /// Revoking a token is what ends an exchange, so it must not leave the
@@ -304,6 +399,143 @@ mod tests {
 
     #[test]
     fn an_answer_to_a_call_nobody_parked_is_dropped() {
-        assert!(!complete("no-such-call", "Wrote a block.".into(), false));
+        assert!(!complete("no-such-call", "Wrote a block.".into(), false, None));
+    }
+
+    // ---- the image half (C2b) ---------------------------------------------
+
+    fn png(b64: &str) -> ImagePayload {
+        ImagePayload {
+            b64: b64.to_string(),
+            mime: "image/png".to_string(),
+        }
+    }
+
+    /// `canvas_read({ block_id })` on a drawing: the block's line, and its PNG
+    /// beside it. The text is untouched, so the model reads the same outline
+    /// it would have read without a picture.
+    #[tokio::test]
+    async fn a_drawing_comes_back_as_a_line_and_its_png() {
+        let out = park(
+            |c| {
+                assert_eq!(c.name, "canvas_read");
+                assert!(complete(
+                    &c.call_id,
+                    "a3f1  drawing  Sketch · at 0,0 3x3".into(),
+                    false,
+                    Some(png("iVBORw0KGgo=")),
+                ));
+            },
+            payload("tok-image", "canvas_read"),
+            Duration::from_secs(5),
+        )
+        .await;
+        assert_eq!(
+            out,
+            Ok(ToolReply {
+                text: "a3f1  drawing  Sketch · at 0,0 3x3".to_string(),
+                image: Some(ToolImage {
+                    b64: "iVBORw0KGgo=".to_string(),
+                    mime: "image/png".to_string(),
+                }),
+            })
+        );
+    }
+
+    /// The cap refuses the picture and NOT the answer, and says which of the
+    /// two happened. A silent drop would read to the model as a canvas that
+    /// holds an empty drawing (LESSONS 9).
+    #[test]
+    fn an_image_over_the_cap_is_dropped_and_the_reply_says_so() {
+        let (image, said) = carry(Some(png(&"A".repeat(TOOL_IMAGE_B64_MAX + 1))));
+        assert!(image.is_none());
+        assert_eq!(
+            said.as_deref(),
+            Some("the image came to 5.1 MB, over the 5.0 MB cap, so this reply carries the text alone")
+        );
+    }
+
+    /// Exactly the cap travels: the boundary belongs to the side that can be
+    /// read, not to the side that can only be guessed at.
+    #[test]
+    fn an_image_exactly_at_the_cap_travels() {
+        let (image, said) = carry(Some(png(&"A".repeat(TOOL_IMAGE_B64_MAX))));
+        assert!(said.is_none());
+        assert_eq!(image.expect("image").b64.len(), TOOL_IMAGE_B64_MAX);
+    }
+
+    /// A media type the child cannot decode never reaches it, and the line
+    /// names the type rather than saying that something went wrong.
+    #[test]
+    fn an_image_of_a_type_the_child_cannot_read_is_named_not_sent() {
+        let odd = ImagePayload {
+            b64: "AAAA".into(),
+            mime: "image/tiff".into(),
+        };
+        let (image, said) = carry(Some(odd));
+        assert!(image.is_none());
+        assert_eq!(
+            said.as_deref(),
+            Some(
+                "the image is image/tiff, which an image block cannot carry, so this reply carries the text alone"
+            )
+        );
+        for mime in TOOL_IMAGE_MIMES {
+            let (ok, none) = carry(Some(ImagePayload {
+                b64: "AAAA".into(),
+                mime: mime.into(),
+            }));
+            assert!(ok.is_some() && none.is_none(), "{mime} should travel");
+        }
+    }
+
+    /// The media type is the webview's string: printed back clipped, so a
+    /// runaway one cannot spend the model's context on itself.
+    #[test]
+    fn a_runaway_media_type_is_clipped_before_it_is_printed() {
+        let (image, said) = carry(Some(ImagePayload {
+            b64: "AAAA".into(),
+            mime: "image/".to_string() + &"z".repeat(4_000),
+        }));
+        assert!(image.is_none());
+        let said = said.expect("a line");
+        assert!(said.starts_with("the image is image/zzz"));
+        assert!(said.len() < 140, "the line stays a line: {}", said.len());
+    }
+
+    /// An error carries no image. A failed call is text the repair loop reads,
+    /// and a picture attached to one would be a second reading of a refusal.
+    #[tokio::test]
+    async fn an_error_answer_drops_the_image() {
+        let out = park(
+            |c| {
+                complete(
+                    &c.call_id,
+                    "ERROR: no block 'zzzz' on this canvas. Call canvas_read for the block ids".into(),
+                    true,
+                    Some(png("iVBORw0KGgo=")),
+                );
+            },
+            payload("tok-error-image", "canvas_read"),
+            Duration::from_secs(5),
+        )
+        .await;
+        assert_eq!(
+            out,
+            Err("ERROR: no block 'zzzz' on this canvas. Call canvas_read for the block ids".into())
+        );
+    }
+
+    /// The two halves of the answer, as the app sends them: the webview posts
+    /// `image` as an object of two strings, and nothing else.
+    #[test]
+    fn the_image_payload_is_two_strings_and_optional() {
+        let p: ImagePayload =
+            serde_json::from_value(serde_json::json!({"b64": "AAAA", "mime": "image/png"}))
+                .expect("deserialize");
+        assert_eq!(p.b64, "AAAA");
+        assert_eq!(p.mime, "image/png");
+        let none: Option<ImagePayload> = serde_json::from_value(serde_json::Value::Null).expect("null");
+        assert!(none.is_none());
     }
 }

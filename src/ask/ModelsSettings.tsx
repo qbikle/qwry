@@ -18,12 +18,18 @@
 // rule 11), and rule 2's matrix binds a control that EXISTS and cannot act
 // now, where on production the capability does not exist at all (the dry run
 // refuses before it opens a connection). Nothing else in Settings moves.
+//
+// C2b adds a second conditional row, last: the one switch that answers the
+// registry's `"unknown"` vision flag for THIS install. It appears only for the
+// model a run would actually reach and only while nothing knows whether that
+// model reads an image, because a model flagged either way has no question to
+// ask and `false` is a measured no that no switch should offer to overrule.
 
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { PresetId, ProviderId } from "../agent/providers/types";
 import { agentKeyDelete, agentKeySet } from "../ipc/commands";
 import { useConnections } from "../stores/connections";
-import { useSettings } from "../stores/settings";
+import { imagesAllowed, useSettings, visionUnknown } from "../stores/settings";
 import { Switch } from "../design/Switch";
 import {
   KEY_PLACEHOLDER,
@@ -36,6 +42,7 @@ import {
   encodeChoice,
   groupsFrom,
   loadKeys,
+  modelLabel,
   optionLabel,
   probeLocal,
   providerAuth,
@@ -97,6 +104,7 @@ export function ModelsSettings({ profileId, reveal = false }: ModelsSettingsProp
   );
   const connName = conn?.name ?? null;
   const writes = useSettings((s) => (profileId ? s.agentWrites[profileId] === true : false));
+  const agentVision = useSettings((s) => s.agentVision);
 
   // one Keychain pass and one probe per local runtime on mount; each row
   // re-probes on its own when its URL is edited. The probes take no `live`
@@ -180,6 +188,10 @@ export function ModelsSettings({ profileId, reveal = false }: ModelsSettingsProp
     : null;
   const appChoice: ModelChoice | null =
     agentProvider && agentModel ? { providerId: agentProvider as ProviderId, model: agentModel } : null;
+  // the model a run would actually reach, which is the only one the vision
+  // switch has anything to say about
+  const chosen = perChoice ?? appChoice;
+  const asksVision = chosen !== null && visionUnknown(chosen.providerId, chosen.model);
 
   const options = (choice: ModelChoice | null) =>
     groupsFrom(state, choice)
@@ -347,6 +359,22 @@ export function ModelsSettings({ profileId, reveal = false }: ModelsSettingsProp
           {options(appChoice)}
         </select>
       </div>
+      {chosen && asksVision && (
+        <div className="settings-row">
+          <span className="settings-label ask-writes">
+            <span>Can See Images</span>
+            <span className="settings-hint">
+              Nothing confirms <span className="ask-id">{modelLabel(chosen)}</span> reads images.
+              With this on, Ask can send it a drawing.
+            </span>
+          </span>
+          <Switch
+            checked={imagesAllowed(agentVision, chosen.providerId, chosen.model)}
+            ariaLabel="Can see images"
+            onChange={(on) => useSettings.getState().setAgentVision(chosen.model, on)}
+          />
+        </div>
+      )}
     </>
   );
 }

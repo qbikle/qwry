@@ -504,6 +504,19 @@ export interface CanvasToolCall {
   args_json: string;
 }
 
+/** the image half of an answer to a `canvas-tool-call` (agent_canvas.rs
+ * ImagePayload): RAW base64 with no `data:` prefix, and the media type apart
+ * from it, which is the shape rmcp's ImageContent puts on the wire. Only a
+ * drawing produces one, and only `canvas_read({ block_id })` answers with one.
+ * The SIZE cap lives on the Rust side alone, because that is the side that
+ * puts the string on the wire: an image over it is dropped and the reply the
+ * model reads gains one line saying so, so this side never has to hold a
+ * second copy of the number (agent_canvas.rs TOOL_IMAGE_B64_MAX). */
+export interface CanvasToolImage {
+  b64: string;
+  mime: string;
+}
+
 /** one Ask thread (appdb agent_threads). `id` is the row's identity and the
  * MCP session's name; `session_key` is what `claude -p` resumes. They are the
  * same uuid until a cut re-mints the key. Rust always sends it (the column

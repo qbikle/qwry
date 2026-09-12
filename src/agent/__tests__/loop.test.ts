@@ -863,6 +863,105 @@ describe("a cut thread's replay", () => {
   });
 });
 
+// ---- a tagged drawing's picture (C2b) --------------------------------------
+//
+// Three statements have to agree on every run: the line the model reads, the
+// message the adapter is handed, and the row the trace prints. They are built
+// from ONE answer (providers `imageRouteFor`), so a picture that cannot
+// travel is never claimed to have travelled (maintainer call 3, LESSONS 9).
+
+describe("the picture a tagged drawing sends", () => {
+  const PNG = { mime: "image/png" as const, b64: "iVBORw0KGgo=" };
+  const drawn = { id: "d1f2a3b4", name: "Drawing 2", drawing: true as const, canvasId: "cv-1" };
+  const ctx = {
+    snapshot,
+    saved: [],
+    threads: [],
+    currentThreadId: null,
+    blocks: [drawn],
+  };
+  const mentions = () => mentionsIn('what did i draw in @"Drawing 2"', ctx);
+
+  const oneAsk = async (over: Partial<Parameters<typeof runAsk>[0]>, id?: Provider["id"]) => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const provider = scripted([[{ text: answerText }, done("stop")]], rec);
+    const { answer } = await ask(
+      id ? { ...provider, id } : provider,
+      tools(rec),
+      { mentions: mentions(), ...over },
+    );
+    const first = rec.requests[0].messages[0];
+    const step = answer.trace.find((t) => t.step === "context");
+    return {
+      message: "content" in first ? (first.content ?? "") : "",
+      images: "images" in first ? first.images : undefined,
+      said: step && step.step === "context" ? step.images : undefined,
+    };
+  };
+
+  test("a wire that carries one on the message says so, and carries it", async () => {
+    const out = await oneAsk({ images: [PNG] });
+    expect(out.message).toContain("a drawing, attached as an image");
+    expect(out.images).toEqual([PNG]);
+    expect(out.said).toEqual({ count: 1, wire: "image_url" });
+  });
+
+  /** the target a run needs before `canvas_read` is offered at all: what the
+   * tools DO is the canvas dispatch's own suite, so this one only has to
+   * exist */
+  const aimed = (): CanvasTools => ({
+    canvasId: "cv-1",
+    title: "Canvas 4",
+    outline: () => [],
+    async write() {
+      return { textForModel: "", result: { canvasId: "cv-1", blockIds: [], replaced: 0 } };
+    },
+    async replace() {
+      return { textForModel: "", result: { canvasId: "cv-1", blockIds: [], replaced: 0 } };
+    },
+    async read() {
+      return {
+        textForModel: 'Canvas "Canvas 4" is empty, 7 columns wide.',
+        result: { canvasId: "cv-1", title: "Canvas 4", columns: 7, blocks: [] },
+      };
+    },
+  });
+
+  test("`claude -p` with a canvas sends the DOOR, never the picture", async () => {
+    const out = await oneAsk({ canvas: aimed(), images: [PNG] }, "claude-code");
+    expect(out.message).toContain("a drawing: call canvas_read with block_id d1f2 to see it");
+    expect(out.message).not.toContain("attached as an image");
+    // the adapter throws Msg.images away by design, so the loop never puts one
+    // there: the model's route is the tool it was handed
+    expect(out.images).toBeUndefined();
+    expect(out.said).toEqual({ count: 1, wire: "canvas_read" });
+  });
+
+  test("`claude -p` with NO canvas has no door, and says so rather than lying", async () => {
+    const out = await oneAsk({ images: [PNG] }, "claude-code");
+    expect(out.message).toContain("a drawing; its picture cannot travel on this connection");
+    expect(out.images).toBeUndefined();
+    expect(out.said).toEqual({ count: 1, wire: "none" });
+  });
+
+  test("a picture the caller could not render is `not carried`, never a promise", async () => {
+    const out = await oneAsk({});
+    expect(out.message).toContain("its picture cannot travel");
+    expect(out.said).toEqual({ count: 1, wire: "none" });
+  });
+
+  test("the small tier carries it too: one message, no tools, the whole question", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    await ask(scripted([[{ text: "```sql\nSELECT 1\n```" }, done("stop")]], rec), tools(rec), {
+      tier: "small",
+      mentions: mentions(),
+      images: [PNG],
+    });
+    const first = rec.requests[0].messages[0];
+    expect("images" in first ? first.images : undefined).toEqual([PNG]);
+  });
+});
+
 /** the describe call the small path makes carries the prefilter's own picks */
 function expect_names(rec: Recorded): unknown {
   return (rec.calls.find((c) => c.name === "describeTables")?.args ?? []) as unknown;

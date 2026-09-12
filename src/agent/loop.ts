@@ -24,8 +24,11 @@ import {
 import type { Tier } from "./providers/registry";
 import type {
   AgentEvent,
+  ImagePart,
+  ImageRoute,
   Msg,
   Provider,
+  ProviderId,
   StopReason,
   ToolCall,
   ToolResult,
@@ -55,7 +58,8 @@ import {
   synonymMap,
   synonymsFired,
 } from "./context";
-import { type Mention, mentionContext, mentionTags } from "./mentions";
+import { type Mention, mentionContext, mentionDrawings, mentionTags } from "./mentions";
+import { imageRouteFor, imageWireFor } from "./providers/presets";
 import { isRisky } from "./risk";
 import { probeNoun } from "./probeNoun";
 import {
@@ -211,6 +215,21 @@ export interface AskRequest {
    * thing the user pointed at, and a second header would be a second grammar
    * for one idea (DESIGN rule 15). Absent on the eval path. */
   rowContext?: string;
+  /** C2b: the pictures this question carries, which today is one drawing's
+   * PNG, rendered by the caller from the document at the moment it sends
+   * (stores/agent `runInto`, off `mentions.ts` `mentionDrawings`). They ride
+   * the FIRST user message and no other: a picture is what the question was
+   * asked about, not context the repair turns re-send. Absent on every
+   * question that tagged no drawing and on the whole eval path, so the
+   * measured bytes and PROMPT_VERSION stand.
+   *
+   * Present is not the same as SENT. The loop reads the run's own route
+   * (providers `imageRouteFor`, the wire plus whether this run has a canvas
+   * target) and puts them on the message only where that route is
+   * `"message"`; on `claude -p` the model fetches the picture through
+   * `canvas_read` instead, and the TAGGED line says so. Either way the trace
+   * prints what happened, so nothing is dropped in silence. */
+  images?: ImagePart[];
   /** B3: the canvas this exchange writes into, resolved by the caller before
    * its first await (LESSONS 3) and captured in the tool, so no tool takes a
    * canvas id and writing outside the target has no wire representation.
@@ -303,11 +322,19 @@ const writeRefusal = (w: WriteMode): string => (w.prod ? WRITES_OFF_PROD : WRITE
  * composed (A2 items 5 and 6). One block, because all three are the same fact
  * (the user pointed at this), and an empty result keeps the header off the
  * message entirely. */
+/** What the trace's own row prints for a route. The wire's name where the
+ * message carried it, the TOOL's name where the model has to fetch it, and
+ * the word the drawer already reads as `not carried` where nothing went
+ * (TraceDrawer `imagesSaid`). */
+const routeSaid = (route: ImageRoute, id: ProviderId): string =>
+  route === "message" ? imageWireFor(id) : route === "tool" ? "canvas_read" : "none";
+
 const taggedContext = (
   mentions: readonly Mention[],
+  route: ImageRoute,
   ...attached: readonly (string | undefined)[]
 ): string =>
-  [mentionContext(mentions), ...attached.map((a) => (a ?? "").trim())]
+  [mentionContext(mentions, route), ...attached.map((a) => (a ?? "").trim())]
     .filter(Boolean)
     .join("\n");
 
@@ -360,6 +387,12 @@ function chipLabel(name: ToolName | CanvasToolName, args: Record<string, unknown
       return CANVAS_CHIP;
   }
 }
+
+/** What a tool result says when it produced a picture this connection cannot
+ * carry. The Rust door's own sentence (agent_canvas.rs), because it is the
+ * same fact: only the MCP bridge puts an image on a tool result, and an
+ * adapter that cannot carry one drops nothing in silence. */
+const IMAGE_NOT_CARRIED = "the picture cannot travel on this connection, so this reply carries the text alone";
 
 /** Hand-written mirror of tools.schema.json. The schema file is the wire
  * contract every provider renders; this is the gate that turns a model's
@@ -444,8 +477,15 @@ async function callCanvasTool(
       return { text: out.textForModel, isError: !!out.error, result: out.result };
     }
     case "canvas_read": {
-      const out = await canvas.read();
-      return { text: out.textForModel, isError: !!out.error, result: out.result };
+      // the args go THROUGH: the schema advertises `block_id`, and a door that
+      // advertises a key it then ignores is worse than one that has none
+      const out = await canvas.read(args);
+      // a drawing's PNG rides an MCP image block on the `claude -p` path and
+      // has no seat at all on this one, where a tool result is text. So the
+      // model is told, in the Rust door's own words, rather than handed a
+      // reply that quietly lost half of itself (maintainer call 3)
+      const text = out.image ? `${out.textForModel}\n${IMAGE_NOT_CARRIED}` : out.textForModel;
+      return { text, isError: !!out.error, result: out.result };
     }
     default:
       return { text: `ERROR: unknown tool '${name}'`, isError: true, result: null };
@@ -542,12 +582,23 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
   // its own time, not the run's so far: every trace row states what that row
   // cost (AGENT-UX 5, LESSONS 13)
   const knowledgeMs = Math.round(now() - knowledgeAt);
+  // C2b: how a tagged drawing's picture is travelling on THIS run, read once
+  // (providers `imageRouteFor`) and read by all three things that must agree
+  // about it — the line the model is sent, the message the adapter renders
+  // and the row the trace prints. A wire that carries a picture only through
+  // `canvas_read` carries none at all on a run with no canvas target, and a
+  // render the caller could not make is the same "none" (maintainer call 3,
+  // LESSONS 9: nothing is dropped in silence)
+  const drawings = mentionDrawings(mentions);
+  const wired = imageRouteFor(req.provider.id, !!req.canvas);
+  const imageRoute: ImageRoute =
+    drawings.length === 0 || (wired === "message" && !req.images?.length) ? "none" : wired;
   const askArgs = {
     question: req.question,
     index: indexFor(meta, picked),
     totalTables: meta.tables.length,
     risky,
-    context: taggedContext(mentions, req.rowContext, req.context),
+    context: taggedContext(mentions, imageRoute, req.rowContext, req.context),
   };
   // A4: last, after the risk block when both fire (the risk block instructs
   // the next turn's probes, this one the final fence). Absent whenever edits
@@ -575,6 +626,16 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
     text: withReplay(req, askMessage(askArgs) + writes + canvasBlock),
     // absent, not empty: a question that tagged nothing has no tagged line
     ...(mentions.length > 0 ? { mentions: mentionTags(mentions) } : {}),
+    // and the pictures beside them, with the route they actually left on. A
+    // question that tagged no drawing says nothing here; one whose picture
+    // could not travel says `not carried`, and one on the `claude -p` wire
+    // says `canvas_read`, because that is where the model has to go for it.
+    // The whole of "an adapter that cannot carry an image says so in the
+    // trace" (maintainer call 3), off the one route the message was built
+    // from, never a second derivation
+    ...(drawings.length > 0
+      ? { images: { count: drawings.length, wire: routeSaid(imageRoute, req.provider.id) } }
+      : {}),
   });
   const knowledgeText = [know.text, past.text].filter(Boolean).join("\n\n");
   if (knowledgeText) {
@@ -660,10 +721,14 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
   };
 
   if (small) {
-    return runSmall(req, { meta, picked, now, emit, trace, usage, finish, maxTurns });
+    return runSmall(req, { meta, picked, now, emit, trace, usage, finish, maxTurns, imageRoute });
   }
 
-  const messages: Msg[] = [{ role: "user", content: userMsg }];
+  // the drawing a question was asked about rides its FIRST user message and
+  // no other: the repair turns are about a statement, not about a picture
+  const messages: Msg[] = [
+    { role: "user", content: userMsg, ...(imageRoute === "message" ? { images: req.images } : {}) },
+  ];
   const peeked: { column: string; id: string }[] = [];
   const sanity: SanityFragment[] = [];
   // a box, not a `let`: the assignment happens inside the Promise.all callback
@@ -1124,6 +1189,10 @@ function safeParse(text: string): unknown {
 interface SmallCtx {
   meta: ReturnType<typeof buildMeta>;
   picked: string[];
+  /** how a tagged drawing's picture travels on this run, decided once by the
+   * caller so the small tier's one message and the trace's one row read the
+   * same answer the mid tier's do */
+  imageRoute: ImageRoute;
   now: () => number;
   emit: (ev: AskEvent) => void;
   trace: TraceStep[];
@@ -1160,8 +1229,17 @@ async function runSmall(req: AskRequest, ctx: SmallCtx): Promise<AskAnswer> {
       isError: !!described.error,
     });
 
+    // the picture rides the small tier's one message too, where the wire
+    // takes one: this path passes `tools: []`, so an image is the whole of
+    // what a drawing can contribute, and dropping it here while the trace
+    // printed the wire it left on would be the same silent loss on a second
+    // path (maintainer call 3)
     const messages: Msg[] = [
-      { role: "user", content: withReplay(req, smallAskMessage(described.textForModel, req.question)) },
+      {
+        role: "user",
+        content: withReplay(req, smallAskMessage(described.textForModel, req.question)),
+        ...(ctx.imageRoute === "message" ? { images: req.images } : {}),
+      },
     ];
     const attempts = Math.min(SMALL_REPAIRS + 1, ctx.maxTurns);
     let lastError = "no SQL code block found in response";

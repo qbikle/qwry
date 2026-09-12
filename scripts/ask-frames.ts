@@ -294,6 +294,7 @@ const ALL_STATES = [
   "b2-plus-pill",
   "b2-pill-icons",
   "b3-ask-summary",
+  "c2-settings-vision",
 ] as const;
 /** the second root (A2): the palette is a modal over the window, not a pane in
  * a card, so it has one width, its own (`src/harness/PaletteHarness.tsx`) */
@@ -309,9 +310,10 @@ const STRUCTURE_WIDTHS = [560, 780, 1040] as const;
 const PALETTE_H = 900;
 const STRUCTURE_H = 900;
 /** the canvas root's own states and three widths (fixtures.canvas.ts, B3's
- * four in fixtures.b3canvas.ts and C2a's six in fixtures.c2grid.ts): it is a
- * face of the MAIN card, so it is neither the pane's list nor the pane's
- * widths */
+ * four in fixtures.b3canvas.ts, C2a's six in fixtures.c2grid.ts and C2b's
+ * seven: the five drawing states of fixtures.c2draw.ts and the two empty
+ * pages of fixtures.c2empty.ts): it is a face of the MAIN card, so it is
+ * neither the pane's list nor the pane's widths */
 const CANVAS_STATES = [
   "a3-canvas",
   "a3-chart",
@@ -330,6 +332,13 @@ const CANVAS_STATES = [
   "c2-resize",
   "c2-migrated",
   "c2-dense",
+  "c2-draw",
+  "c2-draw-small",
+  "c2-draw-tools",
+  "c2-draw-empty",
+  "c2-draw-novision",
+  "c2-empty",
+  "c2-empty-place",
 ] as const;
 /** the B3 four and the C2a six stand on a taller card: neither a four-block
  * answer with a chart among them nor a page of cells fits A3's 760
@@ -378,12 +387,29 @@ const TALL_CANVAS_CARD_H = 800;
  * table and the standing-bars result are both below the crop (c2GridCardH) */
 const DOC_CANVAS_STATES: readonly string[] = ["c2-grid", "c2-grid-floor"];
 const DOC_CANVAS_CARD_H = 1584;
+/** C2b's own four numbers (fixtures.c2draw.ts c2DrawCardH, fixtures.c2empty.ts
+ * C2_EMPTY_CARD_H): a sheet beside a chart reflows to six rows at the floor
+ * and is read whole; the floor test is two rows and nothing else; a sheet with
+ * no ink on it is three; and an empty page stands on A3's own card, since a
+ * taller one would be evidence of the card rather than of the page */
+const DRAW_CANVAS_CARD_H = 820;
+const SMALL_CANVAS_CARD_H = 420;
+const FRESH_CANVAS_CARD_H = 480;
+const EMPTY_CANVAS_CARD_H = 560;
 const canvasCardH = (state: string): number =>
-  DOC_CANVAS_STATES.includes(state)
-    ? DOC_CANVAS_CARD_H
-    : TALL_CANVAS_STATES.includes(state)
-      ? TALL_CANVAS_CARD_H
-      : CANVAS_CARD_H;
+  state === "c2-draw-small"
+    ? SMALL_CANVAS_CARD_H
+    : state === "c2-draw-empty"
+      ? FRESH_CANVAS_CARD_H
+      : state === "c2-draw" || state === "c2-draw-tools" || state === "c2-draw-novision"
+        ? DRAW_CANVAS_CARD_H
+        : state === "c2-empty" || state === "c2-empty-place"
+          ? EMPTY_CANVAS_CARD_H
+          : DOC_CANVAS_STATES.includes(state)
+            ? DOC_CANVAS_CARD_H
+            : TALL_CANVAS_STATES.includes(state)
+              ? TALL_CANVAS_CARD_H
+              : CANVAS_CARD_H;
 const MARGIN = 24;
 
 // ---- args -------------------------------------------------------------------

@@ -36,6 +36,23 @@ export type AuthHeaderForm = "bearer" | "none";
  * not the preset. */
 export type ParallelToolCalls = "supported" | "per-model" | "unsupported";
 
+/** What a provider's wire can carry an image ON. A PRESET fact, never a
+ * model's: whether a given model READS one is `Vision` in registry.ts, by the
+ * same law that keeps the cache minimum on the model row. "mcp-image" is the
+ * `claude -p` route, where the PNG reaches the child as MCP image content from
+ * a tool result and never as part of a message. "none" is a wire measured to
+ * carry nothing, which is not the same as a wire nobody has asked yet. */
+export type ImageWire = "none" | "image_url" | "anthropic-blocks" | "mcp-image";
+
+/** How a picture actually TRAVELS on one run, which the wire alone cannot
+ * say: "mcp-image" only reaches the model through `canvas_read`, and that
+ * tool is offered only to a run with a canvas target (loop.ts `toolsFor`), so
+ * the same wire carries a picture on one run and nothing on the next. Three
+ * answers, and every one of them is said out loud: the TAGGED line words
+ * itself by this (mentions.ts), the trace prints it (loop.ts) and `Ask` on a
+ * drawing is absent where it would be "none" (DESIGN rule 2's matrix). */
+export type ImageRoute = "message" | "tool" | "none";
+
 /** Preset quirks are DATA, measured or sourced in W0, never branches in the
  * adapter. Fields are optional because absent means "no known quirk", which
  * is different from a quirk measured to be false. */
@@ -71,6 +88,9 @@ export interface ProviderPreset {
   /** GET {baseUrl}/models can populate the picker */
   listsModels: boolean;
   parallelToolCalls: ParallelToolCalls;
+  /** how an image rides this wire; required, because an absent answer would
+   * read as "no known quirk" where this field has to state a measured fact */
+  imageWire: ImageWire;
   extraHeaders?: Record<string, string>;
   quirks: PresetQuirks;
 }
@@ -99,11 +119,28 @@ export interface ToolResult {
   isError?: boolean;
 }
 
+/** One image on a user question. PNG because the only producer is the
+ * drawing's own export, which renders at 2x and clamps the long edge to
+ * 1568px: at that clamp the square worst case is 3,136 image tokens, and the
+ * producer's own ceiling is 5 MB of base64, half of Anthropic's documented
+ * 10 MB per image. Nothing here truncates an oversized one: a refusal the
+ * user never asked for is worse than the provider's own 400, in the
+ * provider's own words (LESSONS 9). */
+export interface ImagePart {
+  mime: "image/png";
+  /** the base64 payload alone, no `data:` prefix: each adapter wraps it in
+   * the shape its own wire documents */
+  b64: string;
+}
+
 /** Conversation history in provider-neutral form. All results of one parallel
- * turn go in ONE tool message, in the order their calls were made. */
+ * turn go in ONE tool message, in the order their calls were made. Images ride
+ * the user message as a FIELD, never as a fourth variant: a variant would
+ * force every adapter to handle it and the one that forgot would drop the
+ * picture in silence. */
 export type Msg =
   | { role: "system"; content: string }
-  | { role: "user"; content: string }
+  | { role: "user"; content: string; images?: readonly ImagePart[] }
   | { role: "assistant"; content: string; toolCalls?: ToolCall[] }
   | { role: "tool"; results: ToolResult[] };
 

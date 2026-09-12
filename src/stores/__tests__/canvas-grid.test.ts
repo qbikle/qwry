@@ -44,6 +44,7 @@ const { clearMocks, mockIPC } = await import("@tauri-apps/api/mocks");
 const {
   cancelCanvasSaves,
   defaultSpanFor,
+  drawingName,
   flushCanvases,
   laidOut,
   migrateV1,
@@ -276,6 +277,22 @@ describe("writeDoc and parseDoc", () => {
     expect(parseDoc(JSON.stringify({ blocks: [] }))).toEqual({ v: 2, blocks: [] });
   });
 
+  test("a drawing appdb holds with no strokes at all reads as a drawing with none", () => {
+    // the shape a v1-era row or a half-written blob can genuinely hold: the
+    // kind arrived, the ink did not. It reads as an EMPTY sheet, never as a
+    // throw and never as a broken document, because a document that did not
+    // parse is one the store refuses to write over for ever (LESSONS 1)
+    const doc = parseDoc(JSON.stringify({ v: 2, blocks: [{ id: "d", kind: "drawing" }] }))!;
+    expect(doc).not.toBeNull();
+    expect(doc.blocks).toHaveLength(1);
+    const one = doc.blocks[0] as Block & { strokes: unknown[] };
+    expect(one.kind).toBe("drawing");
+    expect(one.strokes).toEqual([]);
+    // and it round-trips from there, which is what makes the repair a parse
+    // and not a patch
+    expect(parseDoc(writeDoc(doc))).toEqual(doc);
+  });
+
   test("a rect appdb could not have come by honestly is placed, not kept", () => {
     const bad = JSON.stringify({
       v: 2,
@@ -480,6 +497,33 @@ describe("the span a kind opens at", () => {
     expect(defaultSpanFor(note("x".repeat(600)))).toEqual({ w: 3, h: 3 });
     expect(defaultSpanFor(note("line\n".repeat(80)))).toEqual({ w: 3, h: 6 });
     expect(minSpanFor(note("one line"))).toEqual({ w: 1, h: 1 });
+  });
+
+  const drawing = (strokes: unknown[]): Block =>
+    ({ id: "d", kind: "drawing", strokes }) as unknown as Block;
+
+  test("a sheet stands on two cells, and grows with the ink that is on it", () => {
+    // the kind's own floor, which is its cluster's width and not its content's
+    expect(minSpanFor(drawing([]))).toEqual({ w: 2, h: 2 });
+    // ink out to 400px on both axes: ceil((400 + 12) / 120) cells, and the
+    // floor is what a smaller drawing gets rather than what this one gets
+    const wide = drawing([{ k: "rect", c: 0, t: 2, b: [20, 20, 400, 400] }]);
+    expect(minSpanFor(wide)).toEqual({ w: 4, h: 4 });
+  });
+
+  test("a drawing is named by its first label, and nothing else is named at all", () => {
+    const labelled = drawing([
+      { k: "pen", c: 0, t: 2, p: [0, 0, 10, 10] },
+      { k: "text", c: 0, s: 13, at: [4, 40], v: "Gateway change, 12th" },
+      { k: "text", c: 0, s: 13, at: [4, 80], v: "the second one" },
+    ]);
+    expect(drawingName(labelled)).toBe("Gateway change, 12th");
+    // ink with no words has no name, and the ordinal the surface falls back to
+    // is the SURFACE's, since only the page knows which drawing this is
+    expect(drawingName(drawing([{ k: "pen", c: 0, t: 2, p: [0, 0, 10, 10] }]))).toBe("");
+    expect(drawingName(drawing([]))).toBe("");
+    // and a note is not a drawing, which is the guard the outline leans on
+    expect(drawingName(note("one line"))).toBe("");
   });
 
   test("a figure row takes one cell a pair, two past eight glyphs", () => {
@@ -763,6 +807,33 @@ describe("the debounce", () => {
     useCanvas.getState().resizeTo(cv, id, { w: 3, h: 1 }, 7, { auto: true });
     await saved();
     expect(writes).toHaveLength(0);
+  });
+});
+
+// ---- the picture the bridge asks the document for --------------------------
+
+describe("drawingImage", () => {
+  // only the two REFUSALS are pinned here: rendering needs a browser (an
+  // Image, a canvas and a FileReader), and the round trip through the product's
+  // own renderer is measured instead, in the wave's probe. What a test can own
+  // is the contract the bridge leans on — `canvas_read({ block_id })` answers
+  // the line ALONE, and never a broken picture, for a block that has none
+  test("a block that is not a drawing has no picture", async () => {
+    const cv = canvas();
+    const id = useCanvas.getState().addNote(cv, "not ink");
+    expect(await useCanvas.getState().drawingImage(cv, id)).toBeNull();
+  });
+
+  test("a sheet nobody has drawn on has no picture", async () => {
+    const cv = canvas();
+    const id = useCanvas.getState().addDrawing(cv);
+    expect(await useCanvas.getState().drawingImage(cv, id)).toBeNull();
+  });
+
+  test("a block that is not there at all has no picture", async () => {
+    const cv = canvas();
+    expect(await useCanvas.getState().drawingImage(cv, "nothing")).toBeNull();
+    expect(await useCanvas.getState().drawingImage("no-canvas", "nothing")).toBeNull();
   });
 });
 

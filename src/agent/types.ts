@@ -157,6 +157,15 @@ export type TraceStep =
        * trace's summary line off the step; the tags themselves are already
        * inside `text`, under TAGGED BY THE USER. */
       mentions?: { kind: MentionKind; token: string }[];
+      /** C2b: the pictures this question carried and the wire they left on,
+       * so an image never travels unrecorded. ABSENT when the question
+       * carried none — a zero here would be a sentence about nothing (DESIGN
+       * rule 11). `wire` is the PRESET's own answer (presets.ts
+       * `imageWireFor`, an `ImageWire`), spelled here as a string because
+       * this module imports nothing and a second copy of that union would be
+       * one fact in two slots (DESIGN rule 14); `"none"` is the honest
+       * reading of a connection that could not carry what it was handed. */
+      images?: { count: number; wire: string };
     }
   | {
       step: "turn";

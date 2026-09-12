@@ -549,6 +549,52 @@ the gate, so the five tools a no-target run is offered do not grow these
 fields, and neither `PROMPT_VERSION` nor the no-canvas eval baseline moves
 (the B3 pin this section inherits, §5.1).
 
+### 5.3 `canvas_read(block_id)`: the drawing's image (C2b, 2026-09-11)
+
+`canvas_read`'s schema (§5.1) gains one optional string, `block_id`,
+addressed the SAME way `canvas_replace`'s own block id already is (§5.1: a
+full id or any unique prefix of at least 4 characters; an ambiguous prefix
+refused by name, never guessed). **Called with no `block_id`, the reply is
+today's outline, byte for byte** (a pinned regression, the same habit
+§5.2's own "byte-identical" claims keep): naming one block never was and
+still is not required to read a canvas. **Called with one naming any
+block**, the reply narrows to that block's own outline line alone
+(`outlineLine`, §5.1, §5.2); **naming a drawing**, the reply carries that
+line PLUS the drawing's own PNG as an image alongside the text, rendered
+offscreen at 2x and clamped to a 1568px long edge (AGENT-UX §16w, §7's own
+budget). No new tool: `canvas_read` was already the door the model is told
+to open before writing into a non-empty canvas (§5.1's own prompt
+paragraph), so a drawing's image rides the door a text outline already
+used, rule 15's first question answered yes.
+
+**Two wires, one call, because only one of them has anywhere else to put
+an image.** A hosted provider (the Anthropic adapter, the OpenAI-compatible
+adapter) already receives a drawing's image the moment a person presses
+`Ask` on it (§7, `Msg.images`): the image rides the NEXT user turn, not a
+tool result, because both of those adapters carry a structured message body
+with room for one. `claude -p` has no such room: its whole turn reaches the
+child as one string on stdin (`claudecode.ts`), so an `Ask` on a drawing
+under that provider cannot attach an image to anything the child reads
+directly, and the model must ask FOR it, mid-turn, through this very tool.
+So `canvas_read(block_id)`'s image half is a `claude -p` mechanism in
+practice, even though its schema is offered to every canvas-targeted run
+alike: the bridge's `ToolReply` (`agent_mcp.rs`) carries `{ text, image:
+Option<ToolImage { b64, mime }> }`, and the reply builder appends `rmcp`'s
+own `ContentBlock::image(b64, mime)` beside the text block exactly when one
+is present (the shape both Claude Code's own MCP docs and `rmcp`'s source
+state, both ends verified rather than guessed). A hosted provider's own
+tool-result wire is UNCHANGED by this wave (`ToolResult` in
+`providers/types.ts` carries no image field): calling `canvas_read(block_id)`
+on a drawing through the Anthropic or an OpenAI-compatible adapter answers
+with the text line alone, which costs that path nothing it did not already
+have, since the person's own `Ask` press already put the picture where that
+adapter reads pictures from.
+
+Refusals: an unknown or ambiguous `block_id` answers exactly as an unknown
+tool argument does everywhere else (§7's provider-neutral rules), first
+line, never a partial reply. Images travel under §8 item 12's one rule,
+unchanged by where they are requested from.
+
 ## 6. Prompt rules (frozen text lives in `prompt.ts`)
 
 The system prompt states, verbatim in spirit:
@@ -711,6 +757,119 @@ name → error text listing valid tools; a turn cap ends every loop; tool
 results are appended in the format the provider expects (all results of a
 parallel turn in ONE message). Bedrock/Vertex/Foundry are a research item.
 
+**Image context: two facts, never one (C2b, 2026-09-11).** This document's
+own law already splits a per-model fact from a per-provider one (the cache
+minimum, above: "it belongs to the model, not the provider"); vision is the
+same shape and splits the same way. `ImageWire` (`"none" | "image_url" |
+"anthropic-blocks" | "mcp-image"`) is a field on `ProviderPreset`: what the
+WIRE can carry, true of every model behind it alike, since one adapter
+serves every OpenAI-compatible preset by this document's own law (one
+adapter per wire protocol, never one per vendor). `Vision` (`true | false |
+"unknown"`) is a field on `ModelInfo`: whether THIS model reads what its
+wire can carry. `"unknown"` is a third state on purpose, not a lazier
+`false`: a model nothing has confirmed either way is a NO at every gate
+that reads it (AGENT-UX §16y), because a wrong guess of `true` spends a
+person's turn learning from the provider's own 400 what a flag should
+already have known, and a wrong guess of `false` hides a capability a model
+actually has. `imageWireFor(providerId)` and its convenience
+`carriesImages(providerId)` (`presets.ts`) answer the WIRE half of this
+question alone; neither gates `Ask` (that is `vision`, below, AGENT-UX
+§16y). They exist only so the wire layer can state what it measured
+without waiting for a gate to need the answer. The shipped registry's own
+accounting (`registry.ts`'s own header comment): 4 `true` (the three Claude
+ids, because the vision guide's own examples run on `claude-opus-5` and the
+family's own documentation states the capability reaching Haiku too, plus
+`gemini-3.8-flash`, the exact model Google's OpenAI-compatibility image
+example names, at the same base URL `presets.ts` already holds), 2 `false`
+(the two local ggufs, no vision tower to speak of), 11 `unknown` (every id
+nothing has queried, the honest majority state and not a gap to feel bad
+about); the way out of `"unknown"` is a documented lookup per row, the same
+discipline `verified` already keeps for a model's existence, or the one
+person-facing override below.
+
+**The install override.** A model whose row reads `"unknown"` gains one
+path around it that touches no registry file: `useSettings.visionOverride:
+Record<modelId, true>` (persisted, never a `false` entry: turning the
+switch back OFF deletes the row rather than writing one, so a later release
+that ships a verified `true` for that id is never shadowed by a stale
+explicit `false` a person forgot they had set, LESSONS 5). The resolved
+flag a gate reads is `override[id] ?? registryRow.vision`, so an override
+can only ever turn a gate ON, never off a row the registry already states
+`true` for. Where this lives on screen is AGENT-UX §16y's own switch, `Can
+see images`, shown only on the row of the model currently chosen and only
+while that row reads `"unknown"`.
+
+**`Msg` gains one field, never a new variant.** `images?: ImagePart[]` on
+the user variant alone (`ImagePart { mime: "image/png"; b64: string }`, the
+base64 payload with no `data:` prefix, each adapter wrapping it in the
+shape its own wire documents): a fourth `Msg` variant would force every
+adapter to branch on it, and the one that forgot would drop a picture in
+silence, exactly the failure LESSONS 9 names. A message with no image is
+byte-identical to what it always sent (a pinned test, not an intention).
+PNG only: the drawing's own export is the only producer, and the export is
+where the size is held (§5.3's own clamp, a 1568px long edge at 2x, which
+is what keeps a picture inside Anthropic's 10MB per-image ceiling and well
+inside its 32MB request cap). The message path itself carries NO cap, and
+that is the call rather than an omission: a second ceiling here would be a
+number that could disagree with the first, and the only door that fills
+this field is the renderer the first one binds (`types.ts` says so beside
+the field).
+
+**The two message-carrying wires.** The Anthropic adapter, when `images` is
+present, pushes an `image` content block (`{ type: "image", source: {
+type: "base64", media_type, data } }`) for each one BEFORE the text block
+(the vision docs' own ordering advice, verified this wave): an empty
+caption beside a picture sends no text block at all, since an empty string
+is a 400 the picture does not need to risk. The OpenAI-compatible adapter,
+same trigger, widens the user message's `content` from a bare string to a
+`Part[]` array carrying one `{ type: "image_url", image_url: { url:
+"data:image/png;base64,…" } }` per image (Gemini's OpenAI-compatible
+endpoint takes the identical shape at the same base URL `presets.ts` already
+holds, so the one adapter serves it too, no branch added); `detail` is left
+unset (`auto`). Every request that carries no image is unchanged on both
+adapters, which is the test that matters more than the feature.
+
+**`claude -p` has no message-carrying wire for an image, and gets one
+through the canvas bridge instead** (§5.3): its whole turn is one string on
+stdin, so an image cannot ride a `Msg` the way it does on the two adapters
+above, and the temp-file alternative is dead on arrival, because the child
+runs with `--tools ""` and has no `Read` of its own to point at a file (the
+same restriction that keeps 26 unrelated built-ins out of an app that
+promises read-only SQL); reopening that door to carry a picture would trade
+the guarantee for the picture. The image travels as an MCP tool result
+instead, `canvas_read(block_id)`'s own mechanism (§5.3).
+
+**An adapter that cannot carry an image drops nothing silently.** Two facts
+answer this and the wire is only the first of them, because `"mcp-image"`
+is not a property of the connection alone: it reaches the model through
+`canvas_read`, and the canvas family is offered only to a run with a canvas
+TARGET (§5.1's own gate, the tools array a provider is handed IS the
+offer). So the same connection carries a picture on one question and none
+on the next, and one function answers for both — `imageRouteFor(providerId,
+hasCanvasTarget)` (`presets.ts`), returning `"message"` (the two wires
+above), `"tool"` (`claude -p` with a target) or `"none"`.
+
+Three things read that one answer and can therefore never disagree: the
+TAGGED line the model is sent (`a drawing, attached as an image` on a
+message wire, `a drawing: call canvas_read with block_id <handle> to see
+it` on the tool route, `a drawing; its picture cannot travel on this
+connection` where there is no route at all), the message the adapter is
+handed (`Msg.images` is populated on the `"message"` route and on no
+other), and the trace's context row, which prints `1 image · image_url`,
+`1 image · canvas_read` or `1 image · not carried`. A picture the caller
+could not render is the same `"none"`: the line never promises an
+attachment the message does not carry. AGENT-UX §16y's `vision === true`
+gate still stands in front of all of it (a `false` or `unknown` row makes
+`Ask` absent before any of this runs, never a disabled button), and §8 item
+4 stands behind it: everything sent to a provider is visible in the trace
+panel, an image included.
+
+A drawing's own pill is what supplies the target on the tool route
+(AGENT-UX §16l's fifth route, built this wave): a question that names a
+sheet of ink has already named the canvas it stands on. Where that canvas
+has no tab to name it, there is no target, and the route is honestly
+`"none"` rather than a door the model would knock on in vain.
+
 ## 8. Safety
 
 1. Read-only in v1, twice: server-side `default_transaction_read_only=on`
@@ -842,6 +1001,18 @@ parallel turn in ONE message). Bedrock/Vertex/Foundry are a research item.
     the model per block, 200 kept on the document (§5.1, the one number
     both `Add to Canvas` and a model write now share), 6 blocks a call, 8
     an exchange; the statement timeout is the thread's own (item 2).
+12. **Images carry only the element's own render (C2b, 2026-09-11).** The
+    only image content that ever reaches a provider is one drawing block's
+    own PNG, produced by the SAME `toPng` export `Copy` already uses
+    (AGENT-UX §16w), rendered from that block's own `strokes` array alone,
+    at 2x and clamped to a 1568px long edge (§7). No path renders the app's
+    chrome, another block, a file from disk or the clipboard into that PNG;
+    no tool and no mention TAKES an image as input, only ever produces one
+    FROM a drawing already standing on the canvas. The two doors an image
+    can leave through, `Msg.images` on a person's own `Ask` (§7) and
+    `canvas_read(block_id)`'s reply on the model's own call (§5.3), both
+    read the same render function; neither is a place a byte the user did
+    not draw could enter.
 
 ## 9. Data model (appdb, rusqlite)
 

@@ -135,6 +135,7 @@ import { ACTIONS_CHOICE } from "./fixtures.actions";
 import { anatomyExchangeFor } from "./fixtures.anatomy";
 import { ANSWER_CHOICE, type AnswerState } from "./fixtures.answer";
 import type { B2PillState } from "./fixtures.b2pills";
+import { c2VisionSeed, type C2VisionState } from "./fixtures.c2vision";
 import type { B2PopoverState } from "./fixtures.b2popover";
 import { B3_ASK_CHOICE, type B3AskState } from "./fixtures.b3ask";
 import type { B4State } from "./fixtures.b4";
@@ -190,7 +191,8 @@ export type HarnessState =
   | CanvasAskState
   | B1State
   | B2PopoverState
-  | B2PillState;
+  | B2PillState
+  | C2VisionState;
 export const HARNESS_STATES: readonly HarnessState[] = [
   "answer",
   "empty",
@@ -259,6 +261,7 @@ export const HARNESS_STATES: readonly HarnessState[] = [
   "b2-plus-pill",
   "b2-pill-icons",
   "b3-ask-summary",
+  "c2-settings-vision",
 ];
 export const HARNESS_WIDTHS = [320, 392, 560] as const;
 export type HarnessTheme = "dark" | "light";
@@ -727,6 +730,9 @@ export function exchangeFor(state: HarnessState): Exchange | null {
     case "b2-plus-pill":
     case "b2-pill-icons":
     case "b3-ask-summary":
+    // C2b: the settings state is not a thread at all — the card holds
+    // Settings › Models for it, and the pane's stores stand empty
+    case "c2-settings-vision":
       return null;
     case "pending":
     case "retry":
@@ -810,6 +816,10 @@ export function choiceFor(state: HarnessState): { provider: string; model: strin
     case "a3-add":
     case "a3-ask-block":
       return CANVAS_ASK_CHOICE;
+    // C2b: the one state whose subject is a model nothing knows about, which
+    // is the one condition the vision switch appears under
+    case "c2-settings-vision":
+      return c2VisionSeed();
     case "b3-ask-summary":
       return B3_ASK_CHOICE;
     default:

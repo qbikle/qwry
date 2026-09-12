@@ -12,7 +12,7 @@
 // borrows `toDomainRun` rather than reading a snake_case field of its own.
 
 import { agentCanvasResult, agentRunReadonly } from "../ipc/commands";
-import type { CanvasToolCall } from "../ipc/types";
+import type { CanvasToolCall, CanvasToolImage } from "../ipc/types";
 import { useSettings } from "../stores/settings";
 import {
   facesOf,
@@ -32,6 +32,7 @@ import {
   clampPlace,
   gist,
   handleOf,
+  outlineLine,
   outlineText,
   parseCanvasBlock,
   parseCanvasBlocks,
@@ -73,6 +74,14 @@ export interface CanvasStore {
   replaceBlock(canvasId: string, blockId: string, block: ModelBlockInput): string | null;
   /** the document as it stands, in reading order */
   outline(canvasId: string): CanvasOutlineEntry[];
+  /** C2b: one drawing's PNG, or null when that block holds no ink. The
+   * DOCUMENT renders it, because the document owns the strokes and the agent
+   * layer must not import the canvas surface's renderer (`canvas/port.ts`'s
+   * rule, in the other direction). Optional because a build whose canvas
+   * cannot draw is a real state and not an error: `canvas_read` then answers
+   * the block's line, which is what it answers for every other kind
+   * (DESIGN rule 2's matrix). */
+  drawingImage?(canvasId: string, blockId: string): Promise<CanvasToolImage | null>;
 }
 
 export type { ModelBlockInput };
@@ -399,12 +408,39 @@ export function createCanvasTools(init: CanvasToolsInit): CanvasTools {
       };
     },
 
-    async read(): Promise<ToolOutcome<CanvasOutline>> {
+    async read(args: unknown): Promise<ToolOutcome<CanvasOutline>> {
       const blocks = outline();
       const cols = columns();
+      // `null` reads as absent, not as a refusal: it is what a client that
+      // cannot omit a field sends for one, and the whole canvas is what that
+      // model asked for (LESSONS 5)
+      const asked = record(args).block_id ?? undefined;
+      if (asked === undefined) {
+        return {
+          textForModel: outlineText(title, blocks, cols),
+          result: { canvasId, title, columns: cols, blocks },
+        };
+      }
+      const at = resolveHandle(idsOf(blocks), asked);
+      if (!at.ok) return fail(at.error);
+      const one = blocks.find((b) => b.id === at.value);
+      // the handle was resolved against THESE ids, so the miss is the type's
+      // and not the document's; it still names the way out rather than throwing
+      if (!one) {
+        return fail(
+          `ERROR: no block '${handleOf(at.value)}' on this canvas. Call canvas_read for the block ids`,
+        );
+      }
+      // one block, one line, no head over it: the column count and the block
+      // count reached the model with the CANVAS block of its own question, and
+      // a header repeating them above a single line is text that says nothing
+      // (DESIGN rule 11). A drawing adds its picture; every other kind reads
+      // exactly as it reads inside the whole outline (LESSONS 13).
+      const ink = one.kind === "drawing" ? await inkOf(store, canvasId, one.id) : {};
       return {
-        textForModel: outlineText(title, blocks, cols),
-        result: { canvasId, title, columns: cols, blocks },
+        textForModel: ink.said ? `${outlineLine(one)}\n${ink.said}` : outlineLine(one),
+        result: { canvasId, title, columns: cols, blocks: [one] },
+        ...(ink.image ? { image: ink.image } : {}),
       };
     },
 
@@ -416,6 +452,30 @@ export function createCanvasTools(init: CanvasToolsInit): CanvasTools {
 }
 
 const idsOf = (blocks: readonly CanvasOutlineEntry[]): string[] => blocks.map((b) => b.id);
+
+/** what a drawing read found: a picture, or a line saying why there is none.
+ * Both are absent for an empty drawing, which its own outline line already
+ * reports as empty and which needs no second sentence about it. */
+interface Ink {
+  image?: CanvasToolImage;
+  said?: string;
+}
+
+/** One drawing's PNG, through the document. A renderer that throws costs the
+ * PICTURE and not the answer: the block's line still stands, the model is told
+ * in one line why it is reading one, and the cause reaches the console rather
+ * than nowhere (LESSONS 9, the tx-state precedent). The same wording the Rust
+ * door uses when an image cannot travel, because it is the same fact. */
+async function inkOf(store: CanvasStore, canvasId: string, blockId: string): Promise<Ink> {
+  if (!store.drawingImage) return {};
+  try {
+    const image = await store.drawingImage(canvasId, blockId);
+    return image ? { image } : {};
+  } catch (e) {
+    console.error("drawingImage failed", e);
+    return { said: "the drawing could not be rendered, so this reply carries the text alone" };
+  }
+}
 
 const record = (v: unknown): Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
@@ -434,6 +494,10 @@ function liveStore(): CanvasStore {
     // canvas no tab is laid out on has none yet, and the fallback informs the
     // model rather than refusing it a place (LESSONS 5)
     columns: (canvasId) => useCanvas.getState().columnsOf(canvasId),
+    // the drawing's PNG, rendered by the DOCUMENT: the same call the `Ask`
+    // button beside the element makes, so a person and a model are handed one
+    // picture and not two (LESSONS 13)
+    drawingImage: (canvasId, blockId) => useCanvas.getState().drawingImage(canvasId, blockId),
   };
 }
 
@@ -522,17 +586,22 @@ async function answer(
   } else if (call.name === "canvas_replace") {
     out = await tools.replace(args);
   } else if (call.name === "canvas_read") {
-    out = await tools.read();
+    out = await tools.read(args);
   } else {
     out = fail(`ERROR: unknown tool '${call.name}'`);
   }
   if (out.result && "blockIds" in out.result) onWrite(out.result);
-  await reply(call.call_id, out.textForModel, !!out.error);
+  await reply(call.call_id, out.textForModel, !!out.error, out.image);
 }
 
-async function reply(callId: string, text: string, isError: boolean): Promise<void> {
+async function reply(
+  callId: string,
+  text: string,
+  isError: boolean,
+  image?: CanvasToolImage,
+): Promise<void> {
   try {
-    await agentCanvasResult(callId, text, isError);
+    await agentCanvasResult(callId, text, isError, image);
   } catch (e) {
     // the child's own timeout is then the only answer, and it says the same
     // thing this side would have said (tools.ts CANVAS_BRIDGE_LOST); report it

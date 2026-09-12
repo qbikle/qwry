@@ -48,6 +48,20 @@
   flex: 1;
 }
 
+/* the one menu whose rows wear a mark (the drawing's picker, AGENT-UX 16x):
+   the glyph sits at the label's own size and takes the row's tighter gap, so
+   a row that draws its shape still reads as one line and not as two columns */
+.ctx-glyph {
+  display: flex;
+  color: var(--fg-muted);
+}
+.ctx-item:has(> .ctx-glyph) {
+  gap: var(--sp-2);
+}
+.ctx-item.hot > .ctx-glyph {
+  color: var(--accent-fg);
+}
+
 .ctx-hint {
   /* tier 2, not faint: hints carry column names and shortcuts the user
      came to read (DESIGN.md rule 3). String hints are identifiers = data

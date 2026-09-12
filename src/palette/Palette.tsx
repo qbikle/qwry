@@ -530,6 +530,18 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
             >
               <LayoutGrid size={12} /> New Note
             </Command.Item>
+            <Command.Item
+              value="new drawing canvas draw sketch"
+              onSelect={() => {
+                // the third kind's own row: a sheet lands on the canvas armed
+                // and empty, and the press on the page is its other door
+                // (C2b call 6, DESIGN rule 8)
+                void loadCanvasPort().then((port) => port?.newDrawing());
+                close();
+              }}
+            >
+              <LayoutGrid size={12} /> New Drawing
+            </Command.Item>
           </Command.Group>
 
           <Command.Group heading="Open Tabs">

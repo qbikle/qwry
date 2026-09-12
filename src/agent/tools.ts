@@ -100,6 +100,12 @@ export interface ToolOutcome<T> {
   textForModel: string;
   result: T | null;
   error?: string;
+  /** C2b: a picture the answer carries, RAW base64 with no `data:` prefix.
+   * Only the MCP bridge can put one on the wire; the HTTP adapters carry an
+   * image on a USER message and never on a tool result, so a call that
+   * produced one over that route says so in its text (canvas-grid-spec 5.4).
+   * Structural on purpose: no import, so this file stays platform-free. */
+  image?: { mime: string; b64: string };
 }
 
 /** One table as `list_tables` reports it. */
@@ -299,7 +305,7 @@ export interface CanvasWriteResult {
  * own work and canvas_replace refuses it. */
 export interface CanvasOutlineEntry {
   id: string;
-  kind: "note" | "result";
+  kind: "note" | "result" | "drawing";
   line: string;
   rows?: number;
   columns?: string[];
@@ -338,7 +344,10 @@ export interface CanvasTools {
   columns?(): number;
   write(args: unknown): Promise<ToolOutcome<CanvasWriteResult>>;
   replace(args: unknown): Promise<ToolOutcome<CanvasWriteResult>>;
-  read(): Promise<ToolOutcome<CanvasOutline>>;
+  /** C2b: `block_id` narrows the read to one block, and a drawing answers
+   * with its PNG beside its line. Optional, so every caller that wants the
+   * whole outline keeps writing `read()`. */
+  read(args?: unknown): Promise<ToolOutcome<CanvasOutline>>;
   /** the `claude -p` bridge: answer the MCP server's `canvas-tool-call`
    * events for this session until the returned stop is called. `onWrite` is
    * how the block ids reach the loop's canvasWrite event on that path, since
@@ -552,7 +561,7 @@ export const handleOf = (id: string): string => id.slice(0, CANVAS_HANDLE);
  * the line and the outline has nowhere else to put them (DESIGN rule 14). */
 export function blockLine(
   id: string,
-  kind: "note" | "result",
+  kind: CanvasOutlineEntry["kind"],
   parts: readonly (string | null | undefined)[],
 ): string {
   const said = parts.filter((p): p is string => !!p);

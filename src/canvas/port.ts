@@ -21,6 +21,7 @@
 // what the cue needs to say and nothing more.
 
 import { create } from "zustand";
+import type { ImagePart } from "../agent/providers/types";
 
 /** What an add reports back: exactly what the cue must say (LESSONS 9, a
  * silent action is one the user has to go and check). */
@@ -48,6 +49,10 @@ export interface CanvasPort {
   /** the palette's `New Note`: the keyboard route onto an empty canvas, whose
    * only other door is a click on the card (A3 item 6, DESIGN rule 8) */
   newNote: () => void;
+  /** C2b: the palette's `New Drawing`, the same route for the third kind. The
+   * canvas's other door to a sheet is a press on the page, so the keyboard
+   * has one too (DESIGN rule 8's reveal clause) */
+  newDrawing: () => void;
   /** B3: the one canvas a QUESTION can cause. A question carrying the word
    * "canvas" on a connection with no canvas tab gets one, its tab opening
    * beside the user's WITHOUT focus; the caller prefixes the question's pill
@@ -64,6 +69,13 @@ export interface CanvasPort {
    * attempt that fails, is refused or is cancelled before writing anything
    * leaves the blocks that stand exactly where they are (spec 2.4 rule 2) */
   clearOnNextWrite: (exchangeId: string) => void;
+  /** C2b: one drawing's picture, rendered from the document AS IT STANDS.
+   * The pane asks for it at the moment a question is SENT and `canvas_read`
+   * renders it at the moment the model calls: one renderer, read twice, so a
+   * stroke drawn between a press and a send can never leave the two doors
+   * handing out two different pictures of one sheet (LESSONS 13). Null for a
+   * block that is not a drawing and for a sheet nobody has written on */
+  drawingImage: (canvasId: string, blockId: string) => Promise<ImagePart | null>;
   /** B3: the exchange's assumption labels, once its verdict has parsed them,
    * onto the FIRST result block it wrote. They belong to the exchange, so
    * they stand in one slot and not under every block it wrote (DESIGN rule

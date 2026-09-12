@@ -12,9 +12,10 @@
 
    C2a moves the page inset from 20 to 16 and replaces three gaps with one.
    The inset is the gutter's neighbour now and follows the gutter's own
-   arithmetic: 5 x 108 + 4 x 12 + 2 x 16 + 2 (the card's hairline) = 640, so
-   the 640 floor is five whole cells at the base and every default span is its
-   designed size exactly where rule 13 designs it. The 16 between blocks, the
+   arithmetic: 5 x 108 + 4 x 12 + 2 x 16 + 2 (the card's hairline) = 622, which
+   the 640 floor holds with room over, so five whole cells stand there at the
+   base and stretch into the 18 that is left (111.6 each): every default span
+   is its designed size exactly where rule 13 designs it. The 16 between blocks, the
    24 above a titled one and the column's own gap become the grid's one
    12 gutter (3 numbers to 1, grid.css).
 

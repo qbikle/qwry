@@ -2220,3 +2220,326 @@ standing bars (§16p's chart aspect rule is specified and not yet drawn in a
 fixture); a select tool inside a future drawing (C2b's own open item,
 unchanged); whether "now vs then" gives a block its own re-run (§16h, still
 unmoved); multi-select, group move and align (§16s, explicitly deferred).
+
+### 16w. The drawing: strokes, coordinates and the cap (C2b, 2026-09-11)
+
+§16p's reserved third kind gets its law. A drawing is an SVG surface, never
+`<canvas>`: a resize wipes a canvas element's own backing store and repaints
+it a frame late (`ZenScreen.tsx`'s own bug class), where an SVG's viewBox
+follows the box for free, theme tokens (`var(--accent)`) resolve inside it,
+and a stroke is a real element a pointer can hit-test without hand-rolled
+geometry, the same reasoning that already put the chart in SVG (§16a). Kinds
+of stroke, six, the minimum that covers "mark up a chart and stop": **pen**
+(freehand, Ramer-Douglas-Peucker simplified and smoothed on commit, epsilon
+0.6px, below a CSS pixel), **rectangle**, **ellipse**, **line**, **arrow** (a
+filled head, four times its own stroke width long), **text label**. A `⇧`
+modifier that constrains a rectangle to a square, an ellipse to a circle or
+the pen/line to an exact straight line is NOT built this wave (§16aa, open):
+the six tools stand on their own, unconstrained. Colour is one of the accent ladder's three steps,
+the same ladder the chart already draws in (`Chart.tsx`), never a literal: a
+drawing beside a chart is the same palette, and a theme flip repaints both
+from one set of tokens. Stroke width is its own three-step ladder (1 · 2 ·
+4px, DESIGN rule 4's hairline allowance).
+
+**Coordinates are absolute CSS pixels from the element's own top-left, never
+normalized, ever** (maintainer call 1): a normalized circle becomes an
+ellipse the instant its box stretches (§16o's own cell stretch, up to 1.25x),
+so a drawing keeps one scale, 1:1, for its whole life. The cost is paid on
+purpose: a resize reveals or hides paper, it never stretches the ink, which
+is what a page of ink should do. Two rules keep that honest: on commit, the
+strokes' own bounding box is measured against `minSpanFor`, and if it exceeds
+the element's frame the span grows through the SAME `resizeTo(…, { auto:
+true })` a hand resize uses (no second name for this path; it is the note's
+own `autoH` route, §16p); where a reflow has capped the width below ink
+already drawn, the sheet does NOT scroll — `overflow: visible` (LESSONS 7:
+a scroller here would be a second scroll authority inside a page that
+already pans) — so the ink simply stands outside the element's own frame
+rather than disappearing inside it, the same rule the note's own overflow
+already follows on this grid. It never clips a stroke and never moves one
+under a window resize. A shrink stops at the strokes'
+bounding box rounded up to whole cells (§16p's own rule for a kind whose
+content is never clipped), which is part of why the drawing's minimum is
+2×2 and not 1×1 (the other part is its cluster, §16x).
+
+**Serialize and deserialize are born as a pair** (LESSONS 1): `parseStrokes`
+and `writeStrokes` ship together with one property test,
+`parseStrokes(writeStrokes(s))` deep-equals `s` for random stroke arrays,
+hostile inputs included (empty, a single point, a 4,000-point pen stroke,
+negative coordinates; `NaN` and `Infinity` are refused at parse, never
+stored). Strokes are flat number arrays, `[x0,y0,x1,y1,…]` for a pen path,
+never `{x,y}` objects (roughly 40% smaller as JSON at the same precision),
+rounded to 0.1px on commit (LESSONS 2: know the platform's lossy conversions
+and state the one this format accepts on purpose, since these magnitudes
+round-trip float64 exactly and the loss is invisible at this resolution).
+
+**The cap holds, and it says so where it is hit.** Two ceilings, both
+measured against the serialized form (the whole canvas document is one
+debounced blob, AGENT-SPEC §9): 4,000 points on one pen stroke (about 40KB
+at 0.1px rounding — the stroke SEALS at that count, the ink stopping under
+the still-moving finger, cued `Stroke full at 4,000 points`, and never
+spills into a second stroke), and 64KB of strokes on one element. There is
+no document-level ceiling this wave (the plan's own third number is not
+built; §16aa, open). **Amended from the plan (C2b, shipped):** the
+element REFUSES the newest stroke rather than evicting the oldest, and says
+so on its own face, `Full at 64 KB`, standing at the sheet's foot for as
+long as the sheet is full. The plan's eviction read better as a sentence
+and worse as a drawing: a cap that eats the ring a person drew ten minutes
+ago to make room for the line they drew now destroys work that is not being
+looked at, silently from the hand's point of view, and there is no undo
+across a document write that already happened. A refusal loses only the
+stroke whose maker is watching the cue. The maintainer's own wording
+("never refuses the newest") is recorded as the deviation it is
+(ROADMAP_log, DECISIONS). No tool writes strokes this wave, so the
+`canvas_write` half of the plan's sentence has nothing to say yet and says
+nothing (§16aa, open).
+
+**Undo and redo are per element, bounded, and live outside the document.** Two
+stacks, `past` and `future`, of at most 100 whole stroke-array snapshots each
+(the arrays themselves immutable, so an entry is one reference, not a copy)
+live in the component, never in `doc_json`: a history that rode the document
+would be persisted per element forever and would be the single largest
+thing in the blob. It dies with the element's unmount, stated here rather
+than discovered later. `⌘Z` undoes while the drawing has focus; there is no
+select tool this wave to give `⌫` a second meaning inside a focused drawing
+(§16aa, open), so `⌫` on a focused drawing still deletes the ELEMENT, the
+same key every other kind already binds (§16b, §16s).
+
+**`Clear…` and `Delete…`** are the drawing's `More` menu, mirroring a
+result's `Compare With ▸` then `Delete` (§16b): `Clear…` opens the app's own
+danger confirm whenever the drawing carries at least one stroke (`Clear
+Drawing?`, and the detail is what is about to go — `12 strokes` — because
+the drawing's NAME is already in the title and a confirm's detail line is
+for the quantity, the register `Delete Drawing?` uses for its own name;
+button `Clear`, the verb alone, since the noun stands two lines above it); an
+empty drawing has nothing to clear, so the row is disabled rather than
+silently doing nothing (DESIGN rule 2's matrix), never hidden. `Delete…`
+confirms exactly as a note's does (§16f): a drawing's ink has no way back,
+the same reasoning that puts a note behind the same grammar. `Copy` puts the
+element's own SVG on the clipboard (every colour resolved to a literal, so
+the marks are legible outside a document that defines `--accent`; cue
+`Copied drawing`, LESSONS 9's own truthful-feedback rule). **Amended from
+the plan:** the plan said a PNG, on the same `toPng` the model is sent. What
+a person pastes a drawing INTO is a document or a message, where vector
+marks scale and a 2x raster does not, and the model's PNG has a different
+job (a wire that reads pixels); one export serving both would have been one
+fact in two slots only by pretending the two jobs were one.
+
+**An empty sheet shows its paper.** A drawing with no ink carries 0 strings
+and 0 controls like every other element at rest, and ONE surface: the sheet
+itself, `--bg-raised` at the block radius, until the first stroke lands.
+This is the one place the drawing differs from the empty note beside it,
+and the reason is the gesture: words arrive where a caret already stands,
+so a note needs no paper drawn for it, while a stroke has to be started
+somewhere, and an element with no ink and no surface is an element a reader
+cannot see (DESIGN rule 8's affordance clause; the crosshair cursor is the
+second half of the same answer). The frame `c2-draw-empty` is the evidence.
+
+### 16x. The drawing's cluster and picker (C2b, 2026-09-11)
+
+The picker is not a second strip: it lives INSIDE the same `.acts-float`
+cluster every other kind already carries at its own top-right corner (§16b,
+§16s), never a global toolbar shown at rest (a toolbar drawn for five tools
+on a page that may hold no drawing is exactly what rule 15 refuses). A
+drawing's cluster, seven hot and zero at rest: **Grip · Pen ▾ · Undo ·
+Redo · Copy · Ask · More**. `Grip` is the drag surface every kind now
+carries first (§16s, unchanged); `Pen ▾` is ONE control standing in for the
+whole toolset, a menu of the six stroke kinds (§16w), each row its own
+glyph, its label, and a one-key chord shown as `<Kbd>` (`P` pen, `R`
+rectangle, `O` ellipse, `L` line, `A` arrow, `T` text; the chords fire only
+while the drawing has focus). Menu rows elsewhere in this app carry a
+label, a hint and an arrow, never an icon (§16b); `Pen ▾`'s own rows are the
+deliberate exception, because the glyph is not decoration on an action's
+name, it is the SHAPE the row hands you. **Amended from the plan
+(maintainer call 2, shipped):** the plan folded `Redo` into `More` as a
+`⇧⌘Z` row and held the cluster at six to match a result's own count; the
+tree gives `Redo` its own button beside `Undo` instead, both standing
+disabled rather than vanishing when their own stack is empty (rule 13: a
+cluster that changes shape as a stack fills is one nobody can design for),
+because the two halves of one gesture belong in one place and a row you
+have to go and find is not that place. `⇧⌘Z` still redoes while the drawing
+has focus, the chord riding the button rather than replacing it.
+
+**The reveal is `:focus-within` only, never bare `:hover`**, the one
+carve-out from §16b's general rule that every cluster reveals on hover,
+focus-within and `[data-hot]` alike: a pointer crossing a pen surface
+mid-stroke is not a request to see the toolbar, and a cluster that flashed
+on every incidental pass over a drawing a person is actively inking would
+teach the wrong lesson about what a hover means here. Focus-within and
+`[data-hot]` still reveal it (the harness route, and the keyboard route
+that stands in for a hover a person never made, DESIGN rule 8's reveal
+clause), so the surface still works with no mouse at all.
+
+`Ask` is the common set's own button (§16b unchanged in name and position),
+gated on the vision flag (§16y): present when the chosen model's `vision`
+is `true`, absent otherwise (never disabled, the matrix read the way §16i
+already reads it, "enforced by absence": a capability that does not exist
+has no button to grey out). `More` opens on `Clear…`, a hairline separator,
+`Delete…` (§16w) — `Redo` stands as its own button in the cluster (above),
+not a row here.
+
+**Rule 13's own arithmetic.** At the 640 floor a two-cell drawing renders
+2 × 111.6 + 12 = 235px (§16o's own raw-cell number). The seven-icon cluster
+(`.iconbtn-sm` 18px each, 4px gaps, a 16px lead, §16b's own math for a
+result's cluster: 16 + 7×18 + 6×4 + 4 = 170px) must clear that width for 2×2
+to stand as a real floor and not a number that reads well until a frame is
+drawn (rule 13: "a control the max width can show and the floor cannot is a
+control that does not exist"); the frame `c2-draw-small` is the evidence,
+not this sentence.
+
+### 16y. Ask on a drawing and the vision gate (C2b, 2026-09-11)
+
+`Ask` on a drawing writes `@"<name>"` into the composer through the exact
+mechanism §16d already built for a result or a note: the name is the
+drawing's own first text label if it has one, else `Drawing N` by the
+canvas's ordinal (an empty name is refused today at the same door every
+other kind's name already is). What differs is what the mention resolves
+TO, and WHEN. `BlockRef` (§16d) gains `drawing?: true` and `canvasId?:
+string` — a flag and the canvas it lives on, never the pixels themselves
+(LESSONS 13): a PNG frozen at the moment `Ask` was pressed and the PNG
+`canvas_read` renders at the moment it is called would be two pictures of
+one sheet the instant a stroke landed between them, so the ref names the
+drawing and the DOCUMENT is read when a picture is actually wanted, through
+the canvas port's `drawingImage`. The resolved pill wraps and clones exactly
+as any other mention does (§16d's own clone rule, unmoved). **This is a
+SEPARATE render from `Copy`'s** (§16w): `Copy` puts vector SVG on the
+clipboard, made for pasting into a document that scales it; the model is
+sent a raster instead, `drawingImage`'s own `toPng`, offscreen at 2x and
+clamped to a 1568px long edge (AGENT-SPEC §5.3, §7): a 4-cell-wide drawing
+at the floor costs about 600 image tokens, the square worst case at the
+clamp about 3,100, the
+number AGENT-SPEC §7 budgets against.
+
+**The gate sits at resolution, not only at the button.** When the chosen
+model's `vision` (AGENT-SPEC §7) is not `true`, `Ask` is absent from a
+drawing's cluster (§16x) exactly as a capability with no button reads
+everywhere else in this file (rule 2's matrix, "enforced by absence"), AND
+a mention typed by hand, `@"Drawing 2"`, still resolves to the drawing
+(the ref carries `drawing`/`canvasId` regardless of the gate) but rides the
+route's third sentence: `mentionContext`'s TAGGED line reads "a drawing;
+its picture cannot travel on this connection" rather than promising an
+attachment the wire never carries (`imageRouteFor` → `"none"`; not, as an
+earlier draft of this section said, a fall back to plain text — the tag
+survives, only the picture does not). **Open, not yet built:** that one
+sentence is shared by every cause of `"none"` (no vision, no canvas target,
+or a failed render), so it can read as a connection limit when the real
+cause was a render failure or a missing target (§16aa, open; the fix is a
+cause-specific line in `mentionContext`, or a return to the honestly
+narrower "was not sent with this question"). The composer otherwise says
+nothing extra (rule 11, the norm is silent): a model that cannot see a
+picture was never offered the button that would have promised one.
+
+**The one switch.** A model whose `vision` reads `unknown` (neither
+confirmed nor refused, AGENT-SPEC §7) is a `false` at this gate, same as
+every other absent case, UNLESS the person overrides it: Settings › Models
+gains one `Switch` row, `Can see images`, shown only on the row of the
+model that is CURRENTLY CHOSEN and only while that model's `vision` reads
+`unknown` (a verified `true` or `false` row carries no switch: there is
+nothing left for a person to decide once the registry has). Turning it on
+flips `vision` to `true` for this install alone, never in the registry file
+the app ships with (AGENT-SPEC §7's own storage rule); turning it back off
+removes the override rather than writing an explicit `false`, so a later
+release that ships a verified `true` for that row is never shadowed by a
+stale switch the person forgot they had flipped (LESSONS 5: cached data may
+inform, never refuse). **Amended from the plan:** the row is titled `Can See
+Images`, in the Title Case every other label in this modal wears, and the
+trade is stated in the row's own HINT rather than in a tooltip — `Nothing
+confirms <model> reads images. With this on, Ask can send it a drawing.` —
+because the edits switch directly above it already stacks its consequence
+under its label in the same row (§13.7's own shape), and a tooltip would be
+a second grammar for the same job on two adjacent rows. The frame
+`c2-settings-vision` is the evidence, at the pane's own three widths.
+
+**And the gate has a second half the plan did not see.** `vision === true`
+says the MODEL reads a picture; it does not say this question can carry one
+to it. On `claude -p` the picture travels only as `canvas_read`'s own MCP
+image content (AGENT-SPEC §7), and that tool is offered only to a run with
+a canvas TARGET — so a question about a drawing supplies one through §16l's
+fifth route, the drawing's own pill implying the canvas it stands on. Where
+even that is absent (a canvas whose tab has been closed), the question's
+TAGGED line says the picture cannot travel and the trace's row says `not
+carried`, rather than the line promising an attachment no wire took. The
+one derivation is `imageRouteFor` (AGENT-SPEC §7); `Ask` itself stays on
+the cluster, because the route is a property of the question and not of the
+element, and a button that came and went as a draft changed would be worse
+than a sentence that tells the truth.
+
+### 16z. The empty grid's caret, revisited (C2b, 2026-09-11)
+
+§16n's count is still unmoved, **0 strings, 0 controls**, and so is its own
+rule that the caret line is the page's own draft, never a block: nothing
+empty reaches `doc_json` (§16n). What changes is WHERE a click places it.
+§16n had one caret line at a fixed origin, (16, 16), because the canvas was
+still one dimension; on the grid a click can land in any of the page's
+cells, so the caret goes to **the cell the click was in**, not to a corner
+(`place()` is bypassed entirely here, LESSONS 5's own point: the user NAMED
+the place by clicking it, so nothing computes one for them). A click on a
+cell an element already occupies is that element's, as it always was; a
+click on empty ground places one caret, one line, 1×1, growing by the
+note's own content rule the moment words commit it (§16p, §16n's blur
+contract otherwise unchanged: a click elsewhere, a tab switch or the pane
+taking focus removes an EMPTY caret, words keep it and commit it). The cell
+lattice (§16s, 2px dots at tier 3 on the gutter crossings) shows for the
+DURATION of the press that places the caret, exactly as it already shows
+for a drag or a resize (§16s), and is gone the instant the caret lands: a
+person aiming a click at one cell among many gets the same transient
+reference frame a person dragging a block already gets, and it is invisible
+at rest on the empty page precisely as it is invisible at rest on a full
+one.
+
+The palette's routes grow from one to two: `New Note` (unchanged) and
+**`New Drawing`**, both keyboard doors to what a click already does by
+hand, `New Drawing` placing a fresh 3×3 drawing at the grid's own `place()`
+(§16q), never at the clicked cell, since a palette command names no cell to
+click.
+
+### 16aa. Counts, and what this wave settles (C2b, 2026-09-11)
+
+| count | before (§16v) | after |
+|---|---|---|
+| block species with a real component | 2 (`drawing` type-only) | 3 |
+| hot on a drawing's cluster, at rest | (none) | 0 |
+| hot on a drawing's cluster, focused | (none) | 7 (`Grip · Pen ▾ · Undo · Redo · Copy · Ask · More`), 6 where the chosen model has no vision |
+| `More` rows on a drawing | (none) | 2 visible (`Clear…` · `Delete…`) |
+| surfaces on a drawing at rest | (none) | 0 with ink, 1 without it (the paper, §16w) |
+| always-visible chrome per element, at rest | 0 | 0 |
+| always-visible chrome per page | 0 | 0 |
+| new Settings rows | 0 | 1, conditional (only the CHOSEN model, only while its `vision` reads `unknown`) |
+| palette commands that create a block | 1 (`New Note`) | 2 (+ `New Drawing`) |
+| stroke kinds | (none) | 6 (pen, rectangle, ellipse, line, arrow, text) |
+| new `springs.ts` presets | 0 | 0 |
+| tools offered to a canvas-targeted run | 8 | 8 (`canvas_read` gains an optional `block_id`, not a ninth tool, AGENT-SPEC §5.3) |
+
+Settles: the drawing's whole law promised at §16p, filled in here, SVG at
+1:1 absolute pixels never normalized; six stroke kinds and no more; the
+cap-refuses-the-newest rule and the one place that says so; undo/redo
+bounded and outside the document; the picker folded into the SAME cluster
+every other kind already carries, revealed on focus-within and `[data-hot]`
+only and never on a bare hover; `Ask`'s vision gate, both halves of it
+(absence at the button, fallback to plain text at resolution), the one
+install-level override, and the ROUTE the picture actually takes per
+question (AGENT-SPEC §7's `imageRouteFor`, and §16l's fifth route built to
+serve it); the empty grid's caret moving from a fixed corner to the clicked
+cell.
+
+Does not settle, carried forward as this wave's own open list (AGENT-SPEC
+§11, ROADMAP): **a select tool inside the drawing** (moving or deleting one
+stroke among many, the item §16v already carried forward unresolved) stays
+unbuilt this wave too, for the same reason stated at the point of decision:
+`Undo` and `Clear…` cover a whiteboard's ordinary use, and a tenth control
+would give `⌫` a second meaning inside a focused drawing where every other
+kind's `⌫` still means one thing. Also unmoved: standing bars (§16p, still
+not drawn in a fixture); `now vs then` (§16e, §16h, §16v); multi-select,
+group move and align (§16s, §16v). And newly open: **a tool that writes
+strokes**, which is what the cap's own tool-voice sentence is waiting for
+(§16w), and **the fifth route for a result or a note's pill**, which §16l
+promises and which this wave built for a drawing alone, because a block
+that sends its own content in the TAGGED block needs no canvas target to be
+answered. Also newly open, found at the final gate rather than decided at
+build time: **a `⇧` modifier constraining a shape to a square, a circle or
+an exact straight line** is not built (§16w); **a document-level stroke
+ceiling** (the plan's third number, beside the per-stroke and per-element
+ones) is not built, so the cap this wave is two ceilings and not three
+(§16w); and **the `"none"` image route's line is cause-blind** across its
+three triggers — no vision, no canvas target, a failed render — where a
+cause-specific sentence would tell a person which of the three actually
+happened (§16y).

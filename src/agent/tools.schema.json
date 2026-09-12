@@ -329,10 +329,15 @@
     },
     {
       "name": "canvas_read",
-      "description": "What the canvas already holds: how many columns wide it is, then every block's id, kind, first line and place on the grid, and for a result its columns, its row count and the face it is on. Call it before writing into a canvas that is not empty, so you add to the document instead of repeating it, and before placing a block yourself, so `at` and `span` are written against the grid that is really there.",
+      "description": "What the canvas already holds: how many columns wide it is, then every block's id, kind, first line and place on the grid, and for a result its columns, its row count and the face it is on. Call it before writing into a canvas that is not empty, so you add to the document instead of repeating it, and before placing a block yourself, so `at` and `span` are written against the grid that is really there. Name one block to read that block alone, which is how you look at a drawing.",
       "parameters": {
         "type": "object",
-        "properties": {},
+        "properties": {
+          "block_id": {
+            "type": "string",
+            "description": "One block: the id, or its first 4 characters, as canvas_read printed it. Omit it for the whole canvas. A drawing named here comes back as the drawing itself where the reply can carry a picture, and as its line where it cannot."
+          }
+        },
         "required": [],
         "additionalProperties": false
       }

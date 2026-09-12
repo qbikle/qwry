@@ -18,6 +18,15 @@ export type Tier = "small" | "mid" | "large";
  * (W0 registry facts). This is per model, never per provider. */
 export type ParamSupport = "supported" | "rejected";
 
+/** Whether this model reads an image. Three states, not two: `"unknown"` is
+ * the honest answer for a row nothing has confirmed either way, and it is a NO
+ * at the gate, because sending a picture to a model that 400s spends the
+ * user's turn to learn what a flag should have known. A provider's `/models`
+ * call cannot settle it (none of them report it), so the way out of
+ * `"unknown"` is a documented lookup here, or the one switch in Settings ›
+ * Models that flips it for this install. */
+export type Vision = true | false | "unknown";
+
 export interface ModelInfo {
   /** the provider's own id string, verbatim, including path-shaped ids */
   id: string;
@@ -33,13 +42,24 @@ export interface ModelInfo {
    * across the family and a miss is SILENT (check cache_creation_input_tokens),
    * so it belongs to the model, not the provider. */
   cacheMinTokens?: number;
+  /** reads an image, per the provider's own documentation. Required, so a new
+   * row has to state its answer instead of inheriting a silent default */
+  vision: Vision;
   /** a live /models call has confirmed this id exists */
   verified: boolean;
 }
 
 /** Seeded from the W0 report. Anthropic's three are the only verified rows:
  * each was accepted by a real `claude -p` invocation. Everything else is
- * hand-typed from documentation and stays unverified until proven. */
+ * hand-typed from documentation and stays unverified until proven.
+ *
+ * `vision` is sourced the same way and reads 4 true / 2 false / 11 unknown:
+ * the three Claude rows because the vision guide's own examples run on
+ * `claude-opus-5` and the family documents the capability, `gemini-3.8-flash`
+ * because it is the model in Google's own OpenAI-compatibility image example
+ * (at the same base URL presets.ts holds, trailing slash included), the two
+ * local ggufs false because a text gguf has no vision tower, and every row
+ * nobody queried `"unknown"` rather than guessed either way. */
 export const MODEL_REGISTRY: readonly ModelInfo[] = [
   {
     id: "claude-haiku-4-5",
@@ -50,6 +70,7 @@ export const MODEL_REGISTRY: readonly ModelInfo[] = [
     parallelTools: true,
     samplingParams: { temperature: "supported", topP: "supported" },
     cacheMinTokens: 4096,
+    vision: true,
     verified: true,
   },
   {
@@ -61,6 +82,7 @@ export const MODEL_REGISTRY: readonly ModelInfo[] = [
     parallelTools: true,
     samplingParams: { temperature: "rejected", topP: "rejected" },
     cacheMinTokens: 1024,
+    vision: true,
     verified: true,
   },
   {
@@ -72,6 +94,7 @@ export const MODEL_REGISTRY: readonly ModelInfo[] = [
     parallelTools: true,
     samplingParams: { temperature: "rejected", topP: "rejected" },
     cacheMinTokens: 512,
+    vision: true,
     verified: true,
   },
 
@@ -83,6 +106,7 @@ export const MODEL_REGISTRY: readonly ModelInfo[] = [
     contextWindow: 0,
     parallelTools: true,
     samplingParams: { temperature: "supported", topP: "supported" },
+    vision: "unknown",
     verified: false,
   },
   {
@@ -93,6 +117,7 @@ export const MODEL_REGISTRY: readonly ModelInfo[] = [
     contextWindow: 1_050_000,
     parallelTools: true,
     samplingParams: { temperature: "supported", topP: "supported" },
+    vision: "unknown",
     verified: false,
   },
   {
@@ -103,6 +128,7 @@ export const MODEL_REGISTRY: readonly ModelInfo[] = [
     contextWindow: 1_048_576,
     parallelTools: false,
     samplingParams: { temperature: "supported", topP: "supported" },
+    vision: true,
     verified: false,
   },
   {
@@ -113,6 +139,7 @@ export const MODEL_REGISTRY: readonly ModelInfo[] = [
     contextWindow: 1_000_000,
     parallelTools: false,
     samplingParams: { temperature: "supported", topP: "supported" },
+    vision: "unknown",
     verified: false,
   },
   {
@@ -123,6 +150,7 @@ export const MODEL_REGISTRY: readonly ModelInfo[] = [
     contextWindow: 1_000_000,
     parallelTools: true,
     samplingParams: { temperature: "supported", topP: "supported" },
+    vision: "unknown",
     verified: false,
   },
   {
@@ -134,6 +162,7 @@ export const MODEL_REGISTRY: readonly ModelInfo[] = [
     contextWindow: 1_000_000,
     parallelTools: false,
     samplingParams: { temperature: "supported", topP: "supported" },
+    vision: "unknown",
     verified: false,
   },
   {
@@ -144,6 +173,7 @@ export const MODEL_REGISTRY: readonly ModelInfo[] = [
     contextWindow: 128_000,
     parallelTools: true,
     samplingParams: { temperature: "supported", topP: "supported" },
+    vision: "unknown",
     verified: false,
   },
   {
@@ -154,6 +184,7 @@ export const MODEL_REGISTRY: readonly ModelInfo[] = [
     contextWindow: 128_000,
     parallelTools: true,
     samplingParams: { temperature: "supported", topP: "supported" },
+    vision: "unknown",
     verified: false,
   },
   {
@@ -165,6 +196,7 @@ export const MODEL_REGISTRY: readonly ModelInfo[] = [
     contextWindow: 128_000,
     parallelTools: false,
     samplingParams: { temperature: "supported", topP: "supported" },
+    vision: "unknown",
     verified: false,
   },
   {
@@ -175,6 +207,7 @@ export const MODEL_REGISTRY: readonly ModelInfo[] = [
     contextWindow: 0,
     parallelTools: true,
     samplingParams: { temperature: "supported", topP: "supported" },
+    vision: "unknown",
     verified: false,
   },
   {
@@ -185,6 +218,7 @@ export const MODEL_REGISTRY: readonly ModelInfo[] = [
     contextWindow: 0,
     parallelTools: true,
     samplingParams: { temperature: "supported", topP: "supported" },
+    vision: "unknown",
     verified: false,
   },
   {
@@ -195,6 +229,7 @@ export const MODEL_REGISTRY: readonly ModelInfo[] = [
     contextWindow: 0,
     parallelTools: true,
     samplingParams: { temperature: "supported", topP: "supported" },
+    vision: "unknown",
     verified: false,
   },
 
@@ -209,6 +244,7 @@ export const MODEL_REGISTRY: readonly ModelInfo[] = [
     contextWindow: 8192,
     parallelTools: false,
     samplingParams: { temperature: "supported", topP: "supported" },
+    vision: false,
     verified: false,
   },
   {
@@ -219,6 +255,7 @@ export const MODEL_REGISTRY: readonly ModelInfo[] = [
     contextWindow: 32_768,
     parallelTools: false,
     samplingParams: { temperature: "supported", topP: "supported" },
+    vision: false,
     verified: false,
   },
 ];
@@ -262,6 +299,14 @@ export function tierOf(
 ): { tier: Tier; known: boolean } {
   const found = modelInfo(modelId, presetId);
   return found ? { tier: found.tier, known: true } : { tier: "mid", known: false };
+}
+
+/** Does this model read an image? A model the registry has never seen is
+ * `"unknown"`, never `false`: nothing has looked, which is the state the
+ * Settings switch exists to answer, where `false` is a measured no that no
+ * switch should offer to overrule. */
+export function visionOf(modelId: string, presetId: ProviderId): Vision {
+  return modelInfo(modelId, presetId)?.vision ?? "unknown";
 }
 
 /** Models the registry knows for one preset, for seeding the picker before a

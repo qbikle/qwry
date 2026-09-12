@@ -32,6 +32,7 @@ import { parseSse } from "./sse";
 import type {
   AgentEvent,
   ChatRequest,
+  ImageWire,
   Msg,
   Platform,
   Provider,
@@ -70,8 +71,16 @@ interface CompletionChunk {
   error?: unknown;
 }
 
+/** The content parts of a user message. A user message is a plain string
+ * until an image rides with it: widening it always would change every request
+ * this adapter has ever sent, for thirteen providers, to buy nothing. */
+type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 type WireMessage =
-  | { role: "system" | "user"; content: string }
+  | { role: "system"; content: string }
+  | { role: "user"; content: string | ContentPart[] }
   | {
       role: "assistant";
       content: string | null;
@@ -168,6 +177,29 @@ function renderTools(tools: readonly ToolSchema[], preset: ProviderPreset) {
   }));
 }
 
+/** A user message's content: the plain string, or the parts array when the
+ * question carries an image this wire can hold. Text part first, then the
+ * image, which is the order OpenAI's own guide and Google's OpenAI-compatible
+ * example both write. A preset whose wire carries nothing keeps the string and
+ * the image never leaves the app: the door it would have gone through is shut
+ * further up, where `Ask` on a drawing is only offered to a model flagged as
+ * reading one. */
+function userContent(
+  msg: Extract<Msg, { role: "user" }>,
+  wire: ImageWire,
+): string | ContentPart[] {
+  const images = wire === "image_url" ? msg.images ?? [] : [];
+  if (images.length === 0) return msg.content;
+  const parts: ContentPart[] = msg.content === "" ? [] : [{ type: "text", text: msg.content }];
+  for (const image of images) {
+    parts.push({
+      type: "image_url",
+      image_url: { url: `data:${image.mime};base64,${image.b64}` },
+    });
+  }
+  return parts;
+}
+
 /** Provider-neutral history to OpenAI wire shape. One `tool` message per
  * result: the neutral `Msg` keeps all results of a parallel turn together, but
  * this wire format wants them separate, each pointing at its own call id. */
@@ -175,12 +207,15 @@ function renderMessages(
   system: string,
   messages: readonly Msg[],
   normalize: (id: string) => string,
+  wire: ImageWire,
 ): WireMessage[] {
   const out: WireMessage[] = [];
   if (system.trim() !== "") out.push({ role: "system", content: system });
   for (const msg of messages) {
-    if (msg.role === "system" || msg.role === "user") {
-      out.push({ role: msg.role, content: msg.content });
+    if (msg.role === "system") {
+      out.push({ role: "system", content: msg.content });
+    } else if (msg.role === "user") {
+      out.push({ role: "user", content: userContent(msg, wire) });
     } else if (msg.role === "assistant") {
       const calls = msg.toolCalls ?? [];
       out.push({
@@ -263,7 +298,7 @@ class OpenAiProvider implements Provider {
     const body: Record<string, unknown> = {
       model,
       stream: true,
-      messages: renderMessages(req.system, req.messages, normalize),
+      messages: renderMessages(req.system, req.messages, normalize, this.preset.imageWire),
     };
     if (req.tools.length > 0) {
       body.tools = renderTools(req.tools, this.preset);

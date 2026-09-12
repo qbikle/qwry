@@ -41,6 +41,11 @@
 //! caps, the block ids and the result texts live. Mirroring three more tools
 //! would double this file's largest debt (canvas-agent-spec §1.7).
 //!
+//! A tool answers with a `ToolReply`: text, and at most one image beside it.
+//! Only `canvas_read` on a drawing fills the second half today, and only the
+//! MCP path can carry it at all: the HTTP adapters put an image on a USER
+//! message, never on a tool result (canvas-grid-spec §5.4).
+//!
 //! Which tools a token serves is fixed when it is minted: `agent_mcp_serve`
 //! takes the list the loop handed its provider, so a thread with no canvas
 //! target serves the five and a model that has no canvas to write into is
@@ -124,15 +129,48 @@ pub struct McpEndpoint {
 pub struct McpCall {
     pub tool: String,
     pub ms: f64,
-    /// size of the text handed back to the model
+    /// size of what was handed back to the model: the text, plus any image's
+    /// base64
     pub bytes: u64,
     pub is_error: bool,
 }
 
 type CallLog = Arc<Mutex<Vec<McpCall>>>;
 type McpResult<T> = std::result::Result<T, McpError>;
-/// Ok = the text the model sees; Err = the same, flagged `isError`.
-pub type ToolText = std::result::Result<String, String>;
+
+/// One image a tool hands back beside its text: RAW base64, never a `data:`
+/// URI, and the media type apart from it. That is `rmcp`'s own `ImageContent`
+/// (`{"type":"image","data":…,"mimeType":…}`, `model/content.rs`), which is
+/// the shape Claude Code documents an MCP tool result may carry, so the two
+/// ends of this wire were read rather than guessed (canvas-grid-spec 5.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolImage {
+    pub b64: String,
+    pub mime: String,
+}
+
+/// What one tool answers with: the text the model reads, and at most one
+/// image beside it. Every tool but `canvas_read` on a drawing answers text
+/// alone, which is what `ToolReply::text` says once rather than at each of
+/// the fifteen call sites.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolReply {
+    pub text: String,
+    pub image: Option<ToolImage>,
+}
+
+impl ToolReply {
+    pub fn text(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            image: None,
+        }
+    }
+}
+
+/// Ok = what the model sees; Err = text, flagged `isError`. A failure is text
+/// and only text: an error the repair loop reads has nothing to picture.
+pub type ToolAnswer = std::result::Result<ToolReply, String>;
 
 // ---------------------------------------------------------------------------
 // tool surface
@@ -144,14 +182,14 @@ pub type ToolText = std::result::Result<String, String>;
 /// their own, which is what lets the transport be tested without a database.
 #[async_trait::async_trait]
 pub trait McpToolBackend: Send + Sync + 'static {
-    async fn list_tables(&self) -> ToolText;
-    async fn describe_tables(&self, names: Vec<String>) -> ToolText;
-    async fn peek_values(&self, table: String, column: String, limit: u32) -> ToolText;
-    async fn run_sql(&self, sql: String) -> ToolText;
-    async fn probe(&self, sqls: Vec<String>) -> ToolText;
+    async fn list_tables(&self) -> ToolAnswer;
+    async fn describe_tables(&self, names: Vec<String>) -> ToolAnswer;
+    async fn peek_values(&self, table: String, column: String, limit: u32) -> ToolAnswer;
+    async fn run_sql(&self, sql: String) -> ToolAnswer;
+    async fn probe(&self, sqls: Vec<String>) -> ToolAnswer;
     /// ONE method for all three canvas tools, not three: this side knows the
     /// name and the raw arguments and nothing else about them (§1.7).
-    async fn canvas_call(&self, name: String, args_json: String) -> ToolText;
+    async fn canvas_call(&self, name: String, args_json: String) -> ToolAnswer;
 }
 
 fn parse_tools(json: &str, key: &str) -> Option<Vec<Tool>> {
@@ -617,12 +655,12 @@ fn tool_error(e: DriverError) -> String {
 
 #[async_trait::async_trait]
 impl McpToolBackend for SessionBackend {
-    async fn list_tables(&self) -> ToolText {
+    async fn list_tables(&self) -> ToolAnswer {
         let meta = self.meta().await?;
-        Ok(list_tables_text(&meta))
+        Ok(ToolReply::text(list_tables_text(&meta)))
     }
 
-    async fn describe_tables(&self, names: Vec<String>) -> ToolText {
+    async fn describe_tables(&self, names: Vec<String>) -> ToolAnswer {
         let meta = self.meta().await?;
         let mut picked: Vec<&TableMeta> = Vec::new();
         for raw in &names {
@@ -644,10 +682,10 @@ impl McpToolBackend for SessionBackend {
         // costs sample values, not the DDL (LESSONS 5)
         let session = self.session()?;
         let stats = crate::agent::describe(&session, &refs).await.unwrap_or_default();
-        Ok(describe_text(&meta, &picked, &stats))
+        Ok(ToolReply::text(describe_text(&meta, &picked, &stats)))
     }
 
-    async fn peek_values(&self, table: String, column: String, limit: u32) -> ToolText {
+    async fn peek_values(&self, table: String, column: String, limit: u32) -> ToolAnswer {
         let meta = self.meta().await?;
         let Some(t) = meta.resolve(&table) else {
             return Err(unknown_table(&meta, &table));
@@ -664,10 +702,10 @@ impl McpToolBackend for SessionBackend {
         let peek = crate::agent::peek_values(&session, &t.schema, &t.name, &col.name, limit)
             .await
             .map_err(tool_error)?;
-        Ok(peek_text(&peek.values, peek.more))
+        Ok(ToolReply::text(peek_text(&peek.values, peek.more)))
     }
 
-    async fn run_sql(&self, sql: String) -> ToolText {
+    async fn run_sql(&self, sql: String) -> ToolAnswer {
         let session = self.session()?;
         let run = crate::agent::run_readonly(
             &session,
@@ -677,21 +715,24 @@ impl McpToolBackend for SessionBackend {
         )
         .await
         .map_err(tool_error)?;
-        Ok(run_text(&run))
+        Ok(ToolReply::text(run_text(&run)))
     }
 
-    async fn probe(&self, sqls: Vec<String>) -> ToolText {
+    async fn probe(&self, sqls: Vec<String>) -> ToolAnswer {
         // truncate rather than refuse, as `tools.tauri.ts` does: a model that
         // asked for a seventh probe still deserves the first six answers
         let asked: Vec<String> = sqls.into_iter().take(crate::agent::PROBE_MAX).collect();
         let session = self.session()?;
         let results = crate::agent::probe(&session, &asked).await.map_err(tool_error)?;
-        Ok(probe_text(&results))
+        Ok(ToolReply::text(probe_text(&results)))
     }
 
-    /// Straight over the bridge. No validation, no cap, no block: the app
-    /// answers with the same text the driven path's tool would (§1.7).
-    async fn canvas_call(&self, name: String, args_json: String) -> ToolText {
+    /// Straight over the bridge. No validation of the arguments and no block:
+    /// the app answers with the same text the driven path's tool would (§1.7).
+    /// The one thing this side does judge is whether the answer's IMAGE can go
+    /// on the wire, which is a wire fact and so not the app's
+    /// (`agent_canvas::carry`).
+    async fn canvas_call(&self, name: String, args_json: String) -> ToolAnswer {
         crate::agent_canvas::call(&self.app, &self.token, &self.session_id, name, args_json).await
     }
 }
@@ -728,7 +769,7 @@ impl QwryMcp {
         self.tools.iter().any(|t| t.name.as_ref() == name)
     }
 
-    fn record(&self, tool: &str, started: Instant, text: &str, is_error: bool) {
+    fn record(&self, tool: &str, started: Instant, bytes: usize, is_error: bool) {
         if let Ok(mut log) = self.log.lock() {
             if log.len() >= CALL_LOG_CAP {
                 log.remove(0);
@@ -736,13 +777,13 @@ impl QwryMcp {
             log.push(McpCall {
                 tool: tool.to_string(),
                 ms: started.elapsed().as_secs_f64() * 1000.0,
-                bytes: text.len() as u64,
+                bytes: bytes as u64,
                 is_error,
             });
         }
     }
 
-    async fn dispatch(&self, name: &str, args: &JsonObject) -> ToolText {
+    async fn dispatch(&self, name: &str, args: &JsonObject) -> ToolAnswer {
         match name {
             "list_tables" => self.backend.list_tables().await,
             "describe_tables" => {
@@ -811,6 +852,27 @@ fn string_array(args: &JsonObject, key: &str) -> std::result::Result<Vec<String>
         .collect()
 }
 
+/// One reply as MCP content. The image goes FIRST: the Messages API's own
+/// advice is that an image block placed before the text it belongs to reads
+/// better, and a tool result reaches the child's model as a user turn, so the
+/// advice transfers whole (canvas-grid-spec 5.2). Text-only replies are one
+/// block, byte-identical to what every tool sent before C2b.
+fn content_of(reply: ToolReply) -> Vec<ContentBlock> {
+    let mut content = Vec::with_capacity(2);
+    if let Some(image) = reply.image {
+        content.push(ContentBlock::image(image.b64, image.mime));
+    }
+    content.push(ContentBlock::text(reply.text));
+    content
+}
+
+/// What the trace counts: everything handed to the model, the image's base64
+/// included. Counting the text alone would report a 600-token picture as the
+/// forty bytes of the line beside it.
+fn reply_bytes(reply: &ToolReply) -> usize {
+    reply.text.len() + reply.image.as_ref().map_or(0, |i| i.b64.len())
+}
+
 impl ServerHandler for QwryMcp {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
@@ -835,12 +897,12 @@ impl ServerHandler for QwryMcp {
         let outcome = self.dispatch(&request.name, &args).await;
         // a failed tool call is normal: the text goes back to the model in
         // the shape the repair loop expects, never as a JSON-RPC error
-        let (text, is_error) = match outcome {
-            Ok(text) => (text, false),
-            Err(text) => (text, true),
+        let (reply, is_error) = match outcome {
+            Ok(reply) => (reply, false),
+            Err(text) => (ToolReply::text(text), true),
         };
-        self.record(&request.name, started, &text, is_error);
-        let content = vec![ContentBlock::text(text)];
+        self.record(&request.name, started, reply_bytes(&reply), is_error);
+        let content = content_of(reply);
         Ok(if is_error {
             CallToolResult::error(content).into()
         } else {
@@ -1632,31 +1694,94 @@ mod tests {
         assert_eq!(peek_text(&["a".into()], true), "'a' … (more exist)");
     }
 
+    // ---- the reply's two halves (C2b) -------------------------------------
+
+    /// The wire shape both ends of this seam were READ for, not guessed at:
+    /// rmcp's `ImageContent` serializes camelCase, which is byte for byte what
+    /// Claude Code documents an MCP tool result may carry (spec §5.2). The
+    /// image goes first, the text second.
+    #[test]
+    fn a_reply_with_an_image_is_the_image_block_then_the_text() {
+        let content = content_of(ToolReply {
+            text: "a3f1  drawing  Sketch · at 0,0 3x3".into(),
+            image: Some(ToolImage {
+                b64: "iVBORw0KGgo=".into(),
+                mime: "image/png".into(),
+            }),
+        });
+        assert_eq!(
+            serde_json::to_value(&content).expect("serialize"),
+            serde_json::json!([
+                {"type": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png"},
+                {"type": "text", "text": "a3f1  drawing  Sketch · at 0,0 3x3"}
+            ])
+        );
+        // and it is still a tool result, not a protocol answer of its own
+        assert_eq!(
+            serde_json::to_value(CallToolResult::success(content))
+                .expect("serialize")["content"]
+                .as_array()
+                .expect("array")
+                .len(),
+            2
+        );
+    }
+
+    /// Text alone is ONE block, exactly what every tool sent before C2b. The
+    /// five tools' wire did not move, and that is a test rather than an
+    /// intention.
+    #[test]
+    fn a_text_reply_is_one_block_as_it_always_was() {
+        assert_eq!(
+            serde_json::to_value(content_of(ToolReply::text("film  (~1000 rows)")))
+                .expect("serialize"),
+            serde_json::json!([{"type": "text", "text": "film  (~1000 rows)"}])
+        );
+    }
+
+    /// The trace counts the picture. A 600-token image logged as the forty
+    /// bytes of the line beside it would make the most expensive call in a
+    /// thread read as its cheapest.
+    #[test]
+    fn the_trace_counts_the_image_beside_the_text() {
+        assert_eq!(reply_bytes(&ToolReply::text("abc")), 3);
+        assert_eq!(
+            reply_bytes(&ToolReply {
+                text: "abc".into(),
+                image: Some(ToolImage {
+                    b64: "A".repeat(1024),
+                    mime: "image/png".into(),
+                }),
+            }),
+            1027
+        );
+    }
+
     // ---- the transport itself, over a real socket -------------------------
 
     struct FakeTools;
 
     #[async_trait::async_trait]
     impl McpToolBackend for FakeTools {
-        async fn list_tables(&self) -> ToolText {
-            Ok("film  (~1000 rows)".into())
+        async fn list_tables(&self) -> ToolAnswer {
+            Ok(ToolReply::text("film  (~1000 rows)"))
         }
-        async fn describe_tables(&self, names: Vec<String>) -> ToolText {
+        async fn describe_tables(&self, names: Vec<String>) -> ToolAnswer {
             Err(format!("ERROR: unknown table '{}'", names.join(",")))
         }
-        async fn peek_values(&self, _t: String, _c: String, _l: u32) -> ToolText {
-            Ok("'a'".into())
+        async fn peek_values(&self, _t: String, _c: String, _l: u32) -> ToolAnswer {
+            Ok(ToolReply::text("'a'"))
         }
-        async fn run_sql(&self, sql: String) -> ToolText {
-            Ok(format!("ran: {sql}"))
+        async fn run_sql(&self, sql: String) -> ToolAnswer {
+            Ok(ToolReply::text(format!("ran: {sql}")))
         }
-        async fn probe(&self, sqls: Vec<String>) -> ToolText {
-            Ok(format!("{} probes", sqls.len()))
+        async fn probe(&self, sqls: Vec<String>) -> ToolAnswer {
+            Ok(ToolReply::text(format!("{} probes", sqls.len())))
         }
         /// stands in for the app on the other side of the bridge: the name and
         /// the model's raw arguments, which is everything this side hands over
-        async fn canvas_call(&self, name: String, args_json: String) -> ToolText {
-            Ok(format!("{name} {args_json}"))
+        async fn canvas_call(&self, name: String, args_json: String) -> ToolAnswer {
+            Ok(ToolReply::text(format!("{name} {args_json}")))
         }
     }
 
@@ -2121,10 +2246,10 @@ mod tests {
 
         #[async_trait::async_trait]
         impl McpToolBackend for LabTools {
-            async fn list_tables(&self) -> ToolText {
-                Ok(list_tables_text(&self.meta().await?))
+            async fn list_tables(&self) -> ToolAnswer {
+                Ok(ToolReply::text(list_tables_text(&self.meta().await?)))
             }
-            async fn describe_tables(&self, names: Vec<String>) -> ToolText {
+            async fn describe_tables(&self, names: Vec<String>) -> ToolAnswer {
                 let meta = self.meta().await?;
                 let mut picked: Vec<&TableMeta> = Vec::new();
                 for raw in &names {
@@ -2141,15 +2266,15 @@ mod tests {
                     })
                     .collect();
                 let stats = crate::agent::describe(&self.0, &refs).await.map_err(tool_error)?;
-                Ok(describe_text(&meta, &picked, &stats))
+                Ok(ToolReply::text(describe_text(&meta, &picked, &stats)))
             }
-            async fn peek_values(&self, table: String, column: String, limit: u32) -> ToolText {
+            async fn peek_values(&self, table: String, column: String, limit: u32) -> ToolAnswer {
                 let peek = crate::agent::peek_values(&self.0, "public", &table, &column, limit)
                     .await
                     .map_err(tool_error)?;
-                Ok(peek_text(&peek.values, peek.more))
+                Ok(ToolReply::text(peek_text(&peek.values, peek.more)))
             }
-            async fn run_sql(&self, sql: String) -> ToolText {
+            async fn run_sql(&self, sql: String) -> ToolAnswer {
                 let run = crate::agent::run_readonly(
                     &self.0,
                     &sql,
@@ -2158,15 +2283,15 @@ mod tests {
                 )
                 .await
                 .map_err(tool_error)?;
-                Ok(run_text(&run))
+                Ok(ToolReply::text(run_text(&run)))
             }
-            async fn probe(&self, sqls: Vec<String>) -> ToolText {
+            async fn probe(&self, sqls: Vec<String>) -> ToolAnswer {
                 let results = crate::agent::probe(&self.0, &sqls).await.map_err(tool_error)?;
-                Ok(probe_text(&results))
+                Ok(ToolReply::text(probe_text(&results)))
             }
             /// no window on the other side of this one: the lab run drives the
             /// database, and the canvas is the app's
-            async fn canvas_call(&self, _name: String, _args_json: String) -> ToolText {
+            async fn canvas_call(&self, _name: String, _args_json: String) -> ToolAnswer {
                 Err("ERROR: the canvas is closed. Say your findings here instead".into())
             }
         }

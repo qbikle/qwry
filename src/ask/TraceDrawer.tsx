@@ -163,6 +163,16 @@ function toolRow(step: ToolStep, ms: number | null): Row {
   };
 }
 
+/** what a question's pictures add to the context line: how many, and the wire
+ * they left on. Nothing when the question carried none (DESIGN rule 11), and
+ * the plain truth when the connection could carry none of them — an image is
+ * never dropped in silence (maintainer call 3, AGENT-SPEC 7). */
+const imagesSaid = (images?: { count: number; wire: string }): string => {
+  if (!images) return "";
+  const said = plural(images.count, "image", "images");
+  return images.wire === "none" ? ` · ${said} · not carried` : ` · ${said} · ${images.wire}`;
+};
+
 /** the loop's trace in loop order, one row per step; turn rows summarise the
  * tool calls that followed them until the next turn */
 function rowsFromTrace(exchange: Exchange, trace: TraceStep[], timed: boolean): Row[] {
@@ -184,7 +194,7 @@ function rowsFromTrace(exchange: Exchange, trace: TraceStep[], timed: boolean): 
           kindLabel: "context",
           label: `${plural(step.candidates.length, "candidate table", "candidate tables")}${
             answer?.risky ? " · risk check on" : ""
-          }`,
+          }${imagesSaid(step.images)}`,
           ms: ms(step.ms),
           body: step.text,
           above:

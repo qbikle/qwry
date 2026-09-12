@@ -7,7 +7,7 @@
 // not an `if`. Base URLs for local runtimes are defaults the user edits: a port
 // is never hardcoded into behaviour.
 
-import type { PresetId, ProviderPreset } from "./types";
+import type { ImageRoute, ImageWire, PresetId, ProviderId, ProviderPreset } from "./types";
 
 /** Mistral's tool-call ids must be exactly 9 alphanumerics or the API 400s
  * with `Tool call id was [id] but must be a-z, A-Z, 0-9, with a length of 9.`
@@ -22,6 +22,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     authHeader: "bearer",
     listsModels: true,
     parallelToolCalls: "supported",
+    imageWire: "image_url",
     quirks: {
       notes:
         "defines the wire format the rest of this table copies. We never send strict:true, so the additionalProperties rules that come with it never apply.",
@@ -34,6 +35,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     authHeader: "bearer",
     listsModels: true,
     parallelToolCalls: "per-model",
+    imageWire: "image_url",
     // attribution headers OpenRouter documents; HTTP-Referer is omitted rather
     // than sent empty, since a desktop app has no site to attribute
     extraHeaders: { "X-Title": "qwry" },
@@ -49,6 +51,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     authHeader: "none",
     listsModels: true,
     parallelToolCalls: "per-model",
+    imageWire: "image_url",
     quirks: {
       reasoningDeltaField: "reasoning_content",
       requiresServerFlags: ["--jinja"],
@@ -63,6 +66,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     authHeader: "none",
     listsModels: true,
     parallelToolCalls: "per-model",
+    imageWire: "image_url",
     quirks: {
       requiresServerFlags: ["--enable-auto-tool-choice", "--tool-call-parser"],
       notes:
@@ -76,6 +80,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     authHeader: "none",
     listsModels: true,
     parallelToolCalls: "per-model",
+    imageWire: "image_url",
     quirks: {
       minVersion: "0.8.0",
       notes:
@@ -89,6 +94,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     authHeader: "none",
     listsModels: true,
     parallelToolCalls: "per-model",
+    imageWire: "image_url",
     quirks: {
       notes:
         "the server is started by hand inside the LM Studio app and its port is user-changeable, so a refused connection is the normal first-run state.",
@@ -101,6 +107,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     authHeader: "bearer",
     listsModels: true,
     parallelToolCalls: "per-model",
+    imageWire: "image_url",
     quirks: {
       notes:
         "the catalog rotates fast, so prefer a live /models call over the registry. groq/compound and groq/compound-mini support only built-in server tools.",
@@ -113,6 +120,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     authHeader: "bearer",
     listsModels: true,
     parallelToolCalls: "supported",
+    imageWire: "image_url",
     quirks: {
       toolCallIdPattern: MISTRAL_TOOL_ID_PATTERN,
       notes:
@@ -126,6 +134,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     authHeader: "bearer",
     listsModels: true,
     parallelToolCalls: "per-model",
+    imageWire: "image_url",
     quirks: {
       notes:
         "a router over many open-weight families; quirks are inherited per underlying model, the Mistral id rule included.",
@@ -138,6 +147,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     authHeader: "bearer",
     listsModels: true,
     parallelToolCalls: "per-model",
+    imageWire: "image_url",
     quirks: {
       notes:
         "model ids are full paths of the form accounts/fireworks/models/<name>, so a label has to strip the prefix.",
@@ -150,6 +160,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     authHeader: "bearer",
     listsModels: true,
     parallelToolCalls: "per-model",
+    imageWire: "image_url",
     quirks: {
       defaultModel: "deepseek-v4-flash",
       notes:
@@ -163,6 +174,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     authHeader: "bearer",
     listsModels: true,
     parallelToolCalls: "supported",
+    imageWire: "image_url",
     quirks: {
       rejectsStrictAdditionalProperties: true,
       notes:
@@ -178,6 +190,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     authHeader: "bearer",
     listsModels: true,
     parallelToolCalls: "per-model",
+    imageWire: "image_url",
     quirks: {
       notes:
         "Google's OpenAI-compatible layer, chosen over a native functionCall adapter for v1 (DECISIONS 2026-09-05). The layer is beta and does not document parallel_tool_calls.",
@@ -201,6 +214,41 @@ export function presetFor(id: PresetId): ProviderPreset {
   const preset = BY_ID.get(id);
   if (!preset) throw new Error(`unknown provider preset: ${id}`);
   return preset;
+}
+
+/** How an image reaches this provider, or "none" when none can. The two
+ * adapters with a wire format of their own are not preset rows, so their
+ * answers sit here beside the table rather than in a second one; all three
+ * shapes were read from the providers' own documentation (canvas-grid-spec
+ * 5.2, re-verified this wave). An id this table has never seen answers
+ * "none": a provider we cannot describe is one we do not send pictures to. */
+export function imageWireFor(id: ProviderId): ImageWire {
+  if (id === "anthropic") return "anthropic-blocks";
+  if (id === "claude-code") return "mcp-image";
+  return BY_ID.get(id as PresetId)?.imageWire ?? "none";
+}
+
+/** Whether an image can reach this provider at all, by whatever route. The
+ * route is not the message everywhere: `claude -p` gets the PNG as MCP image
+ * content from `canvas_read`, never on a Msg, because the child runs with
+ * `--tools ""` and has no file-reading door to offer instead. */
+export function carriesImages(id: ProviderId): boolean {
+  return imageWireFor(id) !== "none";
+}
+
+/** How a picture reaches THIS run's model: on the message, through
+ * `canvas_read`, or not at all. The wire decides the first two and the run's
+ * own canvas target decides whether the second exists, because the canvas
+ * family is offered only to a targeted run (loop.ts `toolsFor`) — a picture
+ * whose only door is a tool nobody was handed is a picture that never
+ * arrives, and saying it left would be the silent drop maintainer call 3
+ * forbids. ONE derivation, read by the gate that hides `Ask`, by the line the
+ * model is sent and by the trace, so those three can never disagree. */
+export function imageRouteFor(id: ProviderId, canvasTarget: boolean): ImageRoute {
+  const wire = imageWireFor(id);
+  if (wire === "image_url" || wire === "anthropic-blocks") return "message";
+  if (wire === "mcp-image") return canvasTarget ? "tool" : "none";
+  return "none";
 }
 
 /** Presets that document `stream_options: {include_usage: true}`. The rest

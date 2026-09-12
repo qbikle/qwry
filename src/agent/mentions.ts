@@ -44,6 +44,8 @@
 import type { SchemaSnapshot, TableInfo } from "../stores/schema";
 import type { SavedQuery } from "../stores/saved";
 import type { MentionKind, Thread } from "./types";
+import type { ImageRoute } from "./providers/types";
+import { handleOf } from "./tools";
 
 /** `[start, end)` over the question text, the leading `@` included: the
  * backdrop paints one pill over exactly these glyphs. */
@@ -83,6 +85,19 @@ export interface BlockRef {
   rowCount?: number | null;
   /** a note's own words: what a note carries instead of a run */
   text?: string | null;
+  /** C2b: this block is a SHEET OF INK. The one ref whose content is not a
+   * sentence, and the flag rather than the picture on purpose: a PNG frozen
+   * here at the moment `Ask` was pressed and a PNG `canvas_read` renders at
+   * the moment it is called are two pictures of one drawing, and a stroke
+   * drawn between the press and the send would make the two doors disagree
+   * about a sheet the user is looking at (LESSONS 13). So the ref names the
+   * drawing and the DOCUMENT is read when the picture is actually wanted */
+  drawing?: true;
+  /** C2b: the canvas that holds this block. A block's pill implies its canvas
+   * (AGENT-UX 16l's fifth route), which is what lets a question about a
+   * drawing offer `canvas_read` on the one wire that carries a picture by
+   * tool and no other way. Absent on a ref remembered before this wave */
+  canvasId?: string;
 }
 
 /** A canvas document, by the title its tab wears (B2), the ladder's seventh
@@ -471,11 +486,28 @@ export const clip = (text: string) =>
     ? text
     : `${text.slice(0, MENTION_TEXT_CAP)}\n… (truncated)`;
 
+/** What a tagged DRAWING's line says, which depends entirely on how the
+ * picture is travelling on THIS run (providers `imageRouteFor`). Three wires,
+ * three sentences, and each of them true where it is printed: a line claiming
+ * an attachment on a wire that carries none is the exact lie maintainer call
+ * 3 forbids, and it is the model that pays for it. */
+const drawingSaid = (id: string, route: ImageRoute): string =>
+  route === "message"
+    ? "a drawing, attached as an image"
+    : route === "tool"
+      ? `a drawing: call canvas_read with block_id ${handleOf(id)} to see it`
+      : "a drawing; its picture cannot travel on this connection";
+
 /** The lines under `TAGGED BY THE USER:` (prompt.ts owns that header): one
  * per tag, in the order they were typed, a table and a column naming
  * themselves and a saved query and a thread carrying their text. Empty when
- * nothing was tagged, which is what keeps the header off the message. */
-export function mentionContext(mentions: readonly Mention[]): string {
+ * nothing was tagged, which is what keeps the header off the message.
+ *
+ * `route` is how a picture travels on this run, and the ONLY thing a drawing
+ * ref's line is built from: the caller reads it once (loop.ts) and the trace
+ * prints the same answer, so the words the model gets and the words the user
+ * reads can never disagree. */
+export function mentionContext(mentions: readonly Mention[], route: ImageRoute = "message"): string {
   const seen = new Set<string>();
   const lines: string[] = [];
   for (const m of mentions) {
@@ -527,12 +559,38 @@ export function mentionContext(mentions: readonly Mention[]): string {
         if (shape) parts.push(shape);
         const note = m.ref.text?.trim();
         if (note) parts.push(clip(note));
+        // a drawing has no words and no run: the line says where the picture
+        // IS, in the words of the route it is actually on. Saying so beats
+        // sending an image block with nothing naming it, and beats naming an
+        // attachment the wire never carried
+        if (m.ref.drawing) parts.push(drawingSaid(m.ref.id, route));
         lines.push(parts.length === 1 ? parts[0] : `${parts[0]}:\n${parts.slice(1).join("\n")}`);
         break;
       }
     }
   }
   return lines.join("\n");
+}
+
+/** The drawings the tags name, in the order they were typed and deduped by
+ * the ref key `mentionContext` dedupes by, so a drawing tagged twice is one
+ * picture and one line. What comes back is the BLOCK, never a rendered PNG:
+ * this file is pure and the document is a store, so the caller renders each
+ * one at the moment it sends (stores/agent `runInto`) and both doors onto a
+ * sheet read the same document at the same instant (LESSONS 13). Kept beside
+ * the lines so the words and the pictures of one question are built by one
+ * grammar (DESIGN rule 14). */
+export function mentionDrawings(mentions: readonly Mention[]): { id: string; canvasId?: string }[] {
+  const seen = new Set<string>();
+  const out: { id: string; canvasId?: string }[] = [];
+  for (const m of mentions) {
+    if (m.kind !== "block" || !m.ref.drawing) continue;
+    const key = refKey(m);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ id: m.ref.id, ...(m.ref.canvasId ? { canvasId: m.ref.canvasId } : {}) });
+  }
+  return out;
 }
 
 /** What the trace's context step carries, and what its summary line prints:

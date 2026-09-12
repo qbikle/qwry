@@ -112,6 +112,14 @@
 // them are POSED mid-gesture from the engine's own arithmetic, and
 // `c2-migrated` seeds a pre-C2 document so the upgrade's picture is evidence.
 //
+// C2b adds the third species and the page with nothing on it: three drawing
+// states (fixtures.c2draw.ts: `c2-draw`, `c2-draw-small`, `c2-draw-tools`) on
+// cards of their own, since the floor state is two rows and the other two are
+// six; and two empty ones (fixtures.c2empty.ts: `c2-empty`, `c2-empty-place`)
+// on A3's own 560, because what an empty page is evidence of is how little is
+// on it. `c2-draw-tools` and `c2-empty-place` are POSED, one pressing the
+// product's own picker open and the other leaving a finger on the page.
+//
 // scripts/ask-frames.ts drives headless Chrome over this route and writes
 // one PNG per state × width × theme. The dev build remains the final eyeball;
 // these frames are the evidence.
@@ -127,6 +135,7 @@ import "./tauriShim";
 import { useEffect } from "react";
 import ReactDOM from "react-dom/client";
 import { AskPanel } from "../ask/AskPanel";
+import { ModelsSettings } from "../ask/ModelsSettings";
 import { CanvasTab } from "../canvas/CanvasTab";
 import { DEFAULT_PALETTE } from "../design/theme";
 import type { Profile } from "../ipc/types";
@@ -185,12 +194,28 @@ import {
   type C2GridState,
 } from "./fixtures.c2grid";
 import {
+  c2DrawCardH,
+  c2DrawChoice,
+  C2_DRAW_STATES,
+  c2DrawAfterMount,
+  c2DrawSeed,
+  type C2DrawState,
+} from "./fixtures.c2draw";
+import {
+  C2_EMPTY_CARD_H,
+  C2_EMPTY_STATES,
+  c2EmptyAfterMount,
+  c2EmptySeed,
+  type C2EmptyState,
+} from "./fixtures.c2empty";
+import {
   CANVAS_ASK_STATES,
   canvasAskAfterMount,
   canvasAskSeed,
   type CanvasAskState,
 } from "./fixtures.canvas-ask";
 import { b4AfterMount } from "./fixtures.b4";
+import { C2_VISION_CARD_H, C2_VISION_STATES } from "./fixtures.c2vision";
 import { ECHO_STATES, echoExchangesFor, type EchoState } from "./fixtures.echo";
 import { EDIT_STATES, editAfterMount, editSeed, type EditState } from "./fixtures.edit";
 import { MENTION_STATES, mentionsAfterMount, mentionsSeed, type MentionState } from "./fixtures.mentions";
@@ -428,6 +453,9 @@ function seed({ state, w, theme }: Params) {
   });
 }
 
+const isC2Vision = (state: string): boolean =>
+  (C2_VISION_STATES as readonly string[]).includes(state);
+
 function Harness({ state, w, scroll }: Params) {
   // the pane's own mount effects run first (child before parent): they close
   // the picker, the trace and the Threads sheet for a fresh connection and
@@ -481,6 +509,10 @@ function Harness({ state, w, scroll }: Params) {
         const el = document.querySelector<HTMLElement>(".ask-scroll");
         if (el) el.scrollTop = 0;
       }
+      if (isC2Vision(state)) {
+        const pane = document.querySelector<HTMLElement>(".harness-scroll");
+        if (pane) pane.scrollTop = pane.scrollHeight;
+      }
       if (interact?.stripScroll != null) {
         const strip = document.querySelector<HTMLElement>(".ans-strip");
         if (strip) strip.scrollLeft = interact.stripScroll;
@@ -489,6 +521,20 @@ function Harness({ state, w, scroll }: Params) {
     });
     return () => cancelAnimationFrame(id);
   }, [state, scroll]);
+  // C2b: one state in this root is not the pane at all. The vision switch
+  // lives in Settings › Models, which is a modal over the window and not a
+  // face of the card, so the card holds the real section at the pane's own
+  // three widths (the modal is never wider) and the pose parks its scroller
+  // at the foot, where the two defaults and the one switch stand
+  if (isC2Vision(state)) {
+    return (
+      <div className="harness">
+        <aside className="card harness-card settings-modal harness-scroll" style={{ width: w, height: C2_VISION_CARD_H }}>
+          <ModelsSettings profileId={FIXTURE.profile.id} />
+        </aside>
+      </div>
+    );
+  }
   return (
     <div className="harness">
       <aside className="card harness-card" style={{ width: w, height: CARD_H }}>
@@ -528,7 +574,7 @@ const CANVAS_PROFILES: Profile[] = [
   { ...FIXTURE.profile, id: "harness-analytics", name: "analytics", host: "analytics-db.internal" },
 ];
 
-type AnyCanvasState = CanvasState | B3CanvasState | C2GridState;
+type AnyCanvasState = CanvasState | B3CanvasState | C2GridState | C2DrawState | C2EmptyState;
 
 interface CanvasParams {
   state: AnyCanvasState;
@@ -542,18 +588,40 @@ const isB3Canvas = (state: string): state is B3CanvasState =>
 const isC2Grid = (state: string): state is C2GridState =>
   (C2_GRID_STATES as readonly string[]).includes(state);
 
+const isC2Draw = (state: string): state is C2DrawState =>
+  (C2_DRAW_STATES as readonly string[]).includes(state);
+
+const isC2Empty = (state: string): state is C2EmptyState =>
+  (C2_EMPTY_STATES as readonly string[]).includes(state);
+
 /** the card each wave is read on: A3's three blocks stand in 760, B3's four
  * with a chart among them need 800, and C2's page of cells is read from its
  * top at the same 800 except where the LAYOUT is the subject, where the card
- * holds the whole document (fixtures.c2grid.ts c2GridCardH) */
+ * holds the whole document (fixtures.c2grid.ts c2GridCardH). C2b's drawing
+ * states carry their own two numbers for the same reason (c2DrawCardH), and
+ * its empty page is read at A3's 560: a card taller than the page would be
+ * evidence of nothing but the card */
 const canvasCardH = (state: string): number =>
-  isC2Grid(state) ? c2GridCardH(state) : isB3Canvas(state) ? B3_CANVAS_CARD_H : CANVAS_CARD_H;
+  isC2Draw(state)
+    ? c2DrawCardH(state)
+    : isC2Empty(state)
+      ? C2_EMPTY_CARD_H
+      : isC2Grid(state)
+        ? c2GridCardH(state)
+        : isB3Canvas(state)
+          ? B3_CANVAS_CARD_H
+          : CANVAS_CARD_H;
 
 function canvasParamsFrom(search: string): CanvasParams {
   const q = new URLSearchParams(search);
   const raw = q.get("state") ?? "";
   const w = Number(q.get("w"));
-  const known = (CANVAS_STATES as readonly string[]).includes(raw) || isB3Canvas(raw) || isC2Grid(raw);
+  const known =
+    (CANVAS_STATES as readonly string[]).includes(raw) ||
+    isB3Canvas(raw) ||
+    isC2Grid(raw) ||
+    isC2Draw(raw) ||
+    isC2Empty(raw);
   return {
     state: known ? (raw as AnyCanvasState) : "a3-canvas",
     w: (CANVAS_WIDTHS as readonly number[]).includes(w) ? w : 960,
@@ -567,12 +635,20 @@ function canvasParamsFrom(search: string): CanvasParams {
 function seedCanvas({ state, theme }: CanvasParams) {
   // every wave's seed has the A3 seed's shape, whole: one branch on the state
   // name is the difference between the three waves' documents
-  const seed = isC2Grid(state)
-    ? c2GridSeed(state)
-    : isB3Canvas(state)
-      ? b3CanvasSeed(state)
-      : canvasSeed(state);
-  applySettings({ provider: FIXTURE.provider, model: FIXTURE.model }, theme);
+  const seed = isC2Draw(state)
+    ? c2DrawSeed(state)
+    : isC2Empty(state)
+      ? c2EmptySeed()
+      : isC2Grid(state)
+        ? c2GridSeed(state)
+        : isB3Canvas(state)
+          ? b3CanvasSeed(state)
+          : canvasSeed(state);
+  // the model is the harness's own everywhere but one state: C2b's
+  // `c2-draw-novision` runs on a row the registry documents WITHOUT vision,
+  // because the frame's whole subject is the `Ask` that is then not in the
+  // cluster (C2b call 4, DESIGN rule 2's matrix)
+  applySettings(c2DrawChoice(state) ?? { provider: FIXTURE.provider, model: FIXTURE.model }, theme);
   useConnections.setState({ profiles: CANVAS_PROFILES, activeProfileId: CANVAS_PROFILE_ID });
   useCanvas.setState({
     canvases: seed.canvases,
@@ -595,14 +671,20 @@ function CanvasHarness({ state, w, canvasId }: CanvasParams & { canvasId: string
   useEffect(() => {
     let live = true;
     const id = requestAnimationFrame(() => {
-      // all three hooks are async and only one of them owns a given state:
-      // B3's poses the arriving block and asserts the empty canvas's caret,
-      // C2's poses a pointer mid-gesture, the things a still cannot hold
-      const hook = isC2Grid(state)
-        ? c2GridAfterMount(state)
-        : isB3Canvas(state)
-          ? b3CanvasAfterMount(state)
-          : canvasAfterMount(state);
+      // every hook is async and only one of them owns a given state: B3's
+      // poses the arriving block and asserts the empty canvas's caret, C2a's
+      // poses a pointer mid-gesture, C2b's presses the drawing's own picker
+      // open and leaves a finger on the empty page — the things a still
+      // cannot hold
+      const hook = isC2Draw(state)
+        ? c2DrawAfterMount(state)
+        : isC2Empty(state)
+          ? c2EmptyAfterMount(state)
+          : isC2Grid(state)
+            ? c2GridAfterMount(state)
+            : isB3Canvas(state)
+              ? b3CanvasAfterMount(state)
+              : canvasAfterMount(state);
       void hook.then(() => {
         if (live) document.documentElement.dataset.harnessReady = "1";
       });

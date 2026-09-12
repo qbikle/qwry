@@ -1,5 +1,11 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+// the two provider tables only, by their own paths rather than through
+// providers/index.ts: they are pure data with no imports of their own, where
+// the barrel would drag every adapter into the eager settings module
+import { carriesImages } from "../agent/providers/presets";
+import { baseModelId, visionOf } from "../agent/providers/registry";
+import type { ProviderId } from "../agent/providers/types";
 import {
   applyTheme,
   DEFAULT_PALETTE,
@@ -57,6 +63,12 @@ interface SettingsState {
    * row at all (ModelsSettings) and the dry run refuses before it connects */
   agentWrites: Record<string, boolean>;
   setAgentWrites: (profileId: string, on: boolean) => void;
+  /** C2b: per-install answers to the registry's `"unknown"` vision rows, keyed
+   * by model, sparse and off by default. A per-model fact belongs to the model
+   * (registry.ts), and this is the same fact learned on one machine rather
+   * than from a document, so it stays out of the registry file and lands here */
+  agentVision: Record<string, boolean>;
+  setAgentVision: (modelId: string, on: boolean) => void;
   /** per-provider base URL overrides (local runtimes, gateways), sparse: an
    * absent entry means the preset default; the loop and the probes read the
    * same map so what Settings tested is what a run reaches */
@@ -195,6 +207,7 @@ function sanitizeSettings(persisted: unknown, current: SettingsState): SettingsS
     agentModel: typeof p.agentModel === "string" ? p.agentModel : null,
     agentByConn: sanitizeAgentConns(p.agentByConn),
     agentWrites: sanitizeAgentWrites(p.agentWrites),
+    agentVision: sanitizeAgentVision(p.agentVision),
     agentBaseUrls: sanitizeBaseUrls(p.agentBaseUrls),
     formatPreset: typeof p.formatPreset === "string" ? p.formatPreset : current.formatPreset,
     formatKeywordCase: pick(
@@ -260,6 +273,42 @@ function sanitizeAgentWrites(v: unknown): Record<string, boolean> {
     if (raw === true) out[k] = true;
   }
   return out;
+}
+
+/** persisted vision answers, one per model (C2b). Only `true` survives, the
+ * shape agentWrites uses: a corrupt map can never read as a yes, and off is
+ * what an absent entry already means. */
+function sanitizeAgentVision(v: unknown): Record<string, boolean> {
+  if (typeof v !== "object" || v === null) return {};
+  const out: Record<string, boolean> = {};
+  for (const [k, raw] of Object.entries(v as Record<string, unknown>)) {
+    if (raw === true) out[k] = true;
+  }
+  return out;
+}
+
+/** May Ask put an image on this model's question? Three facts in order: the
+ * wire has to carry one at all, then the model's own flag, then this install's
+ * answer for a model the registry cannot speak for. An override lifts
+ * `"unknown"` and nothing else: `false` is a measured no, and a switch that
+ * could overrule it would be a switch that lies. Pure, so the drawing's `Ask`
+ * can ask the question inside its own selector. */
+export function imagesAllowed(
+  agentVision: Record<string, boolean>,
+  providerId: ProviderId,
+  model: string,
+): boolean {
+  if (!carriesImages(providerId)) return false;
+  const flag = visionOf(model, providerId);
+  return flag === true || (flag === "unknown" && agentVision[baseModelId(model)] === true);
+}
+
+/** Does the Models pane offer this model the one vision switch? Only where
+ * nothing knows the answer: a model flagged either way has nothing to ask, and
+ * a wire that carries no image has nothing to offer (DESIGN rule 2's matrix,
+ * where a capability that does not exist is absent rather than disabled). */
+export function visionUnknown(providerId: ProviderId, model: string): boolean {
+  return carriesImages(providerId) && visionOf(model, providerId) === "unknown";
 }
 
 /** persisted base URL overrides, one per provider; anything but a non-empty
@@ -335,6 +384,17 @@ export const useSettings = create<SettingsState>()(
           if (on) next[profileId] = true;
           else delete next[profileId];
           return { agentWrites: next };
+        }),
+      agentVision: {},
+      // keyed the way the registry matches: llama-server reports gguf paths,
+      // and a switch flipped on a path must answer for the file name the model
+      // rows are written against
+      setAgentVision: (modelId, on) =>
+        set((s) => {
+          const next = { ...s.agentVision };
+          if (on) next[baseModelId(modelId)] = true;
+          else delete next[baseModelId(modelId)];
+          return { agentVision: next };
         }),
       agentBaseUrls: {},
       setAgentBaseUrl: (providerId, url) =>
@@ -434,6 +494,7 @@ export const useSettings = create<SettingsState>()(
         agentModel: s.agentModel,
         agentByConn: s.agentByConn,
         agentWrites: s.agentWrites,
+        agentVision: s.agentVision,
         agentBaseUrls: s.agentBaseUrls,
         formatPreset: s.formatPreset,
         formatKeywordCase: s.formatKeywordCase,

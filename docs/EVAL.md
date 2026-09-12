@@ -89,6 +89,11 @@ both W3 staging runs their first launch. The credentials stay local (sourced
 inside the subshell that starts the run, never echoed), and the run's `--out`
 and `--progress` go outside the repo (section 2).
 
+Image inputs are outside every bench (C2b, 2026-09-11): neither
+`eval/tools.node.ts` nor the harness attaches a `Msg.images` array, so a
+drawing's PNG and the vision gate (AGENT-SPEC §7) are measured by nothing
+here, only by the integrator's own probe (AGENT-SPEC §5.3).
+
 ### 3.x Presentation score
 
 Execution accuracy says whether the rows are right; it says nothing about

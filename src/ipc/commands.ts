@@ -29,6 +29,7 @@ import type {
   AgentTurnPatch,
   CanvasInput,
   CanvasRow,
+  CanvasToolImage,
   ClaudeExit,
   GateMode,
   GateVerdict,
@@ -464,9 +465,16 @@ export const agentMcpLog = (token: string) => invoke<McpCall[]>("agent_mcp_log",
  * way a failed tool call is when `isError`. An answer to a call that already
  * timed out, or whose thread closed while the canvas was being written, is
  * dropped: the blocks stand and the model was told to say its findings in the
- * reply instead. */
-export const agentCanvasResult = (callId: string, text: string, isError: boolean) =>
-  invoke<void>("agent_canvas_result", { callId, text, isError });
+ * reply instead. `image` is the one thing an answer carries besides text, a
+ * drawing's PNG; an error never carries one, and an image too large or of a
+ * type the child cannot read is dropped with one line added to `text` rather
+ * than failing the call. */
+export const agentCanvasResult = (
+  callId: string,
+  text: string,
+  isError: boolean,
+  image?: CanvasToolImage,
+) => invoke<void>("agent_canvas_result", { callId, text, isError, image: image ?? null });
 
 export const agentThreadCreate = (profileId: string, title: string) =>
   invoke<AgentThread>("agent_thread_create", { profileId, title });

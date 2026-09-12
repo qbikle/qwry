@@ -43,7 +43,7 @@ import { endTabTx, txEnds, useConnections, type TxEnd } from "./connections";
 import { useAsk, type AskBlock } from "./ask";
 import { useSchema } from "./schema";
 import { useSaved, visibleSaved, type SavedQuery } from "./saved";
-import { useSettings, writesAllowed } from "./settings";
+import { imagesAllowed, useSettings, writesAllowed } from "./settings";
 import { useSidePane } from "./sidePane";
 import { useKnowledge } from "./knowledge";
 import { useRecents } from "./recents";
@@ -54,7 +54,8 @@ import { createTauriTools } from "../agent/tools.tauri";
 import { createCanvasTools } from "../agent/canvas.tauri";
 import { tauriPlatform } from "../agent/platform.tauri";
 import { providerFor, tierOf } from "../agent/providers/index";
-import type { Provider, ProviderId } from "../agent/providers/types";
+import { imageRouteFor } from "../agent/providers/presets";
+import type { ImagePart, Provider, ProviderId } from "../agent/providers/types";
 import {
   runAsk,
   type AskAnswer,
@@ -71,6 +72,7 @@ import {
   clip,
   type CanvasRef,
   type Mention,
+  mentionDrawings,
   parseMentions,
   resolveMentions,
 } from "../agent/mentions";
@@ -436,6 +438,31 @@ export function modelChoice(profileId: string): ModelChoice | null {
     : { providerId: provider as ProviderId, model };
 }
 
+/** Whether this connection's chosen model reads an IMAGE (C2b). Two facts
+ * meet here and neither is the other's: the PRESET says what its wire can
+ * carry (`carriesImages`, one adapter per protocol) and the MODEL row says
+ * whether this model reads what arrives (`visionOf`, the law that a per-model
+ * fact belongs to the model). Both must answer yes.
+ *
+ * `"unknown"` is a no, and the way out of it is the install's own switch, not
+ * a guess: sending a picture to a model that 400s spends the user's turn to
+ * learn what a flag should have known. The switch writes `agentVision` keyed
+ * the way the registry matches ids, and it can only turn an unknown row on: a
+ * row documented `false` has no vision tower to switch on.
+ *
+ * The one gate for the whole feature. `Ask` is ABSENT on a drawing where this
+ * is false (DESIGN rule 2's matrix: a capability that does not exist has no
+ * button), and the run reads it again before it sends, so a model swapped
+ * between the press and the send cannot carry a picture past it. */
+export function canSeeImages(profileId: string): boolean {
+  const choice = modelChoice(profileId);
+  if (!choice) return false;
+  // the rule itself lives beside the override it reads (settings.ts
+  // `imagesAllowed`), so `unknown lifts, false does not` has one spelling and
+  // not two; what this function adds is the CONNECTION's own choice of model
+  return imagesAllowed(useSettings.getState().agentVision, choice.providerId, choice.model);
+}
+
 /** A failed verdict reloaded from appdb, in the shape the failure block
  * reads. `agent_answers` keeps the status and the SQL but not the error text
  * or the turn count, so the messages say only what is known (LESSONS 9). */
@@ -783,6 +810,14 @@ export const useAgent = create<AgentState>((set, get) => ({
   askAbout: (block) => {
     const profileId = get().activeProfileId;
     if (!profileId) return;
+    // the ref is remembered whole (C2b): the question's tag resolves to it,
+    // `mentionContext` names it in the TAGGED block and, for a drawing, the
+    // run renders the picture from the document when it SENDS. What is
+    // remembered is the sheet's identity and never its pixels, so the two
+    // doors onto a drawing can never hand out two different pictures of it
+    // (LESSONS 13). The surface that names the element is the one that owns
+    // its name, so a drawing with no text label of its own arrives here
+    // already called `Drawing 2` and this path knows nothing about kinds
     useAsk.getState().rememberBlock(block);
     // the pane opens in Ask and never closes: `Ask` on a block is a request
     // to write, not a radio press (AGENT-UX section 1)
@@ -1661,12 +1696,45 @@ interface RunArgs {
   persistUserTurn?: boolean;
 }
 
+/** the pictures a question's tagged drawings are sent as, rendered from the
+ * document at the moment of the send through the canvas's ONE renderer (the
+ * port's `drawingImage`, the same call `canvas_read` makes). All or nothing:
+ * a question that could render only half of what it tagged says so and sends
+ * none, because a TAGGED line promising a picture beside a message carrying
+ * no picture is exactly the half-send LESSONS 9 refuses. An empty sheet has
+ * no picture and is that same no. */
+async function drawnImages(
+  drawings: readonly { id: string; canvasId?: string }[],
+): Promise<ImagePart[]> {
+  const port = await loadCanvasPort();
+  if (!port) return [];
+  const out: ImagePart[] = [];
+  for (const d of drawings) {
+    const image = d.canvasId
+      ? await port.drawingImage(d.canvasId, d.id).catch(() => null)
+      : null;
+    if (!image) {
+      copyCueShow("The drawing could not be attached");
+      return [];
+    }
+    out.push(image);
+  }
+  return out;
+}
+
 async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
   const { threadId, exchangeId, profileId } = args;
   cancelRequested.delete(threadId);
   // A4: the connection's edits permission, read before the first await like
   // every other thing this run depends on (LESSONS 3)
   const writes = writeMode(profileId);
+  // C2b: the drawings the question's tags NAME, read here with everything
+  // else the run depends on (LESSONS 3) and gated here as well as at the
+  // button: `Ask` is absent on a drawing the chosen model cannot see, and a
+  // model swapped after the press must not carry one past that. What is read
+  // here is the list, never the pictures: those are rendered below, from the
+  // document as it stands at the moment this question is sent
+  const drawings = canSeeImages(profileId) ? mentionDrawings(args.mentions ?? []) : [];
   // the follow-up row leaves the instant a question is sent (W7): it belongs
   // to the thread as it stood, and a chip beside a running question suggests
   // what to ask next while the last thing asked has no answer. A cancelled
@@ -1712,6 +1780,17 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
   // doubt. Absent with no target, which is the gate: the tools array a
   // provider is handed IS the offer (canvas-agent-spec 1.6)
   const aim = args.canvas ?? null;
+  // C2b: and the pictures themselves, rendered NOW rather than at the press.
+  // A PNG frozen when `Ask` was pressed and the PNG `canvas_read` renders
+  // when the model calls are two pictures of one sheet the moment a stroke
+  // lands between the two, so both doors read the document at the instant
+  // they are used (LESSONS 13). Only the wires that carry a picture ON the
+  // message render one at all: on `claude -p` the model fetches it itself,
+  // and a render nobody would send is a render nobody should pay for
+  const images =
+    drawings.length > 0 && imageRouteFor(args.choice.providerId, !!aim) === "message"
+      ? await drawnImages(drawings)
+      : [];
   const canvas = aim
     ? createCanvasTools({
         sessionId,
@@ -1845,6 +1924,7 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
       // have moved (LESSONS 3)
       writes,
       ...(mentions.length > 0 ? { mentions } : {}),
+      ...(images.length > 0 ? { images } : {}),
       ...(args.rowContext ? { rowContext: args.rowContext } : {}),
       ...(attached ? { context: attached } : {}),
       ...(canvas ? { canvas } : {}),
@@ -2363,6 +2443,28 @@ function activeCanvas(profileId: string): CanvasRef | null {
 const canvasTitleNow = (profileId: string, canvasId: string): string | null =>
   canvasTabRefs(profileId).find((c) => c.id === canvasId)?.title ?? null;
 
+/** AGENT-UX 16l's FIFTH route, which B3 named and did not build: a tagged
+ * DRAWING's pill implies the canvas it stands on. It is the difference
+ * between a question about a sheet of ink and a question the model can
+ * answer, on the one wire that carries a picture by tool and no other way
+ * (`claude -p`): `canvas_read({ block_id })` is offered only to a run with a
+ * target (loop.ts `toolsFor`), so with no target the picture has no door at
+ * all, and the run would tell the model about a drawing it cannot reach.
+ *
+ * Drawings only, and deliberately: a result block or a note SENDS its own
+ * content in the TAGGED block, so aiming a canvas for one would add a
+ * destination nobody asked for. A canvas whose tab has been closed since has
+ * no title to name, and then this route is simply absent — the drawing's line
+ * then says the picture cannot travel rather than promising one (LESSONS 9). */
+function canvasOfDrawing(profileId: string, mentions: readonly Mention[]): CanvasAim | null {
+  for (const m of mentions) {
+    if (m.kind !== "block" || !m.ref.drawing || !m.ref.canvasId) continue;
+    const title = canvasTitleNow(profileId, m.ref.canvasId);
+    if (title) return { canvasId: m.ref.canvasId, title };
+  }
+  return null;
+}
+
 /** Where a question's answer goes, and the question as it will be SENT.
  *
  * 1. the canvas pill in the question, which is every targeted question: a
@@ -2385,6 +2487,10 @@ export async function aimCanvas(
   const none = { aim: null, question: text, cue: null };
   const pill = mentions.find((m) => m.kind === "canvas");
   if (pill) return { aim: { canvasId: pill.ref.id, title: pill.ref.title }, question: text, cue: null };
+  // 1b: a tagged drawing's own canvas (AGENT-UX 16l's fifth route). Above the
+  // word, because a question that names a sheet of ink already named a canvas
+  const drawn = canvasOfDrawing(profileId, mentions);
+  if (drawn) return { aim: drawn, question: text, cue: null };
   if (!SAYS_CANVAS.test(text)) return none;
   if (canvasTabRefs(profileId).length > 0) return none;
   const port = await loadCanvasPort();
@@ -2407,7 +2513,10 @@ function reaimCanvas(
     return { canvasId: held.canvasId, title: canvasTitleNow(profileId, held.canvasId) ?? held.title };
   }
   const pill = mentions.find((m) => m.kind === "canvas");
-  return pill ? { canvasId: pill.ref.id, title: pill.ref.title } : null;
+  if (pill) return { canvasId: pill.ref.id, title: pill.ref.title };
+  // and the drawing's own canvas, the same fifth route a first send takes:
+  // a re-run of a question about a sheet of ink must reach the same picture
+  return canvasOfDrawing(profileId, mentions);
 }
 
 /** the `canvas` field a re-run's RunArgs carries, spread so a run with no

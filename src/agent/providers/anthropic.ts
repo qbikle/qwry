@@ -14,6 +14,8 @@
 //     order their calls were made.
 //   - `thinking_delta` is thinking, `text_delta` is the answer. The signature
 //     that trails a thinking block is not text and is dropped.
+//   - An image on a user message is a base64 `image` block BEFORE the text
+//     block, which is what the vision docs advise for best results.
 
 import { joinUrl, isAbort, mapProviderError } from "./http";
 import { modelInfo } from "./registry";
@@ -46,6 +48,10 @@ const CACHE_CONTROL = { type: "ephemeral" as const };
 
 type Block =
   | { type: "text"; text: string }
+  | {
+      type: "image";
+      source: { type: "base64"; media_type: string; data: string };
+    }
   | { type: "tool_use"; id: string; name: string; input: unknown }
   | {
       type: "tool_result";
@@ -117,7 +123,19 @@ export function renderMessages(messages: readonly Msg[]): {
     if (msg.role === "system") {
       extraSystem.push(msg.content);
     } else if (msg.role === "user") {
-      push("user", [{ type: "text", text: msg.content }]);
+      // images first, then the words about them: the vision docs' own ordering
+      // advice, and their single-image example's own order. A caption that is
+      // empty next to a picture sends no text block at all, since an empty one
+      // is a 400; with no images the block is written unconditionally, exactly
+      // as it always was
+      const blocks: Block[] = (msg.images ?? []).map((image) => ({
+        type: "image" as const,
+        source: { type: "base64" as const, media_type: image.mime, data: image.b64 },
+      }));
+      if (blocks.length === 0 || msg.content !== "") {
+        blocks.push({ type: "text", text: msg.content });
+      }
+      push("user", blocks);
     } else if (msg.role === "assistant") {
       const blocks: Block[] = [];
       if (msg.content !== "") blocks.push({ type: "text", text: msg.content });

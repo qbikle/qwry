@@ -7,18 +7,22 @@
 // The page's geometry belongs to CanvasGrid: the column count read from the
 // width, the cell frames, the drag and the resize, the placeholder and the
 // live region. This file stays what it was, the surface that knows the KINDS:
-// which block is a result and which a note, what each one's cluster holds,
-// what its menu says and which of them holds the caret. The grip joins every
-// cluster as its first action (the one surface every kind drags by), the
-// title line of a result is its second, and `Move Up` / `Move Down` leave both
-// menus: a place on a grid is a drag or an arrow key, and a row that splices
-// the reading order would move nothing a reader can see (4 rows to 3 on a
-// result, 3 to 1 on a note).
+// which block is a result, which a note and which a drawing, what each one's
+// cluster holds, what its menu says and which of them holds the caret. The
+// grip joins every cluster as its first action (the one surface every kind
+// drags by), the title line of a result is its second, and `Move Up` / `Move
+// Down` leave every menu: a place on a grid is a drag or an arrow key, and a
+// row that splices the reading order would move nothing a reader can see
+// (4 rows to 3 on a result, 3 to 1 on a note).
 //
 // The empty canvas is EMPTY: zero strings and zero controls. What it does
-// carry is a CARET, at the page's first line, because a blank card with a
+// carry is a CARET, in the page's first cell, because a blank card with a
 // caret is a page and a blank card with nothing is nothing at all, and the
 // difference is one caret (B3; A3's counts hold, a caret being no control).
+// On a grid the caret lands in the CELL THE PRESS WAS IN (C2b), not at the
+// end of a list: a page of cells has a place for a press to mean, and the
+// cells show themselves for the length of that press and leave with it. The
+// line is one cell wide and grows by its words, the note's own rule.
 // The caret line is an empty note being written and NOT yet a block: the
 // store's own note would reach appdb on its 400 ms debounce, so a stray click
 // used to leave a row behind, and three clicks left three (the boxes the
@@ -28,7 +32,7 @@
 // `New Note` is the keyboard route and mints the store's note as it always
 // did; its blur removes it the same way.
 //
-// A block is a result or a note. The result is the pane's own ResultBlock,
+// A block is a result, a note or a drawing. The result is the pane's own ResultBlock,
 // grown by props rather than forked: the TITLE line is the exchange's
 // question, which stands once, on the answer's first block, and the model's
 // own six-word title on its other results (rule 14: the question once); a
@@ -37,8 +41,14 @@
 // above the faces, the status line folds the assumptions in after one
 // lowercase `assumed`, and the cluster is Grip · Copy · Flip · Insert · Ask ·
 // More (6 hot, 0 at rest). The note is NoteBlock's, the same picture with
-// Grip · Copy · Ask · More. `More` is the block's menu and the one a
-// right-click opens: what is left in it acts on the block's place in the
+// Grip · Copy · Ask · More. The drawing is Drawing's, which draws its own
+// sheet and its own cluster (Grip · Pen ▾ · Undo · Redo · Copy · Ask · More,
+// 7 hot and 0 at rest) and is handed the two things only the page knows: the
+// grip, and whether an `Ask` EXISTS at all. It does not where the chosen
+// model cannot read an image (C2b call 4): the button is absent, never
+// disabled and never explained, because a capability that does not exist has
+// no control (DESIGN rule 2's matrix). `More` is the block's menu and the one
+// a right-click opens: what is left in it acts on the block's place in the
 // document rather than on its content (Compare With, Delete), so it leaves
 // the cluster for the menu.
 //
@@ -67,16 +77,22 @@ import { copyCueShow } from "../lib/copyCue";
 import { msText } from "../lib/duration";
 import {
   chartOf,
+  defaultSpanFor,
+  drawingName,
   facesOf,
   statusOf,
   useCanvas,
   type Block,
+  type DrawingBlock as DrawingBlockDoc,
   type NoteBlock as NoteBlockDoc,
   type ResultBlock as ResultBlockDoc,
   type StatusLine,
 } from "../stores/canvas";
-import { CanvasGrid, Grip } from "./CanvasGrid";
+import { canSeeImages } from "../stores/agent";
+import { useSettings } from "../stores/settings";
+import { CanvasGrid, Grip, type GridPage } from "./CanvasGrid";
 import { compareWithMenu } from "./compareMenu";
+import { Drawing } from "./Drawing";
 import { NoteBlock, noteName } from "./NoteBlock";
 import type { Cell } from "./grid";
 import "./canvas.css";
@@ -103,6 +119,9 @@ const written = (block: Block): WrittenBlock => block as Block & WrittenBlock;
  * nothing. A model's note carries none, because the question above it is the
  * section's heading and a second one would be the same fact twice (rule 14). */
 export function titleOf(block: Block): string {
+  // a drawing carries no line of words at all: what it is called is its first
+  // text label, and that is drawn ON it (drawingName), never above it
+  if (block.kind === "drawing") return "";
   return block.question || written(block).title || "";
 }
 
@@ -111,7 +130,12 @@ export function titleOf(block: Block): string {
  * re-render; the content's own signature can, and the new block then
  * crossfades over the old where it stood instead of arriving as a new one. */
 export function revOf(block: Block): string {
-  return block.kind === "note" ? block.text : `${block.sql ?? ""}|${block.rows.length}|${block.ms}`;
+  if (block.kind === "note") return block.text;
+  // a drawing's ink is not a second reading of one slot: strokes land under a
+  // hand on the sheet, and a key that moved with them would remount the
+  // element mid-drawing and take its undo stack and its caret with it
+  if (block.kind === "drawing") return "draw";
+  return `${block.sql ?? ""}|${block.rows.length}|${block.ms}`;
 }
 
 /** the caret line's stand-in block: an empty note, in edit, belonging to the
@@ -223,6 +247,23 @@ const askAbout = (b: ResultBlockDoc) => {
   );
 };
 
+/** `Ask` on a drawing: the same token the other two kinds write into the
+ * composer, naming the SHEET. The element has no words for the model to
+ * read, so what the ref carries is the drawing's identity and the canvas it
+ * stands on, and the picture itself is rendered from the document when the
+ * question is actually sent (stores/agent `runInto`) or when the model calls
+ * `canvas_read({ block_id })`. One renderer, read at the moment it is used,
+ * so a stroke drawn between this press and the Send cannot leave the two
+ * doors handing out two different pictures of one sheet (LESSONS 13).
+ *
+ * The button only exists where the chosen model reads images (canSeeImages),
+ * so nothing here is a wire that cannot carry one. */
+const askDrawing = (block: DrawingBlockDoc, name: string, canvasId: string) => {
+  void import("../stores/agent").then(({ useAgent }) =>
+    useAgent.getState().askAbout({ id: block.id, name, drawing: true, canvasId }),
+  );
+};
+
 /** one block's row, memoised by the block it draws. Every write to the
  * document rebuilds its array — a face flip, a note's words, a rename, a menu
  * opening — so the list re-rendered every block whenever any one of them
@@ -237,6 +278,8 @@ const CanvasRow = memo(function CanvasRow({
   block,
   canvasId,
   cell,
+  name,
+  canAsk,
   arrive,
   entering,
   editing,
@@ -246,6 +289,12 @@ const CanvasRow = memo(function CanvasRow({
   block: Block;
   canvasId: string;
   cell: Cell;
+  /** what this block answers to, so the row builds no second derivation of it */
+  name: string;
+  /** whether the chosen model reads images (C2b call 4). A drawing's `Ask` is
+   * ABSENT where it does not: the enforcement is the missing button, never a
+   * disabled one and never a sentence (DESIGN rule 2's matrix) */
+  canAsk: boolean;
   arrive: typeof panelIn | typeof swapIn;
   entering: boolean;
   editing: boolean;
@@ -281,6 +330,35 @@ const CanvasRow = memo(function CanvasRow({
             useCanvas.getState().remove(canvasId, block.id);
             useCanvas.getState().endEdit();
           }}
+        />
+      </motion.div>
+    );
+  }
+  if (block.kind === "drawing") {
+    // the sheet draws itself, its own cluster and its own menu; what the page
+    // hands it is the two things only the page knows: the grip (this block can
+    // be moved) and whether an `Ask` exists at all
+    return (
+      <motion.div {...enter} className="cv-item">
+        <Drawing
+          block={block}
+          canvasId={canvasId}
+          cell={cell}
+          lead={<Grip />}
+          ask={
+            canAsk ? (
+              <button
+                type="button"
+                className="iconbtn iconbtn-sm"
+                title="Ask"
+                aria-label="Ask"
+                onClick={() => askDrawing(block, name, canvasId)}
+              >
+                <MessageSquare size={12} />
+              </button>
+            ) : null
+          }
+          onDelete={() => useCanvas.getState().remove(canvasId, block.id)}
         />
       </motion.div>
     );
@@ -343,19 +421,45 @@ const CanvasRow = memo(function CanvasRow({
   );
 });
 
+/** whether a press landed on the PAGE rather than on a block: the scroller
+ * itself, the grid's own ground between the elements, and the tail under the
+ * last one. A press on an element is the element's, as it always was */
+const onPage = (e: { target: EventTarget | null; currentTarget: EventTarget | null }): boolean => {
+  const t = e.target as HTMLElement | null;
+  return t !== null && (t === e.currentTarget || t.classList.contains("cvg"));
+};
+
 /** the element's key: a replaced block keeps its id and its cells, so what
  * tells a rewrite from a re-render is the content's own signature */
 const keyOf = (block: Block): string => `${block.id}:${revOf(block)}`;
 
-/** what the live region and the element's own label call it: the title it
- * carries, a note's first line, and the kind's own word when it has neither
- * (WRITING, identifiers inside chrome) */
-const nameOf = (block: Block): string =>
-  (block.kind === "note" ? noteName(block.text) : titleOf(block)) || (block.kind === "note" ? "Note" : "Result");
+/** which drawing of the document this is, counted from 1 in reading order:
+ * what an unlabelled sheet is called, the way an untitled note is called
+ * `Note`. The count is the document's, so two sheets never answer to one name */
+const ordinalOf = (blocks: readonly Block[], id: string): number => {
+  let n = 0;
+  for (const b of blocks) {
+    if (b.kind !== "drawing") continue;
+    n += 1;
+    if (b.id === id) break;
+  }
+  return Math.max(1, n);
+};
+
+/** what the live region, the element's own label and an `@` pill call it: the
+ * title it carries, a note's first line, a drawing's first label, and the
+ * kind's own word when it has none (WRITING, identifiers inside chrome). One
+ * derivation for all three readers (LESSONS 4) */
+export function nameOf(block: Block, blocks: readonly Block[] = []): string {
+  if (block.kind === "note") return noteName(block.text) || "Note";
+  if (block.kind === "drawing") return drawingName(block) || `Drawing ${ordinalOf(blocks, block.id)}`;
+  return titleOf(block) || "Result";
+}
 
 /** and what KIND it is, which for a result is the face it stands on: the
  * geometry line reads `Orders by channel · chart · 4 by 3 at column 1, row 2` */
-const kindOf = (block: Block): string => (block.kind === "note" ? "note" : block.face);
+const kindOf = (block: Block): string =>
+  block.kind === "note" ? "note" : block.kind === "drawing" ? "drawing" : block.face;
 
 export function CanvasTab({ canvasId }: { canvasId: string }) {
   const doc = useCanvas((s) => s.docs[canvasId]);
@@ -374,14 +478,41 @@ export function CanvasTab({ canvasId }: { canvasId: string }) {
     if (profileId) void useCanvas.getState().load(profileId);
   }, [profileId]);
 
-  /** the caret line standing on the page, by nonce. The nonce is monotonic so
-   * a click always remounts the line and the caret lands in it: a click that
-   * follows a blur has already committed whatever words were there */
-  const [caret, setCaret] = useState<number | null>(null);
+  /** the caret line standing on the page, by nonce and by CELL. The nonce is
+   * monotonic so a click always remounts the line and the caret lands in it: a
+   * click that follows a blur has already committed whatever words were there.
+   * The cell is where the click WAS (C2b call 6): a page of cells has a place
+   * for a press to mean, and the caret goes to the one it landed in rather
+   * than to the end of a list */
+  const [caret, setCaret] = useState<{ n: number; cell: Cell } | null>(null);
   const nonce = useRef(0);
-  const write = () => {
+  /** the grid's own pitch, handed over on mount: ONE arithmetic for the cell a
+   * press is in and the cell an element snaps to (DESIGN rule 14) */
+  const pageRef = useRef<GridPage | null>(null);
+  const page = useCallback((api: GridPage | null) => {
+    pageRef.current = api;
+  }, []);
+  const write = (at?: { x: number; y: number }) => {
     nonce.current += 1;
-    setCaret(nonce.current);
+    // a press NAMES a cell, so the caret takes that one and nothing around it
+    // (the sticky the vocabulary already has: a note is the one kind that
+    // stands on a single cell) and grows by its words from there. The page's
+    // own caret names nothing, so it opens at the kind's default span, read
+    // from the same table `addNote` opens a note with (DESIGN rule 14)
+    const span = at ? { w: 1, h: 1 } : defaultSpanFor(DRAFT);
+    setCaret({ n: nonce.current, cell: { x: at?.x ?? 0, y: at?.y ?? 0, ...span } });
+  };
+
+  /** the words the caret line committed, as a block in the cell it stood in.
+   * Three of the document's own doors and one render: the note is placed,
+   * held to the cell it was typed in and sized to what it holds, all before
+   * the debounce that writes any of it (a caret is not worth a fourth door) */
+  const land = (text: string, cell: Cell) => {
+    const store = useCanvas.getState();
+    const columns = pageRef.current?.columns() ?? store.columnsOf(canvasId);
+    const id = store.addNote(canvasId, text);
+    store.resizeTo(canvasId, id, { w: cell.w, h: cell.h }, columns, { auto: true });
+    store.moveTo(canvasId, id, { x: cell.x, y: cell.y }, columns);
   };
 
   // an empty canvas hands the page the caret, once, when the document is
@@ -493,6 +624,17 @@ export function CanvasTab({ canvasId }: { canvasId: string }) {
     entered.current = true;
   }, []);
 
+  /** what every block answers to, read once against the document it is in:
+   * the grid's label and live region and the row's own `Ask` name it alike */
+  const naming = useCallback((b: Block) => nameOf(b, blocks), [blocks]);
+
+  /** C2b call 4: whether the chosen model reads an image, read as state so a
+   * model swapped in Settings takes the drawing's `Ask` with it. The two
+   * facts behind it are the provider's wire and the model's own row
+   * (stores/agent canSeeImages); this subscribes to the settings the switch
+   * and the picker write, and the answer is one boolean */
+  const sees = useSettings(() => (profileId ? canSeeImages(profileId) : false));
+
   const renderBlock = useCallback(
     (b: Block, cell: Cell) => (
       // a replaced block crossfades where it stood; a new one arrives
@@ -500,6 +642,8 @@ export function CanvasTab({ canvasId }: { canvasId: string }) {
         block={b}
         canvasId={canvasId}
         cell={cell}
+        name={naming(b)}
+        canAsk={sees}
         arrive={seen.current.has(b.id) ? swapIn : panelIn}
         entering={entered.current}
         editing={editingId === b.id}
@@ -507,19 +651,32 @@ export function CanvasTab({ canvasId }: { canvasId: string }) {
         onMenu={openMenu}
       />
     ),
-    [canvasId, editingId, menu?.blockId, openMenu],
+    [canvasId, editingId, menu?.blockId, naming, openMenu, sees],
   );
 
   return (
     <div
       className="cv-scroll"
       ref={scroll}
+      onPointerDown={(e) => {
+        // the cells show for the length of the press and leave with it: at
+        // rest nothing says where a cell is, and putting something somewhere
+        // is exactly when that matters (a drag's own lattice, same rule)
+        if (e.button !== 0 || !onPage(e)) return;
+        pageRef.current?.lattice(true);
+        const off = () => {
+          pageRef.current?.lattice(false);
+          window.removeEventListener("pointerup", off);
+          window.removeEventListener("pointercancel", off);
+        };
+        window.addEventListener("pointerup", off);
+        window.addEventListener("pointercancel", off);
+      }}
       onClick={(e) => {
         // the card itself, the page under the elements and the tail below it
         // are where a click writes; a click that landed on a block is the
         // block's own
-        const t = e.target as HTMLElement;
-        if (t === e.currentTarget || t.classList.contains("cvg")) write();
+        if (onPage(e)) write(pageRef.current?.cellAt(e.clientX, e.clientY));
       }}
     >
       <CanvasGrid
@@ -528,26 +685,36 @@ export function CanvasTab({ canvasId }: { canvasId: string }) {
         columnsHint={(doc as (typeof doc & { lastColumns?: number }) | undefined)?.lastColumns}
         renderBlock={renderBlock}
         keyOf={keyOf}
-        nameOf={nameOf}
+        nameOf={naming}
         kindOf={kindOf}
+        page={page}
+        draft={
+          caret === null
+            ? null
+            : {
+                cell: caret.cell,
+                // the caret line: one empty note in edit, standing in the cell
+                // the click landed in and outside the document until its first
+                // words reach `addNote`
+                node: (
+                  <div className="cv-item" key={caret.n}>
+                    <NoteBlock
+                      block={DRAFT}
+                      editing
+                      onEdit={() => {}}
+                      onCommit={(text) => {
+                        const cell = caret.cell;
+                        setCaret(null);
+                        land(text, cell);
+                      }}
+                      onCancel={() => setCaret(null)}
+                      onDelete={() => setCaret(null)}
+                    />
+                  </div>
+                ),
+              }
+        }
       />
-      {caret !== null && (
-        // the caret line: one empty note in edit, at the page's last line,
-        // outside the document until its first words reach `addNote`
-        <div className="cv-item" key={caret}>
-          <NoteBlock
-            block={DRAFT}
-            editing
-            onEdit={() => {}}
-            onCommit={(text) => {
-              setCaret(null);
-              useCanvas.getState().addNote(canvasId, text);
-            }}
-            onCancel={() => setCaret(null)}
-            onDelete={() => setCaret(null)}
-          />
-        </div>
-      )}
       {menu &&
         (() => {
           // the note's menu is NoteBlock's own; this one is the result's

@@ -293,6 +293,44 @@ describe("where a question's answer goes", () => {
     expect("canvas" in seen[0]).toBe(false);
   });
 
+  test("1b · a tagged DRAWING's own pill implies its canvas (16l's fifth route)", async () => {
+    seed({
+      tabs: [canvasTab("t-b", "cv-b", "Canvas 4")],
+      activeId: "t-b",
+      canvases: [{ id: "cv-b", title: "Canvas 4" }],
+    });
+    useAsk.setState({
+      blocks: { "d1f2a3b4": { id: "d1f2a3b4", name: "Drawing 2", drawing: true, canvasId: "cv-b" } },
+    });
+    await useAgent.getState().ask('@"Drawing 2" what did i draw here');
+    // without this the `claude -p` wire has no door to the picture at all:
+    // canvas_read is offered only to a targeted run, and a question about a
+    // sheet of ink would describe a drawing the model cannot reach
+    expect(target()).toEqual({ canvasId: "cv-b", title: "Canvas 4" });
+  });
+
+  test("1b · a drawing whose canvas has no tab names none, rather than guessing", async () => {
+    seed({ tabs: [], activeId: null, canvases: [] });
+    useAsk.setState({
+      blocks: { "d1f2a3b4": { id: "d1f2a3b4", name: "Drawing 2", drawing: true, canvasId: "cv-gone" } },
+    });
+    await useAgent.getState().ask('@"Drawing 2" what did i draw here');
+    expect(target()).toBeNull();
+  });
+
+  test("1b · a result block's pill is not a target: it sends its own content", async () => {
+    seed({
+      tabs: [canvasTab("t-b", "cv-b", "Canvas 4")],
+      activeId: "t-b",
+      canvases: [{ id: "cv-b", title: "Canvas 4" }],
+    });
+    useAsk.setState({
+      blocks: { b9: { id: "b9", name: "Orders by channel", sql: "SELECT 1", canvasId: "cv-b" } },
+    });
+    await useAgent.getState().ask('@"Orders by channel" what stood out');
+    expect(target()).toBeNull();
+  });
+
   test("a question a busy thread refuses makes no canvas and cues nothing", async () => {
     useAgent.setState({ busy: { [TID]: true } });
     await useAgent.getState().ask("create analysis of @order_v2 in a canvas");

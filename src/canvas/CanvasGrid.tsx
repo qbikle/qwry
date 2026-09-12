@@ -111,6 +111,24 @@ export const geometrySaid = (name: string, kind: string, cell: Cell): string =>
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
+/** What the page around the grid is handed (C2b call 6): the cell a point
+ * lands in, the count it lands in, and the lattice for the length of a press.
+ * The scroller's own click belongs to CanvasTab (the page under the elements
+ * and the tail below them are where a person writes), and the PITCH belongs to
+ * the grid, so the two meet at one function instead of in a second copy of the
+ * arithmetic (DESIGN rule 14). */
+export interface GridPage {
+  /** the cell under a point, in the page's own coordinates. Held inside the
+   * columns; a point below the last row is the row it is in, because the
+   * canvas grows DOWN and a click in the tail is a click on a cell */
+  cellAt: (clientX: number, clientY: number) => { x: number; y: number };
+  columns: () => number;
+  /** the cells, shown while a press is being made and gone with it: the same
+   * lattice a drag shows, for the same reason (nothing says where a cell is
+   * at rest, and a placement is a moment when that matters) */
+  lattice: (on: boolean) => void;
+}
+
 /** the cell the pointer is over: the grab offset is kept, so the element does
  * not jump under the finger, and the target is arithmetic on the pointer and
  * the pitch, never a DOM read per frame */
@@ -355,6 +373,16 @@ export function Grip() {
   );
 }
 
+/** a slot's own cell, in the four custom properties the calc() reads. One
+ * element's frame and the page's caret line are placed by the same four */
+const cellVars = (cell: Cell): CSSProperties =>
+  ({
+    "--x": String(cell.x),
+    "--y": String(cell.y),
+    "--w": String(cell.w),
+    "--h": String(cell.h),
+  }) as CSSProperties;
+
 interface SlotProps {
   block: Block;
   cell: Cell;
@@ -452,18 +480,11 @@ const GridSlot = memo(function GridSlot({ block, cell, label, register, onAuto, 
     };
   }, [autoH, block.id, onAuto]);
 
-  const vars = {
-    "--x": String(cell.x),
-    "--y": String(cell.y),
-    "--w": String(cell.w),
-    "--h": String(cell.h),
-  } as CSSProperties;
-
   return (
     <motion.div
       ref={el}
       className="cvg-slot"
-      style={vars}
+      style={cellVars(cell)}
       role="group"
       aria-label={label}
       exit={{ opacity: 0 }}
@@ -500,6 +521,13 @@ export interface CanvasGridProps {
   renderBlock: (block: Block, cell: Cell) => ReactNode;
   /** its key, so a replaced block still crossfades where it stood */
   keyOf: (block: Block) => string;
+  /** the page's own caret line, standing in the cell a click landed in and in
+   * the document nowhere until its first words (C2b call 6). It rides a slot
+   * like every other element so the one pitch places it */
+  draft?: { cell: Cell; node: ReactNode } | null;
+  /** the surface takes the page's handle on mount and gives it back on
+   * unmount: the register shape every handle here uses */
+  page?: (api: GridPage | null) => void;
   /** what the live region and the label call it, and what kind it is */
   nameOf: (block: Block) => string;
   kindOf: (block: Block) => string;
@@ -512,7 +540,17 @@ const ARROWS: Record<string, { x: number; y: number }> = {
   ArrowDown: { x: 0, y: 1 },
 };
 
-export function CanvasGrid({ canvasId, blocks, columnsHint, renderBlock, keyOf, nameOf, kindOf }: CanvasGridProps) {
+export function CanvasGrid({
+  canvasId,
+  blocks,
+  columnsHint,
+  renderBlock,
+  keyOf,
+  nameOf,
+  kindOf,
+  draft,
+  page,
+}: CanvasGridProps) {
   const host = useRef<HTMLDivElement>(null);
   const live = useRef<HTMLDivElement>(null);
   const size = useRef<HTMLSpanElement>(null);
@@ -575,6 +613,42 @@ export function CanvasGrid({ canvasId, blocks, columnsHint, renderBlock, keyOf, 
       if (frame) cancelAnimationFrame(frame);
     };
   }, [canvasId]);
+
+  // the page's handle: the pitch is here, so the click that writes a note is
+  // placed by the same arithmetic a drag snaps to (DESIGN rule 14). The rect
+  // is read on the press and not per frame - one placement is one read
+  useLayoutEffect(() => {
+    if (!page) return;
+    page({
+      cellAt: (clientX, clientY) => {
+        const node = host.current;
+        const m = metrics.current;
+        if (!node) return { x: 0, y: 0 };
+        const r = node.getBoundingClientRect();
+        return {
+          x: clamp(Math.floor((clientX - r.left) / (m.cellW + m.gutter)), 0, Math.max(0, m.columns - 1)),
+          y: Math.max(0, Math.floor((clientY - r.top) / (CELL_H + m.gutter))),
+        };
+      },
+      columns: () => metrics.current.columns,
+      lattice: (on) => {
+        const node = host.current;
+        if (!node) return;
+        if (!on) {
+          delete node.dataset.place;
+          return;
+        }
+        // the page's own remaining height, read once on the press: an empty
+        // grid is 0 rows tall, and the cells a press is about are the ones
+        // under the pointer rather than the ones under the last element
+        const scroller = node.parentElement;
+        const deep = scroller ? scroller.clientHeight + scroller.scrollTop - node.offsetTop : 0;
+        node.style.setProperty("--lattice-h", `${Math.max(node.clientHeight, deep)}px`);
+        node.dataset.place = "";
+      },
+    });
+    return () => page(null);
+  }, [page]);
 
   const onAuto = useCallback(
     (id: string, span: { w: number; h: number }) => {
@@ -760,6 +834,15 @@ export function CanvasGrid({ canvasId, blocks, columnsHint, renderBlock, keyOf, 
           );
         })}
       </AnimatePresence>
+      {draft && (
+        // the caret line: a slot like any other, so the cell a click landed in
+        // is where the words start. It is the PAGE's and not the document's
+        // until its first words, so it stands outside the presence list and
+        // outside the engine's items: nothing moves for a caret
+        <div className="cvg-slot cvg-draft" style={cellVars(draft.cell)}>
+          {draft.node}
+        </div>
+      )}
       <div className="cvg-live" aria-live="polite" aria-atomic="true" ref={live} />
     </div>
   );

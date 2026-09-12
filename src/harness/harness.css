@@ -19,3 +19,13 @@
   height: 100%;
   overflow: auto;
 }
+
+/* Settings › Models is a modal over the window, not a face of the card (C2b):
+   the card is only here so the frame has the app's own edge around the
+   section, and the section scrolls inside it exactly as the modal's own body
+   does. The skin is `.settings-modal`'s, unchanged, so what the frame shows
+   is the row as Settings draws it */
+.harness-scroll {
+  height: 100%;
+  overflow: auto;
+}

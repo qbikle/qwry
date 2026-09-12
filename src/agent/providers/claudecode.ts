@@ -33,6 +33,14 @@
 // (measured 2026-09-06: without the strict flag the user's own claude.ai MCP
 // servers load into the call, and a connected one hands its tools to a model
 // qwry promised none), and its init gate refuses any listed tool.
+//
+// C2b: this adapter IGNORES `Msg.images`, and that is the design and not an
+// omission. The prompt reaches the child as stdin text and the image half of
+// `--input-format stream-json` is uncitable (canvas-grid section 10 item 6);
+// the route that IS cited at both ends is MCP image content, so a drawing
+// reaches this model as the PNG `canvas_read({ block_id })` returns through
+// the bridge (agent_mcp.rs), never on a message. `imageWireFor("claude-code")`
+// says `mcp-image` for exactly that reason.
 
 import { isAbort } from "./http";
 import { abortError } from "./side";

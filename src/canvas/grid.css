@@ -38,7 +38,15 @@
    first gutter */
 .cvg-lattice {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* the cells of the PAGE, not only of the rows: an empty grid is 0 tall and
+     a press on it is exactly when a person needs to see where a cell is, so a
+     placement press hands it the page's own remaining height (CanvasGrid
+     `lattice`). It never exceeds what the scroller already shows, so nothing
+     it paints can grow the page it is painted on */
+  height: var(--lattice-h, 100%);
   pointer-events: none;
   opacity: 0;
   background-image: radial-gradient(circle at center, var(--fg-faint) 1px, transparent 1px);
@@ -46,7 +54,8 @@
   background-position: calc(var(--cw) / 2) calc(var(--ch) / 2);
   transition: opacity var(--dur-quick) var(--ease-std);
 }
-.cvg[data-gesture] .cvg-lattice {
+.cvg[data-gesture] .cvg-lattice,
+.cvg[data-place] .cvg-lattice {
   opacity: 1;
 }
 
@@ -223,6 +232,15 @@
   font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
   color: var(--fg-muted);
+}
+
+/* the caret line (C2b call 6): a note being written, standing in the cell the
+   click landed in and in the document nowhere until its first words. It is the
+   one slot whose height is its CONTENT's: an empty note is a caret, and a cell
+   of air under it would be a box drawn around nothing (the note's own rule,
+   .note-box) */
+.cvg-draft {
+  height: auto;
 }
 
 /* the page's one live region (AGENT-UX section 12: one per zone), written
