@@ -459,7 +459,7 @@ first and one note last; a direct question gets one result and no note. Write th
 Call canvas_read before writing into a canvas that already holds blocks, and replace a block you wrote yourself when new work supersedes it rather than
 writing a second one beside it. A question that asks to change data is answered in this reply exactly as before, never as a block. When the blocks are
 written, finish HERE with one sentence naming what you wrote and no \`\`\`sql block: each result's assumptions ride that block, so no Assumptions line
-is needed here.`;
+is needed here. A further canvas_create opens a second canvas, when the question asks for one rather than for this one.`;
   if (outline.length === 0) return head;
   // the ids are the replace handles, and the lines are what stops the model
   // writing what already stands. Rendered by the tool layer's own outlineLine,
@@ -470,4 +470,21 @@ is needed here.`;
   // wrong column count is a guess; a caller with no grid to read leaves it off
   const wide = columns === undefined ? "" : `, ${columnsSaid(columns)} wide`;
   return `${head}\nOUTLINE OF "${title}" (${count}${wide}):\n${outline.map(outlineLine).join("\n")}`;
+}
+
+/** The create-only block (D1 item 10b, AGENT-SPEC 5.1): the run has NO canvas
+ * to describe and the question asked for one, so `canvasMessage`'s paragraph
+ * has nothing to be about and this one sentence stands in its place, riding
+ * the user message in the same slot, last.
+ *
+ * One sentence: the one tool this run is offered and the one thing to do with
+ * it next. No outline follows it, there being nothing yet to outline, and no
+ * block grammar either - `canvas_write`'s own schema carries that, and the
+ * model reads it at the moment it has a canvas to use it on (DESIGN rule 11).
+ *
+ * It is absent whenever `canvas_create` is not offered, which is every run the
+ * eval measures: the no-target message stays byte-identical (EVAL 4). */
+export function canvasCreateMessage(): string {
+  return `
+CANVAS: the question names one, so call canvas_create with a short title to open it, then canvas_write your findings into it once it exists.`;
 }

@@ -114,7 +114,7 @@ import { useTabs } from "../stores/tabs";
 import { kindTools, type BlockTool } from "../canvas/blockTools";
 import { Chart } from "../canvas/Chart";
 import { DiffFace } from "../canvas/DiffFace";
-import type { BlockFace, ChartSpec, Diff } from "../stores/canvas";
+import type { BarsFit, BlockFace, ChartSpec, Diff } from "../stores/canvas";
 import { AnswerText } from "./AnswerText";
 import { copiedRowsCue, finished, resultTsv } from "./resultCopy";
 import { isScalarRun, ScalarResult } from "./ScalarResult";
@@ -154,15 +154,21 @@ export function statementFromRun(run: AgentRun, sql: string | null): StatementSt
   };
 }
 
-/** the SQL at the caret of the active query tab, through the editor's own
+/** the SQL appended to the active query tab, through the editor's own
  * dispatch (the SchemaTree precedent: the editor bundle is lazy, so the seam
  * is reached by import). A table tab active means no editor is mounted, and a
  * silent no-op reads as broken, so a fresh query tab takes the text and the
- * cue says which happened (LESSONS 9) */
+ * cue says which happened (LESSONS 9).
+ * D1 item 1: the landing is the buffer's END, not its caret. A whole
+ * statement dropped at the caret splits whatever the caret was inside, and
+ * the caret is wherever the user last left it, which is not where they were
+ * looking when they pressed Insert in another pane. Every Insert the pane
+ * offers is this one call (the block's cluster and the failure block's
+ * field), so the two cannot drift. */
 export function insertSql(text: string, tabTitle: string): void {
   void import("../editor/SqlEditor").then(({ editorInsert }) => {
     if (editorInsert.current) {
-      editorInsert.current(text);
+      editorInsert.current(text, "end");
       copyCueShow("Inserted");
     } else {
       useTabs.getState().newTab(text, tabTitle);
@@ -214,6 +220,11 @@ export interface ResultBlockProps {
   /** what the chart face draws, when the canvas offers one (the document
    * store decides whether a chart exists at all: `chartOf`) */
   chart?: ChartSpec | null;
+  /** and what that face measured when its box was too short for every row:
+   * the count belongs to the status line this block already has, so the face
+   * hands it up rather than printing a second line of its own (D1 item 6).
+   * The canvas is the only caller: a face in the pane is as tall as its rows */
+  onChartFit?: (fit: BarsFit | null) => void;
   /** the comparison standing on this block: the diff face's own rows */
   diff?: Diff | null;
   /** C2a: the cells this block stands on, when a grid gave it some. The faces
@@ -500,6 +511,7 @@ export function ResultBlock({
   prose,
   status,
   chart = null,
+  onChartFit,
   diff = null,
   span,
   lead,
@@ -684,7 +696,7 @@ export function ResultBlock({
         changed={pv.changed}
       />
     ) : face === "chart" && chart ? (
-      <Chart spec={chart} span={span} />
+      <Chart spec={chart} span={span} onFit={onChartFit} />
     ) : face === "diff" && diff ? (
       diff.capped ? null : <DiffFace diff={diff} />
     ) : face === "values" && scalar && run ? (

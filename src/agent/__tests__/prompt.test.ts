@@ -11,7 +11,7 @@
 // commit, deliberately, and re-baselines.
 
 import { describe, expect, test } from "bun:test";
-import { PROMPT_VERSION, SYSTEM_PROMPT, canvasMessage } from "../prompt";
+import { PROMPT_VERSION, SYSTEM_PROMPT, canvasCreateMessage, canvasMessage } from "../prompt";
 
 /** byte-equal across v1, v2, v3 and v4 */
 const MEASURED = [
@@ -124,7 +124,7 @@ describe("the canvas block", () => {
         "Call canvas_read before writing into a canvas that already holds blocks, and replace a block you wrote yourself when new work supersedes it rather than\n" +
         "writing a second one beside it. A question that asks to change data is answered in this reply exactly as before, never as a block. When the blocks are\n" +
         "written, finish HERE with one sentence naming what you wrote and no ```sql block: each result's assumptions ride that block, so no Assumptions line\n" +
-        "is needed here.",
+        "is needed here. A further canvas_create opens a second canvas, when the question asks for one rather than for this one.",
     );
   });
 
@@ -160,5 +160,23 @@ describe("the canvas block", () => {
     expect(PROMPT_VERSION).toBe("v4");
     expect(SYSTEM_PROMPT).not.toContain("CANVAS:");
     expect(SYSTEM_PROMPT).not.toContain("canvas");
+  });
+
+  // D1 item 10b: the run with no canvas and a question that names one gets
+  // neither the paragraph above (there is nothing to describe) nor silence
+  // (which is what left the maintainer's own question answered in the pane).
+  // One sentence, pinned the way the paragraph above is (AGENT-SPEC 5.1)
+  test("the create-only block is one sentence naming the one tool offered", () => {
+    expect(canvasCreateMessage()).toBe(
+      "\nCANVAS: the question names one, so call canvas_create with a short title to open it, " +
+        "then canvas_write your findings into it once it exists.",
+    );
+  });
+
+  test("it describes no canvas, since there is none: no outline, no shapes", () => {
+    const block = canvasCreateMessage();
+    expect(block).not.toContain("OUTLINE OF");
+    expect(block).not.toContain("the user is reading");
+    expect(block).not.toContain("canvas_replace");
   });
 });

@@ -446,22 +446,35 @@ const GridSlot = memo(function GridSlot({ block, cell, label, register, onAuto, 
   }, [cell]);
   useLayoutEffect(() => register(block.id, handle.current as SlotHandle), [block.id, register]);
 
-  // a note never clips and never scrolls: its cells follow its words. The
-  // words are measured where they are RENDERED (the store's own estimate is
-  // made of the markdown and the base cell, and this element may be wider),
-  // and the height goes back through the one `resize` every gesture uses, so
-  // what it displaces is displaced by the same rule
+  // a note's cells follow its words until a hand takes the corner. The words
+  // are measured where they are RENDERED (the store's own estimate is made of
+  // the markdown and the base cell, and this element may be wider), and the
+  // height goes back through the one `resize` every gesture uses, so what it
+  // displaces is displaced by the same rule.
+  //
+  // What is measured is the WORDS and never the box they stand in (D1 item 8):
+  // the box fills the cells now, so measuring it would answer with the height
+  // it was just given and no note would ever grow or shrink again. The box's
+  // own padding and hairline are read off it rather than retyped, so the two
+  // cannot drift (note.css owns those numbers)
   const autoH = block.kind === "note" && block.autoH === true;
   useLayoutEffect(() => {
     if (!autoH) return;
     const words = el.current?.querySelector<HTMLElement>(".note-body");
-    if (!words) return;
+    const inner = (words?.firstElementChild as HTMLElement | null) ?? words;
+    if (!words || !inner) return;
     let frame = 0;
     const measure = () => {
       const h = handle.current;
       if (!h) return;
       const title = el.current?.querySelector<HTMLElement>(".blk-q");
-      const px = words.offsetHeight + (title ? title.offsetHeight + PART_GAP : 0);
+      const box = getComputedStyle(words);
+      const chrome =
+        parseFloat(box.paddingTop) +
+        parseFloat(box.paddingBottom) +
+        parseFloat(box.borderTopWidth) +
+        parseFloat(box.borderBottomWidth);
+      const px = inner.offsetHeight + chrome + (title ? title.offsetHeight + PART_GAP : 0);
       const cells = cellsForPx(px);
       if (cells !== h.cell.h) onAuto(block.id, { w: h.cell.w, h: cells });
     };
@@ -473,7 +486,7 @@ const GridSlot = memo(function GridSlot({ block, cell, label, register, onAuto, 
         measure();
       });
     });
-    ro.observe(words);
+    ro.observe(inner);
     return () => {
       ro.disconnect();
       if (frame) cancelAnimationFrame(frame);

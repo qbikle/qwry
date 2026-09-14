@@ -185,26 +185,63 @@ export interface AgentTools {
 // renderer. Nothing here touches a store or Tauri; canvas.tauri.ts runs the SQL
 // and hands the blocks to the document (AGENT-SPEC section 2 rule 2).
 
-/** The three canvas schemas, from the same file the five come from. Offered
- * ONLY with a target (toolsFor): the tool list is prompt surface (EVAL.md
- * section 4), so a run without one must present the byte-identical five, and a
- * tool the model can see but that always refuses is W7's prose spiral with a
- * new name. There is no canvas_create and no canvas_delete (canvas-agent-spec
- * section 1.1): the target is captured in the tool, so writing outside it has
- * no wire representation, and a delete stays the user's own keypress. */
+/** The canvas schemas, from the same file the five come from. The three that
+ * WRITE are offered only with a target (toolsFor): the tool list is prompt
+ * surface (EVAL.md section 4), so a run without one must present the
+ * byte-identical five, and a tool the model can see but that always refuses is
+ * W7's prose spiral with a new name. `canvas_create` is the fourth and the one
+ * that needs no target, because it is how a run gets one (D1 item 10); there
+ * is still no canvas_delete, which stays the user's own keypress. */
 export const CANVAS_TOOL_SCHEMAS: readonly ToolSchema[] = schema.canvasTools;
 
-export const CANVAS_TOOL_NAMES: readonly CanvasToolName[] = [
+/** The tool that MAKES a canvas (D1 item 10b). Its name is declared here
+ * rather than beside the three (types.ts `CanvasToolName`) because the two
+ * lists answer different questions: those three are what a run with a target
+ * writes with, and this is what a run without one may still be offered. */
+export type CanvasMakeName = "canvas_create";
+export const CANVAS_CREATE: CanvasMakeName = "canvas_create";
+export type AnyCanvasToolName = CanvasToolName | CanvasMakeName;
+
+export const CANVAS_TOOL_NAMES: readonly AnyCanvasToolName[] = [
   "canvas_write",
   "canvas_replace",
   "canvas_read",
+  CANVAS_CREATE,
 ];
 
-/** The array a run hands its provider: the five, plus the canvas family when
- * the exchange has a target. ONE gate for both halves of the prompt surface,
- * so a message can never describe tools it does not offer. */
-export const toolsFor = (canvas: boolean): ToolSchema[] =>
-  canvas ? [...TOOL_SCHEMAS, ...CANVAS_TOOL_SCHEMAS] : [...TOOL_SCHEMAS];
+/** The word, whole, in any case: `analyse this in a canvas` says it, and so
+ * does `Canvas please`; `canvases` and `canvas_write` do not. ONE home for it,
+ * read by the app's own create route (stores/agent `aimCanvas`) and by the
+ * offer of canvas_create below, so the door the user opens and the door the
+ * model is shown can never disagree about the word (DESIGN rule 14). */
+const SAYS_CANVAS = /\bcanvas\b/i;
+export const saysCanvas = (text: string): boolean => SAYS_CANVAS.test(text);
+
+/** What a canvas tool answers before there is a canvas (D1 item 10b): the run
+ * may MAKE one and has not yet, so the three that write refuse in one sentence
+ * that names the way out (LESSONS 9). One string, read by the driven path and
+ * by the `claude -p` bridge, because it is one fact (DESIGN rule 14). */
+export const CANVAS_NOT_MADE =
+  "ERROR: there is no canvas for this answer. Call canvas_create to make one";
+
+/** The three that WRITE, and the one that MAKES, as two lists: AGENT-SPEC
+ * 5.1 gates them on two different conditions. Filtered off the file rather
+ * than indexed into it, so a schema file without one of them offers nothing
+ * for it instead of throwing (LESSONS 5). */
+const CANVAS_WRITERS = CANVAS_TOOL_SCHEMAS.filter((s) => s.name !== CANVAS_CREATE);
+const CANVAS_MAKER = CANVAS_TOOL_SCHEMAS.filter((s) => s.name === CANVAS_CREATE);
+
+/** The array a run hands its provider, and the ONE gate for both halves of
+ * the prompt surface, so a message can never describe tools it does not offer
+ * and no tool is offered that nothing implements: the five, plus the three
+ * that write when the run has a TARGET, plus canvas_create when it may make
+ * one. 5, 6 or 9 (AGENT-SPEC 5.1), and a run that is neither of those things
+ * presents exactly the measured five (EVAL section 4). */
+export const toolsFor = (canvas: boolean, create = false): ToolSchema[] => [
+  ...TOOL_SCHEMAS,
+  ...(canvas ? CANVAS_WRITERS : []),
+  ...(create ? CANVAS_MAKER : []),
+];
 
 /** Rows of a canvas result echoed back to the MODEL: enough to write the note
  * truthfully, never enough to be a second run_sql (probe's own number). */
@@ -355,6 +392,36 @@ export interface CanvasTools {
   serve?(onWrite: (result: CanvasWriteResult) => void): () => void;
 }
 
+/** What `canvas_create` hands back (D1 item 10b): the reply the model reads,
+ * and the tools fixed to the canvas it just made. The tools are RETURNED
+ * rather than kept here, because a tool object is fixed to one canvas at
+ * construction and the run is what owns which canvas it is writing to
+ * (canvas-agent-spec section 4 item 7). `tools` is null on a refusal, which is
+ * every reply where nothing was made. */
+export interface CanvasMade {
+  outcome: ToolOutcome<CanvasOutline>;
+  tools: CanvasTools | null;
+}
+
+/** The one door that MAKES a canvas, offered to a run that already carries a
+ * target or whose question says the word (`toolsFor`, `saysCanvas`).
+ * Implemented once, over the document, in canvas.tauri.ts, and ABSENT on a
+ * platform with no canvas at all: the eval passes none, so its tools array
+ * stays the measured five whatever a bench question happens to say (EVAL
+ * section 4). */
+export interface CanvasMaker {
+  make(args: unknown): Promise<CanvasMade>;
+  /** the `claude -p` bridge for a run whose canvas may not exist yet: ONE
+   * registration for the whole exchange, answering canvas_create itself and
+   * every other canvas call with the tools that stand at that moment.
+   * `onMade` is how the new target reaches the loop on that path, exactly as
+   * `onWrite` is how block ids do. Absent on a platform with no bridge. */
+  serve?(
+    onWrite: (result: CanvasWriteResult) => void,
+    onMade: (tools: CanvasTools) => void,
+  ): () => void;
+}
+
 // ---- validating what the model wrote ---------------------------------------
 //
 // Every refusal names the way out (LESSONS 9). `ERROR: <first line>` is the
@@ -389,6 +456,24 @@ export const columnsSaid = (columns: number): string =>
   `${columns} ${columns === 1 ? "column" : "columns"}`;
 
 const PLACE_ADVICE = "Read the grid off canvas_read, or leave it off and the canvas places the block";
+
+/** A canvas's own NAME, capped where a thread's title is (stores/agent
+ * `TITLE_CAP`, 80): both are a line of words a tab has to wear, and one number
+ * for the two (AGENT-SPEC 5.1). Not `CANVAS_TITLE_CAP`, which is a result
+ * BLOCK's title inside a canvas and a different thing. */
+export const CANVAS_NAME_CAP = 80;
+
+/** canvas_create's one argument. The title names the canvas AND its tab, so it
+ * is required: a canvas called nothing is one the user cannot find again. */
+export function parseCanvasTitle(args: unknown): Parsed<string> {
+  const a = obj(args);
+  const title = a ? str(a.title) : null;
+  if (!title) return bad("ERROR: `canvas_create` needs `title`, what the canvas is called");
+  if (title.length > CANVAS_NAME_CAP) {
+    return overCap("title", title.length, CANVAS_NAME_CAP, "Name what it collects in a few words");
+  }
+  return { ok: true, value: title.trim() };
+}
 
 /** A block's `at` and `span`: absent, or whole cells. A number OUT OF RANGE is
  * not refused here, because the canvas clamps it and the reply says so

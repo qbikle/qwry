@@ -34,12 +34,13 @@
 //! `renderDescribe` in `src/agent/context.ts` and `formatRun` in
 //! `src/agent/tools.tauri.ts` line for line. Change one, change both.
 //!
-//! The CANVAS family (`canvas_write`, `canvas_replace`, `canvas_read`) is the
-//! one exception, and deliberately: those three are advertised here and
-//! implemented nowhere here. `agent_canvas.rs` parks the call and the app
-//! applies it in TypeScript, which is the only place the block shape, the row
-//! caps, the block ids and the result texts live. Mirroring three more tools
-//! would double this file's largest debt (canvas-agent-spec §1.7).
+//! The CANVAS family (`canvas_write`, `canvas_replace`, `canvas_read`, and
+//! `canvas_create`) is the one exception, and deliberately: those four are
+//! advertised here and implemented nowhere here. `agent_canvas.rs` parks the
+//! call and the app applies it in TypeScript, which is the only place the block
+//! shape, the row caps, the block ids, the canvas a create opens and the result
+//! texts live. Mirroring them here would double this file's largest debt
+//! (canvas-agent-spec §1.7).
 //!
 //! A tool answers with a `ToolReply`: text, and at most one image beside it.
 //! Only `canvas_read` on a drawing fills the second half today, and only the
@@ -48,8 +49,9 @@
 //!
 //! Which tools a token serves is fixed when it is minted: `agent_mcp_serve`
 //! takes the list the loop handed its provider, so a thread with no canvas
-//! target serves the five and a model that has no canvas to write into is
-//! never shown a tool that would refuse it (§1.6).
+//! target serves the five, or the five and `canvas_create` when its question
+//! asked for a canvas, and a model that has no canvas to write into is never
+//! shown a tool that would refuse it (§1.6, D1 item 10b).
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -1333,7 +1335,7 @@ mod tests {
     }
 
     /// The canvas family is advertised from the same file, under its own key,
-    /// and the names it advertises are the three the bridge routes: a fourth
+    /// and the names it advertises are the four the bridge routes: a fifth
     /// name in the file would be a tool the child can see and this side
     /// answers with the unknown-tool error.
     #[test]
@@ -1363,6 +1365,7 @@ mod tests {
             "canvas_write",
             "canvas_replace",
             "canvas_read",
+            "canvas_create",
         ]);
         let served = tools_for(Some(&all));
         let expected: Vec<&str> = FIVE
@@ -1994,6 +1997,7 @@ mod tests {
             "canvas_write",
             "canvas_replace",
             "canvas_read",
+            "canvas_create",
         ]);
         let endpoint = endpoint_serving("session-canvas", Arc::new(FakeTools), Some(&all));
 
@@ -2040,9 +2044,31 @@ mod tests {
             "canvas_write {\"blocks\":[{\"kind\":\"note\",\"text\":\"August held\"}]}"
         );
 
+        // and the fourth name routes over the same one event, which is the
+        // whole of what this side does with it (D1 item 10b)
+        let made: serde_json::Value = post(
+            &endpoint,
+            &endpoint.token,
+            rpc(
+                4,
+                "tools/call",
+                serde_json::json!({ "name": "canvas_create", "arguments": {"title": "Orders"} }),
+            ),
+        )
+        .await
+        .json()
+        .await
+        .expect("tools/call json");
+        assert_ne!(made["result"]["isError"], serde_json::json!(true));
+        assert_eq!(
+            made["result"]["content"][0]["text"],
+            "canvas_create {\"title\":\"Orders\"}"
+        );
+
         let log = agent_mcp_log(endpoint.token.clone()).await.expect("log");
-        assert_eq!(log.len(), 1);
+        assert_eq!(log.len(), 2);
         assert_eq!(log[0].tool, "canvas_write");
+        assert_eq!(log[1].tool, "canvas_create");
         agent_mcp_stop(endpoint.token.clone()).await.expect("stop");
     }
 

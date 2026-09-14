@@ -9,7 +9,10 @@
 // keep their marker in tier 2 and their items 4px apart, with no clamp: a
 // clipped answer lies (LESSONS 9), so the two-line cap on a bullet is the
 // prompt's ask and the presentation score's check, never the renderer's
-// knife. A quote is a hairline rule and tier 2; a non-SQL code block is the
+// knife. The marker is the item's own first cell rather than a ::marker (D1
+// item 5: an ordinal right-aligned in a fixed gutter, so `1.` and `70.` end
+// on one edge instead of hanging off the answer's left side), which takes
+// the list's semantics with the UA's markers and gives them back as a role. A quote is a hairline rule and tier 2; a non-SQL code block is the
 // editor register (mono, panel-inset, wraps, no highlighting); a table the
 // model drew for itself, with no run to restate, is the app's one grid
 // species in readOnly mode, header plus up to six rows, the shape
@@ -119,7 +122,20 @@ function block(b: Block, i: number): ReactNode {
       );
     case "list": {
       const items = b.items.map((it, j) => <li key={j}>{inline(it)}</li>);
-      return b.ordered ? <ol key={key}>{items}</ol> : <ul key={key}>{items}</ul>;
+      // the marker is drawn in the item's own gutter cell (ask.css: a fixed
+      // gutter is the only way `1.` and `70.` end on one edge), which costs
+      // `list-style: none`, and WebKit drops a list's semantics with its
+      // markers. `role="list"` puts them back, so the answer is still a list
+      // of n items to a screen reader (section 12)
+      return b.ordered ? (
+        <ol key={key} role="list">
+          {items}
+        </ol>
+      ) : (
+        <ul key={key} role="list">
+          {items}
+        </ul>
+      );
     }
     case "quote":
       return <blockquote key={key}>{inline(b.text)}</blockquote>;

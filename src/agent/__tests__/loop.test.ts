@@ -20,6 +20,7 @@ import {
   TOOL_NAMES,
   TOOL_SCHEMAS,
   type AgentTools,
+  type CanvasMaker,
   type CanvasOutlineEntry,
   type CanvasTools,
   type ToolOutcome,
@@ -1403,7 +1404,14 @@ describe("the canvas gate", () => {
     const { tools: canvas } = canvasStub();
     const { offered } = await oneAsk({ canvas });
     expect(offered).toHaveLength(8);
-    expect(offered.map((t) => t.name)).toEqual([...TOOL_NAMES, ...CANVAS_TOOL_NAMES]);
+    // the ninth, canvas_create, rides the door this run was given rather than
+    // the target it has (D1 item 10b), and this run was given none
+    expect(offered.map((t) => t.name)).toEqual([
+      ...TOOL_NAMES,
+      "canvas_write",
+      "canvas_replace",
+      "canvas_read",
+    ]);
   });
 
   test("the CANVAS block rides the user message once, and rides LAST", async () => {
@@ -1416,7 +1424,9 @@ describe("the canvas gate", () => {
     expect(message.split("CANVAS:")).toHaveLength(2);
     expect(message.indexOf("RISK CHECK REQUIRED")).toBeLessThan(message.indexOf("CANVAS:"));
     expect(message.indexOf("WRITES:")).toBeLessThan(message.indexOf("CANVAS:"));
-    expect(message.trimEnd()).toEndWith("is needed here.");
+    expect(message.trimEnd()).toEndWith(
+      "A further canvas_create opens a second canvas, when the question asks for one rather than for this one.",
+    );
   });
 
   test("the outline rides the block when the canvas holds blocks, and not when it is empty", async () => {
@@ -1449,6 +1459,225 @@ describe("the canvas gate", () => {
     expect(rec.requests[0].tools).toEqual([]);
     const first = rec.requests[0].messages[0];
     expect("content" in first ? (first.content ?? "") : "").not.toContain("CANVAS:");
+  });
+});
+
+// ---- canvas_create: the door to a canvas the run did not start with --------
+//
+// D1 item 10b. The app opens a connection's FIRST canvas from the word
+// (stores/agent `aimCanvas`); every later question that asks for one arrives
+// with no target at all, and this is how the model answers it. The offer is
+// the gate, exactly as the target is for the other three: a question that says
+// nothing about a canvas is offered nothing, and its array is the measured
+// five to the byte (EVAL section 4).
+
+/** A CanvasMaker whose create hands back tools fixed to what it made. */
+function makerStub() {
+  const asked: unknown[] = [];
+  const wrote: unknown[] = [];
+  const fresh: CanvasTools = {
+    canvasId: "cv-new",
+    title: "Orders",
+    outline: () => [],
+    async write(args) {
+      wrote.push(args);
+      return {
+        textForModel: 'Wrote 1 block to "Orders".',
+        result: { canvasId: "cv-new", blockIds: ["n1"], replaced: 0 },
+      };
+    },
+    async replace() {
+      return { textForModel: "Replaced nothing.", result: null };
+    },
+    async read() {
+      return {
+        textForModel: 'Canvas "Orders" is empty, 7 columns wide.',
+        result: { canvasId: "cv-new", title: "Orders", columns: 7, blocks: [] },
+      };
+    },
+  };
+  const maker: CanvasMaker = {
+    async make(args) {
+      asked.push(args);
+      return {
+        outcome: {
+          textForModel: 'Canvas "Orders" is empty, 7 columns wide.',
+          result: { canvasId: "cv-new", title: "Orders", columns: 7, blocks: [] },
+        },
+        tools: fresh,
+      };
+    },
+  };
+  return { maker, asked, wrote, fresh };
+}
+
+describe("canvas_create", () => {
+  const NO_CANVAS = "How many films are in the database?";
+  const SAYS = "put the film counts in a canvas";
+  const createCall = call("c1", "canvas_create", { title: "Orders" });
+
+  const offer = async (over: Partial<Parameters<typeof runAsk>[0]> = {}) => {
+    const rec: Recorded = { calls: [], requests: [] };
+    await ask(scripted([[{ text: "one line." }, done("stop")]], rec), tools(rec), over);
+    const first = rec.requests[0].messages[0];
+    return {
+      names: rec.requests[0].tools.map((t) => t.name),
+      offered: rec.requests[0].tools,
+      message: "content" in first ? (first.content ?? "") : "",
+    };
+  };
+
+  test("no target and no word: the array is the measured five, to the byte", async () => {
+    const { maker } = makerStub();
+    const out = await offer({ question: NO_CANVAS, canvasNew: maker });
+    expect(out.offered).toEqual([...TOOL_SCHEMAS]);
+    expect(out.message).not.toContain("canvas");
+  });
+
+  test("no target but the word: six, and the create-only CANVAS block", async () => {
+    const { maker } = makerStub();
+    const out = await offer({ question: SAYS, canvasNew: maker });
+    expect(out.names).toEqual([...TOOL_NAMES, "canvas_create"]);
+    // there is no canvas to describe yet, so the block is the one sentence
+    // that names the tool and what to do with it next (AGENT-SPEC 5.1)
+    expect(out.message).toContain(
+      "CANVAS: the question names one, so call canvas_create with a short title to open it, " +
+        "then canvas_write your findings into it once it exists.",
+    );
+    // and nothing of the paragraph that describes a canvas the run is IN
+    expect(out.message).not.toContain("the user is reading a canvas called");
+  });
+
+  // the one widening (DESIGN rule 15, this wave's own request against
+  // AGENT-SPEC 5.1's "6"): `claude -p` mints its MCP token ONCE for the whole
+  // exchange, so a run that may create must carry the three that write from
+  // the start there, or the canvas a create opens is one the child cannot put
+  // a block into
+  test("a provider that owns its loop carries the three from the start", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const { maker } = makerStub();
+    await ask(scripted([[{ text: "one line." }, done("stop")]], rec, true), tools(rec), {
+      question: SAYS,
+      canvasNew: maker,
+      thread: { id: "t-1", firstCall: true },
+    });
+    expect(rec.requests[0].tools.map((t) => t.name)).toEqual([
+      ...TOOL_NAMES,
+      ...CANVAS_TOOL_NAMES,
+    ]);
+  });
+
+  test("the three that write refuse until the create lands, and name it", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const m = makerStub();
+    const { answer } = await ask(
+      scripted(
+        [
+          [
+            call("c1", "canvas_write", { blocks: [{ kind: "note", text: "early" }] }),
+            done("toolCalls"),
+          ],
+          [{ text: "one line." }, done("stop")],
+        ],
+        rec,
+      ),
+      tools(rec),
+      { question: SAYS, canvasNew: m.maker },
+    );
+    const step = answer.trace.find((s) => s.step === "tool");
+    expect(step && step.step === "tool" && step.result).toBe(
+      "ERROR: there is no canvas for this answer. Call canvas_create to make one",
+    );
+    expect(m.wrote).toEqual([]);
+  });
+
+  test("a target: the whole family, whatever the question says", async () => {
+    const { maker, fresh } = makerStub();
+    const out = await offer({ question: NO_CANVAS, canvas: fresh, canvasNew: maker });
+    expect(out.names).toEqual([...TOOL_NAMES, ...CANVAS_TOOL_NAMES]);
+  });
+
+  test("a platform with no canvas at all is never shown the door", async () => {
+    const out = await offer({ question: SAYS });
+    expect(out.offered).toEqual([...TOOL_SCHEMAS]);
+  });
+
+  test("the create re-targets the run: the next turn writes into the canvas it made", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const m = makerStub();
+    const { events } = await ask(
+      scripted(
+        [
+          [createCall, done("toolCalls")],
+          [
+            call("c2", "canvas_write", { blocks: [{ kind: "note", text: "a reading" }] }),
+            done("toolCalls"),
+          ],
+          [{ text: "One block is on Orders." }, done("stop")],
+        ],
+        rec,
+      ),
+      tools(rec),
+      { question: SAYS, canvasNew: m.maker },
+    );
+    expect(m.asked).toEqual([{ title: "Orders" }]);
+    // the turn that follows the create is offered the family for a run that
+    // now HAS a target: one variable answers the offer and the dispatch
+    expect(rec.requests[1].tools.map((t) => t.name)).toEqual([
+      ...TOOL_NAMES,
+      ...CANVAS_TOOL_NAMES,
+    ]);
+    // and the write went to the canvas the create made, not to a refusal
+    expect(m.wrote).toHaveLength(1);
+    expect(events.filter((e) => e.type === "canvasTarget")).toEqual([
+      { type: "canvasTarget", canvasId: "cv-new", title: "Orders" },
+    ]);
+    expect(events.filter((e) => e.type === "canvasWrite")).toEqual([
+      { type: "canvasWrite", canvasId: "cv-new", blockIds: ["n1"], replaced: 0 },
+    ]);
+  });
+
+  test("the strip reads `canvas` for it and the trace keeps its own name", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const m = makerStub();
+    const { events, answer } = await ask(
+      scripted(
+        [
+          [createCall, done("toolCalls")],
+          [{ text: "The canvas is open." }, done("stop")],
+        ],
+        rec,
+      ),
+      tools(rec),
+      { question: SAYS, canvasNew: m.maker },
+    );
+    const step = answer.trace.find((s) => s.step === "tool");
+    expect(step && step.step === "tool" && step.name).toBe("canvas_create");
+    expect(events.find((e) => e.type === "toolStart")).toMatchObject({
+      name: "run_sql",
+      label: "canvas",
+    });
+  });
+
+  test("a run that was not offered it reads the unknown tool, and makes nothing", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const m = makerStub();
+    const { answer } = await ask(
+      scripted(
+        [
+          [createCall, done("toolCalls")],
+          [{ text: "one line." }, done("stop")],
+        ],
+        rec,
+      ),
+      tools(rec),
+      { question: NO_CANVAS, canvasNew: m.maker },
+    );
+    const step = answer.trace.find((s) => s.step === "tool");
+    expect(step && step.step === "tool" && step.result).toBe(
+      "ERROR: unknown tool 'canvas_create'. Valid tools: list_tables, describe_tables, peek_values, run_sql, probe",
+    );
+    expect(m.asked).toEqual([]);
   });
 });
 

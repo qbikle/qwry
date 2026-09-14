@@ -80,4 +80,15 @@ describe("the MCP token serves the run's own tools", () => {
       ],
     ]);
   });
+
+  // D1 item 10b: the token a no-target run whose question asked for a canvas
+  // is minted with. The child can MAKE a canvas over it, which is what the
+  // array it was minted from said (the loop hands this path the three that
+  // write as well, because the token is minted once for the whole exchange;
+  // loop.test.ts pins that widening, this file pins the mint)
+  test("no target but the word: the five and canvas_create", async () => {
+    expect(await drain(toolsFor(false, true))).toEqual([
+      [...TOOL_NAMES, "canvas_create"],
+    ]);
+  });
 });

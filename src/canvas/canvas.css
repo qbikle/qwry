@@ -162,7 +162,8 @@
    gutter starts at the page's own left edge and 4px of air holds the plot off
    the title and the status line. */
 .cv-chart {
-  display: block;
+  display: flex;
+  flex-direction: column;
   padding: var(--sp-1) 0;
 }
 .cv-chart svg {
@@ -193,6 +194,12 @@
   display: grid;
   align-content: start;
   overflow: auto;
+  /* the grid takes the element's width and scrolls inside it, never the other
+     way round: `min-width: 0` is what lets a six-column compare against prod
+     give way instead of drawing 937px of grid inside a 482px element, and the
+     columns' own `minmax(0, …)` (DiffFace) is the other half of it */
+  min-width: 0;
+  max-width: 100%;
   font-family: var(--font-mono);
   font-size: var(--grid-fs, var(--text-sm));
   font-variant-numeric: tabular-nums;
@@ -208,10 +215,22 @@
   display: flex;
   align-items: center;
   height: 26px;
+  /* a track the element cannot afford gives way (DiffFace's own minmax), and
+     what the cell then cannot show ellipsizes rather than being cut mid-glyph:
+     the text rides its own block inside the row, since `text-overflow` on a
+     flex container says nothing about the items in it */
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+.cv-diff .dg-t,
+.cv-diff .dg-tri {
+  display: block;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  border-bottom: 1px solid var(--border);
 }
 .cv-diff .dg-r:last-child > * {
   border-bottom: none;

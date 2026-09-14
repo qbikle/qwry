@@ -134,7 +134,16 @@ const queryTab = (id: string): Tab =>
     kind: "query",
   }) as unknown as Tab;
 
-function seed(opts: { tabs?: Tab[]; activeId?: string | null; canvases?: { id: string; title: string }[] } = {}) {
+const tableInfo = (name: string) => ({
+  table_oid: name.length,
+  schema: "public",
+  name,
+  kind: "r" as const,
+  columns: [{ name: "id", attnum: 1, type: "int4", type_oid: 23, not_null: true, default: null }],
+  pk: ["id"],
+});
+
+function seed(opts: { tabs?: Tab[]; activeId?: string | null; canvases?: { id: string; title: string }[]; tables?: string[] } = {}) {
   cues = [];
   seen = [];
   writesBack = null;
@@ -152,7 +161,7 @@ function seed(opts: { tabs?: Tab[]; activeId?: string | null; canvases?: { id: s
     step: { step: "followups", ms: 1, prompt: "", text: "", questions: [] },
   });
   useSettings.setState(baseAgentSettings());
-  useSchema.setState({ snapshots: { [PID]: minimalSnapshot() } });
+  useSchema.setState({ snapshots: { [PID]: minimalSnapshot((opts.tables ?? []).map(tableInfo)) } });
   useConnections.setState({
     profiles: [{ id: PID, name: "staging" }] as unknown as Profile[],
     activeProfileId: PID,
@@ -275,6 +284,25 @@ describe("where a question's answer goes", () => {
     expect(cues).toEqual([]);
   });
 
+  // D1 item 10a. The route reads the question for the word and the mentions
+  // for a CANVAS pill, and a pill of any other kind is none of its business:
+  // the maintainer's own sentence tags a table and asks for a canvas in one
+  // breath. Pinned with a table that really resolves, because a tag the
+  // snapshot cannot resolve is no tag at all and would pin nothing
+  test("2 · a table pill in the question does not suppress the word", async () => {
+    seed({ tables: ["orders"] });
+    await useAgent.getState().ask("can you create a new canvas with insights from @orders");
+    const made = target();
+    expect(made).not.toBeNull();
+    expect(cues).toEqual(["New canvas"]);
+    expect(asked()[0].question).toBe(
+      `@"${made?.title}" can you create a new canvas with insights from @orders`,
+    );
+    // and the table is still a tag: the canvas pill was PREFIXED, not swapped
+    // in for what the user typed
+    expect(seen[0].mentions?.map((m) => m.kind)).toEqual(["canvas", "table"]);
+  });
+
   test("2 · a connection that already HAS a canvas gets no second one", async () => {
     seed({
       tabs: [canvasTab("t-b", "cv-b", "Canvas 4"), queryTab("t-q")],
@@ -355,6 +383,91 @@ describe("where a question's answer goes", () => {
     seen = [];
     await useAgent.getState().retry(asked()[0].id);
     expect(target()).toEqual({ canvasId: "cv-b", title: "Canvas 4" });
+  });
+});
+
+// ---- the canvas the MODEL makes (D1 item 10b) ------------------------------
+//
+// Route 2 opens a connection's FIRST canvas and no more, so every later
+// question that asks for one arrives with no target at all. `canvas_create` is
+// how it is answered: the store builds the door, the loop decides whether the
+// model is shown it, and the canvas it opens is opened through the same seam
+// route 2 uses (one door, DESIGN rule 14).
+
+describe("canvas_create, from the store's side", () => {
+  const hasDoor = () => "canvasNew" in seen[seen.length - 1];
+
+  test("the door rides a question that asks for a canvas, and no other", async () => {
+    seed();
+    await useAgent.getState().ask("how many orders came from each channel");
+    expect(hasDoor()).toBe(false);
+
+    // the screenshot's own shape: a connection that HAS a canvas, a question
+    // that asks for a new one, and no pill. Route 2 makes nothing here, and
+    // the model is the only one who can read that sentence
+    seed({
+      tabs: [canvasTab("t-b", "cv-b", "Canvas 4"), queryTab("t-q")],
+      activeId: "t-q",
+      canvases: [{ id: "cv-b", title: "Canvas 4" }],
+    });
+    await useAgent.getState().ask("can you create a new canvas with insights from orders");
+    expect(target()).toBeNull();
+    expect(hasDoor()).toBe(true);
+  });
+
+  test("a targeted run carries it too: a second canvas is the model's to ask for", async () => {
+    seed({
+      tabs: [canvasTab("t-b", "cv-b", "Canvas 4")],
+      activeId: "t-b",
+      canvases: [{ id: "cv-b", title: "Canvas 4" }],
+    });
+    await useAgent.getState().ask('@"Canvas 4" what stood out last month');
+    expect(hasDoor()).toBe(true);
+  });
+
+  test("it opens the canvas beside the user's tab, without taking focus", async () => {
+    seed({
+      tabs: [canvasTab("t-b", "cv-b", "Canvas 4"), queryTab("t-q")],
+      activeId: "t-q",
+      canvases: [{ id: "cv-b", title: "Canvas 4" }],
+    });
+    await useAgent.getState().ask("create a new canvas with the month over month");
+    const made = await seen[0].canvasNew!.make({ title: "Month over month" });
+    expect(made.tools?.title).toBe("Month over month");
+    const tabs = useTabs.getState();
+    // the reader stays where they are, exactly as route 2 leaves them
+    expect(tabs.activeId).toBe("t-q");
+    expect(tabs.tabs.some((t) => t.canvas_id === made.tools?.canvasId)).toBe(true);
+    expect(useCanvas.getState().canvases[PID].map((c) => c.title)).toContain(
+      "Month over month",
+    );
+  });
+
+  test("the canvas the model made is the one the exchange records", async () => {
+    seed({
+      tabs: [canvasTab("t-b", "cv-b", "Canvas 4"), queryTab("t-q")],
+      activeId: "t-q",
+      canvases: [{ id: "cv-b", title: "Canvas 4" }],
+    });
+    runner.runAsk = async (req) => {
+      req.onEvent?.({ type: "canvasTarget", canvasId: "cv-made", title: "Month over month" });
+      req.onEvent?.({
+        type: "canvasWrite",
+        canvasId: "cv-made",
+        blockIds: ["b1", "b2"],
+        replaced: 0,
+      });
+      return answeredRun(req);
+    };
+    await useAgent.getState().ask("create a new canvas with the month over month");
+    // the title comes from the re-target and not from the send, which resolved
+    // no canvas at all (LESSONS 13: one authority per fact)
+    expect(asked()[0].canvasWrites).toEqual({
+      canvasId: "cv-made",
+      blockIds: ["b1", "b2"],
+      title: "Month over month",
+      replaced: 0,
+    });
   });
 });
 

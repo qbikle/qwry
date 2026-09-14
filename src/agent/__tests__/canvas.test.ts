@@ -20,6 +20,7 @@ import {
   CANVAS_ECHO_ROWS,
   CANVAS_EXCHANGE_MAX,
   CANVAS_HANDLE,
+  CANVAS_NAME_CAP,
   CANVAS_NOTE_CAP,
   CANVAS_TOOL_NAMES,
   CANVAS_TOOL_SCHEMAS,
@@ -32,6 +33,7 @@ import {
   parseCanvasBlock,
   parseCanvasBlocks,
   resolveHandle,
+  saysCanvas,
   toolsFor,
   type CanvasOutlineEntry,
 } from "../tools";
@@ -53,7 +55,7 @@ interface WireSchema {
   tools: { name: string }[];
   canvasTools: {
     name: string;
-    parameters: { properties: Record<string, Json> };
+    parameters: { properties: Record<string, Json>; required?: string[] };
   }[];
 }
 interface Json {
@@ -73,15 +75,28 @@ describe("the tool surface B3 must not move", () => {
     expect(createHash("sha256").update(five).digest("hex")).toBe(FIVE_SHA);
   });
 
-  test("canvasTools names exactly the three, in file order", () => {
+  test("canvasTools names exactly the four, in file order", () => {
     expect(CANVAS_TOOL_SCHEMAS.map((s) => s.name)).toEqual([...CANVAS_TOOL_NAMES]);
-    expect([...CANVAS_TOOL_NAMES]).toEqual(["canvas_write", "canvas_replace", "canvas_read"]);
+    // canvas_create is LAST (D1 item 10b): the three that write keep the
+    // order and the bytes they were measured in, and the one that makes a
+    // canvas is appended after them
+    expect([...CANVAS_TOOL_NAMES]).toEqual([
+      "canvas_write",
+      "canvas_replace",
+      "canvas_read",
+      "canvas_create",
+    ]);
   });
 
-  test("no create and no delete: neither is representable", () => {
+  test("no delete: it is not representable, and the create takes no canvas id", () => {
     const names = [...TOOL_SCHEMAS, ...CANVAS_TOOL_SCHEMAS].map((s) => s.name);
-    expect(names.some((n) => n.includes("create"))).toBe(false);
     expect(names.some((n) => n.includes("delete"))).toBe(false);
+    // deleting a canvas stays the user's own keypress; MAKING one is the
+    // model's door to the canvas the app opened none for (D1 item 10)
+    expect(names.filter((n) => n.includes("create"))).toEqual(["canvas_create"]);
+    const create = wire.canvasTools[3];
+    expect(Object.keys(create.parameters.properties)).toEqual(["title"]);
+    expect(create.parameters.required).toEqual(["title"]);
   });
 
   test("no tool takes a canvas id", () => {
@@ -142,6 +157,11 @@ describe("the tool surface B3 must not move", () => {
     expect(blocks.minItems).toBe(1);
     const note = arms(blocks.items as Json)[0].properties as Json;
     expect((note.text as Json).maxLength).toBe(CANVAS_NOTE_CAP);
+    // and the canvas's own NAME, where a thread's title is capped
+    expect(CANVAS_NAME_CAP).toBe(80);
+    expect((wire.canvasTools[3].parameters.properties.title as Json).maxLength).toBe(
+      CANVAS_NAME_CAP,
+    );
   });
 });
 
@@ -155,7 +175,41 @@ describe("toolsFor is the gate", () => {
   test("a target: eight, the five first, in file order", () => {
     const offered = toolsFor(true);
     expect(offered).toHaveLength(8);
+    expect(offered.map((s) => s.name)).toEqual([
+      ...TOOL_NAMES,
+      "canvas_write",
+      "canvas_replace",
+      "canvas_read",
+    ]);
+  });
+
+  // D1 item 10b: the door to a canvas is offered on its own condition, so a
+  // platform that has no door is never shown one (a tool the model can see and
+  // nothing implements is W7's prose spiral with a new name)
+  test("a target and the door: nine, the create last", () => {
+    const offered = toolsFor(true, true);
     expect(offered.map((s) => s.name)).toEqual([...TOOL_NAMES, ...CANVAS_TOOL_NAMES]);
+  });
+
+  // AGENT-SPEC 5.1: five, six or nine. The three that WRITE gate on a target
+  // by themselves, unmoved; only the door to a canvas is offered wider, and a
+  // run with no target has nothing for the three to act on yet
+  test("no target but the word: six, the create alone after the five", () => {
+    const offered = toolsFor(false, true);
+    expect(offered.map((s) => s.name)).toEqual([...TOOL_NAMES, "canvas_create"]);
+    expect(offered.slice(0, 5)).toEqual([...TOOL_SCHEMAS]);
+  });
+
+  test("neither is still the five, to the byte", () => {
+    expect(toolsFor(false, false)).toEqual([...TOOL_SCHEMAS]);
+    expect(toolsFor(false)).toEqual([...TOOL_SCHEMAS]);
+  });
+
+  test("saysCanvas is the word, whole, in any case", () => {
+    expect(saysCanvas("put this in a canvas")).toBe(true);
+    expect(saysCanvas("Canvas please")).toBe(true);
+    expect(saysCanvas("how many canvases do we sell")).toBe(false);
+    expect(saysCanvas("call canvas_write")).toBe(false);
   });
 });
 
@@ -344,10 +398,11 @@ describe("the MCP bridge, both sides", () => {
     "utf8",
   );
 
-  test("the three tool names are the same three", () => {
-    expect(rust).toContain(
-      `CANVAS_TOOL_NAMES: [&str; 3] = ["${CANVAS_TOOL_NAMES.join('", "')}"]`,
-    );
+  test("the four tool names are the same four", () => {
+    // the Rust const is written over four lines; the names and their order are
+    // what crosses, so the pin reads them rather than the formatting
+    for (const name of CANVAS_TOOL_NAMES) expect(rust).toContain(`"${name}",`);
+    expect(rust).toContain(`CANVAS_TOOL_NAMES: [&str; ${CANVAS_TOOL_NAMES.length}]`);
   });
 
   test("the timeout is one number", () => {

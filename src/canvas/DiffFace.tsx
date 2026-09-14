@@ -18,6 +18,12 @@
 // The grid is the results grid's register drawn statically (200 rows is the
 // cap, so there is nothing here for the virtualizer): the raised header, the
 // 52px row-number gutter, 26px rows, mono cells.
+//
+// D1: every column gives way where the element cannot hold it, so the cells
+// ellipsize and the grid scrolls inside its own box; a six-column compare
+// against prod used to draw 937px of grid inside a 482px element. What a
+// narrowed cell then cannot finish saying, its tooltip says in full, through
+// the one formatter that also prints the marks (`triText`).
 
 import { TriangleAlert } from "lucide-react";
 import type { Diff, DiffCell } from "../stores/canvas";
@@ -29,6 +35,18 @@ const ROW_H = 26;
 const HEADER_H = 30;
 
 const delta = (d: number) => `${d >= 0 ? "+" : "-"}${Math.abs(d).toFixed(1)}%`;
+
+/** the triple as TEXT: `731 · 748 · +2.3%`, the same three parts the cell
+ * draws, in the same order, with the same separator. It is what the cell's own
+ * tooltip says, because a cell narrow enough to ellipsize is a cell whose
+ * numbers a reader cannot finish reading (D1 item 9), and a formatter is what
+ * keeps `[object Object]` untypeable there. One derivation, so the tooltip and
+ * the marks can never disagree (DESIGN rule 14) */
+export function triText(cell: DiffCell): string {
+  const parts = [cell.a ?? "∅", cell.b ?? "∅"];
+  if (cell.delta !== null) parts.push(delta(cell.delta));
+  return parts.join(" · ");
+}
 
 /** one cell: both sides and the change, or `∅` for a side with no row */
 function Tri({ cell }: { cell: DiffCell }) {
@@ -54,8 +72,13 @@ export function DiffFace({ diff }: { diff: Diff }) {
   // not a grid. The labels and every numeric column but the last size to their
   // content; the last takes the slack, so a narrow diff fills the block and a
   // wide one scrolls inside it (the results grid's own bargain)
+  // every column is `minmax(0, max-content)`: it takes what its content needs
+  // and, where the element cannot give it that, it gives WAY, so the cells
+  // ellipsize and the grid scrolls inside its own box. A bare `max-content`
+  // has no lower bound, which is what let a six-column compare against prod
+  // draw 937px of grid inside a 482px element (D1 item 9)
   const cols = diff.labelColumns.length + diff.numericColumns.length;
-  const template = `52px ${"max-content ".repeat(Math.max(0, cols - 1))}minmax(max-content, 1fr)`;
+  const template = `52px ${"minmax(0, max-content) ".repeat(Math.max(0, cols - 1))}minmax(0, 1fr)`;
   return (
     <div
       className="cv-diff"
@@ -67,7 +90,7 @@ export function DiffFace({ diff }: { diff: Diff }) {
       <span className="dg-h dg-n" />
       {[...diff.labelColumns, ...diff.numericColumns].map((c) => (
         <span className="dg-h dg-c" key={c}>
-          {c}
+          <span className="dg-t">{c}</span>
         </span>
       ))}
       {diff.rows.map((row, i) => (
@@ -76,11 +99,11 @@ export function DiffFace({ diff }: { diff: Diff }) {
           {row.labels.map((v, li) => (
             <span className={`dg-c${li === 0 ? " dg-key" : ""}`} key={diff.labelColumns[li]}>
               {li === 0 && row.only && <TriangleAlert size={12} />}
-              {v}
+              <span className="dg-t">{v}</span>
             </span>
           ))}
           {row.cells.map((cell, ci) => (
-            <span className="dg-c" key={diff.numericColumns[ci]}>
+            <span className="dg-c" key={diff.numericColumns[ci]} title={triText(cell)}>
               <Tri cell={cell} />
             </span>
           ))}

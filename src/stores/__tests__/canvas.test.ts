@@ -667,17 +667,44 @@ describe("compare", () => {
     expect(resultAt(out.canvasId, 0).face).toBe("table");
   });
 
-  test("a failure says why, keeps the block as it was, and closes the session", async () => {
+  // D1 item 9: the driver's own sentence became the status line's own grammar,
+  // naming the connection that refused; the face stays where it was and the
+  // refusal stands under it, on the block, until the next compare answers
+  test("a failure says why on the block, keeps the face as it was, and closes the session", async () => {
     const out = useCanvas.getState().addExchange("staging", exchange());
     if (!out.ok) throw new Error("add failed");
+    const face = resultAt(out.canvasId, 0).face;
     runFails = "ERROR: relation \"orders\" does not exist";
     calls = [];
     const verdict = await useCanvas.getState().compare(out.canvasId, out.blockId, "prod");
     expect(verdict.ok).toBe(false);
-    if (!verdict.ok) expect(verdict.message).toContain("does not exist");
+    if (!verdict.ok) expect(verdict.message).toBe("table orders is not on prod");
     expect(calls.map((c) => c.cmd)).toContain("disconnect");
     expect(resultAt(out.canvasId, 0).diff).toBeUndefined();
+    expect(resultAt(out.canvasId, 0).face).toBe(face);
+    expect(resultAt(out.canvasId, 0).mismatch).toBe("table orders is not on prod");
+    expect(statusOf(resultAt(out.canvasId, 0))?.facts).toContain("table orders is not on prod");
     expect(useCanvas.getState().comparing[out.blockId]).toBeUndefined();
+  });
+
+  test("a comparison that lands clears the refusal the last one left", async () => {
+    const out = useCanvas.getState().addExchange("staging", exchange());
+    if (!out.ok) throw new Error("add failed");
+    runFails = "ERROR: relation \"orders\" does not exist";
+    await useCanvas.getState().compare(out.canvasId, out.blockId, "prod");
+    expect(resultAt(out.canvasId, 0).mismatch).toBeDefined();
+    runFails = null;
+    runResult = {
+      columns: ["payment_status", "orders"],
+      rows: [["paid", "479"]],
+      rowCount: 1,
+      row_count: 1,
+      capped: false,
+      ms: 12,
+    };
+    const verdict = await useCanvas.getState().compare(out.canvasId, out.blockId, "prod");
+    expect(verdict.ok).toBe(true);
+    expect(resultAt(out.canvasId, 0).mismatch).toBeUndefined();
   });
 
   test("a block deleted while the query ran is not written back (LESSONS 3)", async () => {

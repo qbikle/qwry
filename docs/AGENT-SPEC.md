@@ -323,15 +323,89 @@ tool call (§8.9).
 Three more tools, offered only when the exchange carries a resolved canvas
 target (`AskRequest.canvas`, AGENT-UX §16l): `canvas_write({ blocks: [1..6],
 after? })` appends, `canvas_replace({ block_id, block })` replaces one block
-in place, `canvas_read({})` returns the target's outline. No `canvas_create`
-and no delete tool exist: the target is resolved by the store before the run
-(§2, LESSONS 3) and is unrepresentable to the model — no tool takes a canvas
-id or a title — so a canvas the user did not ask for is not merely
-forbidden, it has no wire shape to ask for it in. Deleting a person's block
-is the user's own act (`⌫` on a focused block, AGENT-UX §16b);
-`canvas_replace` refuses to empty a block (an empty `note.text` is an error,
-never a delete) so the model cannot delete by emptying either. Model-facing
-tools: **5 → 8**.
+in place, `canvas_read({})` returns the target's outline. The target is
+resolved by the store before the run (§2, LESSONS 3) and is unrepresentable
+to the model on these three — no tool takes a canvas id — so a canvas the
+model wants to WRITE INTO is never one it names, only one the user, or its
+own `canvas_create` below, already opened.
+
+**A fourth tool, `canvas_create({ title })` (D1, 2026-09-14, AGENT-UX
+§16l), closes the one door that stayed shut: making a canvas at all.**
+Offered wider than the three above, on ONE more condition than a target:
+the exchange carries a resolved target, OR the question contains the whole
+word "canvas" (any case) — the SAME test AGENT-UX §16l item 4 already runs
+at the app layer, run again here because that app-side route only ever
+opens a connection's FIRST canvas (item 4's own rule: it never re-targets
+one that already exists), so a question naming "canvas" on a connection
+that already holds one used to reach the model with no target and no way
+to make a new one, answered inline instead of on a canvas (the
+maintainer's own screenshot). `canvas_create` takes no id, only a title
+(capped at `CANVAS_NAME_CAP`, 80, the same number a thread's own title
+already takes, `tools.ts`: both wear a tab, one number for the two — never
+`CANVAS_TITLE_CAP`, the SEPARATE, longer cap a result block's own title
+inside a canvas takes, a different line in a different place, §5.1's own
+title rule below): it creates a NEW canvas through the store
+exactly as the app's own word-route does (`create(profileId, title)`),
+opens its tab beside the exchange's own current tab WITHOUT switching the
+pane's focus off Ask (the SAME no-steal rule), and returns the outline
+`canvas_read` would for it, empty (§5.1, below).
+
+**It is the one canvas tool allowed to change what the OTHER three act on
+for the rest of this exchange, and it is the only one.** LESSONS 3's rule —
+the target is captured once at construction and never re-read from a STORE
+after an await — is unmoved and is not what this describes: a successful
+`canvas_create` call writes its own new canvas id into the exchange's own
+`canvasId` binding at the moment the call returns, the tool's OWN result,
+never a second read of external state, and `toolsFor` (below) evaluates
+that binding fresh on every turn from here, the same way it already
+evaluates `req.canvas` fresh at construction. On a HOSTED provider,
+`canvas_write`, `canvas_replace` and `canvas_read` join the array from the
+NEXT turn onward once there is something for them to act on, since the
+array a turn is offered is computed fresh each turn (§7). **`claude -p` is
+the one exception, because its MCP tool list is minted ONCE for the whole
+exchange (§7): the three that write are pre-offered beside `canvas_create`
+from turn one whenever this run may create at all, and refuse in one
+sentence, `CANVAS_NOT_MADE` (`ERROR: there is no canvas for this answer.
+Call canvas_create to make one`), until a create actually lands — never a
+silent no-op, LESSONS 9's own way-out rule.** Either path, no canvas tool
+succeeds on the SAME call that made its target: a hosted turn does not yet
+offer the writers, and a `claude -p` call that tries one before creating
+reads the refusal above. **A SECOND `canvas_create` call in the same
+exchange opens a SECOND canvas and re-targets the run to it: this answer
+writes into the last canvas it made from then on** (the tool's own schema
+description states this to the model directly, and the CANVAS block's
+sentence 11, below, names it for a run that already has a target). It is
+the case AGENT-UX §16l's own finding is about: a connection that already
+holds a canvas and a question that asks for a NEW one, where a refusal
+would answer the user's own words with "this answer already has a canvas."
+A refusal was built first, on the ground that a loop which can open tabs is
+a loop that can bury a user in them; what bounds it instead is the turn cap
+and the offer itself, since only a run whose question names a canvas, or
+which already has one, is shown the tool at all. No `canvas_create`
+call outlives its own exchange: the NEXT exchange's tools are computed
+fresh from the connection's own state, never from what a prior exchange
+happened to leave standing.
+
+No delete tool exists, for any of the four: deleting a canvas is not this
+wave's question, only creating one where none was addressable was.
+Deleting a person's block is the user's own act (`⌫` on a focused block,
+AGENT-UX §16b); `canvas_replace` refuses to empty a block (an empty
+`note.text` is an error, never a delete) so the model cannot delete by
+emptying either. Model-facing tools: **5** (no target, question names no
+"canvas") **→ 6** (no target, question names "canvas": the base five plus
+`canvas_create` alone) **→ 9** (a target already stands: the base five, the
+three the target always offered, and `canvas_create` last — the array's
+file order, `toolsFor`, so the eight-tool prefix B3 measured never moves). **The 6 is the
+one count a provider can widen: a provider that OWNS its loop is handed one
+array for the whole exchange (`claude -p` mints its MCP token once, above),
+so a run that may create carries the three that write from the start there
+— 9 from turn one, refusing in `CANVAS_NOT_MADE`'s words until a create
+lands; every other provider is offered 5, 6 or 9 exactly as counted.** The FIRST of
+those three is the eval's own case (EVAL §4): its bench questions carry no
+canvas target and name no "canvas," so neither of `canvas_create`'s two
+conditions is ever true for it, and its tools array — length 5, same order
+— and its message both stay byte-identical to before this section, the
+same pin B3 made and this section does not reopen.
 
 The block the model may write is the SAME union AGENT-UX §16 already ships,
 **two kinds, not three**: a `metric` variant was drafted in research and is
@@ -380,22 +454,41 @@ A `result` block's `sql` reaches PostgreSQL through the SAME door as
 refused statement lands NO block, the refusal text returned to the model
 verbatim, first line, exactly as a write sent to `run_sql` is refused.
 
-**The gate is the tool array itself, one boolean, both provider paths**
-(§7): `AskRequest` gains `canvas?: CanvasTools`, resolved before the
-exchange's first await (LESSONS 3); `tools: toolsFor(!!req.canvas)` (`5` or
-`5 + 3`, the five always first, in file order) is what an HTTP provider is
-handed, so a no-target run is gated by construction, and the `claude -p`
-path is gated the same way through the per-token MCP tool list (§7). The
-unknown-tool error lists only the names actually offered, so a no-target
-run's refusal text stays byte-identical to before this wave. One
-implementation: `src/agent/canvas.tauri.ts` (new; the second `*.tauri.ts`
-file under `src/agent/` besides `tools.tauri.ts` / `platform.tauri.ts`, so
-rule 2's placement test still holds — it is the only file of its kind
-allowed to import a store). The target's `canvasId` is captured once at
-construction and never re-read from a store after an await (LESSONS 3): the
-model cannot name a canvas, so "write outside the target" has no wire
-representation at all. Block ids are minted here, once; the store never
-mints an id for a model-written block, and Rust never mints one either (§7).
+**The gate is the tool array itself, both provider paths** (§7): `AskRequest`
+gains `canvas?: CanvasTools`, resolved before the exchange's first await
+(LESSONS 3); `tools: toolsFor(!!canvas || (canMake && req.provider.ownsLoop),
+canMake)`, where `canMake = !!req.canvasNew && (!!canvas ||
+saysCanvas(req.question))` — the question's own word AND the platform's own
+door, since a platform with no canvas hands over no `canvasNew` and its runs
+can never be offered the maker at all (EVAL §4's pin made structural, not
+left to depend on what a bench question happens to say). The predicate is
+`saysCanvas`, not `mentionsCanvas`: in this codebase a *mention* is the `@`
+ladder, and a canvas MENTION is AGENT-UX §16l's route 1, the opposite of
+this word route; one regex, one home (`tools.ts`), imported by
+`stores/agent.ts` so the app's door and the model's door read the same test.
+The result (`5`, `6` or `9`, the five always first, in file order,
+`canvas_create` last of the canvas family when it is offered at all — which
+keeps B3's measured 8-tool prefix and Rust's own "five first, then
+`canvasTools` in file order" pin intact) is what an
+HTTP provider is handed, so a no-target, no-word run is gated by
+construction exactly as a no-target run always was, and the `claude -p`
+path is gated the same way through the per-token MCP tool list (§7). **D1
+widens the gate from one boolean to two, `hasTarget` and `saysCanvas`,
+ORed for `canvas_create` alone**: the other three still gate on `hasTarget`
+by itself, unmoved. The unknown-tool error lists only the names actually
+offered, so a no-target, no-word run's refusal text stays byte-identical to
+before this wave. One implementation: `src/agent/canvas.tauri.ts` (new; the
+second `*.tauri.ts` file under `src/agent/` besides `tools.tauri.ts` /
+`platform.tauri.ts`, so rule 2's placement test still holds — it is the
+only file of its kind allowed to import a store). The target's `canvasId`
+is captured once at construction and never re-read from a STORE after an
+await (LESSONS 3): the model cannot name an EXISTING canvas by id, so
+"write outside the target" still has no wire representation at all;
+`canvas_create`'s own carve-out (above) is a write to that SAME binding
+from the tool call's own result, not a store read, and is the one stated
+exception LESSONS 3 always allowed for state a call itself just produced.
+Block ids are minted here, once; the store never mints an id for a
+model-written block, and Rust never mints one either (§7).
 
 **The `$ref` question is resolved, no.** `tools.schema.json` carries no
 `$ref` and no `$defs` anywhere. Every schema, canvas or not, is
@@ -441,7 +534,9 @@ reverse):
 > answered in this reply exactly as before, never as a block. When the
 > blocks are written, finish HERE with one sentence naming what you
 > wrote and no ```sql block: each result's assumptions ride that
-> block, so no Assumptions line is needed here.
+> block, so no Assumptions line is needed here. A further canvas_create
+> opens a second canvas, when the question asks for one rather than for
+> this one.
 
 A canvas that already holds blocks appends its OUTLINE under the paragraph,
 one line per block, rendered by the tool layer's own `outlineLine` so this
@@ -470,7 +565,37 @@ the model reads it; 10 keeps the pane's summary exchange to one line
 assumption rule below patches the labels onto the block after the verdict
 regardless of what the closing sentence says. Amended 2026-09-09 against the
 shipped bytes (the paragraph above was a pre-build draft; its own rule is
-that the shipped text wins).
+that the shipped text wins). **Sentence 11, appended D1 (2026-09-14, not in
+the ten the accounting above describes, since it postdates the shipped v4
+bytes those numbers were written against): names `canvas_create` in the ONE
+sentence AGENT-UX §16l's own finding asks for, so a model already targeting
+one canvas is never left to guess it may open another when the question
+asks for one.**
+
+**The create-only message, no target (D1, 2026-09-14).** When
+`canvas_create` is offered WITHOUT the other three — no target, the
+question names "canvas" — there is no existing canvas to describe, so
+`canvasMessage`'s own paragraph does not apply and a second, shorter frozen
+text takes its place, `canvasCreateMessage()` (`prompt.ts`), riding the
+user message the same way, last, quoted whole:
+
+> CANVAS: the question names one, so call canvas_create with a short
+> title to open it, then canvas_write your findings into it once it
+> exists.
+
+One sentence, naming the one tool offered and the one thing to do with it
+next; no outline follows it, there being nothing yet to outline. The
+moment `canvas_create` succeeds, the NEXT turn is offered the full nine
+(above), but the USER MESSAGE does not move: it is built once, before the
+run's first await, and the same bytes go to the model and to the trace
+(§8.4), so the create-only sentence stands for the rest of the exchange and
+`canvasMessage`'s paragraph is never sent on a run that began without a
+target. What the model then reads about the canvas it just made is the
+create's own reply, the outline `canvas_read` would return; the block
+grammar it writes against is `canvas_write`'s own schema. A mid-run swap
+was considered and refused: a provider that OWNS its loop takes no message
+from this loop at all (§7, `claude -p`, the app's default), so the swap
+would be a rule that held on the HTTP path and nowhere else.
 
 **Assumptions on a model-written result block.** The loop does not parse the
 model's `Assumptions:` line until after the verdict (§4.6), so after it, the
@@ -705,8 +830,10 @@ order (§5.1's gate, the other half of it). Every `claude -p` spawn already
 calls `mcpServer` once per exchange and revokes the token in the adapter's
 own `finally` (item 3 above), so a per-token list is per-exchange with no
 new lifetime to manage: `platform.tauri.ts`'s `mcpServer` passes
-`req.tools.map(t => t.name)` — the same array `toolsFor(!!req.canvas)`
-already computed for the HTTP path (§5.1) — straight through, so the token
+`req.tools.map(t => t.name)` — the same array `toolsFor` (D1, 2026-09-14:
+two arguments now, §5.1, and `claude -p` is the one provider whose first
+argument may be true on a run that has no target YET) already computed for
+this run — straight through, so the token
 this exchange holds can never serve a superset of what the HTTP providers
 were handed. `agent_mcp.rs` parses `tools.schema.json`'s new `canvasTools`
 sibling key beside its existing `tools` (`tools_for(names)`, `None` =>
@@ -714,14 +841,22 @@ sibling key beside its existing `tools` (`tools_for(names)`, `None` =>
 one field on the struct — is the `Vec` `list_tools` answers from, never the
 file-wide global.
 
-**Rust holds zero canvas semantics.** The three canvas tool names are
-dispatched through one new trait method, `McpToolBackend::canvas_call(name,
-args_json) -> ToolText`, and `SessionBackend`'s implementation is a BRIDGE,
-not a mirror: today's five tools are already mirrored line-for-line in Rust
-(item 3's own ~470-line debt, "change one, change both"), and mirroring
-three more — block-id minting, chart availability, the canvas document's own
-rules — would double it and hand the two copies a fresh way to drift on the
-next cap change. Instead: `canvas_call` mints a `call_id`, parks a
+**Rust holds zero canvas semantics.** The canvas tool names — three, now
+FOUR with `canvas_create` (D1, 2026-09-14) — are dispatched through one new
+trait method, `McpToolBackend::canvas_call(name, args_json) -> ToolText`,
+and `SessionBackend`'s implementation is a BRIDGE, not a mirror: today's
+five tools are already mirrored line-for-line in Rust (item 3's own
+~470-line debt, "change one, change both"), and mirroring the canvas ones
+too — block-id minting, chart availability, the canvas document's own
+rules, now canvas creation itself — would double it and hand the two
+copies a fresh way to drift on the next cap change. Routing is by name, not
+by semantics, and generic across all four: `agent_canvas.rs`'s own
+`CANVAS_TOOL_NAMES` constant (`agent_mcp.rs`'s `dispatch` checks
+`CANVAS_TOOL_NAMES.contains(&canvas) && self.serves(canvas)` before it ever
+reaches `canvas_call`) is a plain array of tool names — three today — and
+`canvas_create` joining it is the WHOLE Rust-side change this section asks
+for: no new match arm, no new semantics, the same generic bridge routing a
+fourth name exactly as it already routes the first three. Instead: `canvas_call` mints a `call_id`, parks a
 `tokio::sync::oneshot::Sender<ToolText>` in a process-wide pending map,
 emits `canvas-tool-call { call_id, session_id, name, args_json }` on the
 app's existing event bus (the shape `commands.rs` already uses), and awaits
@@ -993,11 +1128,16 @@ has no tab to name it, there is no target, and the route is honestly
     and a canvas result block reads the connection the thread is already
     on, its provenance structural (the canvas belongs to a profile, §9) and
     the chrome speaking for the data's origin (LESSONS 4). The model cannot
-    address a canvas: no tool takes a canvas id (captured once, at
-    `createCanvasTools`'s construction, from the target resolved before the
-    exchange's first await, LESSONS 3, §5.1), no tool creates or deletes
-    one (§5.1), and with no target no canvas tool exists at all — the array
-    a provider is handed IS the gate (§5.1, §7). Row caps: 5 rows echoed to
+    ADDRESS a canvas: no tool takes an EXISTING canvas's id (captured once,
+    at `createCanvasTools`'s construction, from the target resolved before
+    the exchange's first await, LESSONS 3, §5.1), and no tool deletes one.
+    It can CREATE one, narrowly (`canvas_create`, D1, 2026-09-14, §5.1), and
+    that tool's own row-write is the SAME `canvas_upsert` a person's `New
+    Canvas` already takes — no new Rust path for creation either, the
+    bridge routes it by name exactly as the other three (§7). With neither
+    a target nor the word "canvas" in the question, no canvas tool of any
+    of the four exists at all — the array a provider is handed IS the gate
+    (§5.1, §7). Row caps: 5 rows echoed to
     the model per block, 200 kept on the document (§5.1, the one number
     both `Add to Canvas` and a model write now share), 6 blocks a call, 8
     an exchange; the statement timeout is the thread's own (item 2).
@@ -1071,11 +1211,27 @@ and ends the exchange without executing it (`sql` set, `run` null); and
 query tab. `row_count` on a `ran` row is the rows affected the TAB reported,
 never the dry run's `exact_rows` (§8.8): the two can differ (a concurrent
 writer between preview and Run), and only the tab's own number is what the
-user watched happen (LESSONS 13). No new table and no migration exist to
-track commit state itself this wave: the tab's own transaction is the only
-record of whether a `ran` row is committed, rolled back or still open
-(AGENT-UX §13.6's `uncommitted`), so a reload mid-transaction reads `ran`
-with no way to ask the tab what it later decided.
+user watched happen (LESSONS 13). **`status` gains two MORE values once a
+`ran` row's own transaction closes (D1, 2026-09-14, closing the gap this
+paragraph once accepted): `committed` or `rolled_back`, written the instant
+the `useConnections` subscriber that stamps `Exchange.ranTx` in memory
+(AGENT-UX §13.6) sees `txTabs[key]` flip false, through the SAME full-row
+upsert `ran` already used (`agent_answer_put`) — no new command, no new
+column, no migration, since the column was always a bare TEXT and
+`proposed`/`ran` were prose convention, never a database CHECK. The
+persisted spelling (`rolled_back`) is not `ranTx`'s own in-memory spelling
+(`rolledback`): one shape in memory, a different one on disk, and exactly
+ONE map between them (`TX_STATUS` / `txFromStatus`, `stores/agent.ts`), so
+the two can never drift apart through a second, uncoordinated conversion
+(LESSONS 11).** A CHANGE's status is therefore one of four, in the order it
+moves through them: `proposed | ran | committed | rolled_back`; the other
+four spellings this column carries (`answered`, `failed`, `turn_cap`,
+`cancelled`) belong to a read and never meet a transaction. A transaction still open when the app
+closes, or one closed some route this pair does not track, leaves `status =
+'ran'` with nothing to distinguish, and a reload mid-transaction still
+reads `ran` with no way to ask the tab what it later decided — that half of
+the gap was never the finding, and it stays open on purpose (nothing closed
+the transaction for the app to have learned from).
 
 **Knowledge and saved checks (A2; appdb v8 — the merge left the number where
 the wave wrote it, A4 having added no migration, so the arm reads
@@ -1197,6 +1353,15 @@ already resolves nothing for an id no document holds, above). An older
 Restart's confirm counts the canvas blocks beside the questions it deletes:
 `Restart from Here?` · `The 2 questions after this one, their answers and 7
 canvas blocks will be deleted.` · `Delete 2 Questions` (AGENT-UX §16i).
+
+**Open (D1, 2026-09-14): a cut does not delete a canvas `canvas_create`
+made, only the blocks a `canvasWrites` entry names.** An exchange that
+CREATED a canvas (§5.1) and is later cut by a Restart leaves that canvas
+standing, empty or not, an orphan tab with no exchange left that made it;
+`canvasWrites` tracks blocks written into a canvas, never the fact that an
+exchange minted the canvas itself, and closing that gap (a `canvasCreated:
+canvasId` field beside `canvasWrites`, and a fourth rule for the three
+above) is carried forward rather than guessed at here.
 
 One new `AskEvent`, kinds 9 → 10 (`loop.ts`):
 `{ type: "canvasWrite"; canvasId: string; blockIds: string[] }`, emitted

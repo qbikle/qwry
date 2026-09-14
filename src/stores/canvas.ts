@@ -222,6 +222,16 @@ export interface ResultBlock extends BlockBase {
    * Ask it stays a way of looking (W7, never persisted) */
   face: BlockFace;
   diff?: Diff;
+  /** D1 item 9: a comparison this block could not be given, in the status
+   * line's own grammar (`table order_v2 is not on prod-crawler`). It stands as
+   * the last fragment of that line until the next compare answers, and the
+   * block keeps the face it was already on: a refusal is not a reason to take
+   * away the result the reader had.
+   *
+   * SESSION state riding the block, never the document: `writeDoc` drops it at
+   * the door, so a reload never brings back a refusal whose cause may since
+   * have been fixed (LESSONS 5: cached data may inform, never refuse) */
+  mismatch?: string;
 }
 
 export interface NoteBlock extends BlockBase {
@@ -415,13 +425,40 @@ export function defaultFace(block: Block): BlockFace {
   return facesOf(block)[0];
 }
 
+/** what a squeezed chart face drew, counted by the layout that drew it
+ * (Chart.tsx `barLayout`): the rows that fit, of the rows there are. */
+export interface BarsFit {
+  shown: number;
+  total: number;
+}
+
+/** `8 of 12 bars`: the status register's own `200 of 1,842 rows` (AGENT-UX
+ * 16a item 4), said of bars */
+export const barsShown = (fit: BarsFit): string => `${fit.shown} of ${fit.total} bars`;
+
 /** the status line's parts. A comparison replaces the run's facts with the
- * diff's own, because the two sides are what the block now states. */
-export function statusOf(block: Block): StatusLine | null {
+ * diff's own, because the two sides are what the block now states.
+ *
+ * `bars` is what the chart face measured when its box was too short for every
+ * row (D1 item 6). It takes the ROW fragment's place rather than standing
+ * beside it: a row of a bar chart is a bar, so `12 rows · 7 of 12 bars` would
+ * be the same twelve twice (DESIGN rule 14). The run's own milliseconds are
+ * unmoved, read from the same `ms` the stored line was built from. */
+export function statusOf(block: Block, bars?: BarsFit | null): StatusLine | null {
   if (block.kind !== "result") return null;
   const assumed = block.chips;
   const d = block.diff;
-  if (!d) return { facts: block.status, sides: [], assumed };
+  // a comparison that could not be made rides this line's own last fragment,
+  // once (DESIGN rule 14): the face it was refused from is still standing and
+  // the run's own facts are still true, so nothing else moves for it
+  if (!d) {
+    const ran = bars ? `${barsShown(bars)} · ${msText(block.ms)}` : block.status;
+    return {
+      facts: block.mismatch ? `${ran} · ${block.mismatch}` : ran,
+      sides: [],
+      assumed,
+    };
+  }
   return {
     facts: d.capped ? `over ${DIFF_ROW_CAP} rows` : rowsText(d.rows.length),
     sides: [
@@ -532,9 +569,55 @@ export function contentSizeOf(block: Block, width?: number): ContentSize {
   };
 }
 
+/** the part of a chart block that is NOT the plot: its title line, its status
+ * line and the gaps between the two (canvas.css `.blk > * + *`), plus the
+ * model's own sentence when it wrote one. The engine's own table carries the
+ * first three as one 64px allowance; the prose it never saw, because
+ * `ContentSize.lines` reaches `defaultSpan` for a table and not for a chart */
+const CHART_CHROME = 64;
+/** the tallest a bar's row ever grows to, however much height it is given
+ * (Chart.tsx `PITCH_MAX`). Asking for more than the plot will use is how a
+ * chart opens a row taller than anything in it; the test that pins the two
+ * together asks the drawing itself (canvas/__tests__/Chart.test.ts) */
+const CHART_PITCH_MAX = 40;
+
+/** what a bar chart's rows need in px, and what they need when squeezed: one
+ * row per label, `ns` bars inside it, and a legend from two series (Chart.tsx
+ * `barLayout`, the same three numbers read from the same place). The engine
+ * sizes a ONE-series chart and nothing else (grid.ts `defaultSpan`: `24 * n`
+ * is a single bar's own pitch), so a chart of two or three series opened three
+ * rows tall and drew all of them anyway, through its own status line and into
+ * the element below it. */
+export function chartPx(spec: ChartSpec, lines: number): number {
+  const ns = Math.min(spec.series.length, CHART_MAX_SERIES);
+  const legend = ns > 1 ? 24 : 0;
+  const pitch = Math.min(CHART_PITCH_MAX, ns === 1 ? 24 : ns * 8 + (ns - 1) * 3 + 12);
+  return legend + spec.labels.length * pitch + CHART_CHROME + 20 * Math.max(0, lines);
+}
+
+/** the rows a bar chart's own content asks for, or null where the question
+ * does not apply (a line plot fills whatever height it is given, and a face
+ * that is not a chart is the engine's business). Capped at the tallest default
+ * any kind on this page takes, the note's six: past that a chart draws the
+ * rows that fit and says how many they are (Chart.tsx), which is the honest
+ * answer for a 40-bar reading and a better one than a widget eleven rows tall */
+const CHART_ROWS_MAX = 6;
+
+function chartRows(block: Block, width: number | undefined): number | null {
+  if (block.kind !== "result" || spanKeyOf(block) !== "chart") return null;
+  const spec = chartOf(block);
+  if (!spec || spec.kind !== "bars") return null;
+  const w = width ?? block.cell?.w ?? DEFAULT_SPAN.chart.w;
+  const lines = block.prose ? noteLines(block.prose, w) : 0;
+  return Math.min(CHART_ROWS_MAX, cellsForPx(chartPx(spec, lines)));
+}
+
 /** the size this block opens at, its content read at the width it will stand at */
-export const defaultSpanFor = (block: Block, width?: number): Span =>
-  defaultSpan(spanKeyOf(block), contentSizeOf(block, width));
+export const defaultSpanFor = (block: Block, width?: number): Span => {
+  const span = defaultSpan(spanKeyOf(block), contentSizeOf(block, width));
+  const rows = chartRows(block, width);
+  return rows === null ? span : { w: span.w, h: Math.max(span.h, rows) };
+};
 
 /** the floor this block stands on: no resize, by hand or by key, goes under it.
  * A drawing's floor GROWS with its ink, so a shrink stops at the strokes'
@@ -666,7 +749,12 @@ export function writeDoc(doc: CanvasDoc): string {
   const out: CanvasDoc = {
     ...doc,
     v: 2,
-    blocks: laidOut(doc.blocks, columns),
+    // a refused comparison is a fact about a press, never about the document
+    // (D1 item 9): it rides the block in memory and leaves at this door, so a
+    // reload never restates a refusal whose cause may since have been fixed
+    blocks: laidOut(doc.blocks, columns).map((b) =>
+      b.kind === "result" && b.mismatch !== undefined ? { ...b, mismatch: undefined } : b,
+    ),
   };
   return JSON.stringify(out);
 }
@@ -724,6 +812,28 @@ export const parseDoc = (json: string, columns = COLUMNS_FALLBACK): CanvasDoc | 
 
 export type DiffOutcome = { ok: true; diff: Diff } | { ok: false; message: string };
 
+/** what a driver said, in the status line's own grammar (D1 item 9). A
+ * comparison is refused far more often for a plain reason than for an obscure
+ * one — the table is not on the other connection, or a column is not — and the
+ * plain reasons are exactly the ones Postgres states in a sentence of its own
+ * making (`relation "public.order_v2" does not exist`). Read the object out of
+ * that sentence and the line reads as this app's own: `table order_v2 is not
+ * on prod-crawler`. Anything else keeps the driver's own first line, prefixed
+ * with the side that said it, because inventing a friendlier sentence for an
+ * error nobody here has read is how a status line starts lying (LESSONS 9). */
+const RELATION_GONE = /relation "([^"]+)" does not exist/i;
+const COLUMN_GONE = /column "?([^"\s]+)"? does not exist/i;
+
+export function compareMismatch(name: string, raw: string): string {
+  const line = raw.split("\n")[0].trim();
+  const bare = (q: string) => q.split(".").pop() ?? q;
+  const rel = RELATION_GONE.exec(line);
+  if (rel) return `table ${bare(rel[1])} is not on ${name}`;
+  const col = COLUMN_GONE.exec(line);
+  if (col) return `column ${bare(col[1])} is not on ${name}`;
+  return line ? `${line} on ${name}` : `${name} could not run this query`;
+}
+
 /** the key separator: a value the database cannot have put inside a label,
  * so two label columns can never collide into one key by accident */
 const KEY_SEP = "\u0000";
@@ -746,7 +856,7 @@ export function buildDiff(args: {
 }): DiffOutcome {
   const { columns, aRows, bColumns, bRows } = args;
   if (bColumns.length !== columns.length || bColumns.some((c, i) => c !== columns[i]))
-    return { ok: false, message: "the other connection returned different columns" };
+    return { ok: false, message: `${args.b.name} returned different columns` };
 
   const { labels, numbers } = columnKinds(columns, [...aRows, ...bRows]);
   if (numbers.length === 0)
@@ -995,11 +1105,15 @@ interface CanvasState {
    * "canvas" on a connection that has none gets one: the document is created
    * and its tab opens BESIDE the user's without taking focus, so the reader
    * stays where they are while the answer lands where it was sent, and the
-   * caller prefixes the question's own pill and cues `New canvas`. The MODEL
-   * never creates a canvas: it has no tool for one and no canvas id to name
-   * (canvas-agent-spec 1.1, 3.2). A Send is the press, the same consent Add
-   * to Canvas has always asked for */
-  openForQuestion: (profileId: string) => { canvasId: string; title: string };
+   * caller prefixes the question's own pill and cues `New canvas`. A Send is
+   * the press, the same consent Add to Canvas has always asked for.
+   *
+   * D1 item 10b: `canvas_create` is the model's own door to this same seam,
+   * for the question that asks for a canvas on a connection that already has
+   * one (where the route above opens nothing, by design). The model NAMES it,
+   * which is the only difference: one door, so the tab a question opens is
+   * opened the same way whoever asked for it (DESIGN rule 14). */
+  openForQuestion: (profileId: string, title?: string) => { canvasId: string; title: string };
   /** the palette's `New Note`: the keyboard route onto an empty canvas, whose
    * only other door is a click on the card (A3 item 6) */
   newNote: () => void;
@@ -1529,6 +1643,15 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     const aRows = block.rows;
     const secs = useSettings.getState().statementTimeoutSecs;
     const timeoutMs = secs > 0 ? secs * 1000 : RUN_SQL_TIMEOUT_MS;
+    /** a refusal lands on the BLOCK, as the last fragment of the status line it
+     * already stands under (D1 item 9), and the face stays where it was: the
+     * reader keeps the result they had and reads why they did not get a second
+     * one. The outcome still carries the line, so a caller that wants to say it
+     * somewhere else is saying the same words */
+    const said = (message: string): CompareOutcome => {
+      patch(canvasId, blockId, (blk) => (blk.kind === "result" ? { ...blk, mismatch: message } : blk));
+      return { ok: false, message };
+    };
 
     set((s) => ({ comparing: { ...s.comparing, [blockId]: true } }));
     let session: string | null = null;
@@ -1548,14 +1671,16 @@ export const useCanvas = create<CanvasState>((set, get) => ({
         a,
         b: { ...b, ms: run.ms },
       });
-      if (!built.ok) return built;
+      if (!built.ok) return said(built.message);
       const diff = built.diff;
+      // the comparison stands, so whatever a previous one could not do stops
+      // being true: one fact, one slot, and the slot is emptied by the answer
       patch(canvasId, blockId, (blk) =>
-        blk.kind === "result" ? { ...blk, diff, face: "diff" } : blk,
+        blk.kind === "result" ? { ...blk, diff, face: "diff", mismatch: undefined } : blk,
       );
       return { ok: true };
     } catch (e) {
-      return { ok: false, message: firstLine(e) };
+      return said(compareMismatch(b.name, firstLine(e)));
     } finally {
       set((s) => ({ comparing: without(s.comparing, blockId) }));
       if (session) void disconnect(session).catch(() => {});
@@ -1564,8 +1689,8 @@ export const useCanvas = create<CanvasState>((set, get) => ({
 
   clearCompare: (canvasId, blockId) => {
     patch(canvasId, blockId, (b) => {
-      if (b.kind !== "result" || !b.diff) return b;
-      const { diff: _gone, ...rest } = b;
+      if (b.kind !== "result" || (!b.diff && !b.mismatch)) return b;
+      const { diff: _gone, mismatch: _said, ...rest } = b;
       // the diff stood in the table's place; the table is what it goes back to
       return { ...rest, face: b.face === "diff" ? "table" : b.face };
     });
@@ -1592,11 +1717,13 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     useTabs.getState().openCanvasTab(id, titleOf(id), true);
   },
 
-  openForQuestion: (profileId) => {
-    const canvasId = get().create(profileId);
-    const title = titleOf(canvasId);
-    useTabs.getState().openCanvasTab(canvasId, title, false);
-    return { canvasId, title };
+  openForQuestion: (profileId, title) => {
+    // a title the caller named is the document's; with none, the numbered
+    // default the create itself picks (`Canvas`, `Canvas 2`, …)
+    const canvasId = get().create(profileId, title);
+    const named = titleOf(canvasId);
+    useTabs.getState().openCanvasTab(canvasId, named, false);
+    return { canvasId, title: named };
   },
 
   newNote: () => {
@@ -1620,8 +1747,8 @@ export const useCanvas = create<CanvasState>((set, get) => ({
       useTabs.getState().openCanvasTab(id, titleOf(id), true);
     }
     // an empty sheet STANDS where an empty note leaves: paper is a place to
-    // draw and the element says so (drawing.css data-empty), where an empty
-    // note is a caret and nothing at all
+    // draw and the sheet says so by being one (drawing.css .dw-sheet), where
+    // an empty note is a caret and nothing at all
     get().addDrawing(id);
   },
 

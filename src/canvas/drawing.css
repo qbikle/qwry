@@ -35,18 +35,6 @@
   --ink-2: color-mix(in srgb, var(--accent) 56%, transparent);
 }
 
-/* the page wraps every element that draws its own .blk in the entrance
-   animation's own div (.cv-item: a note and a drawing both), and that wrapper
-   carries no height. So the grid's `.cvg-slot .blk:not(.blk-note)
-   { height: 100% }` resolved against `auto` and the sheet's `flex: 1 1 0`
-   came out ZERO: every stroke rendered, and every stroke was clipped to a
-   0-tall viewport. A NOTE wants precisely that, since its height is its own
-   words; a drawing wants the cells the document gave it, which is what this
-   passes through. The `:has` is the switch's own precedent (tokens.css). */
-.cv-item:has(> .blk-draw) {
-  height: 100%;
-}
-
 /* the sheet: the cells the element was given, in element pixels at 1:1. The
    grid gives .blk (not a note) height and a column direction, so the sheet
    takes what is left after nothing, which is all of it */
@@ -58,12 +46,15 @@
   /* the WebView must not claim the gesture: a pen stroke is not a pan */
   touch-action: none;
   cursor: crosshair;
-  /* ink drawn past the frame STANDS outside it rather than disappearing
-     inside it, the rule the note already follows on this grid (grid.css
-     .note-body). A scroller here would be a second scroll authority inside a
-     page that already pans (LESSONS 7), and the element grows itself to hold
-     what was drawn anyway */
-  overflow: visible;
+  /* ink stays INSIDE the box (D1 item 6): the page has one clipping rule and
+     it is the widget's (grid.css .cvg-drag), which a sheet drawing past its
+     own frame has no standing to opt out of - strokes on the page with no
+     widget around them are what that looked like. Nothing is normally cut:
+     the element's own floor grows with the ink (the store's minSpanFor) and a
+     commit that outgrew the frame grows the frame. Where a reflow has capped
+     the width under ink already drawn, the ink is held rather than spilling,
+     and no scroller stands here either - a second scroll authority inside a
+     page that already pans is LESSONS 7's own bug */
 }
 .blk-draw > .dw-sheet {
   margin-top: 0;
@@ -80,13 +71,39 @@
   transform: translateY(4px);
 }
 
-/* an empty sheet is a STATE and the state is shown: paper, at the block
-   radius, until the first stroke lands. A drawing with no ink and no surface
-   is an element a reader cannot see, and 0 strings is not 0 pixels. One
-   surface, 0 controls and 0 strings: the count AGENT-UX 16aa carries */
-.blk-draw[data-empty] .dw-sheet {
+/* the sheet is PAPER, with ink on it or without (D1 item 7). C2b drew it only
+   while the drawing was empty, on the reasoning that ink is its own surface;
+   it is not - a stroke and a corner glyph standing on the page with nothing
+   around them is an element a reader cannot see the edges of, and the moment
+   it is one of several on a grid, "where does this drawing end" is a question
+   the page has to answer at rest. One surface, still 0 controls and 0 strings:
+   the count AGENT-UX 16aa carries is unmoved, and the empty sheet's own frame
+   (c2-draw-empty) is unchanged, because the empty case always painted this */
+.blk-draw .dw-sheet {
   background: var(--bg-raised);
   border-radius: var(--radius-md);
+}
+/* and the cluster dissolves into the paper it actually stands on, never into
+   the panel behind it (ask.css: --acts-surface is whatever the buttons are
+   over). With the paper painted at rest, that surface is the sheet's.
+   Written `.blk.blk-draw` and not `.blk-draw`, which is the specificity
+   `.blk` (canvas.css) already has: at equal weight the cascade falls to
+   import order, and the order the module graph happens to produce put the
+   panel's value last — the band painted --bg-panel over --bg-raised paper and
+   notched the sheet's own top-right corner (D1 integration, caught in the
+   frame at 640). One class more can never lose that race */
+.blk.blk-draw {
+  --acts-surface: var(--bg-raised);
+}
+
+/* and the corner handle leaves with the cluster it belongs to. The drawing is
+   the one kind whose cluster does not answer a bare hover (above), so on this
+   one kind the grid's own reveal (grid.css .cvg-slot:hover) was showing a
+   resize glyph in a corner with no other chrome anywhere near it: one glyph
+   alone in the air, which is neither the cluster nor a control anybody went
+   looking for. Focus-within and [data-hot] reveal both, as they always did */
+.cvg-slot:hover:not(:focus-within):has(.blk-draw:not([data-hot])) .cvg-handle {
+  opacity: 0;
 }
 
 /* the in-flight stroke: one path, written with setAttribute from the pointer

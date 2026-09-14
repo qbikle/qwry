@@ -82,6 +82,7 @@ import {
   facesOf,
   statusOf,
   useCanvas,
+  type BarsFit,
   type Block,
   type DrawingBlock as DrawingBlockDoc,
   type NoteBlock as NoteBlockDoc,
@@ -179,14 +180,12 @@ function Status({ line }: { line: StatusLine }) {
 function CanvasResult({
   block,
   canvasId,
-  status,
   span,
   ask,
   more,
 }: {
   block: ResultBlockDoc;
   canvasId: string;
-  status: StatusLine | null;
   /** the cells the element stands on: the chart reads its aspect from them,
    * and the table reads how many rows it shows from the height they leave */
   span: { w: number; h: number };
@@ -213,6 +212,14 @@ function CanvasResult({
   // standing empty, which is the rule every face here follows
   const values = (face: ResultFace): ResultFace =>
     face === "values" && !isScalarRun(run) ? "table" : face;
+  // what a squeezed chart drew, measured by the face and said on the block's
+  // one status line (D1 item 6): the callback is the component's own for the
+  // life of the block, so the face is handed nothing new to redraw for
+  const [bars, setBars] = useState<BarsFit | null>(null);
+  const onChartFit = useCallback((fit: BarsFit | null) => setBars(fit), []);
+  // and only while the chart is the face standing: a flip to the table leaves
+  // the run's own `12 rows` saying what the table shows
+  const status = statusOf(block, block.face === "chart" ? bars : null);
   return (
     <ResultBlock
       exchangeId={block.id}
@@ -230,6 +237,7 @@ function CanvasResult({
         if (face !== "preview") useCanvas.getState().setFace(canvasId, block.id, face);
       }}
       chart={chartOf(block)}
+      onChartFit={onChartFit}
       diff={block.diff ?? null}
       span={span}
       lead={<Grip />}
@@ -388,7 +396,6 @@ const CanvasRow = memo(function CanvasRow({
       <CanvasResult
         block={block}
         canvasId={canvasId}
-        status={statusOf(block)}
         span={cell}
         ask={
           <button

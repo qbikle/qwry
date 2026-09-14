@@ -22,7 +22,12 @@
 // off, and a commit that outgrew the frame grows the frame through the SAME
 // `resize` every gesture uses.
 //
-// Chrome at rest: 0, like the two kinds beside it. The picker is not a strip
+// Chrome at rest: 0 controls and 0 strings, like the two kinds beside it, and
+// ONE surface, the sheet's own paper. C2b painted that paper only while the
+// sheet was empty; D1 paints it always, because a stroke and a corner glyph
+// standing on the page with nothing around them is an element whose edges a
+// reader cannot find, which is what the ghost in the maintainer's screenshot
+// was. The picker is not a strip
 // on the page and not a bar along the element's edge; it is the cluster the
 // other kinds already have, with `Pen ▾` in its second slot (DESIGN rule 15:
 // the tool, its ink and its weight are ONE control's menu, not seven buttons).
@@ -549,7 +554,6 @@ export function Drawing({ block, canvasId, cell, lead, ask, onDelete }: DrawingP
     <div
       className="blk blk-draw noq"
       data-block={block.id}
-      data-empty={strokes.length === 0 ? "" : undefined}
       tabIndex={0}
       onContextMenu={(e) => {
         e.preventDefault();

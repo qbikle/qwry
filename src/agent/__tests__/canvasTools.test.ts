@@ -43,7 +43,7 @@ function shim() {
 }
 shim();
 
-const { createCanvasTools } = await import("../canvas.tauri");
+const { createCanvasMaker, createCanvasTools } = await import("../canvas.tauri");
 const { CANVAS_BLOCK_ROWS, CANVAS_ECHO_ROWS, RUN_SQL_TIMEOUT_MS } = await import("../tools");
 const { useSettings } = await import("../../stores/settings");
 type CanvasStore = import("../canvas.tauri").CanvasStore;
@@ -526,5 +526,127 @@ describe("canvas_read", () => {
     const f = fake();
     expect(f.tools.canvasId).toBe("cv-1");
     expect(f.tools.title).toBe("Sales");
+  });
+});
+
+// ---- canvas_create (D1 item 10b) -------------------------------------------
+//
+// The model's own door to a canvas, for the question that asked for one on a
+// connection the app opened none for (stores/agent `aimCanvas` opens a
+// connection's FIRST canvas and no more). It creates through the same seam the
+// app's own route uses, and hands back the tools fixed to what it made.
+
+interface Made {
+  opened: { profileId: string; title: string }[];
+  /** every canvas id a write landed on, so a write through the created tools
+   * is observably in the canvas the create MADE */
+  landed: string[];
+  maker: ReturnType<typeof createCanvasMaker>;
+}
+
+function maker(
+  open?: (profileId: string, title: string) => { canvasId: string; title: string },
+): Made {
+  const opened: Made["opened"] = [];
+  const landed: string[] = [];
+  const doc: CanvasOutlineEntry[] = [];
+  const store: CanvasStore = {
+    applyModelBlocks(canvasId, blocks) {
+      landed.push(canvasId);
+      for (const b of blocks) {
+        doc.push({ id: b.id, kind: b.kind, line: "", modelWritten: true });
+      }
+      return blocks.map((b) => b.id);
+    },
+    replaceBlock: () => null,
+    outline: () => doc,
+    columns: () => 7,
+  };
+  return {
+    opened,
+    landed,
+    maker: createCanvasMaker({
+      sessionId: "s1",
+      profileId: "p1",
+      exchangeId: "ex-1",
+      question: "put the month over month in a canvas",
+      timeoutMs: 4000,
+      store,
+      run: async () => RUN(),
+      open:
+        open ??
+        ((profileId, title) => {
+          opened.push({ profileId, title });
+          return { canvasId: "cv-new", title };
+        }),
+    }),
+  };
+}
+
+describe("canvas_create", () => {
+  test("it opens the canvas the model named, on this connection, and answers its outline", async () => {
+    const m = maker();
+    const out = await m.maker.make({ title: "Orders, month over month" });
+    expect(m.opened).toEqual([{ profileId: "p1", title: "Orders, month over month" }]);
+    expect(out.outcome.error).toBeUndefined();
+    // the reply is the outline, which on a canvas nobody has written to yet is
+    // one line saying so: the model reads the same sentence canvas_read gives
+    expect(out.outcome.textForModel).toBe(
+      'Canvas "Orders, month over month" is empty, 7 columns wide.',
+    );
+    expect(out.outcome.result?.canvasId).toBe("cv-new");
+    expect(out.outcome.result?.blocks).toEqual([]);
+  });
+
+  test("the tools it hands back are fixed to what it made, so the writes land THERE", async () => {
+    const m = maker();
+    const out = await m.maker.make({ title: "Orders" });
+    expect(out.tools?.canvasId).toBe("cv-new");
+    expect(out.tools?.title).toBe("Orders");
+    const wrote = await out.tools!.write({
+      blocks: [{ kind: "result", sql: "SELECT month, revenue FROM m" }],
+    });
+    expect(wrote.result?.canvasId).toBe("cv-new");
+    expect(m.landed).toEqual(["cv-new"]);
+  });
+
+  test("a second call makes a second canvas, and the second one wins", async () => {
+    const m = maker();
+    await m.maker.make({ title: "Orders" });
+    const again = await m.maker.make({ title: "Something else" });
+    // two calls, two canvases, the last one written into (AGENT-SPEC 5.1):
+    // item 10's own case is a question asking for a NEW canvas on a connection
+    // that already holds one, which a refusal would answer with "this answer
+    // already has a canvas". The turn cap bounds a model that keeps asking
+    expect(m.opened.map((o) => o.title)).toEqual(["Orders", "Something else"]);
+    expect(again.tools?.title).toBe("Something else");
+  });
+
+  test("a title is required, and the refusal names the field", async () => {
+    const m = maker();
+    const out = await m.maker.make({});
+    expect(out.tools).toBeNull();
+    expect(out.outcome.textForModel).toBe(
+      "ERROR: `canvas_create` needs `title`, what the canvas is called",
+    );
+    expect(m.opened).toEqual([]);
+  });
+
+  test("a title over the cap is refused with the cap and the way out", async () => {
+    const m = maker();
+    const out = await m.maker.make({ title: "x".repeat(81) });
+    expect(out.outcome.textForModel).toBe(
+      "ERROR: `title` is 81 characters; the cap is 80. Name what it collects in a few words",
+    );
+  });
+
+  test("a document that cannot open one costs the canvas, never the answer", async () => {
+    const m = maker(() => {
+      throw new Error("canvas_upsert failed\nnot this line");
+    });
+    const out = await m.maker.make({ title: "Orders" });
+    expect(out.tools).toBeNull();
+    // the first line of it, in the shape every other tool failure takes
+    expect(out.outcome.textForModel).toBe("ERROR: canvas_upsert failed");
   });
 });

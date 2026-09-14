@@ -66,6 +66,9 @@
   position: absolute;
   top: 0;
   left: 0;
+  /* the widget's own corner, carried by the cell so the keyboard's ring
+     below follows it (the frame itself paints nothing) */
+  border-radius: var(--radius-md);
   width: calc(var(--w) * var(--cw) + (var(--w) - 1) * var(--gut));
   height: calc(var(--h) * var(--ch) + (var(--h) - 1) * var(--gut));
   transform: translate3d(
@@ -82,10 +85,35 @@
   position: relative;
   height: 100%;
   border-radius: var(--radius-md);
+  /* ONE clipping rule for the whole page (D1 item 6): a widget draws inside its
+     own box, and what does not fit is the widget's business to answer for (a
+     chart draws the rows that fit and says so, a table and a note scroll, a
+     drawing's own floor grows with its ink). It rides the DRAG layer and not
+     the cell frame because the lift belongs to the layer: a clip one box out
+     would cut the shadow it casts and the 2% it grows by. A chart drawing
+     432px of plot into a 292px face used to land 128px of it on the note
+     below, which no amount of arithmetic inside the face could have stopped */
+  overflow: hidden;
   transition:
     background var(--dur-quick) var(--ease-std),
     box-shadow var(--dur-quick) var(--ease-std);
 }
+/* the keyboard's own selection, drawn on the CELL (AGENT-UX 16s: the focused
+   element IS the selection). Every ring this product draws stands OUTSIDE the
+   box it rings (tokens.css, offset 1), and the one clip above cuts that ring
+   to nothing: a block the arrows, the shift-arrows and the backspace all act
+   on showed no ring anywhere (DESIGN rules 2 and 8). The cell frame is the
+   widget's own box and stands outside the clip, so the ring goes here, at the
+   offset and the width it has everywhere else; the block's own is turned off
+   rather than left clipped, so nothing draws two the day the clip moves */
+.cvg-slot:has(.blk:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.cvg-slot .blk:focus-visible {
+  outline: none;
+}
+
 /* the element a gesture holds paints over its neighbours and over the
    placeholder, which the page draws first (it is a fill under the cells, not
    a card over them) */
@@ -97,23 +125,36 @@
   box-shadow: var(--shadow-pop);
 }
 
-/* a RESULT fills the cells it was given: the title line, the prose and the
+/* EVERY kind fills the cells it was given: the title line, the prose and the
    status line take their own heights and the FACE takes what is left, which
    is what makes a span a number of table rows and a bar chart's own height
    (the table scrolls inside .rb, as it does in the pane).
 
-   A NOTE does the opposite and is left alone: its words set its height and
-   the document follows them (the store's autoH, measured here), so stretching
-   its box to the cells would put a ring around air in edit and a cursor's
-   worth of nothing under the words at rest */
-.cvg-slot .blk:not(.blk-note) {
+   A note used to be the exception, on the grounds that its words set its
+   height (the store's autoH, measured here). They still do - that is what
+   picks the cells it OPENS at - but a hand that then gave it six by three
+   gave it a box, and one line of words in the corner of a box that size is
+   the box refusing what it was made (D1 item 8). So the note fills its own
+   box too, width and height, and scrolls inside it where the words run past
+   the cells; what still reads its content is the autoH measure, which
+   measures the WORDS (.ans-text) and never the box they were given.
+
+   A note and a drawing draw their own .blk inside the entrance animation's
+   wrapper, which carries no height of its own; a result IS the .blk. So the
+   cells reach the block through the wrapper where there is one: `height: 100%`
+   resolved against `auto` is zero, and zero plus the box's own padding is what
+   left a note 18px tall in a 108px widget. The caret line is the one slot none
+   of this reaches (.cvg-draft, below): it holds no cells to fill */
+.cvg-slot:not(.cvg-draft) .cv-item,
+.cvg-slot:not(.cvg-draft) .blk {
   height: 100%;
   display: flex;
   flex-direction: column;
 }
-.cvg-slot .blk:not(.blk-note) > .rb {
+.cvg-slot:not(.cvg-draft) .blk > .rb {
   flex: 1 1 0;
   min-height: 0;
+  min-width: 0;
   display: flex;
 }
 .cvg-slot .rb-inner {
@@ -141,11 +182,41 @@
 .cvg-slot .rb-sql .cm-editor {
   height: 100%;
 }
-/* a note never clips and never scrolls: its height follows its words (the
-   store's autoH), and words past the frame stand outside it rather than
-   disappearing inside it */
-.cvg-slot .note-body {
-  overflow: visible;
+/* the note's own box IS the widget's (D1 item 8): no outdent, since there is
+   no column edge left for the words to line up with, and the read view and
+   the edit box keep the identical padding they always had, so entering edit
+   still moves no glyph. Words past the cells scroll inside the box rather
+   than standing outside it, which is what the page's one clipping rule
+   (.cvg-drag) would cut off anyway; whether the box should GROW for them
+   instead is a question this wave leaves open */
+.cvg-slot:not(.cvg-draft) .blk-note .note-body,
+.cvg-slot:not(.cvg-draft) .blk-note .note-box {
+  flex: 1 1 0;
+  min-height: 0;
+  max-width: none;
+  margin: 0;
+  overflow: auto;
+}
+/* the block's own 8px between its parts, which the outdent used to pay for */
+.cvg-slot:not(.cvg-draft) .blk-note > .blk-q + .note-body,
+.cvg-slot:not(.cvg-draft) .blk-note > .blk-q + .note-box {
+  margin-top: var(--sp-2);
+}
+/* the textarea takes the box, the same box the words stood in. It still
+   measures itself (NoteBlock), which is the basis it grows FROM: past the box
+   the cap holds it and it scrolls, under the box it fills the rest */
+.cvg-slot:not(.cvg-draft) .blk-note .note-box .ask-ta {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 100%;
+  overflow: auto;
+}
+/* a cluster that floated 2px above its first line floated 2px above the
+   widget too, where the one clipping rule now cuts it: on the grid the box's
+   own padding is what holds the words off the top edge, so the cluster sits
+   on it (canvas.css .blk.noq) */
+.cvg-slot .blk.noq > .acts-float {
+  top: 0;
 }
 
 /* the grip: the first action of every cluster and the one surface every kind
@@ -242,6 +313,9 @@
 .cvg-draft {
   height: auto;
 }
+/* and nothing inside it stretches: every rule above that gives a widget its
+   box says `:not(.cvg-draft)`, because a caret line holds no cells and a box
+   that took `flex: 1 1 0` from them would be 0 tall and its own padding */
 
 /* the page's one live region (AGENT-UX section 12: one per zone), written
    once per gesture end and never during one */

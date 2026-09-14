@@ -46,8 +46,8 @@ describe("AnswerText", () => {
     const out = html(INSIGHT);
     expect(out).toContain('<div class="ans-lead">Across <span class="fig">2,763</span> orders:</div>');
     expect(out.match(/<li>/g)).toHaveLength(3);
-    expect(out).toContain("<ul>");
-    expect(out).not.toContain("<ol>");
+    expect(out).toContain('<ul role="list">');
+    expect(out).not.toContain("<ol");
     for (const fig of ["₹4,725", "₹2,564", "22%", "₹4,266,056", "23%"]) {
       expect(out).toContain(`<span class="fig">${fig}</span>`);
     }
@@ -92,7 +92,7 @@ describe("AnswerText", () => {
     expect(out).toContain('<div class="ans-lead">Comment on <code>order_v2</code>:</div>');
     expect(out).toContain("<blockquote>One row per checkout attempt, failed included.</blockquote>");
     expect(out).toContain(
-      "<ol><li>Drop the <code>failed</code> rows.</li><li>Bucket the rest by <code>created_at</code>.</li></ol>",
+      '<ol role="list"><li>Drop the <code>failed</code> rows.</li><li>Bucket the rest by <code>created_at</code>.</li></ol>',
     );
     expect(out).toContain("<pre>{&quot;coupon&quot;: {&quot;code&quot;: &quot;FIRST10&quot;}}</pre>");
   });
@@ -121,5 +121,19 @@ describe("AnswerText", () => {
     expect(html("```sql\nSELECT 1\n```\n\nAssumptions: none")).toBe(
       '<div class="ans-text" aria-live="polite" aria-atomic="false"></div>',
     );
+  });
+
+  // D1 item 5: the ordinal is drawn in the item's own gutter cell, which costs
+  // `list-style: none`, and WebKit takes a list's semantics away with its
+  // markers. Both list kinds carry the role back, and a list past nine items
+  // (the case the fixed gutter exists for) is still one list of n items
+  test("a list keeps its semantics past the marker: role on both kinds, every item present", () => {
+    const steps = ["Create the enum", "Add the column", "Backfill it", "Drop the old one"];
+    const numbered = html([...Array(14)].map((_, i) => `${i + 1}. ${steps[i % 4]}.`).join("\n"));
+    expect(numbered).toContain('<ol role="list">');
+    expect(numbered.match(/<li>/g)).toHaveLength(14);
+    // the ordinals are the list's own, never text inside the item
+    expect(numbered).not.toContain("10.");
+    expect(html("- one\n- two")).toContain('<ul role="list">');
   });
 });

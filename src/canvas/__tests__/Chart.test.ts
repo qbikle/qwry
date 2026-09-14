@@ -157,11 +157,34 @@ describe("a face with a height of its own", () => {
     expect(g.h).toBe(6 * 40);
   });
 
-  test("a squeezed face never puts the rows under the bars they hold", () => {
+  // D1 item 6: a face too short for its rows used to hold the pitch at a floor
+  // and keep stacking, so the plot drew through its own status line and into
+  // the element below it. It draws the rows that FIT and hands the count up to
+  // the block, which says it on the status line it already has (canvas.ts
+  // `statusOf`, pinned in d1canvas.test.ts): the whole face is the plot's,
+  // since nothing is drawn in here for the count
+  test("a squeezed face draws the rows that fit, and never a row under its own bars", () => {
     const g = barLayout(channels, 640, 60);
-    expect(g.pitch).toBe(16);
+    expect(g.shown).toBe(3);
+    expect(g.total).toBe(6);
     expect(g.pitch).toBeGreaterThanOrEqual(g.barH);
+    // the whole plot stands INSIDE the face
+    expect(g.h).toBeLessThanOrEqual(60);
   });
+
+  test("a face with room for every row owes the block no count", () => {
+    const roomy = barLayout(channels, 640, 480);
+    expect(roomy.shown).toBe(roomy.total);
+  });
+
+  test("one bar always stands, however little height there is", () => {
+    const g = barLayout(channels, 640, 8);
+    expect(g.shown).toBe(1);
+    expect(g.total).toBe(6);
+  });
+
+  // the other half of the same item, what a chart OPENS at, is the document's
+  // (canvas.ts chartPx) and is pinned by the drawing itself in d1canvas.test.ts
 
   test("the line's plot takes the face's height in place of its fixed 132", () => {
     expect(lineLayout(months, 640).plotH).toBe(132);

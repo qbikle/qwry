@@ -210,6 +210,19 @@
 // Canvas`; a3-ask-block = a question asked FROM a block, the bubble wearing the
 // block's own `.mention` pill.
 //
+// D1 (the maintainer's findings of 2026-09-14): d1-list-numbered = a
+// fourteen-step ordered list over a nine-row run, framed twice — at the bottom
+// pin for the 16px seam between the list's last line and the grid's header
+// (item 2), and with `--scroll top` for the ordinals right-aligned in their own
+// gutter, `1.` and `14.` ending on one edge (item 5). On the CANVAS root:
+// d1-chart-overflow = a twelve-bar chart in a 4×3 widget over a note, drawing
+// only the bars that fit and saying so, with the same twelve opened at the
+// document's own default height beside it (item 6); d1-note-fill = a note
+// filling a 6×3 widget beside one whose words outrun a 3×1 (item 8);
+// d1-compare-mismatch = a compare that could not be made, standing on the face
+// it was made from, beside one that was, six columns ellipsized inside four
+// cells (item 9).
+//
 // B4 (the sketch's "B4 · qbot" rows): b4-empty = the empty state with the
 // composer focused, qbot's two eye marks 2px lower than at rest; `empty` is
 // the same state at rest and now shows qbot, so the two are the gaze's pair,
@@ -295,6 +308,7 @@ const ALL_STATES = [
   "b2-pill-icons",
   "b3-ask-summary",
   "c2-settings-vision",
+  "d1-list-numbered",
 ] as const;
 /** the second root (A2): the palette is a modal over the window, not a pane in
  * a card, so it has one width, its own (`src/harness/PaletteHarness.tsx`) */
@@ -339,6 +353,9 @@ const CANVAS_STATES = [
   "c2-draw-novision",
   "c2-empty",
   "c2-empty-place",
+  "d1-chart-overflow",
+  "d1-note-fill",
+  "d1-compare-mismatch",
 ] as const;
 /** the B3 four and the C2a six stand on a taller card: neither a four-block
  * answer with a chart among them nor a page of cells fits A3's 760
@@ -396,6 +413,11 @@ const DRAW_CANVAS_CARD_H = 820;
 const SMALL_CANVAS_CARD_H = 420;
 const FRESH_CANVAS_CARD_H = 480;
 const EMPTY_CANVAS_CARD_H = 560;
+/** and D1's own pair (fixtures.d1canvas.ts d1CanvasCardH): two charts over a
+ * note, and a refusal over a diff, both run past A3's 760; the note pair does
+ * not, and stands on it */
+const D1_TALL_CANVAS_CARD_H = 1040;
+const D1_TALL_CANVAS_STATES: readonly string[] = ["d1-chart-overflow", "d1-compare-mismatch"];
 const canvasCardH = (state: string): number =>
   state === "c2-draw-small"
     ? SMALL_CANVAS_CARD_H
@@ -405,11 +427,13 @@ const canvasCardH = (state: string): number =>
         ? DRAW_CANVAS_CARD_H
         : state === "c2-empty" || state === "c2-empty-place"
           ? EMPTY_CANVAS_CARD_H
-          : DOC_CANVAS_STATES.includes(state)
-            ? DOC_CANVAS_CARD_H
-            : TALL_CANVAS_STATES.includes(state)
-              ? TALL_CANVAS_CARD_H
-              : CANVAS_CARD_H;
+          : D1_TALL_CANVAS_STATES.includes(state)
+            ? D1_TALL_CANVAS_CARD_H
+            : DOC_CANVAS_STATES.includes(state)
+              ? DOC_CANVAS_CARD_H
+              : TALL_CANVAS_STATES.includes(state)
+                ? TALL_CANVAS_CARD_H
+                : CANVAS_CARD_H;
 const MARGIN = 24;
 
 // ---- args -------------------------------------------------------------------

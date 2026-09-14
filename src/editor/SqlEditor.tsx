@@ -228,8 +228,41 @@ function snapTime(ts: string): string {
   return `${date}, ${time}`;
 }
 
-/** insert text at the caret (sidebar column double-click etc.) */
-export const editorInsert: { current: ((text: string) => void) | null } = { current: null };
+/** where an insert lands: at the caret, the sidebar's gesture (a column name
+ * joins the statement being typed), or at the END of the buffer, the Ask
+ * pane's (a whole statement is a statement, not a word, and dropping one into
+ * the middle of the one under the caret splits both). One seam, two landings;
+ * the caret stays the default so the gesture that had it keeps it. */
+export type InsertWhere = "caret" | "end";
+
+/** the blank line an appended statement stands after: one, so the buffer
+ * reads as statements and not as a paste (D1 item 1) */
+const APPEND_BLANK_LINES = 2;
+
+/** the append, as a change and a caret: the text lands after the buffer,
+ * behind enough newlines to leave exactly ONE blank line between it and what
+ * was there (none when the buffer is empty), and the caret takes the first
+ * character of the statement, not its end, so the thing just inserted is what
+ * the eye and the next keystroke are on. `tail` is the buffer's last two
+ * characters, never its whole text: a live buffer is read by slice here as it
+ * is everywhere else in this file. */
+export function appendInsert(
+  len: number,
+  tail: string,
+  text: string,
+): { from: number; insert: string; anchor: number } {
+  let nl = 0;
+  for (let i = tail.length - 1; i >= 0 && tail[i] === "\n"; i--) nl++;
+  const lead = len === 0 ? "" : "\n".repeat(Math.max(0, APPEND_BLANK_LINES - nl));
+  return { from: len, insert: lead + text, anchor: len + lead.length };
+}
+
+/** insert text into the active query tab: at the caret (sidebar column
+ * double-click etc.), or appended whole (the Ask pane's Insert, ResultBlock's
+ * `insertSql`) */
+export const editorInsert: { current: ((text: string, where?: InsertWhere) => void) | null } = {
+  current: null,
+};
 
 export function SqlEditor() {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -719,8 +752,21 @@ export function SqlEditor() {
     editorFormat.current = () => {
       if (!ttState) void formatDefault(view);
     };
-    editorInsert.current = (text) => {
+    editorInsert.current = (text, where = "caret") => {
       if (ttState) return; // snapshots are read-only
+      if (where === "end") {
+        const len = view.state.doc.length;
+        const spec = appendInsert(len, view.state.doc.sliceString(Math.max(0, len - 2), len), text);
+        view.dispatch({
+          changes: { from: spec.from, insert: spec.insert },
+          selection: { anchor: spec.anchor },
+          // the buffer just grew past the viewport: the statement the user
+          // asked for is the thing to be looking at (LESSONS 8)
+          scrollIntoView: true,
+        });
+        view.focus();
+        return;
+      }
       const sel = view.state.selection.main;
       view.dispatch({
         changes: { from: sel.from, to: sel.to, insert: text },

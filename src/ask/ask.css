@@ -657,6 +657,19 @@
 .ans-text > :first-child {
   margin-top: 0;
 }
+/* a list and the model's own grid are blocks inside the prose, not more
+   prose: 16px stands above each and above whatever follows it (D1 items 2
+   and 5), where a paragraph's neighbour keeps the column's 8. A lead-in is
+   the exception below, and it is the rule's own point: 16 there would hand
+   the label to the paragraph above instead of to the group it names */
+.ans-text > ul,
+.ans-text > ol,
+.ans-text > ul + *,
+.ans-text > ol + *,
+.ans-text > .ans-grid,
+.ans-text > .ans-grid + * {
+  margin-top: var(--sp-4);
+}
 .ans-text > .ans-lead + * {
   margin-top: var(--sp-1);
 }
@@ -707,18 +720,58 @@
   font-weight: inherit;
   color: var(--fg);
 }
-/* lists: the marker in tier 2 (an ordinal in tabular numerals), a 16px
-   indent, items 4px apart, no clamp (a clipped answer lies, LESSONS 9) */
+/* lists: one item is a row of two cells, the marker's gutter and the text,
+   so a bullet and an ordinal sit on one line-height, items stay 4px apart and
+   a wrapped item hangs under its own first word. No clamp anywhere (a clipped
+   answer lies, LESSONS 9).
+   The gutter is FIXED and the marker right-aligned in it, which is what the
+   UA's own ::marker would not do inside the box: an outside marker is laid
+   out to the LEFT of the content edge, so `70.` (18.5px in this face) hung
+   6px past the answer's own left edge while `1.` (9.4px) sat inside it, and
+   the two read as two indents. 20px holds the two-digit case with the
+   numerals in tabular figures, so `1.` and `70.` end on one edge; a third
+   digit widens its own gutter rather than painting outside the column.
+   The bullet's cell is 12px, which puts its text column at the same 16px the
+   UA's indent gave it, so nothing in a bulleted answer moved (D1 item 5). */
 .ans-text ul,
 .ans-text ol {
+  padding-left: 0;
+  list-style: none;
+}
+/* the item's own indent IS the gutter, and the marker is drawn inside it out
+   of flow, so the item's words stay one run of text: a marker laid out in the
+   flow (a flex cell) would break every emphasis, figure and identifier in the
+   line into a box of its own */
+.ans-text li {
+  position: relative;
+}
+.ans-text li::before {
+  position: absolute;
+  left: 0;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.ans-text ul li {
   padding-left: var(--sp-4);
+}
+.ans-text ul li::before {
+  content: "•";
+  min-width: var(--sp-3);
+}
+.ans-text ol {
+  counter-reset: ans-item;
+}
+.ans-text ol li {
+  counter-increment: ans-item;
+  padding-left: var(--sp-6);
+}
+.ans-text ol li::before {
+  content: counter(ans-item) ".";
+  min-width: var(--sp-5);
 }
 .ans-text li + li {
   margin-top: var(--sp-1);
-}
-.ans-text li::marker {
-  color: var(--fg-muted);
-  font-variant-numeric: tabular-nums;
 }
 /* quote: a hairline left rule and the text in tier 2 */
 .ans-text blockquote {
@@ -1022,6 +1075,23 @@
   opacity: 1;
   transform: none;
 }
+/* the prose and the result block stand 16px apart, not the column's 8 (D1
+   item 2): the block is a box with a header of its own and the answer's last
+   line sat on it. The block's headline (section 13.3) and its `rows · ms`
+   line (section 2 item 4) are the block's own captions, not slots of the
+   column, so they keep the 8 that holds them to it and the 16 lands above
+   whichever of the two stands first. An empty prose is no box at all
+   (display: contents above), so the block takes no margin from it: the
+   streaming answer whose run lands before its first word must not open a gap
+   over nothing (rule 2) */
+.ans-prose + .rb,
+.ans-prose + .rb-head {
+  margin-top: var(--sp-2);
+}
+.ans-prose:has(> .ans-text:empty) + .rb,
+.ans-prose:has(> .ans-text:empty) + .rb-head {
+  margin-top: 0;
+}
 
 /* assumption chips + follow-ups: one wrapping row; the assumption row leads
    with an inline `Assumed` label at tier 2 (AGENT-UX section 3) */
@@ -1300,22 +1370,28 @@
 .ask-ta-wrap {
   position: relative;
   display: flex;
-  /* the outdent's room (W7): a pill at position 0 of the draft outdents 2px
-     to the left of the text origin and the backdrop's own overflow cut it
-     there, so the wrap pads 2px on both sides and takes them straight back in
-     margin. Its content box, and with it the textarea, does not move; only
-     the backdrop's clip edge does */
-  padding: 0 2px;
-  margin: 0 -2px;
+  /* the outdent's room (W7, widened by D1 item 3): a pill at position 0 of the
+     draft outdents 2px to the left of the text origin and its RING stands a
+     further 1px outside that, so a clip at 2px cut the pill's left edge off
+     while its fill and its icon stood whole (measured at the 320 floor: the
+     pill's box at x=48 against the backdrop's clip at 48, the ring at 47).
+     The wrap pads 4px on both sides and takes them straight back in margin:
+     its content box, and with it the textarea, does not move, only the
+     backdrop's clip edge, which now stands 1px clear of the widest thing the
+     pill paints. This is B2's own prediction of where the fix would be (the
+     wrap's padding and the backdrop's, moved together); a chip that grows a
+     thicker ring moves these two numbers again */
+  padding: 0 var(--sp-1);
+  margin: 0 calc(-1 * var(--sp-1));
 }
-/* the backdrop fills the wrap's PADDING box (inset:0) and pays the 2px back
+/* the backdrop fills the wrap's PADDING box (inset:0) and pays the 4px back
    as its own padding, so its glyph run starts where the textarea's does and
-   the clip edge stands 2px outside it: the same padding on both, or the pills
+   the clip edge stands 4px outside it: the same padding on both, or the pills
    drift off the letters they paint behind */
 .ask-ta-back {
   position: absolute;
   inset: 0;
-  padding: 0 2px;
+  padding: 0 var(--sp-1);
   overflow: hidden;
   font-family: var(--font-ui);
   font-size: var(--text-md);

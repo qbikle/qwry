@@ -59,7 +59,7 @@ mockIPC((cmd, payload) => {
   return undefined;
 });
 
-const { createCanvasTools } = await import("../canvas.tauri");
+const { createCanvasMaker, createCanvasTools } = await import("../canvas.tauri");
 type CanvasTools = import("../tools").CanvasTools;
 
 const emit = (session: string, name = "canvas_read", args = "{}") => {
@@ -85,6 +85,37 @@ async function serving(sessionId: string): Promise<{ tools: CanvasTools; stop: (
   const stop = tools.serve?.(() => {}) ?? (() => {});
   await settle();
   return { tools, stop };
+}
+
+/** D1 item 10b: the registration a run that may MAKE a canvas puts up. It
+ * serves the run's target (none, here, until a create) and answers
+ * canvas_create itself, which is the only way the child can reach a canvas the
+ * run does not have yet. */
+async function making(
+  sessionId: string,
+  target: CanvasTools | null = null,
+): Promise<{ made: CanvasTools[]; stop: () => void }> {
+  const made: CanvasTools[] = [];
+  const maker = createCanvasMaker({
+    sessionId,
+    profileId: "p1",
+    exchangeId: "ex-1",
+    question: "put this in a canvas",
+    target,
+    open: (_profileId, title) => ({ canvasId: "cv-new", title }),
+    store: {
+      applyModelBlocks: (_id, blocks) => blocks.map((b) => b.id),
+      replaceBlock: () => null,
+      outline: () => [],
+      columns: () => 7,
+    },
+  });
+  const stop = maker.serve?.(
+    () => {},
+    (tools) => made.push(tools),
+  ) ?? (() => {});
+  await settle();
+  return { made, stop };
 }
 
 describe("the canvas bridge answers every event it can see", () => {
@@ -129,6 +160,60 @@ describe("the canvas bridge answers every event it can see", () => {
     await settle();
     expect(answers[1].isError).toBe(false);
     b.stop();
+  });
+
+  test("canvas_create is answered by the registration, and re-targets it", async () => {
+    const { made, stop } = await making("s-1");
+    // the run has no canvas yet, so every other name says so and names the
+    // way out rather than going quiet
+    emit("s-1", "canvas_write", '{"blocks":[]}');
+    await settle();
+    expect(answers[0]).toEqual({
+      callId: "c-0",
+      text: "ERROR: there is no canvas for this answer. Call canvas_create to make one",
+      isError: true,
+    });
+
+    emit("s-1", "canvas_create", '{"title":"Orders"}');
+    await settle();
+    expect(answers[1].isError).toBe(false);
+    expect(answers[1].text).toBe('Canvas "Orders" is empty, 7 columns wide.');
+    // the loop hears about it on this path through the callback, exactly as it
+    // hears about block ids (LESSONS 13: one seam, one account)
+    expect(made.map((t) => t.canvasId)).toEqual(["cv-new"]);
+
+    // and from here the same registration writes into what it made
+    emit("s-1", "canvas_read");
+    await settle();
+    expect(answers[2].text).toBe('Canvas "Orders" is empty, 7 columns wide.');
+    stop();
+  });
+
+  test("a second create makes a second canvas, and the reads follow it", async () => {
+    const { made, stop } = await making("s-1");
+    emit("s-1", "canvas_create", '{"title":"Orders"}');
+    await settle();
+    emit("s-1", "canvas_create", '{"title":"Another"}');
+    await settle();
+    expect(answers[1].isError).toBe(false);
+    expect(made.map((t) => t.title)).toEqual(["Orders", "Another"]);
+    emit("s-1", "canvas_read");
+    await settle();
+    expect(answers[2].text).toBe('Canvas "Another" is empty, 7 columns wide.');
+    stop();
+  });
+
+  test("a run that cannot create reads the unknown tool for it", async () => {
+    const { tools, stop } = await serving("s-1");
+    expect(tools.canvasId).toBe("cv-gone");
+    emit("s-1", "canvas_create", '{"title":"Orders"}');
+    await settle();
+    expect(answers[0]).toEqual({
+      callId: "c-0",
+      text: "ERROR: unknown tool 'canvas_create'",
+      isError: true,
+    });
+    stop();
   });
 
   test("one registration per session id, and one listener for the app", async () => {

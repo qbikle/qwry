@@ -10,14 +10,19 @@
 
 import {
   CANVAS_CHIP,
+  CANVAS_CREATE,
+  CANVAS_NOT_MADE,
   CANVAS_TOOL_NAMES,
   PEEK_MAX,
   PROBE_MAX,
   PROSE_STRIKES,
   TOOL_NAMES,
   isProseRefusal,
+  saysCanvas,
   toolsFor,
   type AgentTools,
+  type AnyCanvasToolName,
+  type CanvasMaker,
   type CanvasTools,
   type CanvasWriteResult,
 } from "./tools";
@@ -36,7 +41,6 @@ import type {
 import type {
   AgentRun,
   Assumption,
-  CanvasToolName,
   HistoryPair,
   KnowledgeCounts,
   KnowledgeRow,
@@ -67,6 +71,7 @@ import {
   SMALL_SYSTEM_PROMPT,
   SYSTEM_PROMPT,
   askMessage,
+  canvasCreateMessage,
   canvasMessage,
   historyMessage,
   knowledgeMessage,
@@ -155,6 +160,15 @@ export type AskEvent =
        * the exchange records (DESIGN rule 11 binds the line, not the record) */
       replaced: number;
     }
+  | {
+      /** D1 item 10b: the model made a canvas mid-run, so THIS exchange has a
+       * target it did not start with. Sent once, from the seam that made it,
+       * so the pane names the canvas the answer actually went to rather than
+       * the one the send resolved (LESSONS 13). */
+      type: "canvasTarget";
+      canvasId: string;
+      title: string;
+    }
   | { type: "answer"; answer: AskAnswer }
   | {
       type: "error";
@@ -238,6 +252,12 @@ export interface AskRequest {
    * (EVAL section 4). It is the ONE gate: the array a provider is handed IS
    * the offer, so a message can never describe tools it does not offer. */
   canvas?: CanvasTools;
+  /** D1 item 10b: the door that MAKES a canvas, present when the platform has
+   * one at all. Offered to the model only when this run carries a target or
+   * the question says the word (`toolsFor` below); the eval supplies none, so
+   * its tools array is the measured five whatever a bench question says
+   * (EVAL section 4). */
+  canvasNew?: CanvasMaker;
   /** what the connection allows the model to propose (A4). Absent on the
    * eval path and nowhere else: the app passes it for every run, edits on or
    * off, because the loop's job when they are off is to REFUSE a write the
@@ -348,7 +368,7 @@ const sameSql = (a: string, b: string) =>
 
 const isName = (n: string): n is ToolName => (TOOL_NAMES as readonly string[]).includes(n);
 
-const isCanvasName = (n: string): n is CanvasToolName =>
+const isCanvasName = (n: string): n is AnyCanvasToolName =>
   (CANVAS_TOOL_NAMES as readonly string[]).includes(n);
 
 const asRecord = (v: unknown): Record<string, unknown> =>
@@ -361,7 +381,7 @@ const strings = (v: unknown): string[] | null =>
 
 /** The chip the thinking strip shows while this call runs (AGENT-UX 2):
  * status register, lowercase, the object named. */
-function chipLabel(name: ToolName | CanvasToolName, args: Record<string, unknown>): string {
+function chipLabel(name: ToolName | AnyCanvasToolName, args: Record<string, unknown>): string {
   switch (name) {
     case "list_tables":
       return "tables";
@@ -384,6 +404,7 @@ function chipLabel(name: ToolName | CanvasToolName, args: Record<string, unknown
     case "canvas_write":
     case "canvas_replace":
     case "canvas_read":
+    case CANVAS_CREATE:
       return CANVAS_CHIP;
   }
 }
@@ -539,11 +560,24 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
   const now = req.now ?? (() => Date.now());
   const emit = (ev: AskEvent) => req.onEvent?.(ev);
   const maxTurns = req.maxTurns ?? MAX_TURNS;
-  // the names this run offers, which is what an unknown-tool refusal lists:
-  // with no target it is the five, in the order tools.schema.json has them
-  const offered: readonly string[] = req.canvas
-    ? [...TOOL_NAMES, ...CANVAS_TOOL_NAMES]
-    : TOOL_NAMES;
+  // D1 item 10b: the target can CHANGE mid-run, because the model can make a
+  // canvas (canvas_create). Everything that reads the target reads THIS: the
+  // array each turn hands the provider, the family the dispatch admits, and
+  // the names an unknown-tool refusal lists. A run that starts with one and a
+  // run that makes one are the same run from the first write on
+  let canvas: CanvasTools | null = req.canvas ?? null;
+  // and the one condition under which the model is shown that door: a run
+  // that already has a target, or a question that says the word. Nothing
+  // else, so the no-target array and message the eval measured are exactly
+  // what they were (EVAL section 4); read once, before the first turn, so it
+  // cannot drift between the offer and the dispatch
+  const canMake = !!req.canvasNew && (!!canvas || saysCanvas(req.question));
+  // the names this run offers, which is what an unknown-tool refusal lists,
+  // read off the array the provider is actually handed so the refusal and the
+  // offer cannot name two different lists (LESSONS 13). With neither a target
+  // nor a door it is the five, in the order tools.schema.json has them
+  const offered = (): readonly string[] =>
+    toolsFor(!!canvas || (canMake && req.provider.ownsLoop), canMake).map((t) => t.name);
   const started = now();
   const trace: TraceStep[] = [];
   const usage: TokenUsage = { input: 0, output: 0 };
@@ -608,10 +642,16 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
   // B3: last of all, after the risk block and after WRITES. The outline is
   // read ONCE, here, before the run's first await (LESSONS 3), and the same
   // string goes to the model and to the trace: nothing sent is summarised away
-  // (AGENT-SPEC 8.4). Absent with no target, which is the eval's every run
+  // (AGENT-SPEC 8.4). With no target and the question's own word it is the
+  // create-only sentence instead (D1 item 10b, AGENT-SPEC 5.1): a run that
+  // may open a canvas and is told nothing about it answered in the pane, which
+  // is the finding. Absent when neither holds, which is the eval's every run,
+  // so the message it measured does not move by a byte (EVAL 4)
   const canvasBlock = req.canvas
     ? canvasMessage(req.canvas.title, req.canvas.outline(), req.canvas.columns?.())
-    : "";
+    : canMake
+      ? canvasCreateMessage()
+      : "";
   const userMsg = withReplay(
     req,
     askMessage({ ...askArgs, knowledge: know.text, history: past.text }) + writes + canvasBlock,
@@ -776,10 +816,21 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
   // listener's life is the exchange's, started before any child exists and
   // stopped in the finally that ends the run, so a stale registration is
   // unreachable rather than merely unlikely
-  const bridge =
-    req.provider.ownsLoop && req.canvas?.serve
-      ? req.canvas.serve((w) => emit(canvasWriteEvent(w)))
-      : null;
+  const retarget = (tools: CanvasTools) => {
+    canvas = tools;
+    emit({ type: "canvasTarget", canvasId: tools.canvasId, title: tools.title });
+  };
+  const onBridgeWrite = (w: CanvasWriteResult) => emit(canvasWriteEvent(w));
+  // the MAKER holds the registration whenever this run may create, because
+  // the canvas a create makes is the one every later call must reach and the
+  // registration is where that swap lives on this path (canvas.tauri.ts). A
+  // run that cannot create registers its target's own tools, exactly as B3
+  // left it
+  const bridge = !req.provider.ownsLoop
+    ? null
+    : canMake && req.canvasNew?.serve
+      ? req.canvasNew.serve(onBridgeWrite, retarget)
+      : (req.canvas?.serve?.(onBridgeWrite) ?? null);
 
   try {
     while (turns < maxTurns) {
@@ -803,8 +854,21 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
         messages,
         // B3: the ONE gate. The HTTP adapters render this array, and the
         // `claude -p` adapter serves exactly these names off its MCP token, so
-        // neither can offer a canvas tool to a run with no target
-        tools: toolsFor(!!req.canvas),
+        // neither can offer a canvas tool to a run that deals with no canvas.
+        // Read per TURN, because a create mid-run gives this one a target it
+        // did not start with (D1 item 10b, AGENT-SPEC 5.1: 5, 6 or 9).
+        //
+        // The one widening: a provider that owns its loop is handed ONE array
+        // for the whole exchange, because `claude -p` mints its MCP token once
+        // (claudecode.ts, agent_mcp `agent_mcp_serve`) and there is no later
+        // turn to offer it more. A run that may create must carry the three
+        // that write from the start there, or the canvas a create opens is one
+        // the child cannot put a block into and item 10 is unfixed on the
+        // app's default provider. They refuse in CANVAS_NOT_MADE's own words
+        // until the create lands, which is a way out and not the dead end a
+        // tool that ALWAYS refuses would be (DESIGN rule 15; the amendment to
+        // AGENT-SPEC 5.1's "6" is this wave's own request)
+        tools: toolsFor(!!canvas || (canMake && req.provider.ownsLoop), canMake),
         model: req.model,
         signal: req.signal,
         thread: req.thread
@@ -926,16 +990,28 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
               const t = now();
               const parsed = safeParse(call.args);
               let out: { text: string; isError: boolean; result: unknown };
-              // the canvas family only when this exchange has a target, and
-              // the refusal lists the names ACTUALLY offered, so a no-target
-              // run's text is the one it always was
-              const onCanvas = req.canvas && isCanvasName(call.name) ? req.canvas : null;
+              // the canvas family only when this exchange deals with a canvas,
+              // and the refusal lists the names ACTUALLY offered, so a
+              // no-canvas run's text is the one it always was. canvas_create
+              // is the one canvas name a run with no TARGET may call, because
+              // it is how such a run gets one (D1 item 10b)
+              const makeOn =
+                call.name === CANVAS_CREATE && canMake ? (req.canvasNew ?? null) : null;
+              const onCanvas =
+                canvas && call.name !== CANVAS_CREATE && isCanvasName(call.name) ? canvas : null;
+              // the three that write, on a run that may make a canvas and has
+              // not yet: one sentence naming the way out, the same one the
+              // bridge answers with (tools.ts CANVAS_NOT_MADE)
+              const notMade =
+                !canvas && canMake && call.name !== CANVAS_CREATE && isCanvasName(call.name);
               const unknownTool = () => ({
-                text: `ERROR: unknown tool '${call.name}'. Valid tools: ${offered.join(", ")}`,
+                text: `ERROR: unknown tool '${call.name}'. Valid tools: ${offered().join(", ")}`,
                 isError: true,
                 result: null,
               });
-              if (!isName(call.name) && !onCanvas) {
+              if (notMade) {
+                out = { text: CANVAS_NOT_MADE, isError: true, result: null };
+              } else if (!isName(call.name) && !onCanvas && !makeOn) {
                 out = unknownTool();
               } else if (parsed === undefined) {
                 out = {
@@ -943,6 +1019,21 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
                   isError: true,
                   result: null,
                 };
+              } else if (makeOn) {
+                // the run is re-targeted by the seam that made the canvas, so
+                // the next turn's tools array, this turn's later calls and the
+                // pane's own record all read one answer (LESSONS 13)
+                try {
+                  const made = await makeOn.make(asRecord(parsed));
+                  if (made.tools) retarget(made.tools);
+                  out = {
+                    text: made.outcome.textForModel,
+                    isError: !!made.outcome.error,
+                    result: made.outcome.result,
+                  };
+                } catch (e) {
+                  out = { text: `ERROR: ${firstLine(e)}`, isError: true, result: null };
+                }
               } else if (onCanvas) {
                 try {
                   out = await callCanvasTool(onCanvas, call.name, asRecord(parsed));

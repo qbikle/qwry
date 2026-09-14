@@ -43,7 +43,11 @@ The fixture harness is a vite route that renders `AskPanel` with a canned thread
   two before its wave is framed. Since B2 the `@` pill wears its kind icon inside the `@`'s
   own cell, so the same two cases are the check that no glyph moved: the icon may not shift
   the pill's left edge at position 0, nor leave the wrapped fragment without it
-  (`b2-pill-icons` draws three kinds in one draft).
+  (`b2-pill-icons` draws three kinds in one draft). Read the first-position frame at the
+  pill's RING, never at its fill: the ring is painted outside the box every rect measurement
+  returns, so a clip cut to the box passes every probe and still shaves the chip's left edge
+  (D1 item 3: the backdrop clipped at the pill's own box while the ring stood 1px further out).
+  The clip clears the widest thing the chip paints.
 - Frames land in `~/projects/qwry-agent-lab/docs/research/<wave>-frames/` for the
   maintainer's re-check (W2 used `w2-pixels/`). Open the locked sketch beside them:
   `http://127.0.0.1:5462/ask-sketch-v2.html` (`t` toggles its theme).

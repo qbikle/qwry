@@ -51,7 +51,7 @@ import { canvasTabRefs, useTabs } from "./tabs";
 import { loadCanvasPort, useCanvasPort } from "../canvas/port";
 import { driftLabel } from "./checks";
 import { createTauriTools } from "../agent/tools.tauri";
-import { createCanvasTools } from "../agent/canvas.tauri";
+import { createCanvasMaker, createCanvasTools } from "../agent/canvas.tauri";
 import { tauriPlatform } from "../agent/platform.tauri";
 import { providerFor, tierOf } from "../agent/providers/index";
 import { imageRouteFor } from "../agent/providers/presets";
@@ -64,7 +64,7 @@ import {
   type AskPhase,
   type WriteMode,
 } from "../agent/loop";
-import { RUN_SQL_TIMEOUT_MS } from "../agent/tools";
+import { RUN_SQL_TIMEOUT_MS, saysCanvas } from "../agent/tools";
 import { suggestFollowUps } from "../agent/followups";
 import {
   canonicalToken,
@@ -170,7 +170,10 @@ export interface Exchange {
    * (the block's own band, or the status bar's control, both through
    * `endTabTx`). Absent while it is open, and absent for a transaction that
    * ended anywhere else: the headline then says only what the run did, which
-   * is what a reload says too (LESSONS 9). Never persisted */
+   * is what a reload says too (LESSONS 9). D1 item 4 persists it, on the
+   * answer row's own status (`TX_STATUS`), so a reopened thread reads the
+   * ending it was left with; `ranTab` stays session-only, the tab that held
+   * the transaction being gone by then */
   ranTx?: TxOutcome;
   /** the tab an `Explain with Ask` named (A2 item 5): the echo paints the
    * token quoting this name as a pill and never resolves it again, because a
@@ -463,6 +466,32 @@ export function canSeeImages(profileId: string): boolean {
   return imagesAllowed(useSettings.getState().agentVision, choice.providerId, choice.model);
 }
 
+/** D1 item 4: how a run's answer row spells the end of the transaction it
+ * opened, the two tokens `agent_answers.status` holds beside `proposed` and
+ * `ran`. B1 left the distinction out of appdb and a reload could not tell a
+ * committed change from a rolled-back one, both coming back as the plain
+ * `Deleted 1 row`; the column is TEXT and has no constraint, so the gap
+ * closes on the row that is already written and no migration is needed. The
+ * store's own word for the same fact stays `Exchange.ranTx`
+ * (`committed` | `rolledback`): one shape in memory, and this map is the only
+ * place the persisted spelling is written or read (LESSONS 11). */
+const TX_STATUS = { committed: "committed", rolledback: "rolled_back" } as const;
+
+/** the outcome a stored status carries, and null for every status that
+ * carries none (a run still open when the thread was closed, and every read
+ * answer): the headline then says only what the run did (LESSONS 9). */
+const txFromStatus = (status: string | undefined): TxOutcome | null =>
+  status === TX_STATUS.committed
+    ? "committed"
+    : status === TX_STATUS.rolledback
+      ? "rolledback"
+      : null;
+
+/** a stored status that belongs to a CHANGE: the proposal, the run, and the
+ * run's two endings */
+const isWriteStatus = (status: string | undefined): boolean =>
+  status === "proposed" || status === "ran" || txFromStatus(status) !== null;
+
 /** A failed verdict reloaded from appdb, in the shape the failure block
  * reads. `agent_answers` keeps the status and the SQL but not the error text
  * or the turn count, so the messages say only what is known (LESSONS 9). */
@@ -490,13 +519,13 @@ function verdictFromStatus(
   rowCount: number | null,
   message: string,
 ): AskAnswer["verdict"] {
+  // A4: every write status is one verdict, a statement that cleared the write
+  // gate; what separates them is `Exchange.status`, the rows the tab reported
+  // and (D1 item 4) how the transaction ended. A row that kept no statement is
+  // not a proposal any more, whatever it says
+  if (isWriteStatus(status))
+    return sql !== null ? { status: "proposed", sql } : { status: "answered", sql, rowCount };
   switch (status) {
-    // A4: both are one verdict, a statement that cleared the write gate; what
-    // separates them is `Exchange.status` and the rows the tab reported. A row
-    // that kept no statement is not a proposal any more, whatever it says
-    case "proposed":
-    case "ran":
-      return sql !== null ? { status: "proposed", sql } : { status: "answered", sql, rowCount };
     case "failed":
       return { status: "failed", sql, message };
     case "turn_cap":
@@ -613,11 +642,18 @@ export const useAgent = create<AgentState>((set, get) => ({
       current.error = error;
       // A4: a change and how far it got. The dry run is NOT persisted (it
       // described a moment that has passed), so a reloaded proposal shows its
-      // statement with no band, and a reloaded `ran` reads the rows the tab
-      // reported and never `uncommitted`, which belongs to a live tab alone
-      if (sql !== null && (stored?.status === "proposed" || stored?.status === "ran")) {
-        current.status = stored.status;
-        if (stored.status === "ran") current.ranRows = stored.row_count ?? 0;
+      // statement with no band, and a reloaded run reads the rows the tab
+      // reported and never `uncommitted`, which belongs to a live tab alone.
+      // D1 item 4: a run whose transaction the app closed also reads WHICH way
+      // it closed, off its own row, so `committed` and `Rolled back · nothing
+      // changed` survive the thread being reopened; the tab is gone, so
+      // `ranTab` stays unset and the band cannot stand over a transaction
+      // that no longer exists
+      if (sql !== null && isWriteStatus(stored?.status)) {
+        const ranTx = txFromStatus(stored?.status);
+        current.status = stored?.status === "proposed" ? "proposed" : "ran";
+        if (current.status === "ran") current.ranRows = stored?.row_count ?? 0;
+        if (ranTx) current.ranTx = ranTx;
       }
       current.answer = {
         verdict: verdictFromStatus(stored?.status, sql, stored?.row_count ?? null, error?.message ?? ""),
@@ -1779,7 +1815,10 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
   // to this exchange, so no tool takes a canvas id and `wroteBy` is never in
   // doubt. Absent with no target, which is the gate: the tools array a
   // provider is handed IS the offer (canvas-agent-spec 1.6)
-  const aim = args.canvas ?? null;
+  // and it is a `let`, because the MODEL can make one mid-run (canvas_create,
+  // D1 item 10b): the loop re-targets itself and says so, and this is the
+  // field the record of what was written reads its title from
+  let aim = args.canvas ?? null;
   // C2b: and the pictures themselves, rendered NOW rather than at the press.
   // A PNG frozen when `Ask` was pressed and the PNG `canvas_read` renders
   // when the model calls are two pictures of one sheet the moment a stroke
@@ -1800,6 +1839,21 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
         question: args.question,
       })
     : null;
+  // D1 item 10b: the door that MAKES one, built for the run that has a target
+  // and for the one whose question asks for a canvas the app opened none for
+  // (`aimCanvas` route 2 opens a connection's FIRST canvas and no more, so
+  // every later question that asks for one arrives here). The loop decides
+  // what the model is SHOWN; this decides only whether the app can answer it
+  const maker =
+    aim || saysCanvas(args.question)
+      ? createCanvasMaker({
+          sessionId,
+          profileId,
+          exchangeId,
+          question: args.question,
+          target: canvas,
+        })
+      : null;
 
   const controller = new AbortController();
   controllers.get(threadId)?.abort();
@@ -1867,6 +1921,11 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
           thinking: e.thinking + ev.delta,
         }));
         break;
+      case "canvasTarget":
+        // the model made a canvas: the exchange writes into THAT one from
+        // here, so the record the next write assigns names it (LESSONS 13)
+        aim = { canvasId: ev.canvasId, title: ev.title };
+        break;
       case "canvasWrite":
         // the record is ASSIGNED, not appended to: the event carries every id
         // the exchange has written so far, read off the seam where the blocks
@@ -1928,6 +1987,7 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
       ...(args.rowContext ? { rowContext: args.rowContext } : {}),
       ...(attached ? { context: attached } : {}),
       ...(canvas ? { canvas } : {}),
+      ...(maker ? { canvasNew: maker } : {}),
       knowledge,
       history,
       onEvent,
@@ -2291,21 +2351,17 @@ async function persist(set: Setter, get: () => AgentState, args: RunArgs, answer
   }
 }
 
-/** A4: the proposal ran, so its answer row moves from `proposed` to `ran` and
- * carries the rows the TAB affected (AGENT-SPEC 9). One `agentAnswerPut`, the
- * same one every verdict writes: no new table and no migration this wave, and
- * whether that run was committed is the tab's transaction to say, never a
- * column here. History is a convenience: losing it costs the record, never
- * what is on screen. */
-async function persistRan(
-  get: () => AgentState,
-  threadId: string,
-  exchangeId: string,
-  rows: number,
-) {
-  const exchange = (get().exchanges[threadId] ?? []).find((e) => e.id === exchangeId);
-  const answer = exchange?.answer;
-  if (!exchange || !answer || exchange.turnId === null) return;
+/** A4 and D1 item 4: a change's own answer row, rewritten as the change moves
+ * on. `proposed` becomes `ran` when the tab takes it, carrying the rows the
+ * TAB affected (AGENT-SPEC 9), and `ran` becomes its ENDING when that tab's
+ * transaction closes, so a reload can tell a committed change from a
+ * rolled-back one. One `agentAnswerPut` for all three, the same one every
+ * verdict writes: no new table and no migration, `status` being a TEXT column
+ * with nothing to widen. History is a convenience: losing it costs the
+ * record, never what is on screen. */
+async function persistWriteStatus(exchange: Exchange, status: string, rows: number | null) {
+  const answer = exchange.answer;
+  if (!answer || exchange.turnId === null) return;
   try {
     await agentAnswerPut({
       turn_id: exchange.turnId,
@@ -2313,11 +2369,21 @@ async function persistRan(
       row_count: rows,
       assumptions_json: JSON.stringify(answer.assumptions),
       sanity_json: JSON.stringify(answer.sanity),
-      status: "ran",
+      status,
     });
   } catch (e) {
     console.error("agent history write failed", e);
   }
+}
+
+async function persistRan(
+  get: () => AgentState,
+  threadId: string,
+  exchangeId: string,
+  rows: number,
+) {
+  const exchange = (get().exchanges[threadId] ?? []).find((e) => e.id === exchangeId);
+  if (exchange) await persistWriteStatus(exchange, "ran", rows);
 }
 
 function firstLine(e: unknown): string {
@@ -2366,19 +2432,30 @@ async function endWrite(
   set((s) => ({ writing: without(s.writing, exchangeId) }));
 }
 
-/** every `ran` exchange on that tab now says how its transaction ended */
+/** every `ran` exchange on that tab now says how its transaction ended, on
+ * screen and in appdb both (D1 item 4): the same word the headline reads is
+ * written to the exchange's own answer row, so reopening the thread comes
+ * back to `committed` or to `Rolled back · nothing changed` instead of to the
+ * plain line B1 left it with. The row is written from here and nowhere else,
+ * because the transaction closing is the fact and one fact has one writer */
 function stampTxEnd(key: string, ranTx: TxOutcome): void {
   const all = useAgent.getState().exchanges;
   const next: Record<string, Exchange[]> = {};
-  let touched = false;
+  const stamped: Exchange[] = [];
   for (const [threadId, list] of Object.entries(all)) {
     const hit = list.some((e) => e.status === "ran" && e.ranTab === key && e.ranTx !== ranTx);
-    touched ||= hit;
     next[threadId] = hit
-      ? list.map((e) => (e.status === "ran" && e.ranTab === key ? { ...e, ranTx } : e))
+      ? list.map((e) => {
+          if (e.status !== "ran" || e.ranTab !== key) return e;
+          const ended = { ...e, ranTx };
+          stamped.push(ended);
+          return ended;
+        })
       : list;
   }
-  if (touched) useAgent.setState({ exchanges: next });
+  if (stamped.length === 0) return;
+  useAgent.setState({ exchanges: next });
+  for (const e of stamped) void persistWriteStatus(e, TX_STATUS[ranTx], e.ranRows ?? null);
 }
 
 // The tab is where the block learns the transaction closed, from EITHER side:
@@ -2420,10 +2497,6 @@ export interface CanvasAim {
   canvasId: string;
   title: string;
 }
-
-/** the word, whole, in any case: `analyse this in a canvas` says it, and so
- * does `Canvas please`; `canvases` and `canvas_write` do not */
-const SAYS_CANVAS = /\bcanvas\b/i;
 
 /** the canvas whose tab is ACTIVE for this connection, or null: what the
  * prefilled pill names, and nothing else (a tab is not a target). Whether a
@@ -2491,7 +2564,7 @@ export async function aimCanvas(
   // word, because a question that names a sheet of ink already named a canvas
   const drawn = canvasOfDrawing(profileId, mentions);
   if (drawn) return { aim: drawn, question: text, cue: null };
-  if (!SAYS_CANVAS.test(text)) return none;
+  if (!saysCanvas(text)) return none;
   if (canvasTabRefs(profileId).length > 0) return none;
   const port = await loadCanvasPort();
   if (!port) return none;

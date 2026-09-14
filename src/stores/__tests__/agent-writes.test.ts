@@ -43,10 +43,17 @@ for (const k of shimmed) {
   });
 }
 
+/** the two tables a reopened thread reads (openThread). Empty except in the
+ * reload test below, which is the whole point of D1 item 4: what appdb keeps
+ * is what a thread comes back as */
+const stored: { turns: unknown[]; answers: unknown[] } = { turns: [], answers: [] };
+
 const invoked: { cmd: string; args: Record<string, unknown> }[] = [];
 mockIPC((cmd, payload) => {
   invoked.push({ cmd, args: (payload ?? {}) as Record<string, unknown> });
   if (cmd === "agent_turn_add") return 7;
+  if (cmd === "agent_turns_list") return stored.turns;
+  if (cmd === "agent_answers_list") return stored.answers;
   // the event plugin answers the listeners results.ts registers at import;
   // everything else this file touches is a write with nothing to return
   return undefined;
@@ -163,6 +170,12 @@ const answerPuts = () =>
     .filter((i) => i.cmd === "agent_answer_put")
     .map((i) => i.args.answer as { status: string; row_count: number | null })
     .map(({ status, row_count }) => ({ status, row_count }));
+
+/** the row as it stands now: the status a reload would read */
+const lastPut = () => {
+  const all = answerPuts();
+  return all[all.length - 1];
+};
 
 const only = (): Exchange => {
   const list = useAgent.getState().exchanges[TID] ?? [];
@@ -713,6 +726,121 @@ describe("committing and rolling back a run", () => {
       textStale: false,
     });
     expect(agent.stashPrior(before, true).ranTx).toBeUndefined();
+  });
+
+  // D1 item 4: the word on screen is written to the exchange's own answer row,
+  // on the TEXT status column the verdict already uses, so nothing migrates
+  test("the ending goes to the answer row, in the two words a reload reads", async () => {
+    Object.assign(runner, { endTabTx: real.endTabTx });
+    await useAgent.getState().commitWrite("ex-1");
+    await until(() => answerPuts().length > 0);
+    expect(lastPut()).toEqual({ status: "committed", row_count: 12 });
+
+    useAgent.setState({ exchanges: { [TID]: [ran()] } });
+    useConnections.getState().setTxTab(KEY, true);
+    await endTabTx(KEY, "rollback");
+    await until(() => answerPuts().length > 1);
+    expect(lastPut()).toEqual({ status: "rolled_back", row_count: 12 });
+  });
+
+  test("a transaction that ended somewhere the app cannot see writes no row", async () => {
+    // a typed COMMIT, a dead session: nothing was stamped, so nothing is
+    // recorded either and the reload falls back to the plain line (LESSONS 9)
+    useConnections.getState().setTxTab(KEY, false);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(answerPuts()).toEqual([]);
+  });
+});
+
+// ---- what a reload knows about a change (D1 item 4) -------------------------
+//
+// B1 left this open: `ranTab` and `ranTx` were session-only, so a reopened
+// thread read the same `Deleted 1 row` whether the change had been committed
+// or rolled back. The row's own status now carries the ending, and openThread
+// reads it back into the one field the headline already renders.
+
+describe("a change reopened from appdb", () => {
+  const TURN_ID = 8;
+  const reopen = async (status: string) => {
+    seed();
+    stored.turns = [
+      {
+        id: 7,
+        thread_id: TID,
+        idx: 0,
+        role: "user",
+        content: "mark them paid",
+        tool_calls_json: null,
+        tool_results_json: null,
+        usage_json: null,
+        model: "claude-sonnet-5",
+        provider: "claude-code",
+        prompt_version: "v4",
+        ms: 0,
+        created_at: "2026-09-14",
+      },
+      {
+        id: TURN_ID,
+        thread_id: TID,
+        idx: 1,
+        role: "assistant",
+        content: "Marked them paid.",
+        tool_calls_json: null,
+        tool_results_json: null,
+        usage_json: null,
+        model: "claude-sonnet-5",
+        provider: "claude-code",
+        prompt_version: "v4",
+        ms: 12,
+        created_at: "2026-09-14",
+      },
+    ];
+    stored.answers = [
+      {
+        turn_id: TURN_ID,
+        sql: SQL,
+        row_count: 12,
+        assumptions_json: "[]",
+        sanity_json: "[]",
+        status,
+      },
+    ];
+    useAgent.setState({ exchanges: {} });
+    await useAgent.getState().openThread(PID, TID);
+    const list = useAgent.getState().exchanges[TID] ?? [];
+    expect(list).toHaveLength(1);
+    return list[0];
+  };
+
+  test("a committed change says so, with the rows the tab reported", async () => {
+    const e = await reopen("committed");
+    expect(e.status).toBe("ran");
+    expect(e.ranTx).toBe("committed");
+    expect(e.ranRows).toBe(12);
+    // the tab that held the transaction is gone, so no band can stand over it
+    expect(e.ranTab).toBeUndefined();
+  });
+
+  test("a rolled-back change says so, and the headline drops its count", async () => {
+    const e = await reopen("rolled_back");
+    expect(e.status).toBe("ran");
+    expect(e.ranTx).toBe("rolledback");
+    expect(e.ranTab).toBeUndefined();
+  });
+
+  test("a run whose transaction never ended reads the plain line, as it did", async () => {
+    const e = await reopen("ran");
+    expect(e.status).toBe("ran");
+    expect(e.ranRows).toBe(12);
+    expect(e.ranTx).toBeUndefined();
+  });
+
+  test("a proposal is still a proposal, with no rows and no ending", async () => {
+    const e = await reopen("proposed");
+    expect(e.status).toBe("proposed");
+    expect(e.ranRows).toBeUndefined();
+    expect(e.ranTx).toBeUndefined();
+    expect(e.answer?.verdict.status).toBe("proposed");
   });
 });
 

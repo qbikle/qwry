@@ -24,8 +24,11 @@ import { formatRun } from "./context";
 import { toDomainRun } from "./tools.tauri";
 import {
   CANVAS_BLOCK_ROWS,
+  CANVAS_CREATE,
   CANVAS_ECHO_ROWS,
   CANVAS_EXCHANGE_MAX,
+  CANVAS_NOT_MADE,
+  COLUMNS_FALLBACK,
   RUN_SQL_TIMEOUT_MS,
   blockLine,
   cellPart,
@@ -36,8 +39,11 @@ import {
   outlineText,
   parseCanvasBlock,
   parseCanvasBlocks,
+  parseCanvasTitle,
   resolveHandle,
   rowsPart,
+  type CanvasMade,
+  type CanvasMaker,
   type CanvasOutline,
   type CanvasOutlineEntry,
   type CanvasTools,
@@ -445,10 +451,82 @@ export function createCanvasTools(init: CanvasToolsInit): CanvasTools {
     },
 
     serve(onWrite: (out: CanvasWriteResult) => void): () => void {
-      return listenForCalls(init.sessionId, tools, onWrite);
+      return listenForCalls(init.sessionId, { tools, onWrite });
     },
   };
   return tools;
+}
+
+/** What making a canvas needs that writing into one does not: the connection
+ * it belongs to, and the seam that opens it. The rest is what the tools it
+ * returns are built from, passed straight through. */
+export interface CanvasMakerInit extends Omit<CanvasToolsInit, "canvasId" | "title"> {
+  /** the connection the new canvas belongs to */
+  profileId: string;
+  /** the run's target as the run STARTS, or null: what the bridge serves
+   * until a create replaces it */
+  target?: CanvasTools | null;
+  /** create-and-open, the document's own seam. Injectable so the tool is
+   * testable without a store, like everything else here */
+  open?: (profileId: string, title: string) => { canvasId: string; title: string };
+}
+
+/** `canvas_create` (D1 item 10b): the model's own door to a canvas, for the
+ * question that asked for one where the app made none (stores/agent
+ * `aimCanvas` route 2 opens a connection's FIRST canvas and no more, so every
+ * later question that asks for one arrives here). It creates through the
+ * document, opens the tab beside the user's own WITHOUT taking focus, exactly
+ * as route 2 does, and hands back the tools fixed to what it made so the rest
+ * of the run writes there.
+ *
+ * A second call in one exchange makes a SECOND canvas and re-targets again:
+ * two calls, two canvases, the last one written into (AGENT-SPEC 5.1). It is
+ * item 10's own case - a connection that already holds a canvas and a question
+ * asking for a NEW one - so a refusal here would answer the user's own words
+ * with "this answer already has a canvas". What bounds a model that keeps
+ * asking is the turn cap and the offer itself: only a run with a target, or
+ * one whose question names a canvas, is shown this tool at all. */
+export function createCanvasMaker(init: CanvasMakerInit): CanvasMaker {
+  const open =
+    init.open ?? ((profileId: string, title: string) =>
+      useCanvas.getState().openForQuestion(profileId, title));
+  // the run's live target, which the bridge reads and a create replaces
+  const held: Registration = {
+    tools: init.target ?? null,
+    onWrite: () => {},
+  };
+
+  const make = async (args: unknown): Promise<CanvasMade> => {
+    const title = parseCanvasTitle(args);
+    if (!title.ok) return { outcome: fail(title.error), tools: null };
+    let opened: { canvasId: string; title: string };
+    try {
+      opened = open(init.profileId, title.value);
+    } catch (e) {
+      return { outcome: fail(`ERROR: ${firstLine(e)}`), tools: null };
+    }
+    const tools = createCanvasTools({ ...init, canvasId: opened.canvasId, title: opened.title });
+    held.tools = tools;
+    const blocks = tools.outline();
+    const columns = tools.columns?.() ?? COLUMNS_FALLBACK;
+    return {
+      outcome: {
+        textForModel: outlineText(opened.title, blocks, columns),
+        result: { canvasId: opened.canvasId, title: opened.title, columns, blocks: [...blocks] },
+      },
+      tools,
+    };
+  };
+
+  return {
+    make,
+    serve(onWrite, onMade) {
+      held.make = make;
+      held.onWrite = onWrite;
+      held.onMade = onMade;
+      return listenForCalls(init.sessionId, held);
+    },
+  };
 }
 
 const idsOf = (blocks: readonly CanvasOutlineEntry[]): string[] => blocks.map((b) => b.id);
@@ -515,10 +593,24 @@ function liveStore(): CanvasStore {
  * answer, which is a worse account of the same fact (LESSONS 9). */
 const CANVAS_NOT_OPEN = "ERROR: the canvas is not open for this thread";
 
+/** One exchange's standing offer to the bridge. `tools` is the canvas that
+ * stands RIGHT NOW, which is the run's target, or the one canvas_create made,
+ * or null for a run that may still make one; `make` is present only when this
+ * run was offered canvas_create, so a call the tools array never advertised
+ * reads as the unknown tool it is. Mutable on purpose: a create re-targets the
+ * exchange, and the registration is where that fact lives on this path
+ * (D1 item 10b). */
+interface Registration {
+  tools: CanvasTools | null;
+  make?: (args: unknown) => Promise<CanvasMade>;
+  onWrite: (out: CanvasWriteResult) => void;
+  onMade?: (tools: CanvasTools) => void;
+}
+
 /** the sessions serving canvas calls right now, one registration each: a
  * second `serve` for a session replaces the first, since a thread runs one
  * exchange at a time and the newer tools are the live ones. */
-const serving = new Map<string, { tools: CanvasTools; onWrite: (out: CanvasWriteResult) => void }>();
+const serving = new Map<string, Registration>();
 /** the one listener the whole app needs, up while any session is registered */
 let unlistenAll: (() => void) | null = null;
 let listening = false;
@@ -529,19 +621,15 @@ let listening = false;
  * that arrives while ANY session is registered is answered, the registered
  * ones by their own tools and the rest by CANVAS_NOT_OPEN, so a disposed
  * session's late call reads as what it is rather than as silence. */
-function listenForCalls(
-  sessionId: string,
-  tools: CanvasTools,
-  onWrite: (out: CanvasWriteResult) => void,
-): () => void {
-  serving.set(sessionId, { tools, onWrite });
+function listenForCalls(sessionId: string, reg: Registration): () => void {
+  serving.set(sessionId, reg);
   if (!listening) {
     listening = true;
     void import("@tauri-apps/api/event")
       .then(({ listen }) =>
         listen<CanvasToolCall>("canvas-tool-call", (ev) => {
           const held = serving.get(ev.payload.session_id);
-          if (held) void answer(ev.payload, held.tools, held.onWrite);
+          if (held) void answer(ev.payload, held);
           else void reply(ev.payload.call_id, CANVAS_NOT_OPEN, true);
         }),
       )
@@ -563,7 +651,7 @@ function listenForCalls(
     // only this registration's own entry: a newer exchange on the same session
     // has already replaced it, and stopping the old run must not silence the
     // new one
-    if (serving.get(sessionId)?.tools === tools) serving.delete(sessionId);
+    if (serving.get(sessionId) === reg) serving.delete(sessionId);
     if (serving.size === 0 && unlistenAll) {
       unlistenAll();
       unlistenAll = null;
@@ -572,15 +660,32 @@ function listenForCalls(
   };
 }
 
-async function answer(
-  call: CanvasToolCall,
-  tools: CanvasTools,
-  onWrite: (out: CanvasWriteResult) => void,
-): Promise<void> {
+async function answer(call: CanvasToolCall, reg: Registration): Promise<void> {
   let out: ToolOutcome<CanvasWriteResult | CanvasOutline>;
   const args = safeParse(call.args_json);
+  const tools = reg.tools;
   if (args === undefined) {
     out = fail(`ERROR: arguments were not valid JSON: ${call.args_json.slice(0, 200)}`);
+  } else if (call.name === CANVAS_CREATE) {
+    // the create is answered HERE, where the registration is, so the canvas it
+    // makes is the one every later call of this exchange writes into: the
+    // driven path swaps its own variable and this path swaps this field, and
+    // both reach the loop through the same callback (D1 item 10b)
+    if (!reg.make) {
+      out = fail(`ERROR: unknown tool '${call.name}'`);
+    } else {
+      const made = await reg.make(args);
+      if (made.tools) {
+        reg.tools = made.tools;
+        reg.onMade?.(made.tools);
+      }
+      out = made.outcome;
+    }
+  } else if (!tools) {
+    // the child's tool list is minted once for the whole exchange, so a run
+    // that may CREATE one serves the writers from the start and they refuse
+    // until it has (tools.ts CANVAS_NOT_MADE, the driven path's own words)
+    out = fail(CANVAS_NOT_MADE);
   } else if (call.name === "canvas_write") {
     out = await tools.write(args);
   } else if (call.name === "canvas_replace") {
@@ -590,7 +695,7 @@ async function answer(
   } else {
     out = fail(`ERROR: unknown tool '${call.name}'`);
   }
-  if (out.result && "blockIds" in out.result) onWrite(out.result);
+  if (out.result && "blockIds" in out.result) reg.onWrite(out.result);
   await reply(call.call_id, out.textForModel, !!out.error, out.image);
 }
 

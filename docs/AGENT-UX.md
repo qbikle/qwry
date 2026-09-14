@@ -213,10 +213,22 @@ moves and the caret's positions stay exactly the textarea's, and W7's own
 objection (an icon can stand only where a glyph stands, DESIGN rule 5) is
 met by taking the glyph's own cell rather than adding one: measured, the
 `@`'s advance at `--text-md` is 11.86px and the 12px icon is centred on it,
-its own left edge 1.92px inside the backdrop's clip. That slack is the
-whole margin: a larger `--icon-sm`, or a kind whose glyph inks its own left
-edge, clips at draft position 0, and the fix then is the wrap's 2px padding
-and the backdrop's, moved together. The cell stays `display: inline`, never
+its own left edge 1.92px inside the backdrop's clip. **That clip was cut
+wrong (maintainer finding, 2026-09-14, D1 item 3): the ring paints 1px
+OUTSIDE the pill's own box (a border-style ring straddling the edge, not
+inset inside it), while the backdrop's clip was cut TO the box, so a pill
+at draft position 0 lost its ring's outer pixel and, with it, read as
+missing its left edge — the icon's own 1.92px margin was measured against
+that same wrong clip and so could not be trusted either.** The fix clips at
+the widest thing the chip paints, the ring's own outer edge, never the
+box a naive rect measurement returns, moving the wrap's 2px padding and
+the backdrop's outdent out together to match; the taste-gate skill (step 1)
+reads the RING at position 0 from here on, never the fill. Verified in
+frames rather than guessed a second time: `mention-first` and
+`b2-pill-icons` are re-shot at
+320/392/560, both themes, both faces (the draft backdrop and the bubble's
+`MentionText`, one face, one fix, per the technique below). The cell stays
+`display: inline`, never
 `inline-block` (an `inline-block` adds a break opportunity between the `@`
 and a following quote that the textarea's own wrap never has, UAX 14 AL ×
 QU, and the pill would drift off its glyphs at a wrap). The technique: the
@@ -238,7 +250,19 @@ pills into the bubble (§2 item 1).
 ## 2. Anatomy of an answer
 
 Top to bottom, every answer block has the same skeleton; parts that do not
-apply are omitted, never left as dead space (DESIGN rule 2 scope note):
+apply are omitted, never left as dead space (DESIGN rule 2 scope note). The
+column itself carries 8px between its parts (`.ans-tail`'s own `--sp-2`
+flex gap, unmoved); **the prose and the block that follows it stand 16px
+apart, not that 8 (D1, 2026-09-14, `--sp-2` again, added as the block's own
+margin rather than raising the column's gap for every pair): the block is a
+box with a header of its own, where the chips and the sanity line below it
+are plain text and the 8 already reads as space** (maintainer finding: the
+list's last line had touched the grid's header, `margin-top: 0` on an empty
+answer keeping a streaming run's first chip from opening a gap over
+nothing, rule 2). A list or the model's own table INSIDE the prose carries
+that same extra 8 above itself and above whatever follows it, for the same
+reason one level down (a list is a block among paragraphs, not more
+prose):
 
 1. **Question echo**: the user's text, tier-1 contrast, in a tinted bubble at
    the right edge (the sketch's variant B: `accent-soft` fill, a 22% accent
@@ -328,9 +352,20 @@ apply are omitted, never left as dead space (DESIGN rule 2 scope note):
    `AnswerText`): a lead-in (any heading depth, or a bold-only line ending in
    a colon) in the trace-kind register, one per group and never a heading
    hierarchy; bold, italic and inline code; ordered and unordered lists
-   (marker tier 2, items 4px apart, no clamp: the two-line cap on a bullet is
+   (marker tier 2, items 4px apart, one line-height for a bullet and a
+   numbered item alike, no clamp: the two-line cap on a bullet is
    the prompt's ask and the presentation score's check, never the renderer's
-   knife, LESSONS 9); blockquotes as a hairline left rule in tier 2; links
+   knife, LESSONS 9), a numbered list's own numerals right-aligned in one
+   FIXED gutter (20px, tabular figures, sized to hold two digits) so `1.`
+   and `70.` end on one edge rather than each digit width shifting it, a
+   third digit widening its own gutter past that rather than painting
+   outside the column (maintainer finding, 2026-09-14, `d1-list-numbered`);
+   a bullet's own gutter is 12px, the same 16px its text column always
+   stood at; and the list itself carries an extra 8px above it and above
+   whatever follows it (§2's own vertical rhythm, above), 16 in all where
+   the column's own gap is 8, since a list is a block among paragraphs, not
+   more prose; blockquotes as a hairline left
+   rule in tier 2; links
    that open in the browser through the opener plugin (http(s) only, anything
    else renders as its text; a link whose text was backticked keeps the mono
    face); non-SQL code blocks in the editor register (mono, panel-inset,
@@ -402,10 +437,17 @@ apply are omitted, never left as dead space (DESIGN rule 2 scope note):
    content crossfade (`swapIn`) while the block's height springs between
    faces on `spring.layout` (§10, DESIGN rule 2's scope note: a mode
    transition); the face is remembered per exchange for the session.
-   **Insert** puts the SQL at the caret of the active query tab through the
-   editor's own dispatch path (a tab is created only when none is active),
-   cue `Inserted` / `Inserted into a new tab`; this replaces `Open in Tab`
-   everywhere in the Ask pane (§7). Tooltips name the face you get: `Copy`,
+   **Insert** appends the SQL at the END of the active query tab's text,
+   through the editor's one seam (`editorInsert`, unchanged: every Insert in
+   the pane already goes through it) — preceded by one blank line, two
+   newlines, when the tab already holds text, no leading newline when it is
+   empty — the caret landing at the START of the inserted statement and the
+   editor scrolling it into view (maintainer finding, 2026-09-14, closing
+   the bug where it landed at the caret and could drop a statement into the
+   middle of whatever the tab already held); a tab is created only when none
+   is active, cue `Inserted` / `Inserted into a new tab`; this replaces
+   `Open in Tab` everywhere in the Ask pane (§7). Tooltips name the face you
+   get: `Copy`,
    `Show SQL` / `Show Table`, `Insert SQL`. Rest is opacity 0 (never
    visibility: the buttons keep the tab order) with a 4px slide down out of
    the block's top edge on `--dur-quick` / `--ease-std` (§10); `:hover` of
@@ -553,7 +595,7 @@ of the connection (§1).
   SQL in an editable field, and `Fix It` (runs the repair loop once more with
   any edits) in the button row. Never a dead end (LESSONS 9).
 - `Insert` rides the FIELD, not the button row: the statement it puts at the
-  caret of the active query tab (§2 item 4; replaces `Open in Tab` here as
+  end of the active query tab (§2 item 4; replaces `Open in Tab` here as
   everywhere else in the Ask pane) is the one inside that field, edits and
   all, so the action lives on the object it acts on in the result block's own
   floating cluster, revealed by the field's hover and focus within it
@@ -771,7 +813,12 @@ visibility, which would drop it from the order) and is the bubble's keyboard
 route: the bubble itself is a div with no role and no focus. Restart and Jump
 Back are `disabled` while the thread is busy or the pane is in edit mode; the
 travelling ghost is `aria-hidden`, and a folding exchange's anatomy is
-`aria-hidden` while it fades. The live region is the answer slot
+`aria-hidden` while it fades. **A list in the answer text carries
+`role="list"` on `<ol>`/`<ul>` (D1, 2026-09-14): the marker rides the
+item's own gutter cell rather than a UA `::marker`, which costs
+`list-style: none`, and WebKit drops a list's implicit role along with its
+markers — the role is what a screen reader still reads it as one for.** The
+live region is the answer slot
 itself: `aria-live="polite"` on the newest exchange's slot and off on every
 older one, `aria-atomic` false so a delta announces the block it lands in and
 not the whole answer; the blocks inside it add no region and no role of their
@@ -993,13 +1040,38 @@ that closes some other way than these three, a dead session, a bare
 `COMMIT` typed straight into the tab, stamps nothing in `txEnds`: `ranTx`
 stays unset and the headline falls back to the plain reload-shaped line
 below rather than guess (LESSONS 9: a line the app cannot know is a line it
-must not print). Persisted `agent_answers.status` is `proposed` | `ran`
-with `row_count` (AGENT-SPEC §9); `ranTab` and `ranTx` are both
-session-only, never persisted, so a reload after a commit reads `Updated 12
-rows`, no `uncommitted`, and a reload after a ROLLBACK reads that identical
-line: appdb's flat `status`/`row_count` shape cannot yet distinguish the two
-once the session ends, an accepted gap this wave leaves open rather than
-grows the persisted schema to close (ROADMAP_log, the B1 note).
+must not print). **Closed (D1, 2026-09-14): a reload now tells a committed
+run from a rolled-back one.** The instant `txTabs[key]` flips false, the
+SAME subscriber that stamps `ranTx` in memory also persists the fact:
+`agent_answers.status` moves from `ran` to `committed` or `rolled_back`
+through the existing full-row answer upsert (`agent_answer_put`, AGENT-SPEC
+§9), which the store already calls with everything else this row needs; no
+new command, no new column, no migration, since the column was always a
+bare TEXT and `proposed`/`ran` were prose conventions, never a database
+CHECK. The persisted spelling is `rolled_back`, not `ranTx`'s own
+`rolledback`: one shape in memory and a different one on disk, on purpose,
+through the ONE map that translates between them (`TX_STATUS` /
+`txFromStatus`, `stores/agent.ts`) so the two can never drift apart by a
+second, uncoordinated conversion somewhere else (LESSONS 11: consistency
+is a system, and the system here is the one map, not the two spellings
+matching each other by accident). A transaction that closes some other way
+than the three above stamps neither `ranTx` nor `status`, and stays `ran`,
+exactly as it stays without `ranTx` today. On reload: `status = 'committed'`
+reads `Updated 12 rows · committed` (this section's own headline; a `DELETE`
+reads `Deleted 1 row · committed` the same way, §13.5's verb grammar) —
+the identical line the session that committed it saw, DESIGN rule 14's one
+fact in one slot holding across a restart, not only within one; `status =
+'rolled_back'` reads `Rolled back · nothing changed`, the whole line, never
+`row_count` restated as if it happened; and `status = 'ran'` (the
+transaction was still open when the app closed, or closed by a route this
+section does not track) reads the plain reload-shaped line, exactly as
+before this wave. `ranTab` and the in-memory `ranTx` stay session-only
+regardless: neither is needed once `status` itself carries the fact.
+`b1-committed` and `b1-rolled-back` (B1's own fixtures, unmoved) are the
+pixel evidence: the headline they render came from `ranTx` before this
+section and comes from persisted `status` through the same `TX_STATUS` map
+now, so the frames prove the fix by rendering byte-identical to their own
+B1 shots rather than by showing anything new.
 
 ### 13.7 Off, and on production
 
@@ -1293,10 +1365,16 @@ into the status line rather than standing as their own row (item 4, below).
    block, because a note-plus-result pair would carry the question line
    twice (rule 14) and stand two clusters for one exchange. The model's
    words are provenance (LESSONS 4); the user's own annotation is a note
-   underneath, or an `Ask` (§16d). Prose measures at most 680px regardless
-   of the column's width (growth feeds content, and a line past that width
-   is worse content, DESIGN rule 13); the block's own box, and the face
-   beneath it, spans the column.
+   underneath, or an `Ask` (§16d). On a RESULT block, prose measures at
+   most 680px regardless of the column's width (growth feeds content, and a
+   line past that width is worse content, DESIGN rule 13); the block's own
+   box, and the face beneath it, spans the column. **A note is exempt from
+   that cap (D1, 2026-09-14, closing the finding that a note's own text
+   read small inside a wide, tall widget): it has no face and no data
+   beside it needing the shorter reading measure, so its prose fills the
+   block's own assigned width, exactly as a values face's own pairs already
+   fill their cells (§16p) — the cap stays in force only where a result's
+   model sentence stands above a face that still wants it.**
 3. **Face**: present on a result block only. Table, chart and, while a
    comparison stands, diff share one flip cycle with the SQL face (Faces,
    below); a note has no face, its prose being the whole of it.
@@ -1341,6 +1419,27 @@ comparison stands, a fourth:
 - **SQL**, unchanged from Ask.
 - **Diff** (§16e), while a comparison stands, taking the table face's place
   in the cycle.
+
+**One clip, for the whole page (D1, 2026-09-14).** `overflow: hidden` on the
+DRAG layer (§16r's own inner layer, `.cvg-drag`, not the cell frame outside
+it: the lift's shadow and its 2% scale live on this same layer, so a clip
+one box further out would cut those too), no face ever draws past the span
+the document gave it: the table already did (§16p, its six-row window),
+the chart now does too (§16p), and a drawing's own ink joins them (§16w) —
+closing the finding that a chart taller than its own box drew over the
+block below it (432px of plot into a 292px face, 128px of it landing on
+the note beneath), and that a drag left a chart and its neighbour
+overlapping. A widget's rendered height equals its span's height at every
+one of these; nothing here changes WHICH face a kind draws, only that
+whichever one it draws stops at its own edge — a rule the widget answers
+for (a chart draws the rows that fit and says so, below; a table and a
+note scroll; a drawing's own floor grows with its ink, §16w), not a second
+knife the clip itself carries. `c2-grid` and `c2-grid-floor` (C2a's own
+drag/drop/compaction fixtures, unmoved) are the regression check: a CDP
+probe reads every block's DOM rect after a drag settles at 640, 960 and
+1280 and asserts none overlap, so this wave's clip is shown to change only
+what a face draws inside the box compaction already gives it, never
+compaction's own math.
 
 The flip glyph is the one control that reaches every face, in a cycle whose
 glyph always names the face you will get NEXT, never the one you are on
@@ -1455,6 +1554,24 @@ AST gate is what allows a prod sibling to be chosen at all, since nothing
 the gate would refuse can reach either connection regardless of which one
 runs it.
 
+**A sibling that cannot run the statement never reaches the diff face at
+all (D1, 2026-09-14).** The table it names is not there, a column was
+renamed, any error the sibling's own run returns: the block STAYS on
+whatever face it already stood on (its own `Compare With` check stays lit,
+since the user's own pick did not fail, the sibling's run did — choosing
+the same row again still clears it), and ONE more line joins it in the
+sanity line's own grammar, never the raw Postgres text (LESSONS 9): `table
+order_v2 is not on prod-crawler`, or `column X is not on <sibling>` for a
+renamed column, or the driver's own first line prefixed with the sibling's
+name for anything else the two patterns do not match — read out of the
+sibling's own error rather than invented, since a friendlier sentence for
+an error nobody here has read is how a status line starts lying (LESSONS
+9). The mismatch is SESSION state riding the block, never the document
+(`writeDoc` drops it at the door): a reload never restates a refusal whose
+cause may since have been fixed (LESSONS 5, cached data may inform, never
+refuse). The diff face never half-stands on a comparison that did not run.
+`d1-compare-mismatch` is the fixture.
+
 While a comparison stands, the diff face takes the table face's own place
 in the flip cycle (`diff → chart → SQL → diff`): the table's own cells
 become the diff's `A` cells, so nothing renders twice (DESIGN rule 14).
@@ -1465,7 +1582,21 @@ exactly as their own database returned them (never reformatted to agree),
 `Δ` the signed RELATIVE change at one decimal (`+2.3%`): an absolute
 difference was considered and refused, since it would restate two numbers
 the cell already carries. A row present on one side only wears the warn
-glyph on its own label and `∅` in the side it lacks, no `Δ`. The status
+glyph on its own label and `∅` in the side it lacks, no `Δ`. **A cell's own
+hover tooltip (a native `title`) renders that same `A · B · Δ` triple as
+text, one formatter feeding both the marks on screen and the tooltip (D1,
+closing the `[object Object]` finding): a cell narrow enough to ellipsize
+is a cell whose numbers a reader cannot finish reading otherwise, so the
+tooltip is not decoration here, it is the cell's full value** — the chart
+face is unchanged by a comparison (Faces, §16a): it stays the first side's
+own bars, and the diff table is the one place `B` and `Δ` are read at all.
+**Every column gives way where the block cannot hold it (`minmax(0,
+max-content)`, never a bare `max-content`, which has no lower bound) so a
+cell ellipsizes and the grid scrolls inside its own box rather than
+widening past it (D1, closing the finding that a comparison against prod
+stretched the widget past its box: a six-column compare once drew 937px of
+grid inside a 482px element) — the clipping rule, §16a, above, applied to
+the one face that had escaped it.** The status
 line names both connections once, each a tier-1 label the way an
 assumption's is: `6 rows · staging 412.6 ms · prod 388.1 ms · assumed Last
 Month = August 2026` (LESSONS 4: the chrome speaks for the data's origin,
@@ -1618,9 +1749,13 @@ on the FIRST result block the exchange wrote, patched on after the verdict
 four blocks would be one fact in four slots (DESIGN rule 14).
 
 **What the model must not do**, each enforced by absence, never a sentence
-alone (AGENT-SPEC §8's own habit): create a canvas (no tool takes a
-title); write outside its target (no tool takes a canvas id; the target is
-fixed before the exchange's first await, LESSONS 3); run a write (a result
+alone (AGENT-SPEC §8's own habit): create a canvas UNASKED (D1,
+2026-09-14: `canvas_create` exists now, §16l, but only ever offered beside
+a target or a question naming "canvas," AGENT-SPEC §5.1's own gate — a
+question that names neither has no tool that takes a title, exactly as
+before); write outside its target (no tool takes a canvas id; the target is
+fixed before the exchange's first await, LESSONS 3, `canvas_create`'s own
+narrow re-targeting the one stated exception, AGENT-SPEC §5.1); run a write (a result
 block's SQL takes the read gate, AGENT-SPEC §8 item 11; a question that
 asks to change data is answered in the reply exactly as §13 already
 answers one, never as a block); repeat a figure a result on the SAME
@@ -1666,6 +1801,22 @@ the caret (a click elsewhere on the page, a tab switch, the pane taking
 focus) is removed on that blur, the same rule an empty COMMIT already
 follows (§16f: the preview is the commit). A note WITH words keeps them on
 blur and commits: leaving it is committing it.
+
+**The note fills its box (D1, 2026-09-14, closing the finding that a
+note's text read as a one-line box inside a wide, tall widget).** Both
+surfaces, the rendered prose and the edit textarea alike, size to 100% of
+the cell the document gave the block — width already settled above (§16a
+item 2's own exemption), height now too — rather than sitting at their own
+content height inside a bigger box the person or the model asked for: a
+note resized to 6×3 with one short line fills that 6×3, the words anchored
+at the top the way reading anchors them, and content past what the box
+holds SCROLLS inside it, the table face's own overflow answer (§16a,
+above). Whether a TALL box should instead grow to fit fewer words, or a
+short one grow to fit more, is D2's own question (a height POLICY, grow
+versus scroll); this wave answers only what a box already sized one way or
+the other does with the text inside it, and scrolling is the answer that
+needs no policy decided first. `d1-note-fill` is the fixture, a note in a
+6×3 widget.
 
 **Arrival.** A block lands complete, never as streaming text: a canvas
 write is a tool call, so the model composes the block whole, the tool runs
@@ -1774,10 +1925,17 @@ beside the row): **0 new chrome**.
    ladder's own ordering rule, unmoved).
 3. **The `+` pick**, B2's picker, its `Canvases` section: the same token
    at the caret.
-4. **The word "canvas."** The model never creates a canvas — no tool
-   takes a title (AGENT-SPEC §5.1). The APP does, exactly once: when the
-   question contains the word "canvas" (a whole word, any case), no pill
-   already stands in the draft, and the connection has no canvas tab at
+4. **The word "canvas."** The APP creates a canvas, exactly once, at the
+   moment a question is sent: when the question contains the word "canvas"
+   (a whole word, any case), no CANVAS pill (the seventh kind, above)
+   already stands in the draft — a table, column, saved-query or thread
+   pill never suppresses this route, only another canvas pill does
+   (maintainer finding, 2026-09-14: the LAW as written above read "no pill
+   of any kind"; the shipped check never did, `aimCanvas` having always
+   looked for `kind === "canvas"` alone, and a unit test now pins a
+   table-pilled question through this route. What silenced the maintainer's
+   own worked example was the clause below, a connection that already holds
+   a canvas tab, which `canvas_create` now answers) — and the connection has no canvas tab at
    all, sending the question makes the store create `Canvas N`, open its
    tab beside the user's own without switching the pane's focus off Ask,
    prefix the draft's own pill, and say so in the exchange's strip (a
@@ -1793,6 +1951,26 @@ beside the row): **0 new chrome**.
    under it (`askedFrom`, extended from `Add to Canvas` to the model's own
    writes, AGENT-SPEC §9) and the status line names that canvas.
 
+**The model's own door, `canvas_create` (D1, 2026-09-14, AGENT-SPEC §5.1).**
+This route above fires before the model ever runs, and only for a
+connection's FIRST canvas; a connection that already holds one takes route
+1, 2 or 3 instead, so a question naming "canvas" while one already stands
+open used to reach the model with no target and no way to make a new one —
+answered inline in the pane instead of on a canvas, the maintainer's own
+screenshot. `canvas_create({ title })` closes that: the model's own tool,
+offered whenever this exchange already carries a target OR its question
+names "canvas" (AGENT-SPEC §5.1's own gate), so the SAME condition that
+opens the app's door above also opens the model's, for the one case the
+app's door does not reach. Calling it creates a canvas through the store
+exactly as the app's own route does (`create(profileId, title)`), opens its
+tab beside the current one without stealing the pane's focus (the SAME
+no-steal rule as above), and re-targets the exchange so a `canvas_write`
+the model makes on a LATER turn lands there — never the same turn, since
+the turn that calls `canvas_create` is not offered `canvas_write` until the
+target exists (AGENT-SPEC §5.1). The `CANVAS:` block names the tool in one
+sentence whenever it is offered, so the model is never left to guess it
+exists (AGENT-SPEC §5.1's own frozen text carries the exact words).
+
 `Add to Canvas`'s own row cap (§16c) changes from `UI_ROW_CAP` (2,000) to
 the SAME 200 a model write keeps (§16i, AGENT-SPEC §5.1): one number for a
 canvas document across both routes, not two. A press that truncates says
@@ -1803,7 +1981,10 @@ already uses.
 
 Resolved against §16h's open list, without editing it: model-side canvas
 creation stays refused (no tool creates one, §16i) and the app-side
-literal-word route above is what answers "in a canvas" instead; the `@`
+literal-word route above is what answers "in a canvas" instead **(revised
+by D1, 2026-09-14, §16l: the model gains its own narrow door,
+`canvas_create`, for the one case the app-side route does not reach — a
+connection that already holds a canvas)**; the `@`
 ladder's canvas rung is now its own kind, not the `block` flag B2 shipped
 as a placeholder (§16l); `Add to Canvas`'s row cap unifies with the
 model's own (§16l). Unmoved: `now vs then` (§16e, §16h) — nothing here
@@ -1956,9 +2137,17 @@ view.
 
 - table: `h = clamp(ceil((30 + 26 * rows + 56) / 120), 2, 4)`, 4 rows lands
   on 2, 10 on 3, 200 on 4 and scrolls inside its own `.rb` as today.
-- chart, bars: `h = clamp(ceil((24 * n + 64) / 120), 2, 3)`, 6 labels on 2,
-  8 on 3; squeezed under 16px a bar the minimum becomes
-  `ceil((16 * n + 64) / 120)` rather than crowding its own labels.
+- chart, bars: `h = clamp(ceil((24 * n + 64) / 120), 2, 3)` for a ONE-series
+  chart, 6 labels on 2, 8 on 3; squeezed under 16px a bar the minimum
+  becomes `ceil((16 * n + 64) / 120)` rather than crowding its own labels.
+  **A chart of TWO or three series needs more than one bar's own pitch per
+  row (D1, 2026-09-14, closing the finding that a multi-series chart opened
+  at this formula's own height and drew straight through its status line
+  and into the block below it): the document reads the series count too
+  and, past what this formula alone gives it, opens as tall as its bars
+  actually need, capped at 6 — the note's own ceiling, past which the face
+  draws the rows that fit and says so (below) rather than opening taller
+  still.**
 - chart, line: 3, fixed. The plot fills whatever height it is given, and a
   date series has no row count to read.
 - values: 1, or `ceil(c / w)` rows of pairs when the width wraps them (c
@@ -1969,8 +2158,31 @@ view.
   markdown, not the DOM, so the estimate is deterministic.
 
 A shrink below the content is refused for the note and the values face
-(nothing of theirs clips); the table and the chart own their overflow
-exactly as today. A note whose height still follows this formula carries
+(nothing of theirs clips); the table clips and scrolls inside its own `.rb`
+as it always has. **The chart clips too, and a shrink below its content is
+now ALLOWED rather than refused (D1, 2026-09-14, closing the finding that a
+chart taller than its own box drew over the block below it, and that a
+drag left a chart and its neighbour overlapping): a chart given less height
+than its own bars want, by a hand resize or by a `canvas_write` span
+smaller than the default (§5.2's own clamp, never a refusal), draws every
+row at ONE scale (rescaling to the rows that fit would make the bars lie
+about each other) but only as many rows as fit, from the top, and says so
+on the block's OWN status line (§16a item 4), where `8 of 12 bars` takes
+the place of the run's `12 rows` and the milliseconds stand unmoved:
+`8 of 12 bars · 214.7 ms`. A row of a bar chart is a bar, so a second line
+of the face's own would have put the same twelve in two slots and added one
+more always-visible line to the page (DESIGN rules 14 and 15); the face
+measures, the block says it, which is the seam the refused compare's own
+fragment already uses. The register is the one `200 of 1,842 rows` uses
+(§16i, §16l) — never a silent drop, and never the bars beyond the box
+either drawn over a neighbour or clipped in silence.** A model-written or a migrated chart is
+never in that state to begin with: its default height already derives from
+its own bar count the moment `span` is omitted (this section's own table
+and formula, above, applied at creation and at the v1-to-v2 migration
+alike, §16u), so `8 of 12 bars` is what a hand resize, or a model that
+asked for a small span on purpose, produces, never the ordinary case.
+`d1-chart-overflow` is the fixture, a 12-bar chart in a 4×3 widget. A
+note whose height still follows this formula carries
 `autoH: true` (AGENT-SPEC §9); the first hand resize clears it, exactly as
 a drawing's own eventual autofit will (C2b).
 
@@ -2244,22 +2456,36 @@ from one set of tokens. Stroke width is its own three-step ladder (1 · 2 ·
 **Coordinates are absolute CSS pixels from the element's own top-left, never
 normalized, ever** (maintainer call 1): a normalized circle becomes an
 ellipse the instant its box stretches (§16o's own cell stretch, up to 1.25x),
-so a drawing keeps one scale, 1:1, for its whole life. The cost is paid on
-purpose: a resize reveals or hides paper, it never stretches the ink, which
-is what a page of ink should do. Two rules keep that honest: on commit, the
-strokes' own bounding box is measured against `minSpanFor`, and if it exceeds
-the element's frame the span grows through the SAME `resizeTo(…, { auto:
-true })` a hand resize uses (no second name for this path; it is the note's
-own `autoH` route, §16p); where a reflow has capped the width below ink
-already drawn, the sheet does NOT scroll — `overflow: visible` (LESSONS 7:
-a scroller here would be a second scroll authority inside a page that
-already pans) — so the ink simply stands outside the element's own frame
-rather than disappearing inside it, the same rule the note's own overflow
-already follows on this grid. It never clips a stroke and never moves one
-under a window resize. A shrink stops at the strokes'
-bounding box rounded up to whole cells (§16p's own rule for a kind whose
-content is never clipped), which is part of why the drawing's minimum is
-2×2 and not 1×1 (the other part is its cluster, §16x).
+so a drawing keeps one scale, 1:1, for its whole life. A resize reveals or
+hides paper, it never stretches the ink, which is what a page of ink should
+do. One rule keeps that honest: on commit, the strokes' own bounding box is
+measured against `minSpanFor`, and if it exceeds the element's frame the
+span grows through the SAME `resizeTo(…, { auto: true })` a hand resize
+uses (no second name for this path; it is the note's own `autoH` route,
+§16p), so the ordinary case never needs the rule below at all. **Reversed
+(D1, 2026-09-14, closing the drawing-ghost finding): where a reflow, a hand
+shrink, or a `canvas_write` `span` (§5.2) caps the frame below ink already
+drawn, the sheet CLIPS.** The page carries ONE clip, on the drag layer
+every kind already draws inside (§16a, §16r), and a drawing had simply
+opted itself out of it with its own `overflow: visible`; removing that
+override is the whole fix, never a second clipping rule invented for this
+one kind. The maintainer's own
+worked case is why: an element whose ink stood outside its frame, paired
+with a frame that only painted its paper while empty (below), drew strokes
+standing on the bare page with no widget around them at all — a ghost, not
+a page of ink revealing or hiding itself as a resize was supposed to make
+it do. Nothing about the STORED coordinates changes: a clipped stroke is
+still exactly where it was drawn, at the same absolute pixels, and
+widening the element (a hand resize, a wider window's reflow) reveals it
+again unchanged, the 1:1 rule above untouched — only the RENDERING clips,
+never the data. A hand shrink still stops at the strokes' bounding box
+rounded up to whole cells (§16p's own floor, unmoved: a hand resize does
+not fight the gesture that is making it), which is part of why the
+drawing's minimum is 2×2 and not 1×1 (the other part is its cluster,
+§16x); a REFLOW (the column count dropping, §16q) is not a hand resize and
+is not held to that floor, capping the frame at the derived width exactly
+as any other kind's does, with the ink beyond it what now clips. `c2-draw`
+(D1) is the regression frame this closes against.
 
 **Serialize and deserialize are born as a pair** (LESSONS 1): `parseStrokes`
 and `writeStrokes` ship together with one property test,
@@ -2324,15 +2550,24 @@ marks scale and a 2x raster does not, and the model's PNG has a different
 job (a wire that reads pixels); one export serving both would have been one
 fact in two slots only by pretending the two jobs were one.
 
-**An empty sheet shows its paper.** A drawing with no ink carries 0 strings
-and 0 controls like every other element at rest, and ONE surface: the sheet
-itself, `--bg-raised` at the block radius, until the first stroke lands.
-This is the one place the drawing differs from the empty note beside it,
-and the reason is the gesture: words arrive where a caret already stands,
-so a note needs no paper drawn for it, while a stroke has to be started
-somewhere, and an element with no ink and no surface is an element a reader
-cannot see (DESIGN rule 8's affordance clause; the crosshair cursor is the
-second half of the same answer). The frame `c2-draw-empty` is the evidence.
+**A sheet shows its paper, with ink or without it** (amended, D1,
+2026-09-14). A drawing with no ink carries 0 strings and 0 controls like
+every other element at rest, and ONE surface: the sheet itself,
+`--bg-raised` at the block radius. **It paints at ALL times, not only
+`until the first stroke lands` as this section first shipped**: a drawing
+that carries ink but whose frame a person, a reflow, or the model has
+shrunk below that ink still needs a visible edge around the part that
+shows, exactly as an empty one needs one to be clicked at all — the same
+DESIGN rule 8 affordance clause, now read for both cases rather than one,
+and the other half of what closes the ghost finding above (§16w). This is
+still the one place the drawing differs from the empty note beside it, and
+the reason is still the gesture: words arrive where a caret already
+stands, so a note needs no paper drawn for it, while a stroke has to be
+started somewhere; the crosshair cursor is the empty sheet's own further
+half of the same answer, since only an empty sheet invites the FIRST
+stroke. `c2-draw-empty` still stands for the empty case; `c2-draw` (D1)
+draws a shrunk, inked sheet beside it so the frame stands whether the sheet
+holds one stroke or none.
 
 ### 16x. The drawing's cluster and picker (C2b, 2026-09-11)
 
@@ -2367,7 +2602,18 @@ on every incidental pass over a drawing a person is actively inking would
 teach the wrong lesson about what a hover means here. Focus-within and
 `[data-hot]` still reveal it (the harness route, and the keyboard route
 that stands in for a hover a person never made, DESIGN rule 8's reveal
-clause), so the surface still works with no mouse at all.
+clause), so the surface still works with no mouse at all. **The resize
+handle rides the SAME register as the cluster it stands beside (D1,
+2026-09-14, closing the drawing-ghost finding's third clause): §16s's own
+"revealed with the cluster" already subordinates the handle to whatever
+register its OWN block's cluster reveals on, so on a drawing that register
+is this carve-out too, `:focus-within` and `[data-hot]` only, never bare
+`:hover`** — stated outright here because a shipped build read the
+handle's own DESIGN rule 1 row as a fixed hover/focus-within/`[data-hot]`
+list rather than as "whichever register this block's cluster uses," and a
+handle that showed on a bare hover while the drawing's own frame did not
+(paper painting only while empty, above) is exactly what stood alone on
+the page with no widget around it.
 
 `Ask` is the common set's own button (§16b unchanged in name and position),
 gated on the vision flag (§16y): present when the chosen model's `vision`

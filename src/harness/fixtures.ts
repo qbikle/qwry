@@ -119,6 +119,14 @@
 // focused so qbot's gaze has a frame; `empty` stays the regression pair and
 // now shows qbot too, since he ships in the product's empty state.
 
+// D1: `d1-list-numbered` (fixtures.d1ask.ts) is a fourteen-step ordered list
+// over a nine-row run, the one state that holds two of the wave's findings at
+// once: the ORDINALS, right-aligned in their own gutter so `1.` and `14.` end
+// on one edge (item 5), and the SEAM, the 16px between the list's last line
+// and the block's grid header (item 2). It parks at the pane's own bottom,
+// where the seam is; `--scroll top` is the second frame, where the numerals
+// are.
+
 // B3: `b3-ask-summary` (fixtures.b3ask.ts) is what a canvas-targeted answer
 // leaves in the PANE: bubble, strip, the status line `4 blocks · Canvas 4`,
 // footer, and nothing else (AGENT-UX 16k). Its thread is read whole from that
@@ -149,6 +157,7 @@ import { RICH_CHOICE, richSeed, type RichState } from "./fixtures.rich";
 import { stripSeed } from "./fixtures.strip";
 import { WRITES_CHOICE, type WritesState } from "./fixtures.writes";
 import { B1_CHOICE, type B1State } from "./fixtures.b1";
+import { D1_ASK_CHOICE, d1AskSeed, type D1AskState } from "./fixtures.d1ask";
 
 export type HarnessState =
   | "answer"
@@ -192,7 +201,8 @@ export type HarnessState =
   | B1State
   | B2PopoverState
   | B2PillState
-  | C2VisionState;
+  | C2VisionState
+  | D1AskState;
 export const HARNESS_STATES: readonly HarnessState[] = [
   "answer",
   "empty",
@@ -262,6 +272,7 @@ export const HARNESS_STATES: readonly HarnessState[] = [
   "b2-pill-icons",
   "b3-ask-summary",
   "c2-settings-vision",
+  "d1-list-numbered",
 ];
 export const HARNESS_WIDTHS = [320, 392, 560] as const;
 export type HarnessTheme = "dark" | "light";
@@ -753,6 +764,8 @@ export function exchangeFor(state: HarnessState): Exchange | null {
     case "insight-code":
     case "insight-stream":
       return richSeed(state).exchange;
+    case "d1-list-numbered":
+      return d1AskSeed(state).exchange;
   }
 }
 
@@ -822,6 +835,10 @@ export function choiceFor(state: HarnessState): { provider: string; model: strin
       return c2VisionSeed();
     case "b3-ask-summary":
       return B3_ASK_CHOICE;
+    // D1: the order_v2 runbook runs on its own thread's Haiku 4.5, so the
+    // pill reads what the footer reads (the W5 states' own rule)
+    case "d1-list-numbered":
+      return D1_ASK_CHOICE;
     default:
       return { provider: PROVIDER, model: MODEL };
   }

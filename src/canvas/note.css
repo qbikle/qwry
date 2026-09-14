@@ -6,7 +6,14 @@
    composer's own textarea (.ask-ta, the source's font and its 20px lines),
    and NoteBlock imports it, because a note is prose in the answer slot's own
    voice standing somewhere else. The box around that textarea is this file's
-   (B3): the composer's fill and its border step belong to the composer. */
+   (B3): the composer's fill and its border step belong to the composer.
+
+   One rule here is answered from outside it (D1 item 8): on the GRID the box
+   below is the widget's own box, so the outdent goes, the 680 measure goes
+   with it and the words scroll inside the cells. That is the grid giving an
+   element its box, so it is written where the grid's own numbers are
+   (grid.css, `.cvg-slot:not(.cvg-draft) .blk-note`), and what stands here is
+   the geometry a note wears anywhere else. */
 
 /* the positioning box and the surface the cluster dissolves into, so a note
    renders whole even before the canvas shell is on the page (a fixture, a

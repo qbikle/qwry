@@ -20,9 +20,13 @@ export type ToolName =
 /** The three tools a run with a canvas target also sees (B3), as named in
  * tools.schema.json's `canvasTools`. Kept apart from ToolName on purpose: the
  * five are the measured surface and a run without a target must offer exactly
- * them (EVAL 4). There is no create and no delete: the target is resolved
- * before the run and captured in the tool, so writing outside it has no wire
- * representation, and deleting a block stays the user's own keypress. */
+ * them (EVAL 4). These three never create and never delete: the target is
+ * resolved before the run and captured in the tool, so writing outside it has
+ * no wire representation, and deleting a block stays the user's own keypress.
+ * The FOURTH name, `canvas_create` (D1, AGENT-SPEC 5.1), lives in tools.ts as
+ * `CanvasMakeName`, with `AnyCanvasToolName` for the union: it is gated on a
+ * condition of its own (a target OR the question's own word), so a type that
+ * meant "offered whenever the target is" would be false for it. */
 export type CanvasToolName = "canvas_write" | "canvas_replace" | "canvas_read";
 
 /** Which face a canvas result block opens on. `values` is the one-row shape
@@ -92,7 +96,13 @@ export type MentionKind =
 /** How a thread's question ended. The tokens are persisted verbatim in
  * `agent_answers.status`, so they never drift between store and appdb.
  * `proposed` and `ran` are A4's: a change the model wrote and nothing ran,
- * and the same change once the user ran it in a query tab (AGENT-SPEC 9). */
+ * and the same change once the user ran it in a query tab (AGENT-SPEC 9).
+ * Two more spellings reach that column, `committed` and `rolled_back` (D1,
+ * AGENT-SPEC 9, AGENT-UX 13.6), and are deliberately NOT in this union: they
+ * are written and read only by `TX_STATUS` / `txFromStatus` in
+ * stores/agent.ts, the one map that translates between disk and the
+ * in-memory `Exchange.ranTx`, and they never stand on `Exchange.status`,
+ * which keeps saying `ran` for a change whose transaction has ended. */
 export type AnswerStatus =
   | "answered"
   | "failed"

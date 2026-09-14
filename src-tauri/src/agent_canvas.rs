@@ -48,8 +48,16 @@ pub const CANVAS_TOOL_CALL_EVENT: &str = "canvas-tool-call";
 /// The canvas family, in the order `tools.schema.json` lists it. The names
 /// are here rather than in the schema file because the bridge must route them
 /// whatever the file advertises, and because a name is a wire fact: the
-/// TypeScript side answers these three and nothing else (§1.1).
-pub const CANVAS_TOOL_NAMES: [&str; 3] = ["canvas_write", "canvas_replace", "canvas_read"];
+/// TypeScript side answers these four and nothing else (§1.1). `canvas_create`
+/// is the fourth (D1 item 10b): the only one a token with no canvas target may
+/// be minted with, because it is how such a run gets one. Routing is all this
+/// side does with it, exactly as for the other three.
+pub const CANVAS_TOOL_NAMES: [&str; 4] = [
+    "canvas_write",
+    "canvas_replace",
+    "canvas_read",
+    "canvas_create",
+];
 
 /// The timeout's text, in the `ERROR: <first line>` shape every tool failure
 /// takes (AGENT-SPEC §5). It names the way out: the findings still exist, and

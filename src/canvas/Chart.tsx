@@ -22,17 +22,33 @@
 // fixed 132. With no span the geometry is exactly what it was: the pane's
 // block is as tall as what it holds.
 //
-// One scale across every series (two scales in one plot lie), the series in
-// the accent ladder's order (three steps of one hue over the panel), and a
-// legend only from two series, one status-register line inside the face at
-// its top-left.
+// D1 closes the case C2a's rule left open: a face too short for its own rows.
+// The pitch was held at a floor and the rows went on stacking, so a twelve-bar
+// chart of three series in a 4x3 element drew 432px of plot into a 292px face,
+// through its own status line and 128px into the note below it. It draws the
+// rows that FIT now and hands the count UP to the block, which prints it on
+// the one status line it already has, `7 of 12 bars · 214.7 ms`, where the
+// run's own `12 rows` stood: a row of a bar chart IS a bar, so the same 12 on
+// a second line of the face's own was one fact in two slots and one more line
+// standing always (DESIGN rule 14, rule 15). Nothing is reserved inside the
+// face for it, because it is not drawn there. The document's own answer to the
+// same question is the other half (canvas.ts `chartPx`): a chart OPENS at a
+// height read from its bars and its series, so nothing is clipped until a
+// hand makes it so.
+//
+// One scale across every series (two scales in one plot lie) and across every
+// row, drawn or not: rescaling to the rows that fit would make the bars lie
+// about each other, where the line under them tells the truth. The series are
+// in the accent ladder's order (three steps of one hue over the panel), and a
+// legend appears only from two series, one status-register line inside the
+// face at its top-left.
 //
 // The SVG is sized by a ResizeObserver on its own box, so the bars take the
 // width the card gives them at 640, 960 and 1280 and the geometry is computed
 // once per width.
 
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import type { ChartSpec } from "../stores/canvas";
+import type { BarsFit, ChartSpec } from "../stores/canvas";
 import { CELL_W_BASE, GUTTER } from "./grid";
 
 /** the accent ladder: three steps of one hue over the panel */
@@ -59,6 +75,10 @@ const clip = (s: string, px: number) =>
 interface Geometry {
   h: number;
   children: ReactNode;
+  /** what the block's status line says instead of the run's row count, when
+   * the face is too short to hold every row (D1 item 6). Absent while they
+   * all fit: the norm is silent (DESIGN rule 11) */
+  fit?: BarsFit;
 }
 
 /** the row the x labels take under standing bars, and the line above every
@@ -114,11 +134,34 @@ export function barLayout(spec: ChartSpec, w: number, faceH = 0) {
   // pane's own 24 (or at what two series need)
   const natural = ns === 1 ? 24 : ns * barH + (ns - 1) * gap + 12;
   const floor = ns === 1 ? 16 : ns * barH + (ns - 1) * gap + 4;
-  const pitch = faceH > 0 ? Math.max(floor, Math.min(PITCH_MAX, (faceH - legH) / n)) : natural;
+  // the rows a hand-shrunk face can actually hold. Squeezed past their own
+  // floor the bars used to keep stacking and the plot drew straight through
+  // the status line and into the element below it (D1 item 6); it draws the
+  // rows that FIT instead and hands how many of the labels they are up to the
+  // block, which says it on the status line it already has. The whole of the
+  // face is the plot's, since the count is not drawn in here
+  const room = faceH > 0 ? Math.max(0, faceH - legH) : 0;
+  const fits = faceH <= 0 || n * floor <= room;
+  const shown = fits ? n : Math.max(1, Math.min(n, Math.floor(room / floor)));
+  const pitch = faceH > 0 ? Math.max(floor, Math.min(PITCH_MAX, room / shown)) : natural;
   const max = Math.max(1, ...spec.series.flatMap((s) => s.values));
   const x0 = labW + 8;
   const plotW = Math.max(24, w - x0 - valW - 8);
-  return { ns, labW, valW, barH, gap, pitch, legH, max, x0, plotW, h: legH + n * pitch };
+  return {
+    ns,
+    labW,
+    valW,
+    barH,
+    gap,
+    pitch,
+    legH,
+    max,
+    x0,
+    plotW,
+    shown,
+    total: n,
+    h: legH + shown * pitch,
+  };
 }
 
 /** standing bars: the face's height IS the value axis, three ticks at its
@@ -159,8 +202,11 @@ export function standLayout(spec: ChartSpec, w: number, faceH = 0) {
 
 /** bars: one row per label, one bar per series inside it */
 function bars(spec: ChartSpec, w: number, faceH: number): Geometry {
-  const { ns, labW, barH, gap, pitch, legH, max, x0, plotW, h } = barLayout(spec, w, faceH);
-  const rows = spec.labels.map((label, ri) => {
+  const { ns, labW, barH, gap, pitch, legH, max, x0, plotW, shown, total, h } = barLayout(spec, w, faceH);
+  // ONE scale across every series and across every row, drawn or not: rescaling
+  // to the rows that fit would make the bars lie about each other, where the
+  // line under them tells the truth about how many there are
+  const rows = spec.labels.slice(0, shown).map((label, ri) => {
     const y = legH + ri * pitch;
     return (
       <g key={`${label}-${ri}`}>
@@ -182,7 +228,11 @@ function bars(spec: ChartSpec, w: number, faceH: number): Geometry {
       </g>
     );
   });
-  return { h, children: [...legendOf(spec, x0), ...rows] };
+  return {
+    h,
+    children: [...legendOf(spec, x0), ...rows],
+    ...(shown < total ? { fit: { shown, total } } : null),
+  };
 }
 
 /** the line's numbers: three y ticks at the left, sparse x ticks under the
@@ -303,7 +353,20 @@ function standBars(spec: ChartSpec, w: number, faceH: number): Geometry {
   };
 }
 
-export function Chart({ spec, span }: { spec: ChartSpec; span?: { w: number; h: number } }) {
+export function Chart({
+  spec,
+  span,
+  onFit,
+}: {
+  spec: ChartSpec;
+  span?: { w: number; h: number };
+  /** the count a squeezed face owes the block's status line, or null while
+   * every row fits. The face measures and the BLOCK says it, which is what
+   * keeps `7 of 12 bars` and `12 rows` from standing on two lines at once
+   * (D1 item 6, DESIGN rule 14). Absent in the pane, where no face is ever
+   * shorter than its own rows */
+  onFit?: (fit: BarsFit | null) => void;
+}) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
   // a layout effect and the entry's CONTENT box: the first paint is already
@@ -331,6 +394,16 @@ export function Chart({ spec, span }: { spec: ChartSpec; span?: { w: number; h: 
           ? standBars(spec, w, faceH)
           : bars(spec, w, faceH)
       : null;
+  // the layout's own answer, handed up before the frame is painted so the
+  // status line never reads `12 rows` for one frame and `7 of 12 bars` the
+  // next. The two numbers are the dependency and not the object, so a redraw
+  // at the same fit writes nothing
+  const fit = geo?.fit ?? null;
+  const shown = fit?.shown ?? 0;
+  const total = fit?.total ?? 0;
+  useLayoutEffect(() => {
+    onFit?.(shown > 0 ? { shown, total } : null);
+  }, [onFit, shown, total]);
   return (
     <div className="cv-chart" ref={hostRef}>
       {geo && (

@@ -7,7 +7,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { DiffFace } from "../DiffFace";
+import { DiffFace, triText } from "../DiffFace";
 import type { Diff } from "../../stores/canvas";
 
 const diff = (over: Partial<Diff> = {}): Diff => ({
@@ -62,8 +62,21 @@ describe("DiffFace", () => {
     const out = html(diff());
     expect(out).toContain("∅");
     expect(out).toContain("dg-r warn");
-    // one Δ per paired cell, and none on the one-sided row
-    expect(out.match(/%/g)?.length).toBe(2);
+    // a Δ per paired cell, in the marks and again in the tooltip that says the
+    // same cell whole where it ellipsizes (D1 item 9); the one-sided row
+    // carries none in either
+    expect(out.match(/%/g)?.length).toBe(4);
+    expect(out).toContain('title="∅ · 21"');
+  });
+
+  // D1 item 9: a cell narrow enough to ellipsize is a cell a reader cannot
+  // finish, so its tooltip says the triple in full. A formatter, never the
+  // object itself, which is what `[object Object]` in a tooltip is made of
+  test("the tooltip is the triple as text, in the marks' own order and separator", () => {
+    expect(triText({ a: "731", b: "748", delta: 2.3256 })).toBe("731 · 748 · +2.3%");
+    expect(triText({ a: null, b: "21", delta: null })).toBe("∅ · 21");
+    expect(triText({ a: "482", b: "479", delta: -0.6224 })).toBe("482 · 479 · -0.6%");
+    expect(html(diff())).toContain('title="731 · 748 · +2.3%"');
   });
 
   test("the header names the label column and every numeric one, once each", () => {
@@ -71,6 +84,9 @@ describe("DiffFace", () => {
     expect(out.match(/payment_status/g)?.length).toBe(1);
     expect(out).toContain("orders");
     expect(out).toContain("amount");
+    // and every name rides the block that ellipsizes it, header and label
+    // alike: `text-overflow` on a flex row says nothing about the items in it
+    expect(out.match(/class="dg-t"/g)?.length).toBe(3 + diff().rows.length);
   });
 
   test("the face never names the two connections: that is the status line's", () => {
