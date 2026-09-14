@@ -1,8 +1,16 @@
-// The canvas, as a tab of the main card (A3 item 6, C2a). A GRID of blocks at
-// the card's own width, 16px in from every edge, a 12px gutter between cells,
-// and no chrome of its own: no toolbar, no strip, no frame per block. The tab
-// is the strip (DESIGN rule 15: the blocks stand here under 0 always-visible
-// controls, before the grid and after it).
+// The canvas, as a tab of the main card (A3 item 6, C2a). A GRID of widgets at
+// the card's own width, 16px in from every edge, a 12px gutter between cells.
+//
+// D2 gives the page ONE strip and every widget ONE line. The strip is the
+// canvas's own name at the left, where the first cell starts, and a `+` at the
+// right whose menu is the three kinds with their glyphs (DESIGN rule 12: a
+// title and one icon button, nothing else). A click on the name renames it
+// where it stands, ↩ saves through the store's one `rename` and the tab's
+// label follows; Esc puts the old name back. That reverses A3's "0 frames per
+// widget" and "0 controls per page" by the maintainer's own call (Q1 a, Q3 b):
+// strips 0 → 1, frames per widget 0 → 1, always-visible controls per widget
+// still 0 and per page 0 → 1. The widget's own line and its 12px of padding
+// are grid.css's, because they belong to the cells and not to the kinds.
 //
 // The page's geometry belongs to CanvasGrid: the column count read from the
 // width, the cell frames, the drag and the resize, the placeholder and the
@@ -67,22 +75,21 @@
 
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { motion } from "motion/react";
-import { Ellipsis, MessageSquare } from "lucide-react";
+import { BarChart3, Ellipsis, MessageSquare, PenLine, Plus, Type } from "lucide-react";
 import { ResultBlock, type ResultFace } from "../ask/ResultBlock";
 import { isScalarRun } from "../ask/ScalarResult";
 import { ContextMenu, type MenuNode } from "../app/overlay/ContextMenu";
 import { Kbd } from "../design/Kbd";
 import { panelIn, swapIn } from "../design/springs";
 import { copyCueShow } from "../lib/copyCue";
-import { msText } from "../lib/duration";
 import {
   chartOf,
+  DEFAULT_CANVAS_TITLE,
   defaultSpanFor,
   drawingName,
   facesOf,
   statusOf,
   useCanvas,
-  type BarsFit,
   type Block,
   type DrawingBlock as DrawingBlockDoc,
   type NoteBlock as NoteBlockDoc,
@@ -91,6 +98,7 @@ import {
 } from "../stores/canvas";
 import { canSeeImages } from "../stores/agent";
 import { useSettings } from "../stores/settings";
+import { CANVAS_NAME_CAP } from "../agent/tools";
 import { CanvasGrid, Grip, type GridPage } from "./CanvasGrid";
 import { compareWithMenu } from "./compareMenu";
 import { Drawing } from "./Drawing";
@@ -144,20 +152,14 @@ export function revOf(block: Block): string {
 const DRAFT: NoteBlockDoc = { id: "cv-draft", kind: "note", text: "" };
 
 /** the status line under a result's faces: the run's facts, then the
- * comparison's two sides when one stands, then the assumptions after one
- * lowercase lead. The labels are tier 1 and the lead and the numbers tier 2
- * (canvas.css .blk .ans-status): a chip on the canvas toggles nothing, and a
- * chip that answers no click is a control costume on a non-control */
+ * assumptions after one lowercase lead. The labels are tier 1 and the lead
+ * tier 2 (canvas.css .blk .ans-status). A comparison's two connections and two
+ * timings left this line for the diff face's own chips in D2, where each side's
+ * facts stand together in that side's chip (DESIGN rule 14) */
 function Status({ line }: { line: StatusLine }) {
   return (
     <>
       {line.facts}
-      {line.sides.map((s) => (
-        <Fragment key={s.name}>
-          {" · "}
-          <span className="asm">{s.name}</span> {msText(s.ms)}
-        </Fragment>
-      ))}
       {line.assumed.length > 0 && (
         <>
           {" · assumed "}
@@ -212,14 +214,10 @@ function CanvasResult({
   // standing empty, which is the rule every face here follows
   const values = (face: ResultFace): ResultFace =>
     face === "values" && !isScalarRun(run) ? "table" : face;
-  // what a squeezed chart drew, measured by the face and said on the block's
-  // one status line (D1 item 6): the callback is the component's own for the
-  // life of the block, so the face is handed nothing new to redraw for
-  const [bars, setBars] = useState<BarsFit | null>(null);
-  const onChartFit = useCallback((fit: BarsFit | null) => setBars(fit), []);
-  // and only while the chart is the face standing: a flip to the table leaves
-  // the run's own `12 rows` saying what the table shows
-  const status = statusOf(block, block.face === "chart" ? bars : null);
+  // what a squeezed chart drew is the FACE's own line now (`+ 4 more`, D2 item
+  // 4), so this line is the run's again, `12 rows · 241.6 ms`, whichever face
+  // is standing
+  const status = statusOf(block);
   return (
     <ResultBlock
       exchangeId={block.id}
@@ -237,7 +235,6 @@ function CanvasResult({
         if (face !== "preview") useCanvas.getState().setFace(canvasId, block.id, face);
       }}
       chart={chartOf(block)}
-      onChartFit={onChartFit}
       diff={block.diff ?? null}
       span={span}
       lead={<Grip />}
@@ -468,6 +465,162 @@ export function nameOf(block: Block, blocks: readonly Block[] = []): string {
 const kindOf = (block: Block): string =>
   block.kind === "note" ? "note" : block.kind === "drawing" ? "drawing" : block.face;
 
+/** The canvas's one strip (D2 item 2, Q3 b): the page's name at the left, on
+ * the first cell's own left edge, and the `+` at the right. Rule 12 in one
+ * line, a title and one icon button and nothing else, at the 40px every header
+ * in this window wears (the Ask pane's `.ask-head`, the Inspector's pattern).
+ *
+ * Read and edit are ONE geometry (AGENT-UX 16j, the note's own rule): the name
+ * already stands inside a transparent 1px border with its padding paid back in
+ * margin, so a click swaps a span for an input over the same box and no glyph
+ * moves; the accent ring FADES in on the frame after the mount, because a
+ * transition cannot run on the frame an element appears in. ↩ and a blur save
+ * through the store's one `rename`, which the tab's label follows (the name is
+ * one fact: the header is where it is edited and the tab is where it is read);
+ * Esc puts the old words back, and a name emptied to nothing keeps them, since
+ * a canvas called nothing is one nobody can find again. */
+function CanvasHead({ canvasId, title }: { canvasId: string; title: string }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [ring, setRing] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const [addAt, setAddAt] = useState<{ x: number; y: number } | null>(null);
+  const field = useRef<HTMLInputElement>(null);
+  const editing = draft !== null;
+
+  useEffect(() => {
+    if (!editing) {
+      setRing(false);
+      return;
+    }
+    field.current?.select();
+    const id = requestAnimationFrame(() => setRing(true));
+    return () => cancelAnimationFrame(id);
+  }, [editing]);
+
+  // and the ring LEAVES the way it arrived: the span that comes back wears it
+  // for one frame, so the same --dur-quick border-color transition runs out
+  // instead of the line vanishing with the input. It is the span's own border
+  // that fades, which is the one ↩ and Esc were always going to leave behind
+  useEffect(() => {
+    if (!leaving) return;
+    const id = requestAnimationFrame(() => setLeaving(false));
+    return () => cancelAnimationFrame(id);
+  }, [leaving]);
+
+  /** ↩, Esc and a blur all end in one place: the input goes and the ring is
+   * handed to the span to fade. A close inside the frame the ring arrived on
+   * has none to hand over, and flashes nothing */
+  const close = () => {
+    setLeaving(ring);
+    setDraft(null);
+  };
+
+  const save = () => {
+    const next = (draft ?? "").trim();
+    close();
+    if (next && next !== title) useCanvas.getState().rename(canvasId, next);
+  };
+
+  /** the `+`'s menu: three KINDS, each wearing its own glyph (the amended menu
+   * rule, ContextMenu's `glyph`: a menu of kinds hands you a shape, a menu of
+   * actions stays bare). A note and a drawing are placed at once, at the kind's
+   * default span, through the two doors the palette's `New Note` and `New
+   * Drawing` already use, so a widget added from here and one added from there
+   * are the same widget (DESIGN rule 14). `Chart…` cannot be placed: a chart is
+   * a READING of a query and there is none yet, so the row opens the composer
+   * with this canvas tagged and the words the question starts with, and the
+   * model writes it. The ellipsis is WRITING rule 2's contract; the two that
+   * act at once carry none */
+  const addMenu: MenuNode[] = [
+    {
+      kind: "item",
+      glyph: <Type size={12} />,
+      label: "Note",
+      onSelect: () => {
+        const store = useCanvas.getState();
+        store.beginEdit(store.addNote(canvasId, ""));
+      },
+    },
+    {
+      kind: "item",
+      glyph: <PenLine size={12} />,
+      label: "Drawing",
+      onSelect: () => void useCanvas.getState().addDrawing(canvasId),
+    },
+    {
+      kind: "item",
+      glyph: <BarChart3 size={12} />,
+      label: "Chart…",
+      onSelect: () => useCanvas.getState().askForChart(canvasId),
+    },
+  ];
+
+  return (
+    <div className="cv-head">
+      {editing ? (
+        <input
+          ref={field}
+          className={`cv-title${ring ? " ring" : ""}`}
+          aria-label="Canvas Name"
+          maxLength={CANVAS_NAME_CAP}
+          // the box is the WORDS' (canvas.css `field-sizing`); `size` is the
+          // same hug in characters for an engine without it, never the input's
+          // default twenty, which put 94px of empty strip inside the ring
+          size={Math.max(1, (draft ?? "").length + 1)}
+          value={draft ?? ""}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={save}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              save();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              e.stopPropagation();
+              close();
+            }
+          }}
+        />
+      ) : (
+        <span
+          className={`cv-title${leaving ? " ring" : ""}`}
+          onClick={() => {
+            // a drag that selected the words is a select, never an edit (the
+            // note's own rule, AGENT-UX section 2 item 1)
+            const sel = window.getSelection();
+            if (sel && !sel.isCollapsed) return;
+            setDraft(title);
+          }}
+        >
+          {title}
+        </span>
+      )}
+      <button
+        type="button"
+        className={`iconbtn${addAt ? " active" : ""}`}
+        title="Add Widget"
+        aria-label="Add Widget"
+        aria-haspopup="menu"
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          setAddAt({ x: r.right, y: r.bottom + 4 });
+        }}
+      >
+        <Plus size={14} />
+      </button>
+      {addAt && (
+        <ContextMenu
+          point={addAt}
+          items={addMenu}
+          align="end"
+          layerClassName="ov-anchor-layer cv-add"
+          onClose={() => setAddAt(null)}
+        />
+      )}
+    </div>
+  );
+}
+
 export function CanvasTab({ canvasId }: { canvasId: string }) {
   const doc = useCanvas((s) => s.docs[canvasId]);
   const meta = useCanvas((s) => Object.values(s.canvases).flat().find((c) => c.id === canvasId));
@@ -662,73 +815,76 @@ export function CanvasTab({ canvasId }: { canvasId: string }) {
   );
 
   return (
-    <div
-      className="cv-scroll"
-      ref={scroll}
-      onPointerDown={(e) => {
-        // the cells show for the length of the press and leave with it: at
-        // rest nothing says where a cell is, and putting something somewhere
-        // is exactly when that matters (a drag's own lattice, same rule)
-        if (e.button !== 0 || !onPage(e)) return;
-        pageRef.current?.lattice(true);
-        const off = () => {
-          pageRef.current?.lattice(false);
-          window.removeEventListener("pointerup", off);
-          window.removeEventListener("pointercancel", off);
-        };
-        window.addEventListener("pointerup", off);
-        window.addEventListener("pointercancel", off);
-      }}
-      onClick={(e) => {
-        // the card itself, the page under the elements and the tail below it
-        // are where a click writes; a click that landed on a block is the
-        // block's own
-        if (onPage(e)) write(pageRef.current?.cellAt(e.clientX, e.clientY));
-      }}
-    >
-      <CanvasGrid
-        canvasId={canvasId}
-        blocks={blocks}
-        columnsHint={(doc as (typeof doc & { lastColumns?: number }) | undefined)?.lastColumns}
-        renderBlock={renderBlock}
-        keyOf={keyOf}
-        nameOf={naming}
-        kindOf={kindOf}
-        page={page}
-        draft={
-          caret === null
-            ? null
-            : {
-                cell: caret.cell,
-                // the caret line: one empty note in edit, standing in the cell
-                // the click landed in and outside the document until its first
-                // words reach `addNote`
-                node: (
-                  <div className="cv-item" key={caret.n}>
-                    <NoteBlock
-                      block={DRAFT}
-                      editing
-                      onEdit={() => {}}
-                      onCommit={(text) => {
-                        const cell = caret.cell;
-                        setCaret(null);
-                        land(text, cell);
-                      }}
-                      onCancel={() => setCaret(null)}
-                      onDelete={() => setCaret(null)}
-                    />
-                  </div>
-                ),
-              }
-        }
-      />
-      {menu &&
-        (() => {
-          // the note's menu is NoteBlock's own; this one is the result's
-          const b = blocks.find((x) => x.id === menu.blockId);
-          if (!b || b.kind !== "result") return null;
-          return <ContextMenu point={menu} items={menuFor(b)} onClose={() => setMenu(null)} />;
-        })()}
-    </div>
+    <>
+      <CanvasHead canvasId={canvasId} title={meta?.title ?? DEFAULT_CANVAS_TITLE} />
+      <div
+        className="cv-scroll"
+        ref={scroll}
+        onPointerDown={(e) => {
+          // the cells show for the length of the press and leave with it: at
+          // rest nothing says where a cell is, and putting something somewhere
+          // is exactly when that matters (a drag's own lattice, same rule)
+          if (e.button !== 0 || !onPage(e)) return;
+          pageRef.current?.lattice(true);
+          const off = () => {
+            pageRef.current?.lattice(false);
+            window.removeEventListener("pointerup", off);
+            window.removeEventListener("pointercancel", off);
+          };
+          window.addEventListener("pointerup", off);
+          window.addEventListener("pointercancel", off);
+        }}
+        onClick={(e) => {
+          // the card itself, the page under the elements and the tail below it
+          // are where a click writes; a click that landed on a block is the
+          // block's own
+          if (onPage(e)) write(pageRef.current?.cellAt(e.clientX, e.clientY));
+        }}
+      >
+        <CanvasGrid
+          canvasId={canvasId}
+          blocks={blocks}
+          columnsHint={(doc as (typeof doc & { lastColumns?: number }) | undefined)?.lastColumns}
+          renderBlock={renderBlock}
+          keyOf={keyOf}
+          nameOf={naming}
+          kindOf={kindOf}
+          page={page}
+          draft={
+            caret === null
+              ? null
+              : {
+                  cell: caret.cell,
+                  // the caret line: one empty note in edit, standing in the cell
+                  // the click landed in and outside the document until its first
+                  // words reach `addNote`
+                  node: (
+                    <div className="cv-item" key={caret.n}>
+                      <NoteBlock
+                        block={DRAFT}
+                        editing
+                        onEdit={() => {}}
+                        onCommit={(text) => {
+                          const cell = caret.cell;
+                          setCaret(null);
+                          land(text, cell);
+                        }}
+                        onCancel={() => setCaret(null)}
+                        onDelete={() => setCaret(null)}
+                      />
+                    </div>
+                  ),
+                }
+          }
+        />
+        {menu &&
+          (() => {
+            // the note's menu is NoteBlock's own; this one is the result's
+            const b = blocks.find((x) => x.id === menu.blockId);
+            if (!b || b.kind !== "result") return null;
+            return <ContextMenu point={menu} items={menuFor(b)} onClose={() => setMenu(null)} />;
+          })()}
+      </div>
+    </>
   );
 }

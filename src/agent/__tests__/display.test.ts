@@ -144,7 +144,7 @@ describe("parseBlocks", () => {
     ]);
   });
 
-  test("a non-SQL fence is code in its own register; a SQL fence never renders, tagged or not", () => {
+  test("a non-SQL fence is code in its own register; with a run on screen a SQL fence never renders, tagged or not", () => {
     expect(blocks("coupon-shape.md")).toEqual([
       { kind: "p", text: "Coupons sit inside `metadata`, in this shape:" },
       { kind: "code", lang: "json", text: '{"coupon": {"code": "FIRST10", "kind": "percent", "value": 10}}' },
@@ -156,6 +156,18 @@ describe("parseBlocks", () => {
       { kind: "p", text: "An untagged fence still holds the query, so it belongs to the SQL row, not the text:" },
       { kind: "p", text: "Signature is 3.1% of customers and 19% of revenue." },
     ]);
+  });
+
+  // D2 item 7: the drop is rule 14 and nothing else, so it is spent only when
+  // there IS a row restating the statement. With no run on screen the fence is
+  // the model's own, exactly as a markdown table is with no grid to restate it
+  test("without a run a SQL fence is the model's own and renders, tagged or not", () => {
+    expect(parseBlocks("The join:\n\n```sql\nSELECT 1\n```", { hasRun: false })).toEqual([
+      { kind: "p", text: "The join:" },
+      { kind: "code", lang: "sql", text: "SELECT 1" },
+    ]);
+    expect(kinds(parseBlocks("```\nSELECT 1\n```", { hasRun: false }))).toEqual(["code"]);
+    expect(kinds(parseBlocks("```\nSELECT 1\n```", { hasRun: true }))).toEqual([]);
   });
 
   test("an unterminated fence is a code block still streaming", () => {
@@ -188,7 +200,7 @@ describe("parseBlocks", () => {
   });
 
   test("a table needs a header, a separator and a body row; a lone pipe line is prose", () => {
-    expect(kinds(blocks("pipe-prose.md", false))).toEqual(["p", "p"]);
+    expect(kinds(blocks("pipe-prose.md", false))).toEqual(["p", "p", "code"]);
     expect(parseBlocks("month | count\n--- | ---\n2026-08 | 2949786", { hasRun: false })).toEqual([
       { kind: "table", header: ["month", "count"], rows: [["2026-08", "2949786"]] },
     ]);
@@ -214,7 +226,7 @@ describe("parseBlocks", () => {
   });
 
   test("the W2 shapes: a glued heading becomes a lead, the rule and the images go", () => {
-    expect(kinds(blocks("w2-breakdown.md", false))).toEqual(["p", "lead", "p", "table", "p"]);
+    expect(kinds(blocks("w2-breakdown.md", false))).toEqual(["p", "lead", "p", "table", "p", "code"]);
     expect(kinds(blocks("w2-breakdown.md", true))).toEqual(["p", "lead", "p", "p"]);
     expect(blocks("w2-bulleted.md")).toEqual([
       {
@@ -395,6 +407,40 @@ describe("inlineTokens", () => {
   });
 });
 
+// D2 item 6: the fold is the RENDERER's (ask/AnswerText.tsx), and this is the
+// line between them. A seventy-item list parses to one list block of seventy
+// however long it is: the parser never drops an item, so the projection the
+// loop reads, the thread list's first sentence and the eval's score all still
+// see the whole answer, and only the slot draws twelve of it.
+describe("a long list", () => {
+  const raw = [...Array(70)].map((_, i) => `${i + 1}. erp_table_${i + 1}`).join("\n");
+
+  test("parses whole: one list block, seventy items, in order", () => {
+    const bs = parseBlocks(raw, { hasRun: false });
+    expect(kinds(bs)).toEqual(["list"]);
+    const first = bs[0];
+    if (first.kind !== "list") throw new Error("not a list");
+    expect(first.ordered).toBe(true);
+    expect(first.items).toHaveLength(70);
+    expect(first.items[0]).toBe("erp_table_1");
+    expect(first.items[69]).toBe("erp_table_70");
+  });
+
+  test("projects whole: every item is one line of answerText", () => {
+    expect(answerText(raw).split("\n")).toHaveLength(70);
+  });
+
+  // the fold's memory is keyed by the twelve items ABOVE it, which the parser
+  // settles before a thirteenth exists: a list opened mid-stream stays open
+  test("the twelve above the fold settle before the thirteenth arrives", () => {
+    const upTo = (n: number) => raw.split("\n").slice(0, n).join("\n");
+    const twelve = parseBlocks(upTo(13), { hasRun: false })[0];
+    const whole = parseBlocks(raw, { hasRun: false })[0];
+    if (twelve.kind !== "list" || whole.kind !== "list") throw new Error("not a list");
+    expect(twelve.items.slice(0, 12)).toEqual(whole.items.slice(0, 12));
+  });
+});
+
 describe("footerStatus", () => {
   test("the status register with a space before every unit", () => {
     expect(footerStatus(1, 20_400, "Sonnet 5")).toBe("1 turn · 20.4 s · Sonnet 5");
@@ -424,10 +470,14 @@ describe("streaming", () => {
           if (JSON.stringify(settled) !== JSON.stringify(full.slice(0, settled.length))) {
             expect(settled, `${name} @${n} of ${raw.length} (whole: ${whole})`).toEqual(full.slice(0, settled.length));
           }
-          // and the projection of what has settled is a prefix of the final one
+          // and the projection of what has settled is a prefix of the final one.
+          // The final one is this gate's own: `answerText` is the hasRun:true
+          // projection by definition (pinned above), and a SQL fence is in one
+          // and not the other (D2 item 7)
+          const wholeText = project(full);
           const head = project(settled);
-          if (head && !answerText(raw).startsWith(head)) {
-            expect(answerText(raw), `${name} @${n}`).toStartWith(head);
+          if (head && !wholeText.startsWith(head)) {
+            expect(wholeText, `${name} @${n}`).toStartWith(head);
           }
           checked++;
         }
@@ -441,7 +491,11 @@ describe("streaming", () => {
     expect(kinds(parseBlocks("a | b", { hasRun: false }))).toEqual(["p"]);
     expect(kinds(parseBlocks("a | b\n--- | ---\n1 | 2", { hasRun: false }))).toEqual(["table"]);
     expect(kinds(parseBlocks("```\nSEL", { hasRun: false }))).toEqual(["code"]);
-    expect(kinds(parseBlocks("```\nSELECT 1", { hasRun: false }))).toEqual([]);
+    // with a run on screen a langless fence is code until its first word turns
+    // out to be the SQL row's; with none there is no row to hand it to and the
+    // block never changes kind at all
+    expect(kinds(parseBlocks("```\nSELECT 1", { hasRun: true }))).toEqual([]);
+    expect(kinds(parseBlocks("```\nSELECT 1", { hasRun: false }))).toEqual(["code"]);
     // everything settled before them is untouched
     expect(kinds(parseBlocks("Prose.\n\na | b", { hasRun: false }))).toEqual(["p", "p"]);
     expect(kinds(parseBlocks("Prose.\n\na | b\n--- | ---\n1 | 2", { hasRun: false }))).toEqual(["p", "table"]);

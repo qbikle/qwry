@@ -16,10 +16,12 @@
    document changes; .cvg-drag is the gesture's, written imperatively from the
    pointer handler and sprung back on the drop.
 
-   Nothing here is visible at rest: 0 controls per element and 0 per page. The
-   lattice, the placeholder and the size label belong to a gesture and leave
-   with it; the grip and the corner handle are revealed with the cluster, on
-   the block's own hover (ask.css .acts-float's register). */
+   At rest a widget wears ONE hairline and 12px inside it (D2 item 1) and 0
+   controls: the lattice, the placeholder and the size label belong to a
+   gesture and leave with it, and the grip and the corner handle are revealed
+   with the cluster, on the block's own hover (ask.css .acts-float's register).
+   The cluster and the handle both live INSIDE the padding, so neither stands
+   over content and neither is cut by the clip. */
 
 .cvg {
   position: relative;
@@ -77,13 +79,29 @@
     0
   );
 }
-/* the gesture's own layer, and the lift: a press raises the element on
-   spring.pop (the scale is a motion value, written outside React) while the
-   shadow needs an edge to fall from, so the panel fill and the radius come in
-   under it over --dur-quick */
+/* the gesture's own layer, the lift, AND the widget's own face (D2 item 1).
+   A3 counted 0 frames per element and the maintainer reversed it (Q1 a): every
+   widget wears one hairline and 12px inside it, hover / focus-within / the
+   harness step the line to --border-strong, and a page of four reads as four
+   widgets instead of four things floating on one sheet. The count moves with
+   the call: frames per widget 0 -> 1 (on the four-widget page 1 -> 4, the
+   table's own edge folded into the widget's, below); always-visible controls
+   per widget 0 -> 0, which is what keeps this a FACE and not a toolbar.
+
+   It rides the drag layer and not the cell frame for the same reason the clip
+   does: the lift belongs to the layer, so the 2% scale and --shadow-pop grow
+   the line with it, and the border standing OUTSIDE the padding box is exactly
+   what the clip below cannot cut. The corner is --radius-md, the cell frame's
+   own, so the keyboard's ring (offset 1 on .cvg-slot) still follows it.
+
+   A press raises the element on spring.pop (the scale is a motion value,
+   written outside React) while the shadow needs an edge to fall from, so the
+   panel fill comes in under it over --dur-quick */
 .cvg-drag {
   position: relative;
   height: 100%;
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   /* ONE clipping rule for the whole page (D1 item 6): a widget draws inside its
      own box, and what does not fit is the widget's business to answer for (a
@@ -96,7 +114,16 @@
   overflow: hidden;
   transition:
     background var(--dur-quick) var(--ease-std),
+    border-color var(--dur-quick) var(--ease-std),
     box-shadow var(--dur-quick) var(--ease-std);
+}
+/* the line steps up with the cluster: the three states that reveal a widget's
+   chrome are the three that say which widget the pointer, the keyboard and the
+   harness are on (ask.css .acts-float's own register) */
+.cvg-slot:hover .cvg-drag,
+.cvg-slot:focus-within .cvg-drag,
+.cvg-slot:has([data-hot]) .cvg-drag {
+  border-color: var(--border-strong);
 }
 /* the keyboard's own selection, drawn on the CELL (AGENT-UX 16s: the focused
    element IS the selection). Every ring this product draws stands OUTSIDE the
@@ -177,30 +204,116 @@
   padding: 0;
 }
 .cvg-slot .cv-chart,
-.cvg-slot .cv-diff,
+.cvg-slot .cv-diff-face,
 .cvg-slot .rb-sql,
 .cvg-slot .rb-sql .cm-editor {
   height: 100%;
 }
-/* the note's own box IS the widget's (D1 item 8): no outdent, since there is
-   no column edge left for the words to line up with, and the read view and
-   the edit box keep the identical padding they always had, so entering edit
-   still moves no glyph. Words past the cells scroll inside the box rather
-   than standing outside it, which is what the page's one clipping rule
-   (.cvg-drag) would cut off anyway; whether the box should GROW for them
-   instead is a question this wave leaves open */
+
+/* ---- the widget's line is the face's line too (D2 item 1) -----------------
+   No widget ever shows two. The TABLE face keeps its own top and bottom
+   hairlines (the raised header band needs an edge above it and the last row
+   an edge below) and bleeds to the widget's left and right lines, so the band
+   runs from line to line under the question line instead of standing in a
+   second box 12px inside the first. The DIFF face loses its box entirely and
+   its grid takes the same treatment, 8 under the chips.
+
+   The negative margins reach exactly the padding box, which is where the clip
+   cuts, so the hairline the widget draws is the only vertical line there is */
+.cvg-slot .blk > .rb.table,
+.cvg-slot .blk .cv-diff {
+  margin-left: calc(-1 * var(--sp-3));
+  margin-right: calc(-1 * var(--sp-3));
+  border-left: none;
+  border-right: none;
+  border-radius: 0;
+}
+.cvg-slot .blk > .rb.diff {
+  border: none;
+  border-radius: 0;
+  background: none;
+  overflow: visible;
+}
+.cvg-slot .blk .cv-diff-face {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.cvg-slot .blk .cv-diff {
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: none;
+  /* the face's own `max-width: 100%` is the PANE's rule (a wide compare gives
+     way inside the block); here the 100% is the content box, and a grid that
+     bleeds 12 past it on each side has to be allowed the 24 (canvas.css) */
+  max-width: none;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+/* the chips stand above the grid and never shrink under it: a side's facts are
+   the face's own heading, and a face too short to hold both is a face whose
+   GRID scrolls (DiffFace) */
+.cvg-slot .blk .cchips {
+  flex-shrink: 0;
+  margin-bottom: var(--sp-2);
+}
+/* the note's own box IS the widget's (D1 item 8, D2 item 1): it takes the
+   widget's 12 and pays it back in margin, so the box's border edge lands
+   exactly on the padding box and the first glyph stands 12 from the widget's
+   line, where every other kind's first glyph stands. D1 wrote `margin: 0`
+   here, which left the words 12 in from a box that had no line of its own;
+   with the widget wearing one, the outset is what merges the two.
+
+   The ring edit adds (note.css) becomes an INSET hairline on this page rather
+   than a border: a border would stand 1px outside the padding box, which is
+   the widget's own line and the one thing the clip cuts. Inset, it paints the
+   pixel just inside that line, so entering edit reads as the widget's own line
+   turning accent, which is what it is. One accent line, and no glyph moves */
 .cvg-slot:not(.cvg-draft) .blk-note .note-body,
 .cvg-slot:not(.cvg-draft) .blk-note .note-box {
   flex: 1 1 0;
   min-height: 0;
   max-width: none;
-  margin: 0;
+  padding: var(--sp-3);
+  margin: calc(-1 * var(--sp-3));
+  border: none;
+  border-radius: var(--radius-md);
   overflow: auto;
 }
-/* the block's own 8px between its parts, which the outdent used to pay for */
+.cvg-slot:not(.cvg-draft) .blk-note .note-box {
+  transition: box-shadow var(--dur-quick) var(--ease-std);
+}
+.cvg-slot:not(.cvg-draft) .blk-note .note-box.ring {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+/* the block's own 8px between its parts, the outset paid back: the box reaches
+   12 above its first glyph and the parts stand 8 apart */
 .cvg-slot:not(.cvg-draft) .blk-note > .blk-q + .note-body,
 .cvg-slot:not(.cvg-draft) .blk-note > .blk-q + .note-box {
-  margin-top: var(--sp-2);
+  margin-top: calc(var(--sp-2) - var(--sp-3));
+}
+/* and the words say when there are more of them (D1's ledgered S3): a note a
+   hand has sized scrolls inside its span, so 16px of its foot fades while its
+   end is out of view, the thinking strip's own mask register. It leaves the
+   moment the end is reached, and a note still growing with its words never
+   shows it at all (NoteBlock writes `data-more`).
+
+   The band fades the WORDS, not the padding: the mask is painted over the
+   border box, and the box's own bottom --sp-3 is the last thing in it, so a
+   band measured from the bottom edge spent 12 of its 16 on empty inset and
+   cut the last line at full opacity (LESSONS 9: a clipped answer lies). It
+   ends at the CONTENT's foot instead, and the 16 above it are all words */
+.cvg-slot:not(.cvg-draft) .blk-note .note-body[data-more] {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 calc(100% - 16px - var(--sp-3)),
+    transparent calc(100% - var(--sp-3))
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    #000 calc(100% - 16px - var(--sp-3)),
+    transparent calc(100% - var(--sp-3))
+  );
 }
 /* the textarea takes the box, the same box the words stood in. It still
    measures itself (NoteBlock), which is the basis it grows FROM: past the box
@@ -211,12 +324,37 @@
   max-height: 100%;
   overflow: auto;
 }
+/* while the WIDGET is still following the words (D2 item 3, the store's
+   `autoH`), the textarea is exactly as tall as they are and does not stretch
+   to the box: a box that stretched it would answer the grid's measure with the
+   height it was just given, and no note would ever grow again (D1 item 8's
+   trap, one layer in). The gap it leaves is at most the row the widget is
+   springing to; the first hand resize gives the fill rule back */
+.cvg-slot:not(.cvg-draft) .blk-note.auto .note-box .ask-ta {
+  flex: 0 0 auto;
+}
 /* a cluster that floated 2px above its first line floated 2px above the
-   widget too, where the one clipping rule now cuts it: on the grid the box's
-   own padding is what holds the words off the top edge, so the cluster sits
-   on it (canvas.css .blk.noq) */
+   widget too, where the one clipping rule now cuts it: on the grid the
+   WIDGET's own padding is what holds the words off the top edge, so the
+   cluster sits at the content's own top-right, 12 in from both lines, centred
+   on the 24px question line (canvas.css .blk.noq) */
 .cvg-slot .blk.noq > .acts-float {
   top: 0;
+}
+
+/* the drawing's paper is the PADDING BOX (D2 item 1): the sheet outsets by the
+   widget's own 12 so the raised paper runs to the hairline and the widget shows
+   one line and not a card inside a card. The ink's coordinate space moves by
+   the border's 1px and nothing more, so every stored stroke keeps its origin;
+   the corner is the widget's, drawn by the clip rather than by a second radius
+   of the sheet's own */
+.cvg-slot:not(.cvg-draft) .blk-draw .dw-sheet {
+  width: auto;
+  margin: calc(-1 * var(--sp-3));
+  border-radius: 0;
+}
+.cvg-slot:not(.cvg-draft) .blk-draw > .dw-sheet {
+  margin-top: calc(-1 * var(--sp-3));
 }
 
 /* the grip: the first action of every cluster and the one surface every kind
@@ -312,6 +450,12 @@
    .note-box) */
 .cvg-draft {
   height: auto;
+  /* the widget's own 12, and nothing else of its face: a caret line is not a
+     widget yet, so it wears no line (a box drawn around nothing is the empty
+     canvas's three boxes again, note.css's own rule). What it does wear is the
+     inset, so the first glyph stands where it will stand once the words make
+     it a widget and no letter moves on the commit */
+  padding: var(--sp-3);
 }
 /* and nothing inside it stretches: every rule above that gives a widget its
    box says `:not(.cvg-draft)`, because a caret line holds no cells and a box

@@ -86,13 +86,15 @@ export const C2_DRAW_WIDTHS = [640, 960, 1280] as const;
 
 /** a card tall enough to read the whole document at the FLOOR, where the
  * reflow stacks the sheet under the chart: 3 rows of chart plus 3 of sheet is
- * 6 rows, 708px, and this is that plus the tab bar and the page's own inset */
-const C2_DRAW_CARD_H = 820;
+ * 6 rows, 708px, and this is that plus the canvas strip, the tab bar and the
+ * page's own inset (the strip is D2 item 2's, and it costs every canvas card
+ * its own 40) */
+const C2_DRAW_CARD_H = 860;
 /** the small state is two rows and nothing else */
 const C2_SMALL_CARD_H = 420;
 /** and the empty sheet is three: a card taller than the page would be
  * evidence of nothing but the card (the empty grid's own rule) */
-const C2_EMPTY_CARD_H = 480;
+const C2_EMPTY_CARD_H = 500;
 
 export const c2DrawCardH = (state: string): number =>
   state === "c2-draw-small" ? C2_SMALL_CARD_H : state === "c2-draw-empty" ? C2_EMPTY_CARD_H : C2_DRAW_CARD_H;

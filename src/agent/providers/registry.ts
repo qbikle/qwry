@@ -53,13 +53,16 @@ export interface ModelInfo {
  * each was accepted by a real `claude -p` invocation. Everything else is
  * hand-typed from documentation and stays unverified until proven.
  *
- * `vision` is sourced the same way and reads 4 true / 2 false / 11 unknown:
+ * `vision` is sourced the same way and reads 7 true / 2 false / 8 unknown:
  * the three Claude rows because the vision guide's own examples run on
- * `claude-opus-5` and the family documents the capability, `gemini-3.8-flash`
- * because it is the model in Google's own OpenAI-compatibility image example
- * (at the same base URL presets.ts holds, trailing slash included), the two
- * local ggufs false because a text gguf has no vision tower, and every row
- * nobody queried `"unknown"` rather than guessed either way. */
+ * `claude-opus-5` and the family documents the capability; both GPT-5.6 rows
+ * because OpenAI's own images guide documents vision input for the family
+ * (images.test.ts pins the same citation); both Gemini rows because Google's
+ * OpenAI-compatibility page documents image input for the family at the same
+ * base URL presets.ts already holds, `gemini-3.8-flash` being the model its
+ * own example runs on (trailing slash included); the two local ggufs false
+ * because a text gguf has no vision tower; and every row nobody queried
+ * stays `"unknown"` rather than guessed either way. */
 export const MODEL_REGISTRY: readonly ModelInfo[] = [
   {
     id: "claude-haiku-4-5",
@@ -106,7 +109,7 @@ export const MODEL_REGISTRY: readonly ModelInfo[] = [
     contextWindow: 0,
     parallelTools: true,
     samplingParams: { temperature: "supported", topP: "supported" },
-    vision: "unknown",
+    vision: true,
     verified: false,
   },
   {
@@ -117,7 +120,7 @@ export const MODEL_REGISTRY: readonly ModelInfo[] = [
     contextWindow: 1_050_000,
     parallelTools: true,
     samplingParams: { temperature: "supported", topP: "supported" },
-    vision: "unknown",
+    vision: true,
     verified: false,
   },
   {
@@ -139,7 +142,7 @@ export const MODEL_REGISTRY: readonly ModelInfo[] = [
     contextWindow: 1_000_000,
     parallelTools: false,
     samplingParams: { temperature: "supported", topP: "supported" },
-    vision: "unknown",
+    vision: true,
     verified: false,
   },
   {

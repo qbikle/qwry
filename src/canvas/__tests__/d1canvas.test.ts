@@ -40,7 +40,7 @@ mockIPC(() => undefined);
 
 const { barLayout } = await import("../Chart");
 const { CELL_H, CELL_W_BASE, GUTTER } = await import("../grid");
-const { barsShown, chartOf, compareMismatch, defaultSpanFor, statusOf, writeDoc } = await import("../../stores/canvas");
+const { chartOf, compareMismatch, defaultSpanFor, statusOf, writeDoc } = await import("../../stores/canvas");
 type Block = import("../../stores/canvas").Block;
 type ResultBlock = import("../../stores/canvas").ResultBlock;
 
@@ -117,7 +117,7 @@ describe("a chart opens at a height its own bars fit in", () => {
 // on the one status line it already had. A row of a bar chart IS a bar, so
 // `12 rows · 7 of 12 bars` would be the same twelve twice (DESIGN rule 14) and
 // a line of the face's own was one more line standing always (rule 15).
-describe("a squeezed chart's count rides the block's own status line", () => {
+describe("a squeezed chart says nothing on the block's status line (D2 item 4)", () => {
   const squeezed: Block = {
     ...chartBlock(12, 3),
     status: "12 rows · 214.7 ms",
@@ -125,22 +125,16 @@ describe("a squeezed chart's count rides the block's own status line", () => {
     cell: { x: 0, y: 0, w: 4, h: 3 },
   };
 
-  test("the bars take the rows fragment's place, and the run keeps its milliseconds", () => {
-    expect(barsShown({ shown: 7, total: 12 })).toBe("7 of 12 bars");
-    expect(statusOf(squeezed, { shown: 7, total: 12 })?.facts).toBe("7 of 12 bars · 214.7 ms");
-  });
-
-  test("a face with room for every row says the plain line", () => {
-    expect(statusOf(squeezed, null)?.facts).toBe("12 rows · 214.7 ms");
+  // D1 put `7 of 12 bars` here; D2 moves the count into the face's own
+  // `+ N more`, the one line that acts on it, and the status line goes back to
+  // the run's facts whether the face is squeezed or not (DESIGN rule 14)
+  test("the run's own line stands, squeezed or not", () => {
     expect(statusOf(squeezed)?.facts).toBe("12 rows · 214.7 ms");
   });
 
-  test("a refused compare is still the line's last fragment, after the bars", () => {
-    const line = statusOf({ ...squeezed, mismatch: "table order_v2 is not on prod-crawler" }, {
-      shown: 7,
-      total: 12,
-    });
-    expect(line?.facts).toBe("7 of 12 bars · 214.7 ms · table order_v2 is not on prod-crawler");
+  test("a refused compare is still the line's last fragment", () => {
+    const line = statusOf({ ...squeezed, mismatch: "table order_v2 is not on prod-crawler" });
+    expect(line?.facts).toBe("12 rows · 214.7 ms · table order_v2 is not on prod-crawler");
   });
 });
 

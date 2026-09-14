@@ -57,6 +57,7 @@ import {
   type ModelPlace,
 } from "../agent/tools";
 import type { AgentRun, CanvasFace } from "../agent/types";
+import { canonicalToken } from "../agent/mentions";
 import { figureText, SCALAR_MAX_COLS } from "../ask/ScalarResult";
 import { msText } from "../lib/duration";
 import {
@@ -94,6 +95,7 @@ import type { DrawTool } from "../canvas/blockTools";
 import { setCanvasPort } from "../canvas/port";
 import { useAgent } from "./agent";
 import { useAsk } from "./ask";
+import { useSidePane } from "./sidePane";
 import { useConnections } from "./connections";
 import { useRecents } from "./recents";
 import { useSettings } from "./settings";
@@ -292,8 +294,6 @@ export interface CanvasMeta {
 export interface StatusLine {
   /** the run's own facts, or a diff's row count */
   facts: string;
-  /** a comparison names both connections and both timings ONCE (LESSONS 4) */
-  sides: { name: string; ms: number }[];
   /** the assumptions, rendered after one lowercase `assumed` lead */
   assumed: string[];
 }
@@ -432,19 +432,16 @@ export interface BarsFit {
   total: number;
 }
 
-/** `8 of 12 bars`: the status register's own `200 of 1,842 rows` (AGENT-UX
- * 16a item 4), said of bars */
-export const barsShown = (fit: BarsFit): string => `${fit.shown} of ${fit.total} bars`;
-
-/** the status line's parts. A comparison replaces the run's facts with the
- * diff's own, because the two sides are what the block now states.
+/** the status line's parts. A comparison keeps the run's row count and hands
+ * the two connections to the diff face's own chips, which carry a side's name
+ * and that side's time together (D2 item 5): a name in the chip and again in
+ * this line is one fact in two slots (DESIGN rule 14).
  *
- * `bars` is what the chart face measured when its box was too short for every
- * row (D1 item 6). It takes the ROW fragment's place rather than standing
- * beside it: a row of a bar chart is a bar, so `12 rows · 7 of 12 bars` would
- * be the same twelve twice (DESIGN rule 14). The run's own milliseconds are
- * unmoved, read from the same `ms` the stored line was built from. */
-export function statusOf(block: Block, bars?: BarsFit | null): StatusLine | null {
+ * D1's `7 of 12 bars` is retired here for the same reason. A squeezed chart
+ * now draws `+ 4 more` inside its own face, which is the line that ACTS on
+ * the count, so the block's status line goes back to the run's own
+ * `12 rows · 241.6 ms` (D2 item 4). */
+export function statusOf(block: Block): StatusLine | null {
   if (block.kind !== "result") return null;
   const assumed = block.chips;
   const d = block.diff;
@@ -452,19 +449,13 @@ export function statusOf(block: Block, bars?: BarsFit | null): StatusLine | null
   // once (DESIGN rule 14): the face it was refused from is still standing and
   // the run's own facts are still true, so nothing else moves for it
   if (!d) {
-    const ran = bars ? `${barsShown(bars)} · ${msText(block.ms)}` : block.status;
     return {
-      facts: block.mismatch ? `${ran} · ${block.mismatch}` : ran,
-      sides: [],
+      facts: block.mismatch ? `${block.status} · ${block.mismatch}` : block.status,
       assumed,
     };
   }
   return {
     facts: d.capped ? `over ${DIFF_ROW_CAP} rows` : rowsText(d.rows.length),
-    sides: [
-      { name: d.a.name, ms: d.a.ms },
-      { name: d.b.name, ms: d.b.ms },
-    ],
     assumed,
   };
 }
@@ -603,6 +594,12 @@ export function chartPx(spec: ChartSpec, lines: number): number {
  * answer for a 40-bar reading and a better one than a widget eleven rows tall */
 const CHART_ROWS_MAX = 6;
 
+/** and the tallest a note GROWS to on its own (D2 item 3): the same six, the
+ * cap `defaultSpan("note")` already clamps a note's opening height to
+ * (grid.ts). Past it the words scroll inside the cells rather than pushing a
+ * widget down a page nobody asked to make taller. */
+export const NOTE_ROWS_MAX = 6;
+
 function chartRows(block: Block, width: number | undefined): number | null {
   if (block.kind !== "result" || spanKeyOf(block) !== "chart") return null;
   const spec = chartOf(block);
@@ -612,10 +609,26 @@ function chartRows(block: Block, width: number | undefined): number | null {
   return Math.min(CHART_ROWS_MAX, cellsForPx(chartPx(spec, lines)));
 }
 
+/** one row of a figure pair, and the chrome a widget puts around it (D2 item
+ * 1): the title line, the status line, the 8 between the block's parts and the
+ * widget's own 12 top and bottom. A figure row used to clear a single cell by
+ * two pixels; with the widget's line and its band around it, it does not, and
+ * a values widget that opens one cell tall draws its captions through its own
+ * status line. The numbers are `.ans-scalar` and `.blk`'s (ask.css,
+ * canvas.css), read here the way `chartPx` reads the chart's. */
+const VALUES_ROW_PX = 50;
+const VALUES_CHROME = 24 + 16 + 2 * 8 + 2 * 12;
+
+/** the rows a figure row needs, or null where the question does not apply */
+function valueRows(block: Block, span: Span): number | null {
+  if (block.kind !== "result" || spanKeyOf(block) !== "values") return null;
+  return cellsForPx(span.h * VALUES_ROW_PX + VALUES_CHROME);
+}
+
 /** the size this block opens at, its content read at the width it will stand at */
 export const defaultSpanFor = (block: Block, width?: number): Span => {
   const span = defaultSpan(spanKeyOf(block), contentSizeOf(block, width));
-  const rows = chartRows(block, width);
+  const rows = chartRows(block, width) ?? valueRows(block, span);
   return rows === null ? span : { w: span.w, h: Math.max(span.h, rows) };
 };
 
@@ -626,6 +639,10 @@ export const defaultSpanFor = (block: Block, width?: number): Span => {
  * window does (canvas-grid 3.2, 3.5) */
 export function minSpanFor(block: Block): Span {
   const min = minSpan(spanKeyOf(block), contentSizeOf(block));
+  // a figure row's floor is what its figures and the widget's own band need:
+  // under it the captions read through the status line (D2 item 1)
+  const figures = valueRows(block, min);
+  if (figures !== null) return { w: min.w, h: Math.max(min.h, figures) };
   if (block.kind !== "drawing") return min;
   const ink = bboxOf(block.strokes);
   if (!ink) return min;
@@ -1061,6 +1078,27 @@ interface CanvasState {
     columns: number,
     opts?: { auto?: boolean },
   ) => void;
+  /** D2 item 3: the note's own growth, while no hand has sized it. The words
+   * are measured where they are rendered (CanvasGrid) and this is what the
+   * measure asks for: the span steps to `rows`, capped at `NOTE_ROWS_MAX`,
+   * and the widgets under it make room on the resize's own spring. It GROWS
+   * by default, because a page must not jump under the caret; the commit
+   * passes `shrink` and the one shrink rides the same spring. A block whose
+   * `autoH` a hand has cleared is refused here: the cells are the user's. */
+  growTo: (
+    canvasId: string,
+    blockId: string,
+    rows: number,
+    columns: number,
+    opts?: { shrink?: boolean },
+  ) => void;
+  /** D2 item 4: `+ N more` in a squeezed chart's own face. The widget takes
+   * the height its bars need, which is the height the document would have
+   * OPENED it at (`defaultSpanFor`), so the line that says how many are
+   * missing and the rule that decided the opening height are one arithmetic
+   * (DESIGN rule 14). Its width is untouched: the hand that shrank it chose
+   * that. */
+  fitChart: (canvasId: string, blockId: string, columns: number) => void;
   /** C2: the page is this many columns wide now. Wider than the layout was
    * stored at, the stored layout stands (empty columns at the right until
    * something is moved there); NARROWER, a derived layout is computed in
@@ -1121,6 +1159,15 @@ interface CanvasState {
    * has no words to begin with, so it lands armed and empty rather than in an
    * edit: the sheet IS the edit */
   newDrawing: () => void;
+  /** D2 item 2: the `+` menu's `Chart…` row. A note and a drawing are placed
+   * at once; a chart is not, because a chart is a READING of a query and the
+   * document holds none until one is asked for. So the row opens the composer
+   * with this canvas already tagged and the words the question starts with,
+   * and the model writes the widget through `canvas_add` exactly as it does
+   * for any other question aimed at a canvas (B3): one door in, never a
+   * second (DESIGN rule 14). The words stand at once; nothing animates
+   * typing. */
+  askForChart: (canvasId: string) => void;
 }
 
 const metaOf = (s: CanvasState, canvasId: string): CanvasMeta | null => {
@@ -1562,6 +1609,28 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     });
   },
 
+  growTo: (canvasId, blockId, rows, columns, opts) => {
+    const block = get().docs[canvasId]?.blocks.find((b) => b.id === blockId);
+    // a hand on the corner is the end of this: `autoH` is the document's own
+    // record of who owns the height (AGENT-SPEC section 9)
+    if (!block || block.kind !== "note" || block.autoH !== true) return;
+    const want = Math.max(1, Math.min(NOTE_ROWS_MAX, rows));
+    const now = block.cell?.h ?? want;
+    if (want === now || (want < now && !opts?.shrink)) return;
+    get().resizeTo(canvasId, blockId, { w: block.cell?.w ?? DEFAULT_SPAN.note.w, h: want }, columns, {
+      auto: true,
+    });
+  },
+
+  fitChart: (canvasId, blockId, columns) => {
+    const block = get().docs[canvasId]?.blocks.find((b) => b.id === blockId);
+    if (!block || block.kind !== "result") return;
+    const w = block.cell?.w ?? DEFAULT_SPAN.chart.w;
+    const h = defaultSpanFor(block, w).h;
+    if (block.cell && h <= block.cell.h) return;
+    get().resizeTo(canvasId, blockId, { w, h }, columns);
+  },
+
   reflowTo: (canvasId, columns) => {
     const doc = get().docs[canvasId];
     if (!doc || !Number.isFinite(columns) || columns < 1) return;
@@ -1633,7 +1702,7 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     // query runs on a database that is not this window's
     const block = get().docs[canvasId]?.blocks.find((b) => b.id === blockId);
     if (!block || block.kind !== "result" || !block.sql)
-      return { ok: false, message: "this block has no query to compare" };
+      return { ok: false, message: "this widget has no query to compare" };
     const meta = metaOf(get(), canvasId);
     if (!meta) return { ok: false, message: "this canvas is gone" };
     const sql = block.sql;
@@ -1736,6 +1805,16 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     }
     // the empty note IS the edit: committing it empty takes it away again
     get().beginEdit(get().addNote(id, ""));
+  },
+
+  askForChart: (canvasId) => {
+    const meta = metaOf(get(), canvasId);
+    if (!meta) return;
+    // the pane opens in Ask and never closes, `Ask` on a block's own rule
+    useSidePane.getState().show("ask");
+    useAsk
+      .getState()
+      .prefill(meta.profileId, `${canonicalToken("canvas", { id: meta.id, title: meta.title })} add a chart of `);
   },
 
   newDrawing: () => {

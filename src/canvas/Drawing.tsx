@@ -105,11 +105,12 @@ const POINT_MIN = 1;
 
 /** the glyph each tool wears, in two places at once: the picker's BUTTON
  * shows the armed tool's, so what a press will make is legible without
- * opening the menu, and every ROW of the menu shows its own. The app's menu
- * rows carry a label, a hint and an arrow and no icon column (compareMenu's
- * reading); this one menu is the deliberate exception, because the glyph is
- * not decoration on an action's name, it is the shape the row hands you
- * (AGENT-UX 16x) */
+ * opening the menu, and every ROW of the menu shows its own. It was the one
+ * menu in the app that wore a glyph column; D2 makes the exception the rule
+ * it was already drawing (AGENT-UX 16b as amended, ContextMenu's `glyph`): a
+ * menu of ACTIONS on one object is bare, a menu of KINDS, where the row hands
+ * you a shape or a widget, wears its glyph. This picker and the canvas's `+`
+ * are the two; `More` and the compare picker stay bare. */
 const GLYPH: Record<DrawTool, typeof Pen> = {
   pen: Pen,
   rect: Square,

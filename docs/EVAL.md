@@ -284,6 +284,63 @@ Haiku `pagila-hard.json` **5/5**; section 4's table has every row.
   unknown-tool error text stays the one that lists only those five. No
   bench row moves for a change no gated run ever sees.
 
+- **D2 measured a v5 and reverted it (2026-09-14)**: `PROMPT_VERSION` stays
+  `v4`, and this is the first entry in this list that says so because a run
+  said so rather than because no byte moved. The wave asked for one sentence
+  in `HYBRID_RULES`, beside the column rule: `When the answer is a list of
+  more than a few identifiers, return them as the result of a query, never as
+  a list in prose.` It was written, the version was bumped, the pins followed,
+  and all six Pagila rows were re-measured. Accuracy held everywhere:
+  `pagila.json` **33/33** on both models at recall 0.94, `pagila-hard.json`
+  **5/5** on both, 0 turn-cap hits on all four. Presentation did not.
+  `pagila-insight.json` + claude-haiku-4-5 read **0.771** over 7 and, on its
+  one re-sample, **0.750** over 8 against a row of **0.850**, where the gate's
+  slack is 0.05; claude-sonnet-5 read **0.875** over 8 against 0.900, which
+  passes. Two draws under the bar is the rule's own answer, so the sentence
+  and the version bump were reverted and `src/agent/prompt.ts` is byte-equal
+  to what it was before the wave.
+
+  **The control is why this reads as the sentence and not as the weather.** A
+  re-sampled row that stays under can still be a model, a CLI or a machine
+  that moved since the row was taken eight days earlier, and this file had no
+  way to tell those apart: every number it holds was measured against bytes
+  that no longer exist beside it. So the v4 prompt was rebuilt in a scratch
+  copy of the tree, identical but for the one sentence and the version
+  string, and run on the same bench, the same hour, the same machine:
+  **0.857** over 7, which is the committed row. v4 scores its row today; v5
+  does not. What moved is `no_grid_restatement`, the check DESIGN rule 14
+  owns and the one EVAL has called "arriving and has not landed" since v3. It
+  reads 4/7 on the control, 3/7 and 2/8 on the two v5 draws. Read plainly: a
+  sentence telling the model to put identifiers in the result made it read
+  MORE of the result back in prose, which is the opposite of the intent and
+  the same trade v3 made in the other direction. A control run beside the
+  measured one is cheap and settles a question a re-sample cannot; it is
+  recommended for any future prompt wave whose row is older than the tooling.
+
+  What the wave keeps is the half that needed no prompt: `AnswerText` folds a
+  list past 12 items behind a `Show All 70` line (D2 item 6), so the
+  maintainer's seventy table names are one screen whatever the model writes.
+  The fold is the floor, not the fix, and the rule above is still the fix
+  someone will land, with a wording that does not cost rule 14.
+
+  | bench | model | v4 row | v5, measured | verdict |
+  |---|---|---|---|---|
+  | `pagila.json` | claude-haiku-4-5 | 33/33 | **33/33**, recall 0.94 | holds |
+  | `pagila.json` | claude-sonnet-5 | 33/33 | **33/33**, recall 0.94 | holds |
+  | `pagila-hard.json` | claude-haiku-4-5 | 5/5 | **5/5**, recall 1.00 | holds |
+  | `pagila-hard.json` | claude-sonnet-5 | 5/5 | **5/5**, recall 1.00 | holds |
+  | `pagila-insight.json` | claude-haiku-4-5 | 8/8 ran, 0.850 | 7/8 ran, **0.771** over 7 · re-sample 8/8 ran, **0.750** over 8 | **fails**, 0.100 under a 0.05 slack |
+  | `pagila-insight.json` | claude-sonnet-5 | 8/8 ran, 0.900 | 8/8 ran, **0.875** over 8 | holds |
+  | `pagila-insight.json` (v4 control, same hour) | claude-haiku-4-5 | 8/8 ran, 0.850 | 7/8 ran, **0.857** over 7 | the row, on today's tooling |
+
+  Artifacts: `eval/results/{pagila,pagila-hard}-{haiku,sonnet}-v5.json`,
+  `insight-{haiku,sonnet}-v5.json` and `insight-haiku-v5b.json` (the
+  re-sample), all gitignored; the control's artifact and every run's log are
+  in the session scratchpad's `d2-eval/`, outside the repo, because the tree
+  it was produced from is not this tree. `eval/baseline.json` does not move:
+  the ten rows it holds are still the v4 rows, and no v5 row was ever
+  written.
+
 **Reference numbers, 2026-09-06** (W3b; provider `claude-code`, `--jobs 3`,
 `PROMPT_VERSION` v4, 0 turn-cap hits on every row except `pagila-insight.json`
 + claude-haiku-4-5, whose `ins-05` EXEC-FAILed twice and pushed `avg_turns` to

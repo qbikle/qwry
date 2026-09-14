@@ -223,6 +223,20 @@
 // it was made from, beside one that was, six columns ellipsized inside four
 // cells (item 9).
 //
+// D2 (the maintainer's answers of 2026-09-14): on the ASK root, d2-answer-typo
+// = the whole answer rhythm in one exchange (a four-word lead-in as a label, a
+// paragraph, bullets carrying their figures, a code block in the editor's own
+// face, a colon sentence, the model's table) and d2-answer-list = seventy
+// names folded after the twelfth behind `Show All 70`; both park at the TOP,
+// the insight states' own rule, since the text is the subject. On the CANVAS
+// root: d2-widgets = four widgets each wearing its 1px line and 12px band with
+// the strip above them; d2-add-menu = the same page with the `+` menu open,
+// its rows wearing their glyphs; d2-diff-chips = the compare's two chips
+// inside the diff face, the compared one carrying its ×; d2-chart-fit = a
+// squeezed twelve-bar chart over `+ 4 more` beside the same chart opened
+// whole; d2-note-grown = a note that grew with its words beside one a hand
+// sized, its foot fading.
+//
 // B4 (the sketch's "B4 · qbot" rows): b4-empty = the empty state with the
 // composer focused, qbot's two eye marks 2px lower than at rest; `empty` is
 // the same state at rest and now shows qbot, so the two are the gaze's pair,
@@ -309,6 +323,8 @@ const ALL_STATES = [
   "b3-ask-summary",
   "c2-settings-vision",
   "d1-list-numbered",
+  "d2-answer-typo",
+  "d2-answer-list",
 ] as const;
 /** the second root (A2): the palette is a modal over the window, not a pane in
  * a card, so it has one width, its own (`src/harness/PaletteHarness.tsx`) */
@@ -356,6 +372,11 @@ const CANVAS_STATES = [
   "d1-chart-overflow",
   "d1-note-fill",
   "d1-compare-mismatch",
+  "d2-widgets",
+  "d2-add-menu",
+  "d2-diff-chips",
+  "d2-chart-fit",
+  "d2-note-grown",
 ] as const;
 /** the B3 four and the C2a six stand on a taller card: neither a four-block
  * answer with a chart among them nor a page of cells fits A3's 760
@@ -400,24 +421,39 @@ const CARD_H = 640;
 const CANVAS_CARD_H = 760;
 const TALL_CANVAS_CARD_H = 800;
 /** and the two C2a states whose subject is the LAYOUT are read whole: their
- * document is 13 rows at the floor, where an 800 card stops at row 6 and the
- * table and the standing-bars result are both below the crop (c2GridCardH) */
+ * document is 14 rows at the floor (the figure row stands on two cells since
+ * D2 item 1), where an 800 card stops at row 6 and the table and the
+ * standing-bars result are both below the crop (c2GridCardH) */
 const DOC_CANVAS_STATES: readonly string[] = ["c2-grid", "c2-grid-floor"];
-const DOC_CANVAS_CARD_H = 1584;
+const DOC_CANVAS_CARD_H = 1820;
 /** C2b's own four numbers (fixtures.c2draw.ts c2DrawCardH, fixtures.c2empty.ts
  * C2_EMPTY_CARD_H): a sheet beside a chart reflows to six rows at the floor
  * and is read whole; the floor test is two rows and nothing else; a sheet with
  * no ink on it is three; and an empty page stands on A3's own card, since a
- * taller one would be evidence of the card rather than of the page */
-const DRAW_CANVAS_CARD_H = 820;
+ * taller one would be evidence of the card rather than of the page. The first
+ * and third gained the canvas strip's own 40 (D2 item 2) */
+const DRAW_CANVAS_CARD_H = 860;
 const SMALL_CANVAS_CARD_H = 420;
-const FRESH_CANVAS_CARD_H = 480;
+const FRESH_CANVAS_CARD_H = 500;
 const EMPTY_CANVAS_CARD_H = 560;
 /** and D1's own pair (fixtures.d1canvas.ts d1CanvasCardH): two charts over a
  * note, and a refusal over a diff, both run past A3's 760; the note pair does
  * not, and stands on it */
 const D1_TALL_CANVAS_CARD_H = 1040;
 const D1_TALL_CANVAS_STATES: readonly string[] = ["d1-chart-overflow", "d1-compare-mismatch"];
+/** and D2's own pair (fixtures.d2canvas.ts d2CanvasCardH): the four-widget
+ * page, and the menu standing over it, run to eleven rows at the floor; the
+ * other three are three rows or fewer and stand on a card of their own */
+const D2_TALL_CANVAS_CARD_H = 1580;
+const D2_CANVAS_CARD_H = 740;
+const D2_TALL_CANVAS_STATES: readonly string[] = ["d2-widgets", "d2-add-menu"];
+const D2_CANVAS_STATES: readonly string[] = [
+  "d2-widgets",
+  "d2-add-menu",
+  "d2-diff-chips",
+  "d2-chart-fit",
+  "d2-note-grown",
+];
 const canvasCardH = (state: string): number =>
   state === "c2-draw-small"
     ? SMALL_CANVAS_CARD_H
@@ -427,13 +463,17 @@ const canvasCardH = (state: string): number =>
         ? DRAW_CANVAS_CARD_H
         : state === "c2-empty" || state === "c2-empty-place"
           ? EMPTY_CANVAS_CARD_H
-          : D1_TALL_CANVAS_STATES.includes(state)
-            ? D1_TALL_CANVAS_CARD_H
-            : DOC_CANVAS_STATES.includes(state)
-              ? DOC_CANVAS_CARD_H
-              : TALL_CANVAS_STATES.includes(state)
-                ? TALL_CANVAS_CARD_H
-                : CANVAS_CARD_H;
+          : D2_TALL_CANVAS_STATES.includes(state)
+            ? D2_TALL_CANVAS_CARD_H
+            : D2_CANVAS_STATES.includes(state)
+              ? D2_CANVAS_CARD_H
+              : D1_TALL_CANVAS_STATES.includes(state)
+                ? D1_TALL_CANVAS_CARD_H
+                : DOC_CANVAS_STATES.includes(state)
+                  ? DOC_CANVAS_CARD_H
+                  : TALL_CANVAS_STATES.includes(state)
+                    ? TALL_CANVAS_CARD_H
+                    : CANVAS_CARD_H;
 const MARGIN = 24;
 
 // ---- args -------------------------------------------------------------------

@@ -2649,31 +2649,33 @@ export function syncCanvasPill(profileId: string | null | undefined): void {
   });
 }
 
-/** The compact exchange's status line, up to the canvas's own name: `4 blocks`
- * · `1 block` · `3 blocks · 1 replaced` · `1 replaced`. Two numbers of two
+/** The compact exchange's status line, up to the canvas's own name: `4 widgets`
+ * · `1 widget` · `3 widgets · 1 replaced` · `1 replaced`. Two numbers of two
  * kinds, and each one absent when it is zero (DESIGN rule 11: the norm is
- * silent). The count is the blocks the DOCUMENT still holds, so a block
- * deleted by hand takes itself out of it (LESSONS 13); an exchange left with
- * nothing on the canvas has no line at all. The canvas's title is the link
- * that follows, and the slot that prints it joins the two. */
+ * silent). The count is the widgets the DOCUMENT still holds, so one deleted
+ * by hand takes itself out of it (LESSONS 13); an exchange left with nothing
+ * on the canvas has no line at all. The canvas's title is the link that
+ * follows, and the slot that prints it joins the two. A grid element is a
+ * WIDGET in every string the reader sees (D2 item 8); the identifiers stay
+ * `block`. */
 export function canvasStatusText(writes: CanvasWrites): string {
   const { replaced } = writes;
   const wrote = Math.max(0, writes.blockIds.length - replaced);
   const parts: string[] = [];
-  if (wrote > 0) parts.push(`${wrote} ${wrote === 1 ? "block" : "blocks"}`);
+  if (wrote > 0) parts.push(`${wrote} ${wrote === 1 ? "widget" : "widgets"}`);
   if (replaced > 0) parts.push(`${replaced} replaced`);
   return parts.join(" · ");
 }
 
-/** the canvas blocks an exchange's own successors still hold, which is what
+/** the canvas widgets an exchange's own successors still hold, which is what
  * the older-Restart confirm has to count: a cut takes the answers AND the
- * blocks those answers wrote (canvas-agent 3.5) */
+ * widgets those answers wrote (canvas-agent 3.5) */
 const blocksAfter = (later: readonly Exchange[]): number =>
   later.reduce((n, e) => n + (e.canvasWrites?.blockIds.length ?? 0), 0);
 
 /** The older-Restart confirm's words (canvas-agent 3.5): a question for the
  * title, one sentence naming the count and every half of the loss, a verb and
- * its object on the button. The canvas blocks join the sentence only when
+ * its object on the button. The canvas widgets join the sentence only when
  * there are some, because a connection with no canvas must not be told about
  * one (DESIGN rule 11), and they are counted from the document rather than
  * from what the model said it wrote (LESSONS 13). */
@@ -2689,7 +2691,7 @@ export function restartConfirmText(
   const lost =
     blocks === 0
       ? `${asks} and ${answers}`
-      : `${asks}, ${answers} and ${blocks} ${blocks === 1 ? "canvas block" : "canvas blocks"}`;
+      : `${asks}, ${answers} and ${blocks} ${blocks === 1 ? "canvas widget" : "canvas widgets"}`;
   return {
     title: "Restart from Here?",
     detail: `${lost} will be deleted.`,

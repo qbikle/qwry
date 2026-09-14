@@ -96,15 +96,11 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { BarChart3, Code, Copy, Import, Table, TriangleAlert } from "lucide-react";
-import { EditorState, Prec } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
-import { PostgreSQL, sql as sqlLang } from "@codemirror/lang-sql";
 import type { AgentRun } from "../agent/types";
 import type { WritePreview } from "../ipc/types";
 import type { TxOutcome } from "../stores/agent";
 import { spring, swapIn } from "../design/springs";
 import { formattedSql, formattedSqlPeek } from "../editor/format";
-import { qwryHighlight, qwryTheme } from "../editor/theme";
 import { Grid } from "../grid/Grid";
 import { copyCue, copyCueShow } from "../lib/copyCue";
 import { useAsk } from "../stores/ask";
@@ -114,8 +110,9 @@ import { useTabs } from "../stores/tabs";
 import { kindTools, type BlockTool } from "../canvas/blockTools";
 import { Chart } from "../canvas/Chart";
 import { DiffFace } from "../canvas/DiffFace";
-import type { BarsFit, BlockFace, ChartSpec, Diff } from "../stores/canvas";
+import type { BlockFace, ChartSpec, Diff } from "../stores/canvas";
 import { AnswerText } from "./AnswerText";
+import { SqlFace } from "./SqlFace";
 import { copiedRowsCue, finished, resultTsv } from "./resultCopy";
 import { isScalarRun, ScalarResult } from "./ScalarResult";
 
@@ -220,11 +217,6 @@ export interface ResultBlockProps {
   /** what the chart face draws, when the canvas offers one (the document
    * store decides whether a chart exists at all: `chartOf`) */
   chart?: ChartSpec | null;
-  /** and what that face measured when its box was too short for every row:
-   * the count belongs to the status line this block already has, so the face
-   * hands it up rather than printing a second line of its own (D1 item 6).
-   * The canvas is the only caller: a face in the pane is as tall as its rows */
-  onChartFit?: (fit: BarsFit | null) => void;
   /** the comparison standing on this block: the diff face's own rows */
   diff?: Diff | null;
   /** C2a: the cells this block stands on, when a grid gave it some. The faces
@@ -455,45 +447,6 @@ export function RanHeadline({ verb, rows, tx }: { verb: string; rows: number; tx
   );
 }
 
-// the SQL face over the editor theme: auto height, the answer's data size,
-// the block showing through (the block draws the border and the corners)
-const faceTheme = EditorView.theme({
-  "&": { height: "auto", fontSize: "var(--text-sm)", backgroundColor: "transparent" },
-  ".cm-content": { padding: "8px 0" },
-  ".cm-line": { padding: "0 12px" },
-  ".cm-scroller": { lineHeight: "var(--lh-data)" },
-});
-
-/** the read-only view of the statement, in the app's own SQL grammar,
- * highlight and theme, wrapped so the floor never scrolls it sideways */
-function SqlFace({ text }: { text: string }) {
-  const hostRef = useRef<HTMLDivElement>(null);
-  const dark = useSettings((s) => s.resolved === "dark");
-  // layout effect: the view exists before the face paints, so the flip is one
-  // frame, not an empty box and then the SQL
-  useLayoutEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
-    const view = new EditorView({
-      parent: host,
-      state: EditorState.create({
-        doc: text,
-        extensions: [
-          sqlLang({ dialect: PostgreSQL }),
-          qwryHighlight,
-          qwryTheme(dark),
-          Prec.high(faceTheme),
-          EditorView.lineWrapping,
-          EditorState.readOnly.of(true),
-          EditorView.editable.of(false),
-        ],
-      }),
-    });
-    return () => view.destroy();
-  }, [text, dark]);
-  return <div ref={hostRef} className="rb-sql" />;
-}
-
 export function ResultBlock({
   exchangeId,
   run,
@@ -511,7 +464,6 @@ export function ResultBlock({
   prose,
   status,
   chart = null,
-  onChartFit,
   diff = null,
   span,
   lead,
@@ -696,7 +648,7 @@ export function ResultBlock({
         changed={pv.changed}
       />
     ) : face === "chart" && chart ? (
-      <Chart spec={chart} span={span} onFit={onChartFit} />
+      <Chart spec={chart} span={span} />
     ) : face === "diff" && diff ? (
       diff.capped ? null : <DiffFace diff={diff} />
     ) : face === "values" && scalar && run ? (

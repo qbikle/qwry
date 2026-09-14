@@ -622,7 +622,7 @@ describe("what the exchange records", () => {
     expect(chipsOf("r2")).toEqual([]);
   });
 
-  test("a block deleted by hand takes itself out of the number", async () => {
+  test("a widget deleted by hand takes itself out of the number", async () => {
     seed({
       tabs: [canvasTab("t-b", "cv-b", "Canvas 4")],
       activeId: "t-b",
@@ -631,7 +631,7 @@ describe("what the exchange records", () => {
     writesBack = { canvasId: "cv-b", blockIds: ["b1", "b2", "b3", "b4"], replaced: 0 };
     await useAgent.getState().ask('@"Canvas 4" what stood out last month');
     useAgent.getState().forgetCanvasBlocks(["b2"]);
-    expect(canvasStatusText(asked()[0].canvasWrites!)).toBe("3 blocks");
+    expect(canvasStatusText(asked()[0].canvasWrites!)).toBe("3 widgets");
     // and an exchange left with nothing on the canvas loses the line
     useAgent.getState().forgetCanvasBlocks(["b1", "b3", "b4"]);
     expect(asked()[0].canvasWrites).toBeUndefined();
@@ -642,13 +642,13 @@ describe("the compact exchange's status line", () => {
   const line = (blockIds: string[], replaced = 0) =>
     canvasStatusText({ canvasId: "cv", blockIds, title: "Canvas 4", replaced });
 
-  test("the blocks, singular at one", () => {
-    expect(line(["a", "b", "c", "d"])).toBe("4 blocks");
-    expect(line(["a"])).toBe("1 block");
+  test("the widgets, singular at one", () => {
+    expect(line(["a", "b", "c", "d"])).toBe("4 widgets");
+    expect(line(["a"])).toBe("1 widget");
   });
 
-  test("a replace is its own fragment, and the block count is what was added", () => {
-    expect(line(["a", "b", "c", "d"], 1)).toBe("3 blocks · 1 replaced");
+  test("a replace is its own fragment, and the widget count is what was added", () => {
+    expect(line(["a", "b", "c", "d"], 1)).toBe("3 widgets · 1 replaced");
     expect(line(["a"], 1)).toBe("1 replaced");
   });
 
@@ -727,20 +727,20 @@ describe("the older-Restart confirm", () => {
     );
   });
 
-  test("the canvas blocks join the sentence, counted from what still stands", () => {
+  test("the canvas widgets join the sentence, counted from what still stands", () => {
     const two = [exchange(1, ["a", "b", "c", "d"]), exchange(2, ["e", "f", "g"])];
     expect(restartConfirmText(two)).toEqual({
       title: "Restart from Here?",
-      detail: "The 2 questions after this one, their answers and 7 canvas blocks will be deleted.",
+      detail: "The 2 questions after this one, their answers and 7 canvas widgets will be deleted.",
       label: "Delete 2 Questions",
     });
     expect(restartConfirmText([exchange(1, ["a"])]).detail).toBe(
-      "The question after this one, its answer and 1 canvas block will be deleted.",
+      "The question after this one, its answer and 1 canvas widget will be deleted.",
     );
   });
 
   test("the bubble's Restart asks with THESE words: one definition, one caller", () => {
-    // the sentence and the arithmetic that counts the blocks must not drift
+    // the sentence and the arithmetic that counts the widgets must not drift
     // apart again (LESSONS 13): EchoActions holds neither
     const src = readFileSync(join(import.meta.dir, "../../ask/EchoActions.tsx"), "utf8");
     expect(src).toContain('import { restartConfirmText, useAgent, type Exchange } from "../stores/agent"');

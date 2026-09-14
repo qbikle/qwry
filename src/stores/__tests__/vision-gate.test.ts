@@ -62,13 +62,15 @@ test("a model documented WITHOUT vision: no, and the switch cannot argue", () =>
 });
 
 test("an unknown row is a no until this install answers for it", () => {
-  choose("openai", "gpt-5.6-terra");
+  // a row the registry still carries as `"unknown"`: the OpenAI and Gemini
+  // families now read `vision: true` from their own docs (D2 item 10)
+  choose("mistral", "mistral-large-3");
   expect(canSeeImages(PID)).toBe(false);
-  useSettings.getState().setAgentVision("gpt-5.6-terra", true);
+  useSettings.getState().setAgentVision("mistral-large-3", true);
   expect(canSeeImages(PID)).toBe(true);
   // and off again: the switch is the whole record, so turning it off takes
   // the button away again
-  useSettings.getState().setAgentVision("gpt-5.6-terra", false);
+  useSettings.getState().setAgentVision("mistral-large-3", false);
   expect(canSeeImages(PID)).toBe(false);
 });
 

@@ -159,20 +159,21 @@ describe("a face with a height of its own", () => {
 
   // D1 item 6: a face too short for its rows used to hold the pitch at a floor
   // and keep stacking, so the plot drew through its own status line and into
-  // the element below it. It draws the rows that FIT and hands the count up to
-  // the block, which says it on the status line it already has (canvas.ts
-  // `statusOf`, pinned in d1canvas.test.ts): the whole face is the plot's,
-  // since nothing is drawn in here for the count
+  // the element below it. It draws the rows that FIT instead. D2 item 4 adds
+  // the line that acts on the count: a squeezed face keeps ONE status line
+  // (16) of its own height back for `+ N more`, so the rows it draws are the
+  // rows that fit in what is left, and the plot plus that line still stand
+  // inside the face
   test("a squeezed face draws the rows that fit, and never a row under its own bars", () => {
     const g = barLayout(channels, 640, 60);
-    expect(g.shown).toBe(3);
+    expect(g.shown).toBe(2);
     expect(g.total).toBe(6);
     expect(g.pitch).toBeGreaterThanOrEqual(g.barH);
-    // the whole plot stands INSIDE the face
-    expect(g.h).toBeLessThanOrEqual(60);
+    // the whole plot, and the 16 the `+ N more` line stands in, INSIDE the face
+    expect(g.h).toBeLessThanOrEqual(60 - 16);
   });
 
-  test("a face with room for every row owes the block no count", () => {
+  test("a face with room for every row reserves nothing and owes no line", () => {
     const roomy = barLayout(channels, 640, 480);
     expect(roomy.shown).toBe(roomy.total);
   });

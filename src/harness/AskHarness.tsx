@@ -130,6 +130,15 @@
 // C2a's grid states are, on cards of their own (d1CanvasCardH: 1040 where a
 // document runs past A3's 760, 760 where it does not).
 //
+// D2 adds two pane states and five canvas ones. On the ASK route:
+// `d2-answer-typo` and `d2-answer-list` (fixtures.d2answer.ts), the answer's
+// own rhythm and the long list's fold, both parked at the TOP like the W5
+// insight states, since the text is the subject and nothing below it competes.
+// On the CANVAS route (fixtures.d2canvas.ts): `d2-widgets`, `d2-add-menu`,
+// `d2-diff-chips`, `d2-chart-fit`, `d2-note-grown`, wired as D1's three are,
+// on cards of their own (d2CanvasCardH: 1180 for the four-widget page and the
+// menu standing over it, 700 for the other three).
+//
 // scripts/ask-frames.ts drives headless Chrome over this route and writes
 // one PNG per state × width × theme. The dev build remains the final eyeball;
 // these frames are the evidence.
@@ -259,6 +268,14 @@ import {
   d1CanvasSeed,
   type D1CanvasState,
 } from "./fixtures.d1canvas";
+import { D2ANSWER_STATES, d2AnswerSeed, type D2AnswerState } from "./fixtures.d2answer";
+import {
+  d2CanvasCardH,
+  D2_CANVAS_STATES,
+  d2CanvasAfterMount,
+  d2CanvasSeed,
+  type D2CanvasState,
+} from "./fixtures.d2canvas";
 import "../app/v2.css";
 import "./harness.css";
 
@@ -290,6 +307,7 @@ function paramsFrom(search: string): Params {
         (state === "strip" ||
           state === "kv-wide" ||
           state.startsWith("insight") ||
+          (D2ANSWER_STATES as readonly string[]).includes(state) ||
           (RESULT_STATES as readonly string[]).includes(state) ||
           (WRITES_STATES as readonly string[]).includes(state) ||
           (B1_STATES as readonly string[]).includes(state)))
@@ -385,6 +403,12 @@ function seed({ state, w, theme }: Params) {
   // shape); its exchange comes back through `exchangeFor` like every other
   // single-exchange state, so only the live pair is read here
   const d1 = (D1_ASK_STATES as readonly string[]).includes(state) ? d1AskSeed(state as D1AskState) : null;
+  // D2: the answer's rhythm and the long list's fold, one landed exchange each
+  // over the fixture thread. Neither runs, so neither carries a busy or a
+  // phase; what the seed is read for here is the thread's follow-up row
+  const d2ans = (D2ANSWER_STATES as readonly string[]).includes(state)
+    ? d2AnswerSeed(state as D2AnswerState)
+    : null;
   // the thread a state shows, oldest first: one seed wins, and the same list
   // is the active thread, the exchanges and what the follow-up row reads
   const list =
@@ -429,7 +453,7 @@ function seed({ state, w, theme }: Params) {
     pending: interact?.pending ?? {},
     // the row is the THREAD's now (W7 item 3): the answer states hand theirs
     // over, every other state's is the one its last exchange recorded
-    followUps: list ? { [tid]: (ans ?? a3 ?? b3)?.followUps ?? followUpsFor(list) } : {},
+    followUps: list ? { [tid]: (ans ?? a3 ?? b3 ?? d2ans)?.followUps ?? followUpsFor(list) } : {},
     phase: { [tid]: live ? live.phase : state === "busy" ? "tools" : null },
     busy: { [tid]: live ? live.busy : state === "busy" },
   });
@@ -589,11 +613,15 @@ export const CANVAS_CARD_H = 760;
 /** the canvas's own connection and two siblings, so `Compare With ▸` opens on
  * the picture's own two rows and the diff fixture's B side is a connection
  * that exists. The A side IS the pane's fixture connection, so a page that
- * seeds both agrees with itself (fixtures.canvas.ts CANVAS_PROFILE_ID) */
+ * seeds both agrees with itself (fixtures.canvas.ts CANVAS_PROFILE_ID).
+ * The siblings drop the fixture's explicit `color` and take their own hash
+ * slot (design/avatarColor): three connections wearing one colour would draw
+ * the compare chips' two dots the same, and the dot is the provenance mark
+ * (DESIGN rule 5's listed exception, D2 item 5) */
 const CANVAS_PROFILES: Profile[] = [
   FIXTURE.profile,
-  { ...FIXTURE.profile, id: "harness-prod", name: "prod", host: "prod-db.internal", is_prod: true },
-  { ...FIXTURE.profile, id: "harness-analytics", name: "analytics", host: "analytics-db.internal" },
+  { ...FIXTURE.profile, id: "harness-prod", name: "prod", host: "prod-db.internal", is_prod: true, color: null },
+  { ...FIXTURE.profile, id: "harness-analytics", name: "analytics", host: "analytics-db.internal", color: null },
 ];
 
 type AnyCanvasState =
@@ -602,7 +630,8 @@ type AnyCanvasState =
   | C2GridState
   | C2DrawState
   | C2EmptyState
-  | D1CanvasState;
+  | D1CanvasState
+  | D2CanvasState;
 
 interface CanvasParams {
   state: AnyCanvasState;
@@ -625,6 +654,9 @@ const isC2Empty = (state: string): state is C2EmptyState =>
 const isD1Canvas = (state: string): state is D1CanvasState =>
   (D1_CANVAS_STATES as readonly string[]).includes(state);
 
+const isD2Canvas = (state: string): state is D2CanvasState =>
+  (D2_CANVAS_STATES as readonly string[]).includes(state);
+
 /** the card each wave is read on: A3's three blocks stand in 760, B3's four
  * with a chart among them need 800, and C2's page of cells is read from its
  * top at the same 800 except where the LAYOUT is the subject, where the card
@@ -633,19 +665,23 @@ const isD1Canvas = (state: string): state is D1CanvasState =>
  * its empty page is read at A3's 560: a card taller than the page would be
  * evidence of nothing but the card. D1's three carry their own pair
  * (d1CanvasCardH): two charts and a note, or a refusal and a diff, run past
- * A3's 760, and the note pair does not */
+ * A3's 760, and the note pair does not. D2's five carry theirs the same way
+ * (d2CanvasCardH): the four-widget page runs to eleven rows at the floor, and
+ * the other three stand on a card of their own */
 const canvasCardH = (state: string): number =>
   isC2Draw(state)
     ? c2DrawCardH(state)
     : isC2Empty(state)
       ? C2_EMPTY_CARD_H
-      : isD1Canvas(state)
-        ? d1CanvasCardH(state)
-        : isC2Grid(state)
-          ? c2GridCardH(state)
-          : isB3Canvas(state)
-            ? B3_CANVAS_CARD_H
-            : CANVAS_CARD_H;
+      : isD2Canvas(state)
+        ? d2CanvasCardH(state)
+        : isD1Canvas(state)
+          ? d1CanvasCardH(state)
+          : isC2Grid(state)
+            ? c2GridCardH(state)
+            : isB3Canvas(state)
+              ? B3_CANVAS_CARD_H
+              : CANVAS_CARD_H;
 
 function canvasParamsFrom(search: string): CanvasParams {
   const q = new URLSearchParams(search);
@@ -657,7 +693,8 @@ function canvasParamsFrom(search: string): CanvasParams {
     isC2Grid(raw) ||
     isC2Draw(raw) ||
     isC2Empty(raw) ||
-    isD1Canvas(raw);
+    isD1Canvas(raw) ||
+    isD2Canvas(raw);
   return {
     state: known ? (raw as AnyCanvasState) : "a3-canvas",
     w: (CANVAS_WIDTHS as readonly number[]).includes(w) ? w : 960,
@@ -675,13 +712,15 @@ function seedCanvas({ state, theme }: CanvasParams) {
     ? c2DrawSeed(state)
     : isC2Empty(state)
       ? c2EmptySeed()
-      : isD1Canvas(state)
-        ? d1CanvasSeed(state)
-        : isC2Grid(state)
-          ? c2GridSeed(state)
-          : isB3Canvas(state)
-            ? b3CanvasSeed(state)
-            : canvasSeed(state);
+      : isD2Canvas(state)
+        ? d2CanvasSeed(state)
+        : isD1Canvas(state)
+          ? d1CanvasSeed(state)
+          : isC2Grid(state)
+            ? c2GridSeed(state)
+            : isB3Canvas(state)
+              ? b3CanvasSeed(state)
+              : canvasSeed(state);
   // the model is the harness's own everywhere but one state: C2b's
   // `c2-draw-novision` runs on a row the registry documents WITHOUT vision,
   // because the frame's whole subject is the `Ask` that is then not in the
@@ -718,13 +757,15 @@ function CanvasHarness({ state, w, canvasId }: CanvasParams & { canvasId: string
         ? c2DrawAfterMount(state)
         : isC2Empty(state)
           ? c2EmptyAfterMount(state)
-          : isD1Canvas(state)
-            ? d1CanvasAfterMount(state)
-            : isC2Grid(state)
-              ? c2GridAfterMount(state)
-              : isB3Canvas(state)
-                ? b3CanvasAfterMount(state)
-                : canvasAfterMount(state);
+          : isD2Canvas(state)
+            ? d2CanvasAfterMount(state)
+            : isD1Canvas(state)
+              ? d1CanvasAfterMount(state)
+              : isC2Grid(state)
+                ? c2GridAfterMount(state)
+                : isB3Canvas(state)
+                  ? b3CanvasAfterMount(state)
+                  : canvasAfterMount(state);
       void hook.then(() => {
         if (live) document.documentElement.dataset.harnessReady = "1";
       });

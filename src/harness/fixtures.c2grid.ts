@@ -5,7 +5,7 @@
 // for the two layout states, which are read whole (c2GridCardH):
 //
 //   c2-grid        six elements on the layout the document was stored at
-//                  (7 columns, the 960 frame): the values row 5x1 with two
+//                  (7 columns, the 960 frame): the values row 5x2 with two
 //                  cells of air beside it, the bars chart 4x3 beside a note,
 //                  a one-line note under it, the table 6x4 with a 1x4 hole at
 //                  its right, and a wide result standing its bars. At 640 the
@@ -78,11 +78,12 @@ export const C2_GRID_CARD_H = 800;
 /** the two LAYOUT states are read whole instead: the table (the one face that
  * scrolls inside its box, capped 6 → 5 at the floor) and the standing-bars
  * result both stand past row 6, where an 800 card stops, so neither was in
- * evidence at the width rule 13 designs for. The document is 13 rows at the
- * floor and 10 at 960, which is 1548px of page, and this is that plus the tab
- * bar and the page's own inset on both sides. The gesture states are read from
+ * evidence at the width rule 13 designs for. The document is 14 rows at the
+ * floor and 11 at 960 now that the figure row stands on two cells (D2 item 1),
+ * which is 1668px of page, and this is that plus the canvas strip, the tab bar
+ * and the page's own inset on both sides. The gesture states are read from
  * their top: what they are evidence of happens in the first three rows */
-const C2_DOC_CARD_H = 1584;
+const C2_DOC_CARD_H = 1820;
 
 export const c2GridCardH = (state: string): number =>
   state === "c2-grid" || state === "c2-grid-floor" ? C2_DOC_CARD_H : C2_GRID_CARD_H;
@@ -235,25 +236,28 @@ function at(cells: Record<string, Cell>): Block[] {
 /** stored at seven columns, the 960 frame's own count: the values row leaves
  * two cells of air, the chart and the note fill a row between them, and the
  * table leaves a 1x4 hole at its right, which is a hole BESIDE an element and
- * therefore the user's own placement (canvas-grid 4.5) */
+ * therefore the user's own placement (canvas-grid 4.5). The figure row stands
+ * on TWO cell rows, which is what `defaultSpanFor` opens a values block at now
+ * that the widget's own 12px band is inside its height (D2 item 1): at one, its
+ * captions clipped */
 const SEVEN: Record<string, Cell> = {
-  "c2-figures": { x: 0, y: 0, w: 5, h: 1 },
-  "c2-channels": { x: 0, y: 1, w: 4, h: 3 },
-  "c2-finding": { x: 4, y: 1, w: 3, h: 2 },
-  "c2-aside": { x: 4, y: 3, w: 3, h: 1 },
-  "c2-cities": { x: 0, y: 4, w: 6, h: 4 },
-  "c2-weekdays": { x: 0, y: 8, w: 6, h: 2 },
+  "c2-figures": { x: 0, y: 0, w: 5, h: 2 },
+  "c2-channels": { x: 0, y: 2, w: 4, h: 3 },
+  "c2-finding": { x: 4, y: 2, w: 3, h: 2 },
+  "c2-aside": { x: 4, y: 4, w: 3, h: 1 },
+  "c2-cities": { x: 0, y: 5, w: 6, h: 4 },
+  "c2-weekdays": { x: 0, y: 9, w: 6, h: 2 },
 };
 
 /** and at the FLOOR, five columns, where rule 13 designs it: every default
  * span fits, the chart keeps one cell of air beside it, and nothing clips */
 const FIVE: Record<string, Cell> = {
-  "c2-figures": { x: 0, y: 0, w: 5, h: 1 },
-  "c2-channels": { x: 0, y: 1, w: 4, h: 3 },
-  "c2-finding": { x: 0, y: 4, w: 3, h: 2 },
-  "c2-aside": { x: 3, y: 4, w: 2, h: 1 },
-  "c2-cities": { x: 0, y: 6, w: 5, h: 4 },
-  "c2-weekdays": { x: 0, y: 10, w: 5, h: 2 },
+  "c2-figures": { x: 0, y: 0, w: 5, h: 2 },
+  "c2-channels": { x: 0, y: 2, w: 4, h: 3 },
+  "c2-finding": { x: 0, y: 5, w: 3, h: 2 },
+  "c2-aside": { x: 3, y: 5, w: 2, h: 1 },
+  "c2-cities": { x: 0, y: 7, w: 5, h: 4 },
+  "c2-weekdays": { x: 0, y: 11, w: 5, h: 2 },
 };
 
 // ---- the pre-C2 document, and the dense one --------------------------------

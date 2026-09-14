@@ -8,7 +8,7 @@
 //                   the `@"Canvas 4"` pill, the strip (`describe order_v2` ·
 //                   `peek payment_status` · `run ×3` · `canvas ×2`, the two
 //                   canvas calls coalescing the way `run ×3` does), the status
-//                   line `4 blocks · Canvas 4` with the title as the link that
+//                   line `4 widgets · Canvas 4` with the title as the link that
 //                   shows the tab, three follow-ups, the footer. No answer
 //                   text, no result block, no assumption chips and no answer
 //                   cluster: all four stand on the canvas already, so the

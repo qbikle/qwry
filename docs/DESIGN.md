@@ -29,7 +29,7 @@ Every interactive control belongs to exactly one species. The species are:
 | Link button | `.linkish` | accent text + hover accent-soft fill; NEVER feedback-free |
 | Soft-danger button | recipe; `.soft-danger` (threads.css) is its first class-based instance | danger-soft fill + danger text, for cancel/delete inside busy toolbars where filled `.danger` would shout (qb-cancel, tp-del-btn, `.soft-danger`); full state matrix mandatory |
 | Stepper (joined pair) | segmented-pair recipe | shared border, hairline divider, radius split, ghost-until-hover (CopySplit, rv-step) |
-| Menu row | ContextMenu / cmdk styles | highlight = accent fill, `.hot` |
+| Menu row | ContextMenu / cmdk styles | highlight = accent fill, `.hot`; bare (label, hint, arrow) for a menu of ACTIONS on one object already chosen; a menu of KINDS, where the row hands you a shape or a widget to create, wears an optional glyph column (`MenuNode.glyph?`, the field the C2b picker already added) at `--icon-sm` instead, amended 2026-09-14 (AGENT-UX §16cc, reversing the C2b picker's own "deliberate exception" framing at AGENT-UX §16x into this rule's first instance) |
 | List row / card | per-surface (`.trow`, the Threads sheet's row) | hover = bg-hover minimum; `.hot` the transient highlight, `.active` the persistent selection |
 | Switch | `.switch` (tokens.css), rendered via `<Switch>` | macOS toggle for feature/setting rows; hidden native checkbox is the truth (role=switch, :has-derived states, spring knob). Native checkboxes remain the species for selection within content (filter rows, lists, CM search panels) |
 | Resize handle | `.cvg-handle` (grid.css) | the canvas element's ONE corner, bottom-right: a 16px hit box over an 8px L glyph at tier 2. Invisible at rest and revealed with the block's own cluster (`.acts-float`'s register, hover / focus-within / `[data-hot]`), accent while the gesture is live (`[data-gesture="resize"]`). No disabled state: it leaves with the cluster, and the keyboard route is the element's own ⇧-arrows |
@@ -181,7 +181,12 @@ fill it. Precedent: the W2 Ask header, `icon · Ask · avatar · name · db ·
 READ-ONLY · model pill · tier · Threads · New`: ten things in 40px, and the
 badge clipped to `READ-ONL` at the floor because the strip had nothing left
 to give. The Inspector's header, a text title and two icon buttons, was the
-pattern in the same window all along.
+pattern in the same window all along. Second instance, 2026-09-14: the
+canvas gained its own 40px header line under this rule (AGENT-UX §16cc),
+the canvas's own name at the left, one icon button (`+`) at the right,
+nothing else, reversing AGENT-UX §16f's earlier "zero strips of its own"
+count by the maintainer's own call rather than by a drift the rule would
+have refused.
 
 The composer's control row is one strip holding what travels with the
 question and nothing else: the `+` context pill, the model pill and Send,

@@ -532,12 +532,15 @@ describe("the span a kind opens at", () => {
       rows: [["2763", "4266056", "43", "22"]],
       face: "values",
     });
-    // `4,266,056` is nine glyphs once the grid has grouped it
-    expect(defaultSpanFor(figures)).toEqual({ w: 5, h: 1 });
-    expect(minSpanFor(figures)).toEqual({ w: 2, h: 1 });
+    // `4,266,056` is nine glyphs once the grid has grouped it. The HEIGHT is
+    // two cells since D2 item 1: a figure row cleared a single cell by two
+    // pixels, and the widget's own line and its 12px band cost 24 more, so a
+    // one-cell values widget drew its captions through its own status line
+    expect(defaultSpanFor(figures)).toEqual({ w: 5, h: 2 });
+    expect(minSpanFor(figures)).toEqual({ w: 2, h: 2 });
     const one = result({ columns: ["orders"], rows: [["482"]], face: "values" });
     // a result's floor is two cells whatever its content: its cluster is 148px
-    expect(defaultSpanFor(one)).toEqual({ w: 2, h: 1 });
+    expect(defaultSpanFor(one)).toEqual({ w: 2, h: 2 });
   });
 
   test("a chart is four wide and as tall as its bars, a table six and as tall as its rows", () => {
@@ -567,7 +570,7 @@ describe("the span a kind opens at", () => {
     // document that files it under `table` still opens on its figures and must
     // not be given the table's four rows of box to hold one line of pairs
     const filed = result({ columns: ["orders"], rows: [["482"]], face: "table" });
-    expect(defaultSpanFor(filed)).toEqual({ w: 2, h: 1 });
+    expect(defaultSpanFor(filed)).toEqual({ w: 2, h: 2 });
   });
 
   test("a table's height holds the prose standing above it", () => {

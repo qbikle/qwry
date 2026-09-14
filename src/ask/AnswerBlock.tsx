@@ -38,8 +38,8 @@
 // always-visible lines where a normal answer has seven and two controls where
 // it has three (the canvas's own link, and Trace). The model's reading lives
 // where it can be read beside its figures (DESIGN rule 14), and the status
-// line is the one slot that says how much of it landed: `4 blocks · Canvas 4`,
-// the title in the link species, counted from the document so a block deleted
+// line is the one slot that says how much of it landed: `4 widgets · Canvas 4`,
+// the title in the link species, counted from the document so a widget deleted
 // by hand takes itself out of the number (LESSONS 13). A proposal is the one
 // exception: A4's branch is untouched, so a change the model wrote anyway
 // still announces itself here, with its canvas blocks standing as the reads

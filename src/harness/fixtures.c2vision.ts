@@ -16,10 +16,12 @@
 // modal that is never wider: the 320 floor is where a label, a two-line hint
 // and a switch have to share one line, which is the thing worth framing.
 //
-// The chosen model is `gpt-5.6-terra` on `openai`: a row the registry carries
-// with `vision: "unknown"`, which is the one state that opens this switch.
-// Nothing here fakes the row - the product's own `visionUnknown` decides, off
-// the registry the app ships with.
+// The chosen model is `mistral-large-3` on `mistral`: a row the registry
+// carries with `vision: "unknown"`, which is the one state that opens this
+// switch. It was `gpt-5.6-terra` on `openai` until D2 item 10 gave the OpenAI
+// and Gemini families `vision: true` off their own docs, which closed the
+// switch on that row. Nothing here fakes it - the product's own
+// `visionUnknown` decides, off the registry the app ships with.
 //
 // Wiring (AskHarness.tsx / ask-frames.ts are the integrator's): add
 // C2_VISION_STATES to the ask root's state list, call c2VisionSeed() before
@@ -43,4 +45,4 @@ export interface C2VisionSeed {
   model: string;
 }
 
-export const c2VisionSeed = (): C2VisionSeed => ({ provider: "openai", model: "gpt-5.6-terra" });
+export const c2VisionSeed = (): C2VisionSeed => ({ provider: "mistral", model: "mistral-large-3" });

@@ -10,9 +10,12 @@
 //                      pitch (34px a row at three series) drew 432px of plot
 //                      into a 292px face, through the block's own status line
 //                      and 128px into the note below it; after it the widget
-//                      clips its content, the chart draws the rows that fit
-//                      and the BLOCK's status line reads `7 of 12 bars ·
-//                      214.7 ms` where the run's `12 rows` stood. The same
+//                      clips its content and the chart draws the rows that
+//                      fit. D1 said so on the BLOCK's status line (`7 of 12
+//                      bars · 214.7 ms`); D2 retired that fragment and the
+//                      face carries its own `+ N more` instead, so the line
+//                      is the run's `12 rows · 214.7 ms` again (AGENT-UX
+//                      §16ee). The same
 //                      twelve bars stand a second time with NO cell of their
 //                      own, so the document opens them at its own default
 //                      height: that is the item's other half, a chart whose

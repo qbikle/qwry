@@ -197,12 +197,17 @@ test("every preset states a wire, and the two native adapters answer too", () =>
   expect(carriesImages("claude-code")).toBe(true);
 });
 
-test("the registry's vision flags are 4 true, 2 false, 11 unknown", () => {
+test("the registry's vision flags are 7 true, 2 false, 8 unknown", () => {
   const count = (want: unknown) =>
     MODEL_REGISTRY.filter((m) => m.vision === want).length;
-  expect([count(true), count(false), count("unknown")]).toEqual([4, 2, 11]);
+  expect([count(true), count(false), count("unknown")]).toEqual([7, 2, 8]);
   expect(visionOf("claude-opus-5", "anthropic")).toBe(true);
+  // every OpenAI and every Gemini row: the family's own docs (registry.ts's
+  // citation), not a per-model guess
+  expect(visionOf("gpt-5.6-terra", "openai")).toBe(true);
+  expect(visionOf("gpt-5.6-sol", "openai")).toBe(true);
   expect(visionOf("gemini-3.8-flash", "gemini")).toBe(true);
+  expect(visionOf("gemini-3.1-pro", "gemini")).toBe(true);
   expect(visionOf("LFM2.5-2.6B-Q4_K_M", "llama-server")).toBe(false);
   expect(visionOf("grok-4.6", "xai")).toBe("unknown");
 });
@@ -249,8 +254,10 @@ const { canSeeImages } = await import("../../../stores/agent");
 
 test("the flag decides, and the install override lifts only an unknown", () => {
   expect(imagesAllowed({}, "anthropic", "claude-opus-5")).toBe(true);
-  expect(imagesAllowed({}, "openai", "gpt-5.6-sol")).toBe(false);
-  expect(imagesAllowed({ "gpt-5.6-sol": true }, "openai", "gpt-5.6-sol")).toBe(true);
+  // both OpenAI rows read true straight off the registry now, no override
+  expect(imagesAllowed({}, "openai", "gpt-5.6-sol")).toBe(true);
+  expect(imagesAllowed({}, "mistral", "mistral-large-3")).toBe(false);
+  expect(imagesAllowed({ "mistral-large-3": true }, "mistral", "mistral-large-3")).toBe(true);
   // a measured no is not a question, so no switch answers it
   expect(imagesAllowed({ "Qwen3-4B-Q4_K_M": true }, "llama-server", "Qwen3-4B-Q4_K_M")).toBe(
     false,
@@ -258,7 +265,10 @@ test("the flag decides, and the install override lifts only an unknown", () => {
 });
 
 test("the Settings switch appears only for an unknown model", () => {
-  expect(visionUnknown("openai", "gpt-5.6-sol")).toBe(true);
+  // a known-true row (both OpenAI and both Gemini rows now) needs no switch
+  expect(visionUnknown("openai", "gpt-5.6-sol")).toBe(false);
+  expect(visionUnknown("gemini", "gemini-3.1-pro")).toBe(false);
+  expect(visionUnknown("mistral", "mistral-large-3")).toBe(true);
   expect(visionUnknown("anthropic", "claude-haiku-4-5")).toBe(false);
   expect(visionUnknown("llama-server", "LFM2.5-2.6B-Q4_K_M")).toBe(false);
   // a model the registry has never seen is exactly who the switch is for
@@ -267,18 +277,18 @@ test("the Settings switch appears only for an unknown model", () => {
 
 test("canSeeImages reads the connection's own model first, then the app default", () => {
   const s = useSettings.getState();
-  s.setAgentModel("openai", "gpt-5.6-sol");
+  s.setAgentModel("mistral", "mistral-large-3");
   expect(canSeeImages("conn-1")).toBe(false);
 
-  s.setAgentVision("gpt-5.6-sol", true);
+  s.setAgentVision("mistral-large-3", true);
   expect(canSeeImages("conn-1")).toBe(true);
 
   // the connection's own choice wins, and it has not been answered for
-  s.setAgentConnModel("conn-1", "openai", "gpt-5.6-terra");
+  s.setAgentConnModel("conn-1", "mistral", "mistral-medium-3.5");
   expect(canSeeImages("conn-1")).toBe(false);
   expect(canSeeImages("conn-2")).toBe(true);
 
-  s.setAgentVision("gpt-5.6-sol", false);
+  s.setAgentVision("mistral-large-3", false);
   s.dropAgentConn("conn-1");
   expect(canSeeImages("conn-1")).toBe(false);
   expect(useSettings.getState().agentVision).toEqual({});

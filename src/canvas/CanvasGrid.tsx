@@ -63,7 +63,8 @@ import {
   type GridItem,
   type Metrics,
 } from "./grid";
-import { laidOut, minSpanFor, useCanvas, type Block } from "../stores/canvas";
+import { laidOut, minSpanFor, NOTE_ROWS_MAX, useCanvas, type Block } from "../stores/canvas";
+import { Widget, type WidgetRef } from "./widget";
 import "./grid.css";
 
 /** the press travels this far before anything moves, so a click on a title
@@ -78,6 +79,8 @@ const COLUMNS_FIRST = 8;
 /** the gap between a block's own parts (canvas.css `.blk > * + *`), which the
  * note's measure has to add back: what it measures is the words */
 const PART_GAP = 8;
+
+
 
 export type GestureKind = "move" | "resize";
 
@@ -197,8 +200,11 @@ export interface GrabConfig {
   name: (id: string) => string;
   ghost: GhostHandle;
   live: (text: string) => void;
-  /** the ONE write of a gesture, at its end */
-  commit: (kind: GestureKind, id: string, cell: Cell) => void;
+  /** the ONE write of a gesture, at its end. `settled` is every element this
+   * gesture has ALREADY put where the document is about to say it stands (the
+   * held one and every neighbour it travelled), so the surface knows not to
+   * animate them a second time when the new cells come back through React */
+  commit: (kind: GestureKind, id: string, cell: Cell, settled: readonly string[]) => void;
 }
 
 export interface Grab {
@@ -330,7 +336,7 @@ export function createGrab(cfg: GrabConfig): Grab {
       // the preview's, in this one write; the elements are already standing
       // there, so their offsets go to zero in the same frame and nothing
       // travels twice
-      cfg.commit(g.kind, g.id, g.target);
+      cfg.commit(g.kind, g.id, g.target, [g.id, ...g.shifted]);
       for (const id of g.shifted) cfg.slot(id)?.offset(0, 0);
       if (g.kind === "move") {
         // the drop settles from wherever the finger left it onto the cells
@@ -387,10 +393,21 @@ interface SlotProps {
   block: Block;
   cell: Cell;
   label: string;
+  canvasId: string;
+  /** the page's pitch, read when it is used and never closed over: a window
+   * drag between a render and an act must not commit a stale layout */
+  metrics: () => Metrics;
+  /** whether the gesture machine has ALREADY put this element where the
+   * document now says it stands. True exactly once per commit, so the travel
+   * below never replays a drop (D2 item 12) */
+  fromGesture: (id: string) => boolean;
+  /** this widget holds the caret: the note's measure reads the TEXTAREA then,
+   * and never shrinks under it (D2 item 3) */
+  editing: boolean;
   register: (id: string, handle: SlotHandle) => () => void;
   /** the note's own height, measured: the document follows its words until a
    * hand takes the corner (the store clears `autoH` then, and this stops) */
-  onAuto: (id: string, span: { w: number; h: number }) => void;
+  onGrow: (id: string, rows: number) => void;
   onDown: (kind: GestureKind, id: string, e: ReactPointerEvent<HTMLElement>) => void;
   onKey: (id: string, e: ReactKeyboardEvent<HTMLElement>) => void;
   children: ReactNode;
@@ -399,7 +416,20 @@ interface SlotProps {
 /** one element's cell frame and its gesture layer. The frame is React's (it
  * changes when the document does); the layer is the gesture's, written from
  * motion values that never pass through a render */
-const GridSlot = memo(function GridSlot({ block, cell, label, register, onAuto, onDown, onKey, children }: SlotProps) {
+const GridSlot = memo(function GridSlot({
+  block,
+  cell,
+  label,
+  canvasId,
+  metrics,
+  fromGesture,
+  editing,
+  register,
+  onGrow,
+  onDown,
+  onKey,
+  children,
+}: SlotProps) {
   const el = useRef<HTMLDivElement>(null);
   const dx = useMotionValue(0);
   const dy = useMotionValue(0);
@@ -456,27 +486,42 @@ const GridSlot = memo(function GridSlot({ block, cell, label, register, onAuto, 
   // the box fills the cells now, so measuring it would answer with the height
   // it was just given and no note would ever grow or shrink again. The box's
   // own padding and hairline are read off it rather than retyped, so the two
-  // cannot drift (note.css owns those numbers)
+  // cannot drift (note.css owns those numbers).
+  //
+  // D2 item 3 gives the rule its other half: while the caret is IN it the
+  // words are the textarea's, whose `scrollHeight` is the height the source
+  // wants and is not lowered by the `max-height` the cells impose. So a note
+  // grows a whole row at a time AS IT IS TYPED, capped at NOTE_ROWS_MAX, past
+  // which the box scrolls. It never shrinks mid-edit: the page must not jump
+  // under the caret, and the commit re-measures once and takes any shrink then
   const autoH = block.kind === "note" && block.autoH === true;
   useLayoutEffect(() => {
-    if (!autoH) return;
-    const words = el.current?.querySelector<HTMLElement>(".note-body");
-    const inner = (words?.firstElementChild as HTMLElement | null) ?? words;
-    if (!words || !inner) return;
+    const host = el.current;
+    if (!autoH || !host) return;
+    // the caret's box, or the rendered prose's: one of the two stands, and
+    // which one is what the edit swap changes under this effect (hence
+    // `editing` in the deps: the node it observes leaves with the swap)
+    const ta = host.querySelector<HTMLTextAreaElement>(".note-box .ask-ta");
+    const words = host.querySelector<HTMLElement>(".note-body");
+    const box = ta ? ta.parentElement : words;
+    const inner = ta ?? ((words?.firstElementChild as HTMLElement | null) ?? words);
+    if (!box || !inner) return;
     let frame = 0;
     const measure = () => {
       const h = handle.current;
       if (!h) return;
-      const title = el.current?.querySelector<HTMLElement>(".blk-q");
-      const box = getComputedStyle(words);
+      const title = host.querySelector<HTMLElement>(".blk-q");
+      const face = getComputedStyle(box);
       const chrome =
-        parseFloat(box.paddingTop) +
-        parseFloat(box.paddingBottom) +
-        parseFloat(box.borderTopWidth) +
-        parseFloat(box.borderBottomWidth);
-      const px = inner.offsetHeight + chrome + (title ? title.offsetHeight + PART_GAP : 0);
-      const cells = cellsForPx(px);
-      if (cells !== h.cell.h) onAuto(block.id, { w: h.cell.w, h: cells });
+        parseFloat(face.paddingTop) +
+        parseFloat(face.paddingBottom) +
+        parseFloat(face.borderTopWidth) +
+        parseFloat(face.borderBottomWidth);
+      const px = (ta ? ta.scrollHeight : inner.offsetHeight) + chrome + (title ? title.offsetHeight + PART_GAP : 0);
+      const cells = Math.min(NOTE_ROWS_MAX, cellsForPx(px));
+      if (cells === h.cell.h) return;
+      if (cells < h.cell.h && editing) return;
+      onGrow(block.id, cells);
     };
     measure();
     const ro = new ResizeObserver(() => {
@@ -491,7 +536,72 @@ const GridSlot = memo(function GridSlot({ block, cell, label, register, onAuto, 
       ro.disconnect();
       if (frame) cancelAnimationFrame(frame);
     };
-  }, [autoH, block.id, onAuto]);
+  }, [autoH, editing, block.id, onGrow]);
+
+  /** what this widget's own faces may act on (D2 items 4 and 5): the cells
+   * they stand in, named once so a face can resize or clear without a prop
+   * threaded through a block that has none */
+  const widget = useMemo<WidgetRef>(
+    () => ({ canvasId, blockId: block.id, columns: () => metrics().columns }),
+    [canvasId, block.id, metrics],
+  );
+
+  // and the document's OWN layout changes travel (D2 item 12). A gesture
+  // springs its neighbours through the handles and lands them itself; a change
+  // the DOCUMENT made — a note growing a row with its words, `+ 4 more` giving
+  // a chart the rows its bars need, a keyboard resize — only wrote new cells,
+  // and the page jumped to them. What animates is the DIFFERENCE: the element
+  // is parked at the box it just left, on the same two handles a drag writes
+  // to, and sprung to the cell frame's own geometry on spring.layout. Reduced
+  // motion collapses the preset and it simply stands there.
+  const was = useRef<Cell>(cell);
+  const wasColumns = useRef(-1);
+  const sizing = useRef<{ stop: () => void } | null>(null);
+  useLayoutEffect(() => {
+    const prev = was.current;
+    was.current = cell;
+    const node = el.current;
+    const h = handle.current;
+    if (!node || !h) return;
+    const m = metrics();
+    // a narrower window is a REFLOW, not a document change: the page derives a
+    // new layout for every element at once and chrome does not animate under a
+    // window drag (DESIGN rule 2's stable-chrome clause). The count is the
+    // tell, and it is also what makes the first render's guess (COLUMNS_FIRST)
+    // silent. A drop has already put this element where it belongs, and so
+    // have the neighbours it displaced: replaying either would be one travel
+    // twice. Both marks are read before either return, so neither is left
+    // standing for the next change to trip over
+    const reflow = wasColumns.current !== m.columns;
+    wasColumns.current = m.columns;
+    const dropped = fromGesture(block.id);
+    if (reflow || dropped || node.dataset.gesture !== undefined) return;
+    const px = (c: Cell) => ({
+      w: c.w * m.cellW + (c.w - 1) * m.gutter,
+      h: c.h * CELL_H + (c.h - 1) * m.gutter,
+    });
+    const dx = (prev.x - cell.x) * (m.cellW + m.gutter);
+    const dy = (prev.y - cell.y) * (CELL_H + m.gutter);
+    if (dx !== 0 || dy !== 0) {
+      h.offset(dx, dy);
+      h.travel(0, 0);
+    }
+    if (prev.w === cell.w && prev.h === cell.h) return;
+    const from = px(prev);
+    const to = px(cell);
+    sizing.current?.stop();
+    h.size(from.w, from.h);
+    const run = animate(node, { width: `${to.w}px`, height: `${to.h}px` }, spring.layout);
+    sizing.current = run;
+    void run.finished
+      .then(() => {
+        if (sizing.current === run) {
+          sizing.current = null;
+          h.size(null, null);
+        }
+      })
+      .catch(() => {});
+  }, [cell, block.id, fromGesture, metrics]);
 
   return (
     <motion.div
@@ -516,7 +626,7 @@ const GridSlot = memo(function GridSlot({ block, cell, label, register, onAuto, 
       onKeyDown={(e) => onKey(block.id, e)}
     >
       <motion.div className="cvg-drag" style={{ x: dx, y: dy, scale }}>
-        {children}
+        <Widget.Provider value={widget}>{children}</Widget.Provider>
         <button type="button" className="cvg-handle" title="Resize" tabIndex={-1} aria-hidden />
       </motion.div>
     </motion.div>
@@ -568,6 +678,11 @@ export function CanvasGrid({
   const live = useRef<HTMLDivElement>(null);
   const size = useRef<HTMLSpanElement>(null);
   const [columns, setColumns] = useState(columnsHint ?? COLUMNS_FIRST);
+  // which widget holds the caret, so the note's measure knows to read the
+  // textarea and to refuse a shrink under it (D2 item 3). The store's, not a
+  // prop: one caret on the document, and the palette's `New Note` writes it
+  // from outside this tree
+  const editingId = useCanvas((s) => s.editing);
   const metrics = useRef<Metrics>(cellMetrics(columns * (CELL_W_BASE + GUTTER)));
   const slots = useRef(new Map<string, SlotHandle>());
 
@@ -663,12 +778,23 @@ export function CanvasGrid({
     return () => page(null);
   }, [page]);
 
-  const onAuto = useCallback(
-    (id: string, span: { w: number; h: number }) => {
-      useCanvas.getState().resizeTo(canvasId, id, span, metrics.current.columns, { auto: true });
+  const onGrow = useCallback(
+    (id: string, rows: number) => {
+      useCanvas.getState().growTo(canvasId, id, rows, metrics.current.columns, { shrink: true });
     },
     [canvasId],
   );
+
+  /** the page's pitch, handed to the slots as a reader rather than a number: a
+   * face that acts on its cells, and a travel that has to know what a cell is
+   * worth in px, both read it at the moment they act */
+  const pitchNow = useCallback(() => metrics.current, []);
+
+  /** the elements a gesture has already landed, cleared as each one's new cell
+   * comes back through React: the surface animates a document change and never
+   * a drop (D2 item 12) */
+  const placed = useRef(new Set<string>());
+  const fromGesture = useCallback((id: string) => placed.current.delete(id), []);
 
   const register = useCallback((id: string, handle: SlotHandle) => {
     slots.current.set(id, handle);
@@ -727,7 +853,8 @@ export function CanvasGrid({
         const node = live.current;
         if (node) node.textContent = text;
       },
-      commit: (kind, id, cell) => {
+      commit: (kind, id, cell, settled) => {
+        for (const at of settled) placed.current.add(at);
         const store = useCanvas.getState();
         const n = metrics.current.columns;
         if (kind === "move") store.moveTo(canvasId, id, { x: cell.x, y: cell.y }, n);
@@ -837,8 +964,12 @@ export function CanvasGrid({
               block={b}
               cell={it.cell}
               label={geometrySaid(nameOf(b), kindOf(b), it.cell)}
+              canvasId={canvasId}
+              metrics={pitchNow}
+              fromGesture={fromGesture}
+              editing={editingId === it.id}
               register={register}
-              onAuto={onAuto}
+              onGrow={onGrow}
               onDown={onDown}
               onKey={onKey}
             >

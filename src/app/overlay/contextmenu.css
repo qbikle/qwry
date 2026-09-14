@@ -48,9 +48,11 @@
   flex: 1;
 }
 
-/* the one menu whose rows wear a mark (the drawing's picker, AGENT-UX 16x):
-   the glyph sits at the label's own size and takes the row's tighter gap, so
-   a row that draws its shape still reads as one line and not as two columns */
+/* the glyph column of a KIND menu (AGENT-UX 16b as D2 amends it: the drawing's
+   picker and the canvas's `+`, whose rows hand you a shape or a widget; an
+   action menu stays bare). The glyph sits at the menu's own dense size and
+   takes the row's tighter gap, so a row that draws its kind still reads as one
+   line and not as two columns */
 .ctx-glyph {
   display: flex;
   color: var(--fg-muted);

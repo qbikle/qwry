@@ -632,7 +632,10 @@
    one (.ans-body > *); the blocks inside never animate on their own, so a
    streaming answer grows the way prose grows by its next word */
 .ans-text {
-  line-height: 1.5;
+  /* D2 item 7: 13 / 20px. 1.5 gave 19.5 and half a pixel of leading is half a
+     pixel of drift down a long answer; 20 is the app's own 4px step and the
+     line-height every other multi-line register in the pane is set on */
+  line-height: 20px;
   color: var(--fg);
   user-select: text;
 }
@@ -657,20 +660,29 @@
 .ans-text > :first-child {
   margin-top: 0;
 }
-/* a list and the model's own grid are blocks inside the prose, not more
-   prose: 16px stands above each and above whatever follows it (D1 items 2
-   and 5), where a paragraph's neighbour keeps the column's 8. A lead-in is
-   the exception below, and it is the rule's own point: 16 there would hand
-   the label to the paragraph above instead of to the group it names */
-.ans-text > ul,
-.ans-text > ol,
-.ans-text > ul + *,
-.ans-text > ol + *,
+/* a list, a code block and the model's own grid are blocks inside the prose,
+   not more prose: 16px stands above each and above whatever follows it (D1
+   items 2 and 5, D2 item 7), where a paragraph's neighbour keeps the column's
+   8. A lead-in is the exception below, and it is the rule's own point: 16
+   there would hand the label to the paragraph above instead of to the group
+   it names. The fold's line belongs to the list above it, so the 16 is paid
+   after the LINE, not after the box */
+.ans-text > .ans-list,
+.ans-text > .ans-list + *,
+.ans-text > .ans-fold + *,
+.ans-text > pre,
+.ans-text > pre + *,
+.ans-text > .ans-sql,
+.ans-text > .ans-sql + *,
 .ans-text > .ans-grid,
 .ans-text > .ans-grid + * {
   margin-top: var(--sp-4);
 }
-.ans-text > .ans-lead + * {
+/* a label, and a line that OPENS the group under it (a sentence the model
+   ended with a colon, or a heading too long to set as a label), both stand 4
+   above what they name */
+.ans-text > .ans-lead + *,
+.ans-text > .ans-colon + * {
   margin-top: var(--sp-1);
 }
 /* only prose keeps the model's line breaks; a list item or a lead-in is one
@@ -731,10 +743,13 @@
    the two read as two indents. 20px holds the two-digit case with the
    numerals in tabular figures, so `1.` and `70.` end on one edge; a third
    digit widens its own gutter rather than painting outside the column.
-   The bullet's cell is 12px, which puts its text column at the same 16px the
-   UA's indent gave it, so nothing in a bulleted answer moved (D1 item 5). */
+   D2 item 7 pays the gap the maintainer saw as a hug: the text column is 8
+   from its gutter on both kinds, which is 28 for an ordinal (20 + 8, was 24)
+   and 16 for a bullet, where an 8px cell right-aligns the dot 8 from its
+   words and leaves the text column exactly where the UA's indent had it. */
 .ans-text ul,
 .ans-text ol {
+  margin: 0; /* the box round the list owns the block's 16 (.ans-list) */
   padding-left: 0;
   list-style: none;
 }
@@ -757,14 +772,14 @@
 }
 .ans-text ul li::before {
   content: "•";
-  min-width: var(--sp-3);
+  min-width: var(--sp-2);
 }
 .ans-text ol {
   counter-reset: ans-item;
 }
 .ans-text ol li {
   counter-increment: ans-item;
-  padding-left: var(--sp-6);
+  padding-left: calc(var(--sp-5) + var(--sp-2));
 }
 .ans-text ol li::before {
   content: counter(ans-item) ".";
@@ -773,26 +788,69 @@
 .ans-text li + li {
   margin-top: var(--sp-1);
 }
+/* The fold (D2 item 6). The box round the list is what the height spring
+   travels (AnswerText drives it on spring.layout and clears the height when
+   it lands, so a resize reflows the list instead of clipping it); it draws
+   nothing and carries the block's own 16 above and below.
+   The line under it is the list's last row: 4 down, standing IN the list's
+   own text column (28 under an ordinal, 16 under a bullet) so it reads as the
+   thirteenth item and not as a control beside the answer. It is the link
+   species (.linkish, rule 1: text that answers a click is a link button), at
+   the prose size, and it is one-way: the reader asked for the list. */
+.ans-text > .ans-list + .ans-fold {
+  margin-top: var(--sp-1);
+  padding-left: var(--sp-4);
+}
+.ans-text > .ans-list + .ans-fold[data-ordered] {
+  padding-left: calc(var(--sp-5) + var(--sp-2));
+}
+/* the rows the fold was hiding arrive on the section's own fade; nothing
+   above the fold moves */
+.ans-text .ans-more {
+  animation: ans-in var(--dur-slow) var(--ease-std);
+}
 /* quote: a hairline left rule and the text in tier 2 */
 .ans-text blockquote {
   padding-left: var(--sp-3);
   border-left: 1px solid var(--fg-muted);
   color: var(--fg-muted);
 }
-/* a non-SQL code block: the editor register (the trace body's face at tier
-   1), wrapping, no highlighting */
+/* a code block: the EDITOR's face, not a second one (D2 item 7, the
+   maintainer's finding that a block of code in the answer read as a foreign
+   species). Every value is the one src/editor draws with: --bg-panel is
+   editor/theme.ts's own background, 13px is --editor-fs's default (--text-md,
+   the app's data size), --lh-data is .cm-scroller's line-height and the 10 /
+   12 inset is .cm-content's padding and .cm-line's. It wraps and never
+   scrolls sideways: the floor is 320 and a cut statement lies (LESSONS 9).
+   A `sql` fence reaches here only when NO run is on screen: with one, the SQL
+   row owns the statement and display.ts drops the fence (DESIGN rule 14); with
+   none it is the model's own, and it takes this same box with the read-only
+   SQL face inside it (.ans-sql below). What is left here is JSON, a shape, a
+   plan, and none of those has a grammar the app knows. */
 .ans-text pre {
-  padding: var(--sp-2) var(--sp-3);
+  padding: 10px var(--sp-3); /* optical */ /* .cm-content 10, .cm-line 12 */
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-app);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
   color: var(--fg);
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  line-height: 1.5;
+  font-size: var(--text-md);
+  line-height: var(--lh-data);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* the same box, with the app's one read-only SQL view inside it instead of
+   plain mono (D2 item 7, AGENT-UX section 2c): the inset is the view's own
+   (SqlFace's prose theme carries .cm-content's 10 and .cm-line's 12), so the
+   box draws the border, the ground and the corners and nothing else. Its text
+   stays selectable inside a user-select:none body, like the block's face */
+.ans-text .ans-sql {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+
 /* the link: the one thing in the text that answers a pointer (rule 8), so
    it announces at rest (accent, a hairline underline at 40%), responds on
    hover (the underline fills) and acknowledges a press (the .linkish fill);
@@ -945,7 +1003,7 @@
   color: var(--warn);
 }
 /* B3: the canvas an answer went to, worn as the link that shows its tab
-   (`4 blocks · Canvas 4`). The footer's own treatment for a link inside a
+   (`4 widgets · Canvas 4`). The footer's own treatment for a link inside a
    status strip (.ans-foot .linkish), plus the strip's line-height, because a
    button brings its own and a taller one would push the 16px row; a title
    longer than the line ellipsizes rather than running past the pane, the way
@@ -1095,6 +1153,13 @@
 
 /* assumption chips + follow-ups: one wrapping row; the assumption row leads
    with an inline `Assumed` label at tier 2 (AGENT-UX section 3) */
+/* the follow-ups stand 16 under the answer's facts, not 8 (D2 item 7): they
+   are the next idea, not a caption on the last one, and 8 read as a caption.
+   The row is the one in the tail whose chips are questions (.chip.q); the
+   assumption row above it is one of the facts and keeps the column's 8 */
+.ans-tail > .ans-chips:has(.chip.q) {
+  margin-top: var(--sp-2);
+}
 .ans-chips {
   display: flex;
   flex-wrap: wrap;
@@ -2119,6 +2184,7 @@
   .ans-body > *,
   .ans-tail > *,
   .ans-body[data-leaving],
+  .ans-text .ans-more,
   .ans-echo::before {
     animation: none;
   }

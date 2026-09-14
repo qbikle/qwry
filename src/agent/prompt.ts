@@ -30,6 +30,15 @@
 // two turns, the Assumptions line, the whole answer shape and both examples)
 // is byte-equal across all four, and prompt.test.ts pins that.
 //
+// A v5 was written, measured and REVERTED (D2, 2026-09-14): one sentence in
+// the list below asking that a list of more than a few identifiers come back
+// as a query result rather than as prose. It cost presentation on
+// claude-haiku-4-5, 0.850 to 0.771 and 0.750 over two draws against a v4
+// control measured the same hour at 0.857, so it never shipped and this file
+// still holds v4. The sentence is not the idea's grave: the answer slot folds
+// a long list on its own (D2 item 6), and a future attempt has a measured
+// starting point in EVAL.md section 4 rather than a blank one.
+//
 // SYSTEM_PROMPT is a constant with NO interpolation: providers cache the
 // system + tools prefix, and a per-question byte in it misses the cache for
 // the whole thread. Everything question-shaped goes in the user message.

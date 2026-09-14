@@ -50,10 +50,17 @@ const INDENTED = /^[ \t]{2,}\S/;
 const IMAGE = /!\[[^\]\n]*\]\([^)\n]*\)/g;
 const LINK = /\[([^\]\n]*)\]\([^)\n]*\)/g;
 
-/** A fence the SQL row already owns. The lang says so; a langless fence whose
- * first word is a statement says so too, and models write plenty of those. */
+/** A fence holding a statement. The lang says so; a langless fence whose first
+ * word is a statement says so too, and models write plenty of those. With a run
+ * on screen the SQL row owns it and it never reaches prose (rule 14); with none
+ * it is the model's own statement, the way a markdown table is the model's own
+ * comparison when no grid restates it, and the slot draws it in the editor's
+ * face (AGENT-UX section 2c). */
 const SQL_LANG = new Set(["sql", "postgres", "postgresql", "pgsql"]);
 const SQL_HEAD = /^\s*(?:with|select|insert|update|delete|create|alter|drop|explain|truncate)\b/i;
+
+export const isSqlFence = (lang: string, code: string): boolean =>
+  SQL_LANG.has(lang) || (lang === "" && SQL_HEAD.test(code));
 
 const SPACE = (c: number): boolean => c === 32 || c === 9;
 
@@ -116,8 +123,9 @@ const cells = (line: string): string[] =>
 
 /** The blocks the answer slot renders, in order. `hasRun` is false only when
  * the turn produced no result: with a grid on screen a markdown table is the
- * grid restated (rule 14) and never renders; without one it is the model's
- * own comparison, which nothing else carries. */
+ * grid restated (rule 14) and never renders, and a `sql` fence is the SQL row's
+ * own statement restated; without one neither is carried by anything else, so
+ * both are the model's and both render. */
 export function parseBlocks(raw: string, opts: { hasRun: boolean }): Block[] {
   if (!raw) return [];
   let text = raw.indexOf("\r") === -1 ? raw : raw.replace(/\r\n?/g, "\n");
@@ -167,7 +175,7 @@ export function parseBlocks(raw: string, opts: { hasRun: boolean }): Block[] {
       let j = i + 1;
       for (; j < lines.length && !FENCE_AT.test(lines[j]); j++) body.push(lines[j]);
       const code = body.join("\n").replace(/\s+$/, "");
-      if (code && !(SQL_LANG.has(lang) || (lang === "" && SQL_HEAD.test(code)))) {
+      if (code && (!opts.hasRun || !isSqlFence(lang, code))) {
         out.push({ kind: "code", lang, text: code });
       }
       i = j;

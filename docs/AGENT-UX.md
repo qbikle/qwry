@@ -349,9 +349,18 @@ prose):
    block's first words replace it. Pre-tool narration from earlier turns
    ("Now retrieving…") is never concatenated into it. The slot renders a
    markdown subset (`parseBlocks` in `src/agent/display.ts`, drawn by
-   `AnswerText`): a lead-in (any heading depth, or a bold-only line ending in
-   a colon) in the trace-kind register, one per group and never a heading
-   hierarchy; bold, italic and inline code; ordered and unordered lists
+   `AnswerText`): a lead-in in the trace-kind register, a heading of any
+   depth or a bold-only line ending in a colon, **at most four words (D2,
+   2026-09-14, §2c, Q10's own finding)**, one per group and never a
+   heading hierarchy, sitting 4px above the group it names rather than the
+   paragraph's own 8 or the list's own 16 **(D1's own fix, 2026-09-14,
+   landed in the tree and never carried into this sentence until now: a
+   label already belongs to the group it opens)**. **A heading past four
+   words, or a plain sentence ending in a colon, is not a lead-in: it
+   renders as ordinary prose, weight 400, the same 4px to the group it
+   opens (D2, §2c). The maintainer's own bare `Here are the 70 ERP
+   tables:` is this case, and stops shouting in small caps.** Bold, italic
+   and inline code; ordered and unordered lists
    (marker tier 2, items 4px apart, one line-height for a bullet and a
    numbered item alike, no clamp: the two-line cap on a bullet is
    the prompt's ask and the presentation score's check, never the renderer's
@@ -359,7 +368,12 @@ prose):
    FIXED gutter (20px, tabular figures, sized to hold two digits) so `1.`
    and `70.` end on one edge rather than each digit width shifting it, a
    third digit widening its own gutter past that rather than painting
-   outside the column (maintainer finding, 2026-09-14, `d1-list-numbered`);
+   outside the column (maintainer finding, 2026-09-14, `d1-list-numbered`),
+   **the gutter's OWN gap to the text widened from 4px to 8px, the text
+   column moving from 24px to 28px (D2, 2026-09-14, §2c, Q10's own
+   "really bad" finding: squaring the numerals' own edge had left them
+   hugging the words, a bullet's matching 8px gap never being cut this
+   short)**;
    a bullet's own gutter is 12px, the same 16px its text column always
    stood at; and the list itself carries an extra 8px above it and above
    whatever follows it (§2's own vertical rhythm, above), 16 in all where
@@ -368,8 +382,17 @@ prose):
    rule in tier 2; links
    that open in the browser through the opener plugin (http(s) only, anything
    else renders as its text; a link whose text was backticked keeps the mono
-   face); non-SQL code blocks in the editor register (mono, panel-inset,
-   wraps, no highlighting); and a markdown table as the readOnly grid ONLY
+   face); code blocks in the editor register (mono, panel-inset, wraps,
+   never scrolls sideways). **A fenced `sql` block gets its own face upgraded (D2,
+   2026-09-14, §2c): highlighted by the SAME read-only CodeMirror the
+   result block's own SQL face uses, one species and one highlight rather
+   than a second one hand-rolled for prose. It reaches the slot on exactly
+   the gate the model's own table below reaches it on: ONLY when no run is
+   on screen. With one, the SQL row owns the statement and the fence strips
+   (rule 14, `display.ts`, tagged or untagged); with none, nothing in the
+   anatomy carries it, so the model's own statement is the answer and wears
+   this face. Every other language tag stays plain, unhighlighted, in the
+   same box, exactly as shipped.** And a markdown table as the readOnly grid ONLY
    when no run is on screen (with one it is the grid restated, rule 14, and
    strips). Figures (a number with its sign, thousands separators, decimals,
    currency mark, `%` or unit suffix) set in tabular numerals at weight 600
@@ -503,6 +526,99 @@ already refuse while busy. What a cut does to the provider's memory is
 AGENT-SPEC §9: the thread re-mints its session and the next call replays the
 kept exchanges. Reduced motion: no travel, the textarea holds the text at
 once and the stack stands.
+
+## 2b. Long lists fold past twelve (D2, 2026-09-14, Q6d)
+
+The maintainer's own worked case: a model asked to list every ERP table
+answered with seventy names as one ordered list, and the pane became a
+seventy-row scroll (`d2-answer-list`, the "D2 · widgets and the answer's
+rhythm" section of `ask-sketch-d2.html`). Two answers were drawn for it and ONE
+shipped. The PROMPT half - one sentence asking a model for "every X" to
+return the identifiers as a query's own result, which AGENT-UX's anatomy
+already gives a scrolling grid built to hold (§2 item 4, DESIGN rule 14) -
+was written as `PROMPT_VERSION` v5, measured against all six Pagila rows and
+REVERTED: it cost `no_grid_restatement` on claude-haiku-4-5 and took that
+bench's presentation 0.850 → 0.771 and 0.750 past the gate's 0.05 slack,
+against a v4 control run the same hour at 0.857 (EVAL §4, AGENT-SPEC §6).
+`PROMPT_VERSION` stays `v4` and the idea is unlanded, not dead. What ships
+is the RENDERER half alone, this section, which was drawn as the floor under
+a model that answers in prose anyway and is now the whole answer:
+`AnswerText` (§2 item 3's
+own parser, reused whole wherever it renders, the pane and a canvas note
+alike, AGENT-UX §16a item 2) folds an ordered or bulleted list past its
+twelfth item, hiding items 13 and on behind one line, **`Show All 70`**
+(the count read off the list itself, never hand-typed) in the `.linkish`
+species (DESIGN rule 1) at the prose size (13/20), Title Case (WRITING rule
+1: it is a button), standing in the list's own text column, 28px under an
+ordinal list (§2 item 3's own gutter, above), 16px under a bulleted one,
+4px under the twelfth item, the same gap every item already keeps from its
+neighbour. A press reveals the rest and does not fold back: the reader
+asked for the list, so there is no way to re-hide it for the rest of the
+exchange (no toggle, no second press). Motion: the list's own height
+springs on `spring.layout` (the fold's own precedent, §10) while rows 13
+and on fade in on `--dur-slow` opacity; the fold line itself is simply gone
+at once, never faded, since a link that answers its own click has nothing
+left to announce. Reduced motion: the list stands at its full height at
+once. One conditional line added inside prose, and only once a list
+actually runs past twelve; a list of eleven or the model's own table (§2
+item 3, above) are both unaffected.
+
+## 2c. The answer's typographic rhythm (D2, 2026-09-14, Q10a)
+
+The maintainer's own verdict on the shipped renderer, over screenshots: a
+bare heading shouting in small caps, numerals hugging the words they
+number, a SQL fence wearing a different face than the one CodeMirror
+already draws elsewhere in the app, and follow-up chips crowding the block
+above them. This section is the corrected rhythm, drawn once as the single
+table a reviewer can check a future string against, consolidating what
+item 3 above already stated (unmoved, cross-referenced here rather than
+repeated) with what this wave adds or fixes:
+
+- **Prose**: 13px type at a 20px line (not the UA's own 19.5), tier 1.
+  Paragraph gap 8 (the column's own, unmoved, item 3 above).
+- **Lead-in**: item 3's own rule, above, amended by this wave to gate on
+  length and to state the 4px it always meant, a heading or bold line of
+  at most four words is the trace-kind label, 10/16, weight 700, uppercase,
+  tier 2, 4px to the group it opens; a longer heading or a plain sentence
+  ending in a colon is prose, weight 400, the same 4px to its own group.
+- **Bullet**: the dot at tier 2 in an 8px column, 8px to the text (the text
+  at 16, unmoved, item 3 above).
+- **Numbered item**: the ordinal at tier 2, tabular figures, right-aligned
+  in a 20px column, 8px to the text (the text at 28, item 3 above, amended
+  by this wave from 24: the hug the maintainer saw); a third digit widens
+  the column rather than painting outside it (unmoved, D1).
+- Items 4px apart (unmoved, item 3 above); a nested list sits 4px under its
+  own item, indented by its own gutter (its parent's numeral or bullet
+  column), not the page's.
+- **A list, a code block or the model's own table** each carry 16px above
+  themselves and above whatever follows (unmoved, D1's own fix, item 3
+  above): a block among paragraphs, not more prose.
+- **Code block**: the editor's own face (§2c, above, amending item 3's
+  "non-SQL... no highlighting"): `--font-mono` at 13px (`--editor-fs`),
+  line 1.55 (`--lh-data`), `--bg-panel`, 1px `--border`, `--radius-md`,
+  10/12 inset (`.cm-content`'s 10, `.cm-line`'s 12); a `sql` fence that
+  reached the slot at all (no run on screen, item 3 above) highlighted by
+  the SQL face's own read-only CodeMirror in that same box, every other tag
+  plain; wraps, never scrolls sideways.
+- **Inline code**: mono, 12px (`--text-sm`), tier 1, no box (unmoved).
+- **The model's own table**: the grid species (§2 item 3's own readOnly
+  grid, unmoved), header row 30px, data rows 26px, its own hairline box;
+  scrolls sideways at the floor exactly as the grid does everywhere (DESIGN
+  rule 13).
+- **Figures**: tabular numerals at weight 600, in whatever tier the line
+  around them already carries (unmoved, item 3 above).
+- **Follow-ups** (§2 item 7, unmoved in every other respect): stand 16px
+  under the answer's own last fact, not the column's bare 8, their own
+  8px margin stacked on the column's 8, the same arithmetic the list and
+  the code block already carry, since a follow-up is a new idea the reader
+  did not ask for, not a caption on what came before it.
+- **Footer** (§2 item 8, unmoved): the column's own 8, no more, it closes
+  the answer rather than opening a new idea, so it earns no second margin.
+
+No new control species, no new spring, no new `--dur` token: every number
+above rides a token or an existing component (`.linkish`, the grid, the
+editor's own CodeMirror face) already named elsewhere in this file or in
+DESIGN.md.
 
 ## 3. Assumption chips
 
@@ -1460,7 +1576,11 @@ Nothing frames a block: no hairline box, no header strip, the floating
 cluster at its own top-right corner is its only chrome, at rest and always
 (3 hairline boxes per block → 0 at rest; the exemplar is Freeform, which
 frames nothing, and DESIGN rule 15's `.rb` keeps its own edge only because a
-grid needs one). The cluster is the `.acts-float` species unchanged (W7, §2
+grid needs one). **Reversed by the maintainer's own call (D2, 2026-09-14,
+Q1a): every widget now wears a 1px hairline at rest, §16bb below.** The
+count this sentence stated stands as the record of what A3 shipped and why;
+it is not restated as current fact where §16bb's own count table (§16hh)
+now speaks for the page. The cluster is the `.acts-float` species unchanged (W7, §2
 item 4): absolute, no layout, opacity 0 with a 4px slide out of the block's
 top edge on `--dur-quick` / `--ease-std`, revealed by the block's own
 `:hover`, `:focus-within`, and the harness's `[data-hot]`; never
@@ -1498,7 +1618,10 @@ floor and clip a column name under the fade, and on the canvas a picker is
 a menu exactly as `More` already is, so the submenu costs nothing the
 cluster does not already spend. The app's own menu rows carry a label, a
 hint and an arrow, never an icon (`contextmenu.css`), so `Compare With`
-draws no glyph of its own either.
+draws no glyph of its own either. **This sentence is narrowed, not
+reversed, by D2 (§16cc): a menu of ACTIONS on one object, which is what
+`More` and `Compare With ▸` both are, stays bare; a menu of KINDS, where
+the row hands you a shape or a widget to create, wears its own glyph.**
 
 ### 16c. Entry from Ask: Add to Canvas
 
@@ -1596,11 +1719,13 @@ cell ellipsizes and the grid scrolls inside its own box rather than
 widening past it (D1, closing the finding that a comparison against prod
 stretched the widget past its box: a six-column compare once drew 937px of
 grid inside a 482px element) — the clipping rule, §16a, above, applied to
-the one face that had escaped it.** The status
-line names both connections once, each a tier-1 label the way an
-assumption's is: `6 rows · staging 412.6 ms · prod 388.1 ms · assumed Last
-Month = August 2026` (LESSONS 4: the chrome speaks for the data's origin,
-once per side, and never again). Both sides are capped at 200 rows,
+the one face that had escaped it.** **Both connections move OFF the status
+line and into a chips row inside the diff face itself (D2, 2026-09-14,
+§16ff, Q5a):** the status line now reads `6 rows · assumed Last Month =
+August 2026`, carrying only what every other result's status line already
+carries (§16a item 4), and the two connections' own names and own times
+ride the chips instead, once each, never in both places at once (LESSONS 4
+holds, only its slot moved). Both sides are capped at 200 rows,
 aggregates only, the run's own cap (Faces, §16a); over the cap on EITHER
 side the face is that one status line and nothing else, no partial grid.
 
@@ -1764,7 +1889,11 @@ canvas already prints, or write a markdown table into a note (rule 14; the
 
 ### 16j. The block redesign: no box at rest, the note's ring (B3, 2026-09-09)
 
-§16b's decision ("nothing frames a block") is finished, not reopened: a
+§16b's decision ("nothing frames a block") is finished, not reopened, for
+the question this section answers, which is the FACE's own inner box, not
+the widget's own outer edge. **That outer question is reopened by the
+maintainer's own call, §16bb, once the widget itself grows a hairline;
+this section's own inner rule survives it unchanged.** A
 face keeps the `.rb` hairline only when its own content needs a boundary —
 the **table** (a grid's cells need an outer edge) and the **SQL** (the
 editor register is a panel inset). The **chart** and the **values** face
@@ -1777,7 +1906,11 @@ never offers the chart, and its own one-row values keep the box, since
 there the box is the block's only edge and the cluster's home; on the
 canvas the cluster is the block's own, riding the question line (§16a), so
 the box has no second job. Frames at rest on the four-block analysis
-fixture (values · chart · note · table): 3 → 1 (the table's).
+fixture (values · chart · note · table): 3 → 1 (the table's). **The
+table's own remaining "1" is itself folded away by D2 (§16bb): the grid's
+top and bottom hairlines stay its own, but its left and right lines now
+bleed to the widget's, so the count this sentence records is the frame the
+wave that shipped it drew, not the page's current one (§16hh).**
 
 **The note in edit**: the same box, and only the ring appears — no fill
 step. Today's `.ask-box` swap (a `--border-strong` hairline stepping to
@@ -1816,7 +1949,12 @@ short one grow to fit more, is D2's own question (a height POLICY, grow
 versus scroll); this wave answers only what a box already sized one way or
 the other does with the text inside it, and scrolling is the answer that
 needs no policy decided first. `d1-note-fill` is the fixture, a note in a
-6×3 widget.
+6×3 widget. **Answered by D2, §16dd: a box the person has resized by hand
+once keeps this section's own rule, fill-then-scroll, exactly as stated
+here; a box `autoH` still owns grows WITH the words instead, up to the same
+6-row ceiling §16p's formula already caps at, and only scrolls past that
+ceiling. This section is therefore the SECOND half of the policy, not
+replaced by the first.**
 
 **Arrival.** A block lands complete, never as streaming text: a canvas
 write is a tool call, so the model composes the block whole, the tool runs
@@ -1867,17 +2005,19 @@ stand under the thread's last answer, each carrying the same pill in
 front of the next question so the analysis keeps landing where it started
 (§16l).
 
-The status line: `4 blocks · Canvas 4` — the canvas's own title worn in
+The status line: **`4 widgets · Canvas 4` (D2, 2026-09-14, Q10a: the string
+this line was minted with said `blocks`; every UI string in this section
+now says `widgets`, §16gg)**, the canvas's own title worn in
 the link species (`.linkish`, the `Trace` precedent, §5: a link of one
 name that opens the surface it names), the one thing on the line that
-answers a pointer (rule 8) by opening the tab. Singular `1 block · Canvas
-4`; with edits, `3 blocks · 1 replaced · Canvas 4` or `1 deleted · Canvas
+answers a pointer (rule 8) by opening the tab. Singular `1 widget · Canvas
+4`; with edits, `3 widgets · 1 replaced · Canvas 4` or `1 deleted · Canvas
 4`. The number is the blocks the store actually applied, read once at the
 seam where the writes land and handed to this slot (LESSONS 13) — never
 the model's own count of what it meant to write. Two numbers stand in this
 exchange, of the two kinds their slots have always used: `canvas ×2` in
 the strip counts CALLS (the trace's own unit, `run ×3`'s precedent), `4
-blocks` here counts the store's own applied rows — `Ask`'s `run ×3` over
+widgets` here counts the store's own applied rows, `Ask`'s `run ×3` over
 `9 rows` is the same pairing already shipped.
 
 Count, always-visible lines of one live answer: a normal one is bubble ·
@@ -2186,6 +2326,20 @@ note whose height still follows this formula carries
 `autoH: true` (AGENT-SPEC §9); the first hand resize clears it, exactly as
 a drawing's own eventual autofit will (C2b).
 
+**The status-line half of the sentence above is RETIRED, not the shrink
+policy under it (D2, 2026-09-14, §16ee, Q2c).** `8 of 12 bars · 214.7 ms`
+put the row count in two slots at once, the moment its own reasoning is
+read against DESIGN rule 14 rather than rule 15 alone: the count already
+stands, drawn, in the bars themselves, and a status line restating it is
+prose repeating a face (the same fact this paragraph's own "rule 15" citation
+protected the page's line COUNT from, not its content). §16ee gives the
+face itself the fold instead, a `+ N more` line at the plot's own foot, and
+`statusOf` returns to printing the run's own `12 rows · 214.7 ms`
+unconditionally, mismatch's own fragment (§16e) being the status line's
+only other passenger. Every other word of this section (the clip, the ONE
+scale, the top-down fill order, the default-height formula and its 6-row
+cap, the D1 fixture's own shrink case) stands exactly as written above.
+
 ### 16q. The engine: compaction, reflow and growth (C2, 2026-09-11)
 
 A pure module (`src/canvas/grid.ts`), no React, no DOM, imported by the
@@ -2193,7 +2347,17 @@ store, the surface and the model's tools alike, and tested without any of
 them. Two operations only, never a third: **push down, then float up.** A
 moved or resized element is pinned where it landed; everything it now
 overlaps is pushed down just enough to clear it, in `(y, x, id)` order; the
-whole layout then compacts upward, the pinned element staying put. Swap was
+whole layout then compacts upward, the pinned element staying put.
+**Reaffirmed, not reopened (D2, 2026-09-14, Q7a): a widget dragged down
+into empty space stays exactly where it was dropped, the hole it leaves
+above it standing.** The question the maintainer put back on the table
+("does it stay where you dropped it, or rise to the first free row")
+answers to this same sentence, chosen as the sketch drew it, so the law
+this file already carries and the shipped tree (DECISIONS, C2a: "a drop
+is PINNED through the compaction") needed no rewrite here; the sentence
+that read the other way is the qwry-agent-lab RESEARCH doc's own §4.5,
+outside this file's ownership, already recorded as overruled by the
+product doc at the point DECISIONS.md settles it. Swap was
 counted and refused: it is only defined when two rects share a span, and a
 size grammar makes that the exception rather than the rule, so a swap
 gesture would still need this same push down as its own fallback, and the
@@ -2789,3 +2953,390 @@ ones) is not built, so the cap this wave is two ceilings and not three
 three triggers — no vision, no canvas target, a failed render — where a
 cause-specific sentence would tell a person which of the three actually
 happened (§16y).
+
+### 16bb. The widget's frame (D2, 2026-09-14, Q1a)
+
+The maintainer's own reversal of §16b's founding call: "widgets have no
+padding and no border today, so the grid reads as crowded." Every widget
+now wears one hairline at rest, the count §16b stated (0 frames per block)
+being the record of what A3 shipped and why, not a floor this section is
+bound by (DESIGN rule 15: rules are floors, and the maintainer's own call
+is the amendment rule 15 asks for, cited here in the same breath as the
+line it reverses).
+
+**The line.** `1px solid var(--border)` on the DRAG layer, `.cvg-drag`
+(§16r's own inner layer, the same one §16a's one page-wide clip already
+runs on, D1): the border stands OUTSIDE the padding box on that same
+layer, so the clip never cuts it and the lift's own 2% scale and
+`--shadow-pop` (§16s) grow the line right along with the widget rather
+than leaving it stationary while the widget lifts off it. `border-radius:
+var(--radius-md)`, the cell frame's own corner (§16o), so the keyboard
+focus ring, which stands OUTSIDE the clip, on the cell frame, D1's own
+fix, still follows the same radius it always did. `padding: var(--sp-3)`
+[12px] on all four sides; no fill at rest (`[data-lift]`'s own panel fill
+and shadow, §16s, are unchanged and appear only once a drag actually
+lifts the widget). `:hover`, `:focus-within` and `[data-hot]` (the harness
+route, §16b) step `border-color` to `var(--border-strong)` on
+`--dur-quick` / `--ease-std`, added to the transition list the drag layer
+already declares for its own lift (§16s) rather than a second, competing
+transition.
+
+**Where the cluster and the handle stand.** The cluster (`.acts-float`,
+§16b) moves inside the padding it used to float 2px above: `top:
+var(--sp-3); right: var(--sp-3)` [12, 12], centred on the 24px question
+line (§16a item 1) exactly as it always sat relative to the block, only
+now inside the widget's own line rather than floating clear of a block
+with no edge. The resize handle (§16s) keeps its 16×16 hit box and 8×8 L
+glyph, now anchored to the PADDING box's own corner rather than the bare
+block's: `right: 0; bottom: 0` of the padding box, the L itself 4px
+further in from the line, so the glyph sits in the padding band and over
+no content, the same "revealed with the cluster" register §16s already
+states, unmoved.
+
+**No double line.** A face that already carried its own `.rb` hairline
+(§16j: the table and the SQL) now bleeds that edge to the widget's own
+line instead of standing a second box inside it: `margin: 0 -12px` (the
+padding's own negative), no left or right border, `border-radius: 0`, its
+own top and bottom hairlines kept, the header band runs edge to edge
+under the question line, and §16j's own remaining "1" (the table's box,
+above) folds to 0 (§16hh). The diff face's own grid (§16ff, below) bleeds
+the same way. The drawing's own paper (§16w) is simply the padding box
+now: `--bg-raised` painted under the widget's own line rather than a
+second box of its own, and the ink's `inset: 0` already IS that padding
+box, so no stored stroke's own coordinates move (§16w's 1:1 rule,
+untouched). The note keeps `note.css`'s own 8/12 padding and its −9/−13
+outset on the grid too (§16o's own `margin: 0` override on
+`.note-body`/`.note-box` retires): its words land 12 from the line like
+every other kind's, and in edit its own 1px accent ring (§16j) falls
+exactly on the widget's own line, one line, accent, the widget's own
+border standing in for what used to be a separate edit-only box.
+
+**Counts.** Frames per widget at rest: 0 → 1, reversing §16b's own count
+by the maintainer's call. On the four-widget analysis page: 1 → 4, and the
+table's own separate edge 1 → 0 (§16j, above), it is the widget's now.
+Always-visible controls per widget: 0 → 0 (a hairline is not a control).
+Hot per widget: unchanged (§16v/§16aa's own counts stand, a result 6, a
+note 4, a drawing 7). Fixture: `d2-widgets`.
+
+### 16cc. The canvas header line, and the + menu (D2, 2026-09-14, Q3b)
+
+Reverses §16f's own "the canvas itself carries zero always-visible
+controls and zero strips of its own: the tab is the strip" for the same
+reason §16bb reverses §16b, the maintainer's own call, cited where the
+line it reverses stands (DESIGN rule 15). §16f's remaining sentences (the
+empty canvas's own silence, the tail's own click target, a note's delete
+confirm) are UNMOVED; only its opening count changes.
+
+**The strip.** One fixed strip between the tab bar and `.cv-scroll`, 40px
+(`.ask-head`'s own height, the Inspector's own header, the SAME pattern;
+DESIGN rule 12 gains this as a second cited instance, below), `border-
+bottom: 1px solid var(--border)`, padding `0 8 0 16` so the title starts
+on the first cell's own left edge (§16o's own inset). Title: the canvas's
+own name as typed (data, never Title-Cased, WRITING's identifiers-inside-
+chrome rule), 13/600, tier 1, ellipsized, `cursor: text`, a transparent
+1px border and 1px/4px padding paid back in a −5px margin (`/* optical
+*/`) so the edit ring grows outward rather than shifting the words (the
+note's own one-geometry rule, §16j). A click makes it an input in place,
+↩ saves through the store's one `rename` (the tab's own label follows,
+Open below), Esc cancels, an emptied name keeps the old one, capped at
+`CANVAS_NAME_CAP` (80, AGENT-SPEC §5.1), one cap for a canvas's own name
+however it is set, hand-typed here or handed to `canvas_create`. The `+`:
+`.iconbtn` at `--icon-md`, lucide `Plus`, tooltip `Add Widget` (no
+ellipsis: it places a widget at once, the house form for a menu button
+that acts without asking anything first, §16x's own `Pen ▾` and `More`
+citation). Pressed state `bg-active` while its own menu stands. DESIGN
+rule 12: a title and one icon button, nothing else.
+
+**The menu.** `ContextMenu`, on `MenuNode`'s own `glyph?: ReactNode` — the
+optional column `Pen ▾` already added, not a second field beside it in a
+second spelling (WRITING rule 5). Rows 28px tall (`--row-y` 6 + a 16px line + 6),
+the glyph at `--icon-sm` (12px, the menu's own dense size, DESIGN rule 5)
+in `.ctx-glyph`'s own 8px-gap slot, 190px min-width, `--bg-raised`,
+`--border-strong`, `--radius-md`, `--shadow-sm`, anchored under the `+` at
+its own right edge. That anchor is the PRIMITIVE's, not a lucky flip:
+`AnchoredOverlay` takes an `align`, and `"end"` hangs the box's own right
+edge on the point (it flips rightward only when the left has no room), so
+the menu ends on the `+` in a window of any width and not merely in one
+narrow enough for the viewport clamp to push it there. `transform-origin:
+top right` is the SAME override §16x already made for `Pen ▾`'s own menu,
+the primitive's own default being top-left, and it is now the corner the
+box actually hangs from. Rows: **Note** (`Type`), **Drawing** (`PenLine`),
+**Chart…** (`BarChart3`).
+
+**The rule amended.** §16b's own sentence, cited there where it stands
+("the app's own menu rows carry a label, a hint and an arrow, never an
+icon"), becomes: a menu of ACTIONS on one widget already chosen is bare
+(`More`, `Compare With ▸`); a menu of KINDS, where the row hands you a
+shape or a widget to CREATE, wears its own glyph. `Pen ▾` (§16x) and this
+`+` menu are both kind menus, the amendment also re-reads §16x's own
+"deliberate exception" language: `Pen ▾`'s glyph column was never an
+exception carved out of the bare-menu rule, it was the first instance of
+this one, stated fully only now.
+
+**Naming the rows.** The brief's own wording is `Text · Drawing · Graph`;
+this section spells the first and third `Note` and `Chart…` instead, per
+WRITING rule 5 (one term per concept) and the strings already standing
+app-wide (`New Note`, `Delete Note?`, `Copied note`; the chart face's own
+name, §16a), `Chart…` because the row does not create a chart at once,
+it opens the composer and needs a question before a chart exists (WRITING
+rule 2's own ellipsis contract), where `Note` and `Drawing` place their
+widget immediately and earn none. Recorded as a deviation from the
+brief's literal wording, per a rule already in this file, rather than a
+silent substitution (LESSONS 9); the maintainer may overrule the spelling.
+
+**What each row does.** `Note` and `Drawing` call `place()` (§16q) at the
+kind's own default span (§16p) and land the new widget on `panelIn`
+(§16g), exactly as `New Drawing` already does from the palette (§16z), a
+third door to the same two calls, beside the palette and, for a note, a
+bare click on empty ground (§16z). `Chart…` moves focus to the composer
+and seeds it with §16l item 1's own prefill mechanism, the `@"Canvas 4"`
+pill an empty draft on this same tab already carries, followed by the
+words `add a chart of `, so the model writes the query a chart needs: a
+graph is the one kind neither a click nor a menu row can create alone,
+since §16i's own tools need a statement to run before there are rows to
+chart. This is not a new targeting route on §16l's own numbered list (the
+tab is already the target the moment its own header holds this button);
+it is one more DOOR to the prefill route 1 already opens, now reachable
+by a press instead of only found by an empty draft, noted at §16l's own
+place below.
+
+**Counts.** Canvas strips: 0 → 1 (title + `+`). Always-visible controls
+per page: 0 → 1 (the `+`). Strings at rest per page: 0 → 1 (the canvas's
+own name). Menus with a glyph column: 1 (`Pen ▾`) → 2. Fixture:
+`d2-add-menu`.
+
+**Open.** The tab's own label and the header's own title are one fact in
+two slots (DESIGN rule 14): the header is where the name is edited and
+the tab's own label follows it (the store's own `rename`, above), and a
+tab cannot lose its own name. Ledgered, not resolved. Whether this strip
+should be a fixed strip above the scroller (drawn this wave, since the
+`+` is the page's own one creation control and DESIGN rule 8 wants it
+reachable) or scroll away with the document is undecided by rule; if the
+maintainer prefers the latter, the counts above are unchanged and only
+the CSS `position` moves.
+
+A pointer at §16l's own place: the header's `Chart…` row (above) rides
+route 1's own prefill mechanism rather than adding a seventh; §16l is
+unamended by it beyond this cross-reference.
+
+**Motion.** The rename: no glyph travels, the words stand where they
+already were; the 1px accent ring fades in on `--dur-quick` (the note's
+own edit-ring transition, §16j), and ↩ or Esc fades it back out the same
+way — the SPAN that comes back wears the ring for one frame and lets the
+same transition run out, since a fade cannot run on an input that has
+already left the page. The menu: opens on `menuIn` (`spring.snappy`: opacity and a scale
+from .97), its own origin the top-right corner under the `+` (§16x's own
+override of `ContextMenu`'s default top-left origin, for a menu that opens
+rightward under a button at the strip's own right edge); the hot row's
+fill steps on `--dur-quick`; it closes at once, the primitive's own exit.
+A row's press lands the new widget on `panelIn` at the place `place()`
+chose, the widgets under it making room on `spring.layout` (§16t,
+unmoved); `Chart…` opens the pane on `spring.slide` (§10) with the
+prefilled words standing at once (never animate typing). Reduced motion:
+the ring is there or gone with no fade, the menu is open or shut with no
+scale, and the new widget stands at its place at once (§16g).
+
+### 16dd. Note growth: grow while typing, scroll once resized (D2, 2026-09-14, Q4a)
+
+Closes the question §16j and §16p both ledgered open (a height POLICY,
+grow versus scroll) for the FIRST half of a note's life, before a hand
+has ever resized it. §16j's own "note fills its box" rule (D1) is the
+answer for the SECOND half, after a hand resize, and stands completely
+unmoved; this section is the half that comes before it, not a
+replacement for it (both sections now cross-cite the other).
+
+While `autoH` is true (§16p's own flag, AGENT-SPEC §9's "per-widget flag
+in the doc"), every keystroke re-runs §16p's own height formula against
+the words as they stand and, the moment it rises past the widget's
+current span, calls `resize()` (§16q/§16s, the SAME call a hand drag or
+a keyboard shift-arrow already makes) to the new span; the widgets under
+it make room on `spring.layout`, exactly as any other resize already does
+(§16t). The textarea itself grows WITH the words at once, never animated
+(never animate typing, ARCHITECTURE ideology 6, §2's own rule), only the
+widget's own span, stepping in whole rows, springs.
+
+It never shrinks MID-edit: the page must not jump under the caret while a
+person is still typing, so a paragraph that gets shorter (a line deleted,
+a word un-wrapping) leaves the span exactly where it stood until the edit
+commits (blur or ⌘↩, §16f). The COMMIT re-reads the height once, and if it
+is now smaller, that one shrink rides a single `spring.layout`, never a
+shrink per keystroke.
+
+Capped at the SAME 6 rows §16p's own formula already ceilings a note at
+(the chart's own ceiling too, §16ee below); past it the box scrolls,
+exactly as a hand-sized note already does (§16j). The FIRST hand resize
+clears `autoH`, the same clearing rule a drawing's own eventual autofit
+will use (§16w's own `resizeTo(…, { auto: true })` reasoning, cited there
+for the drawing and here for the note, one mechanism serving two kinds),
+and from that moment the words scroll inside the span exactly as §16j
+already states.
+
+**The affordance.** While `autoH` is true, or while a hand-sized note has
+not yet been scrolled to its own end, a 16px fade at the bottom edge (the
+thinking strip's own mask register, §2 item 2) stands to say more is
+coming, closing the gap D1 left open and ledgered (`grid.ts:193`, S3, "a
+note's overflow has no scroll affordance at rest"). It disappears once the
+end is reached, and never appears on a note that fits its box wholly.
+
+Motion: the textarea's own growth is instant; the widget's span springs
+on `spring.layout`, the resize snap's own spring (§16t), no new preset.
+Reduced motion: the box stands at its new row count at once (§16g).
+Fixture: `d2-widgets`; a note mid-growth with its own placeholder words is
+not drawn this wave (Open, §16hh).
+
+### 16ee. The chart's fit: a link retires the status line's own count (D2, 2026-09-14, Q2c)
+
+A model-written chart, and now a chart added from the `+` menu's
+`Chart…` row (§16cc) or the palette alike, opens at the height its bars
+need (§16p's own `chartPx` formula, D1, unmoved), capped at 6 rows
+(`CHART_ROWS_MAX`, unmoved). Squeezed below that height, by a hand or by
+a `canvas_write` span smaller than the default (§5.2's own clamp), the
+face still draws the rows that fit, from the top, at ONE scale (§16p:
+rescaling would make the bars lie about each other), and now reserves
+16px at the plot's own foot for a link, `+ N more` (n read off the rows
+still hidden, never hand-typed), the `.linkish` species (DESIGN rule 1:
+text that answers a click is a link button, never a costume on a non-
+control, rule 8's inverse) at `--text-xs`, standing at the bars' own x0,
+exactly where the next bar would start.
+
+A press calls `resize()` with the FIT height (the height the chart would
+have opened at un-squeezed, §16p's own formula) on `spring.layout`, the
+resize snap's own spring (§16t); neighbours make room on the same spring;
+the bars past the old edge draw on the FRAME AFTER (§16t's own resize
+rule, unmoved), and the link itself is gone at once, no fade, a control
+that just acted has nothing left to announce. A later hand shrink brings
+the line back with whatever now fits.
+
+**The status line's own count retires.** §16p's own D1 fix, `8 of 12
+bars · 214.7 ms`, is superseded here: read against DESIGN rule 14 rather
+than rule 15 alone, the bar count was ALREADY drawn, in the bars
+themselves, so a status-line restatement was prose repeating a face, the
+very thing rule 14 refuses everywhere else on this page. `statusOf`
+returns to the run's own `12 rows · 214.7 ms` unconditionally; the `+ N
+more` link is now the one place a squeezed chart says anything about what
+it is not showing, standing beside the refused-compare fragment (§16e) as
+the status line's only other passenger. Fixture: `d2-chart-fit`.
+
+### 16ff. Compare's connection chips (D2, 2026-09-14, Q5a)
+
+Inside the diff face (§16e), above its own grid: a chips row, flex-wrap,
+8px gaps, 8px to the grid below it. Species: NOT the bordered `.chip`
+toggle (the Chip/pill species, DESIGN rule 1, which answers a click and
+shows a wanted state) but the tool chip's own costume, `.tchip` (20px
+tall, `--bg-raised`, pill, `--text-xs`, no border), a chip that answers
+no click here is a control costume on a non-control otherwise (rule 8's
+inverse, the SAME reasoning §16a item 4 already cites for folding the
+assumption chips into the status line rather than drawing them as
+`.chip`s on the canvas).
+
+Each chip: the connection's own 8px provenance dot (DESIGN rule 5's
+documented exception) in its own avatar colour, the connection's name at
+tier 1, then that side's own run time at tier 2 (`staging 412.6 ms`), 6px
+gaps between the three (`/* optical */`), a side's own facts in that
+side's own chip, once. The COMPARED chip alone trails a 16px `×` (lucide
+`X` at `--icon-sm`, tier 2, hover `--bg-hover` and tier 1, `--dur-quick`),
+tooltip `Clear Comparison`, 2px of padding-right to seat it; pressing it
+clears the comparison through the SAME toggle-off `Compare With` already
+performs when its own checked row is picked again (§16e), a second door
+to the one action, not a new one. The origin chip carries no `×`: there
+is nothing to clear from its own side.
+
+The status line (§16e, amended in place) drops both connections' own
+names and both times, now living once each in their own chip, and reads
+`6 rows · assumed Last Month = August 2026`, the SAME register §16a item
+4 already uses everywhere else, no longer a special two-name case.
+`Compare With ▸` stays in `More` (§16b, §16e): the picker chooses a NEW
+connection to compare against, an action on the widget; the chips are the
+record of the choice already made. A refused compare (§16e's own mismatch
+fragment, D1) shows no chips at all: nothing stood, so nothing rides a
+chip (DESIGN rule 11).
+
+Motion: the chips row arrives WITH the diff face on the SAME `swapIn` the
+flip cycle already uses (§16g) while the widget's own height springs on
+`spring.layout`, the flip's own pair, the chips never animate on their
+own. The `×` clears back to the table face on the same swap, the button
+itself being the icon species's own `--dur-quick` hover fill. Reduced
+motion: the other face stands at once (§16g). Fixture: `d2-diff-chips`.
+
+**Open.** At the 640 floor the grid species' own natural column widths
+let the two narrow columns hug their content and the widest column
+(`amount`) take the rest (`d2-diff-chips`); balanced `fr` columns would
+read better but ellipsize the compare's own triple sooner. Drawn to the
+species as it stands (§16e's own grid rule, unmoved); the maintainer may
+prefer the other.
+
+### 16gg. Naming: widget replaces block in every UI string (D2, 2026-09-14, Q10a)
+
+The maintainer's own call, from the AWS console's own home screen: grid
+elements are "blocks" in code and in this file's own prose, and read as
+"widgets" everywhere a person sees one. Scope, stated once rather than
+per string: every UI string that read "block" for a grid element, cues,
+menu rows, confirms, aria labels, tooltips, the status line, now reads
+"widget"; this file's own quoted transcription of such a string changes
+with it, everywhere this wave's own edits touch one (§16bb-§16ff above,
+and §16k's own status line, amended in place: `4 widgets · Canvas 4`, `1
+widget · Canvas 4`, `3 widgets · 1 replaced · Canvas 4`). This wave's own
+NEW copy (the header's `Add Widget` tooltip, §16cc) is written "widget"
+from the start and needed no rename.
+
+**Code identifiers are untouched this round**, the maintainer's own
+qualifier: `Block`, `BlockRef`, `ResultBlock`, `canvas_write`'s own
+`blocks` field, `block_id`, `.rb`, `CANVAS_BLOCK_ROWS` and every other
+identifier this file cites in backticks keep their own spelling. This
+file's own HISTORICAL prose (§16a-§16aa, written before this wave,
+narrating those same identifiers in the same word) is deliberately NOT
+mechanically renamed this pass: a rename touching roughly 240 instances
+of a term that mirrors code identifiers throughout risked drifting this
+file's own precise cross-references for a naming change alone, so this
+wave's edits reach a §16 sentence's own copy only where that sentence
+ALSO amends something else for its own reason (§16bb-§16ff, §16k). A full
+pass renaming this file's remaining prose "block" to "widget" is open,
+named below, and not silently completed.
+
+**Outside this section's own ownership, since swept.** AGENT-SPEC §9's
+Restart confirm now counts "N canvas widgets" (`Restart from Here?` · `… and
+7 canvas widgets will be deleted.`), and `restartConfirmText` in
+`src/stores/agent.ts` writes exactly that; `canvasStatusText` reads
+`4 widgets · Canvas 4` beside it.
+
+### 16hh. Counts, and what D2 settles (D2, 2026-09-14)
+
+| count | before (§16aa) | after |
+|---|---|---|
+| frames per widget, at rest | 0 | 1 (§16bb, reversing §16b by the maintainer's own call) |
+| the table face's own separate edge | 1 (§16j) | 0 (bled into the widget's line, §16bb) |
+| canvas strips | 0 | 1 (title + `+`, §16cc) |
+| always-visible controls per page | 0 | 1 (the `+`, §16cc) |
+| always-visible controls per widget | 0 | 0 |
+| strings at rest per page | 0 | 1 (the canvas's own name, §16cc) |
+| menus with a glyph column | 1 (`Pen ▾`) | 2 (+ the `+` menu, §16cc) |
+| lines a squeezed chart's status carries | 1 (`8 of 12 bars · ms`, D1) | 0 (retired, §16ee) |
+| lines a squeezed chart's own face carries | 0 | 1 (`+ N more`, §16ee) |
+| rows inside the diff face | 1 (the A · B · Δ grid) | 2 (+ the chips row, §16ff) |
+| names and times on the compare status line | 2 names + 2 times | 0 (moved to the chips, §16ff) |
+| new spring presets | (none) | 0 |
+| new `--dur` tokens | (none) | 0 |
+
+Settles: the widget's own hairline frame and where it lives (the drag
+layer, never the cell frame the keyboard ring stands on, §16bb); the
+header line and its `+` menu, and the amendment to the bare-menu rule
+that licenses its own glyph column (§16cc); a note's growth policy for
+both halves of its life, `autoH` growing and a hand-sized note scrolling
+(§16dd, closing §16j's and §16p's own open question); a squeezed chart
+folding its own count into one link rather than a second status-line slot
+(§16ee); a compare's two connections moving off the status line into
+their own chips (§16ff); every UI string this wave's own edits touch
+reading `widget` (§16gg).
+
+Does not settle, carried forward unchanged: drag-reorder (§16b, §16h);
+standing bars (§16p, still not drawn in a fixture); `now vs then` (§16e,
+§16h, §16v); multi-select, group move and align (§16s, §16v); a select
+tool inside a drawing, a document-level stroke ceiling, and the `"none"`
+image route's own cause-blind line (§16aa). Newly open: a full mechanical
+rename of this file's own pre-D2 prose from `block` to `widget` (§16gg);
+the tab's own label and the header's own title standing as one fact in
+two slots (§16cc); whether the header strip should scroll away with the
+document rather than stay pinned (§16cc); the diff grid's own column
+balance at the 640 floor (§16ff); a note mid-growth, the title in edit
+with its own ring, the bottom fade on a hand-sized note, and a hot menu
+row in light theme, none drawn as a fixture this wave (§16dd, §16cc).

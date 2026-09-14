@@ -737,11 +737,12 @@ describe("statusOf", () => {
     if (!out.ok) throw new Error("add failed");
     const s = statusOf(resultAt(out.canvasId, 0))!;
     expect(s.facts).toBe("1 row · 311.8 ms");
-    expect(s.sides).toEqual([]);
     expect(s.assumed).toEqual(["Last Month = August 2026", "Revenue = Paid Orders"]);
   });
 
-  test("a comparison names both connections once, and says so over the cap", async () => {
+  // D2 item 5: both connections and both timings left this line for the diff
+  // face's own chips, where a side's name and a side's time stand together
+  test("a comparison keeps its row count and hands the sides to the face", async () => {
     const out = useCanvas.getState().addExchange("staging", exchange());
     if (!out.ok) throw new Error("add failed");
     runResult = {
@@ -755,10 +756,6 @@ describe("statusOf", () => {
     await useCanvas.getState().compare(out.canvasId, out.blockId, "prod");
     const s = statusOf(resultAt(out.canvasId, 0))!;
     expect(s.facts).toBe("1 row");
-    expect(s.sides).toEqual([
-      { name: "staging", ms: 311.8 },
-      { name: "prod", ms: 388.1 },
-    ]);
     expect(s.assumed).toEqual(["Last Month = August 2026", "Revenue = Paid Orders"]);
 
     runResult = { ...runResult, row_count: DIFF_ROW_CAP + 1 };

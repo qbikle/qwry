@@ -83,6 +83,12 @@
   background: var(--bg-raised);
   border-radius: var(--radius-md);
 }
+/* On the grid the paper is the widget's PADDING BOX (D2 item 1): the sheet
+   outsets by the widget's own 12 and the clip draws its corner, so the raised
+   paper runs to the hairline and the widget shows one line, never a card
+   inside a card (grid.css owns that outset, the cells being the grid's). The
+   ink's origin moves by the border's 1px and by nothing else, so every stored
+   stroke stays where its hand put it. */
 /* and the cluster dissolves into the paper it actually stands on, never into
    the panel behind it (ask.css: --acts-surface is whatever the buttons are
    over). With the paper painted at rest, that surface is the sheet's.

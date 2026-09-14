@@ -781,6 +781,29 @@ message, not prompt text: it never moves `PROMPT_VERSION`. Neither does the
 sends none, and a loop test pins the untagged message byte for byte, so every
 version's rows measure the same bytes before and after W6.
 
+**A v5 was written, measured and REVERTED (D2, 2026-09-14, Q6d, EVAL §4).**
+It added ONE sentence to the same list v4 added its three to, directly under
+the column rule it belongs beside: "When the answer is a list of more than a
+few identifiers, return them as the result of a query, never as a list in
+prose." The maintainer's own screenshot was the reason: seventy ERP table
+names, numbered down the answer slot, where AGENT-UX §2 item 4's own grid was
+built to hold exactly that (DESIGN rule 14, one fact in one slot). The gate
+did not hold. Accuracy held everywhere (`pagila.json` 33/33 and
+`pagila-hard.json` 5/5 on both `claude-code` models), but
+`pagila-insight.json` + claude-haiku-4-5's presentation read 0.771 and, on
+its one re-sample, 0.750 against a row of 0.850, where the slack is 0.05;
+a v4 control run the same hour on the same machine read 0.857, so the loss
+was the sentence and not the weather. The check that moved is
+`no_grid_restatement`: a sentence telling the model to put identifiers in the
+result made it read MORE of the result back in prose. The sentence and the
+`v4` → `v5` bump were reverted together, `PROMPT_VERSION` stays `v4`,
+`src/agent/prompt.ts` is byte-equal to what it was before the wave but for
+nine comment lines recording the experiment, and `eval/baseline.json` does
+not move. D2 item 6 therefore ships as the FOLD alone: AGENT-UX §2b's answer
+slot folds a list past twelve items behind one `Show All N` line, whatever
+the model writes. The numbers, the control and the wording a future attempt
+should start from are EVAL §4's, not this file's.
+
 ## 7. Providers
 
 ```ts
@@ -911,16 +934,42 @@ actually has. `imageWireFor(providerId)` and its convenience
 question alone; neither gates `Ask` (that is `vision`, below, AGENT-UX
 §16y). They exist only so the wire layer can state what it measured
 without waiting for a gate to need the answer. The shipped registry's own
-accounting (`registry.ts`'s own header comment): 4 `true` (the three Claude
-ids, because the vision guide's own examples run on `claude-opus-5` and the
-family's own documentation states the capability reaching Haiku too, plus
-`gemini-3.8-flash`, the exact model Google's OpenAI-compatibility image
-example names, at the same base URL `presets.ts` already holds), 2 `false`
-(the two local ggufs, no vision tower to speak of), 11 `unknown` (every id
-nothing has queried, the honest majority state and not a gap to feel bad
-about); the way out of `"unknown"` is a documented lookup per row, the same
-discipline `verified` already keeps for a model's existence, or the one
-person-facing override below.
+accounting (`registry.ts`'s own header comment): 7 `true` (the three
+Claude ids, because the vision guide's own examples run on `claude-opus-5`
+and the family's own documentation states the capability reaching Haiku
+too; **both GPT-5.6 rows and both Gemini rows, D2, 2026-09-14, Q9b, below**),
+2 `false` (the two local ggufs, no vision tower to speak of), 8 `unknown`
+(DeepSeek's two rows, Mistral's three, Groq's two and xAI's one, every id
+whose own provider's docs nothing here has read yet, the honest remainder
+and not a gap to feel bad about); the way out of `"unknown"` for one of
+THESE rows is still a documented lookup per row, the same discipline
+`verified` already keeps for a model's existence, or the one person-facing
+override below.
+
+**Amended (D2, 2026-09-14, Q9b): OpenAI's rows and Gemini's rows move from
+`unknown` to `true` as a FAMILY default, not a per-model verification.**
+Eleven non-Claude rows read `vision: "unknown"` before this wave (the
+question the maintainer's own finding named: OpenAI, Gemini, DeepSeek,
+Mistral, Groq and xAI presets all absent `Ask` on a drawing unless the
+per-model Settings switch, §16y, was hand-flipped). The maintainer's own
+call narrows that to two families whose public documentation already
+states the capability for every model they ship, not one model each:
+`gpt-5.6-terra` and `gpt-5.6-sol` read `true` because OpenAI's own images
+guide documents vision input for the family (`images.test.ts` pins the
+same citation `registry.ts`'s header comment carries); `gemini-3.8-flash`
+and `gemini-3.1-pro` read `true` because Google's own OpenAI-compatibility
+page documents image input for the family at the same base URL
+`presets.ts` already holds, `gemini-3.8-flash` remaining the one model its
+own example runs on. DeepSeek, Mistral, Groq and xAI rows stay `unknown`:
+nobody has read those four families' own docs yet, and a family default
+is only as good as the documentation it is read off: a row this section
+cannot cite stays the honest `"unknown"` rather than a guess in either
+direction. The mechanism this changes NOTHING about: `visionOf`,
+`imageRouteFor`, the gate at §16y and the Settings override below all read
+the same `vision` field exactly as they did before this wave; a row that
+newly reads `true` is a row that now needs no switch at all (§16y's own
+row-is-absent rule for a `true`/`false` row, unmoved), and a row that
+stays `unknown` keeps needing one. `images.test.ts` pins the new count.
 
 **The install override.** A model whose row reads `"unknown"` gains one
 path around it that touches no registry file: `useSettings.visionOverride:
@@ -1350,9 +1399,11 @@ to remove without scanning every block of every canvas for a matching
 
 A block the user deleted meanwhile is a no-op on all three (`remove`
 already resolves nothing for an id no document holds, above). An older
-Restart's confirm counts the canvas blocks beside the questions it deletes:
+Restart's confirm counts the canvas widgets beside the questions it deletes:
 `Restart from Here?` · `The 2 questions after this one, their answers and 7
-canvas blocks will be deleted.` · `Delete 2 Questions` (AGENT-UX §16i).
+canvas widgets will be deleted.` · `Delete 2 Questions` (AGENT-UX §16i, and
+§16gg for the word: a grid element is a WIDGET in every string a reader sees,
+D2 item 8).
 
 **Open (D1, 2026-09-14): a cut does not delete a canvas `canvas_create`
 made, only the blocks a `canvasWrites` entry names.** An exchange that

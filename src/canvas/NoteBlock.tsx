@@ -27,6 +27,15 @@
 // nothing is a rounded box with a thinner line, and the ring arrives with the
 // first glyph (note.css .note-box.ring).
 //
+// D2 item 3 gives the words their box back. While no hand has taken the corner
+// (`autoH`), the WIDGET grows a whole row at a time as the note is typed, up to
+// six, its neighbours making room on the resize's own spring: the measure is
+// the grid's (CanvasGrid reads this textarea's `scrollHeight`), because the
+// cells are the grid's. Past six, and after the first hand resize, the words
+// scroll inside the span instead, and 16px of the foot fades while the end is
+// out of view (`data-more` below, grid.css's mask): a note that scrolls with
+// nothing saying so is D1's ledgered S3, and this is what closes it.
+//
 // ⌘↩ commits, Esc cancels, and a note emptied in edit deletes itself on
 // commit with no dialog: the preview IS the commit, the fold's own contract
 // (DECISIONS, W4). BLUR is that same commit one step earlier (B3): leaving
@@ -82,6 +91,7 @@ export function NoteBlock({ block, editing, lead, onEdit, onCommit, onCancel, on
   const [draft, setDraft] = useState(block.text);
   const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
   const ta = useRef<HTMLTextAreaElement | null>(null);
+  const body = useRef<HTMLDivElement | null>(null);
   const words = draft.trim().length > 0;
   // the ring FADES: the box mounts with a transparent border and takes the
   // accent on the next frame, so a note the reader clicked and an empty one
@@ -134,6 +144,28 @@ export function NoteBlock({ block, editing, lead, onEdit, onCommit, onCancel, on
     el.focus();
     el.setSelectionRange(el.value.length, el.value.length);
   }, [editing]);
+
+  // and a note whose words run past its cells says so: 16px of its foot fades
+  // while the end is out of view (grid.css `.note-body[data-more]`). It is the
+  // only affordance a scrolling note has, since the box wears no scrollbar at
+  // rest, and it leaves the moment the last line is reached (D1 ledgered it;
+  // a note that GROWS with its words never shows it at all)
+  useLayoutEffect(() => {
+    const el = body.current;
+    if (editing || !el) return;
+    const mark = () => {
+      if (el.scrollTop + el.clientHeight < el.scrollHeight - 1) el.dataset.more = "";
+      else delete el.dataset.more;
+    };
+    mark();
+    el.addEventListener("scroll", mark, { passive: true });
+    const ro = new ResizeObserver(mark);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", mark);
+      ro.disconnect();
+    };
+  }, [editing, block.text]);
 
   /** an emptied note deletes itself: the preview is the commit, and a blur
    * is a commit (B3), so nothing empty is ever left standing */
@@ -228,7 +260,10 @@ export function NoteBlock({ block, editing, lead, onEdit, onCommit, onCancel, on
 
   if (editing) {
     return (
-      <div className={`blk blk-note${block.question ? "" : " noq"} edit`} data-block={block.id}>
+      <div
+        className={`blk blk-note${block.question ? "" : " noq"}${block.autoH ? " auto" : ""} edit`}
+        data-block={block.id}
+      >
         {block.question && <div className="blk-q">{block.question}</div>}
         <div className={`note-box${ring ? " ring" : ""}`} onKeyDown={(e) => e.stopPropagation()}>
           <textarea
@@ -274,6 +309,7 @@ export function NoteBlock({ block, editing, lead, onEdit, onCommit, onCancel, on
       {block.question && <div className="blk-q">{block.question}</div>}
       <div
         className="note-body"
+        ref={body}
         onClick={() => {
           // a drag that selected text is a select, never an edit (the
           // question bubble's own rule, AGENT-UX section 2 item 1)

@@ -1,12 +1,14 @@
-// The answer slot's renderer (W5): each block kind lands in its register,
-// figures wear .fig whether or not the model bolded them, links open in the
-// browser for http(s) only and stay text for anything else, and the live
-// region holds (polite on the newest exchange, :empty when nothing renders).
-// The parser's own rules are display.test's; this file checks what the
-// renderer makes of the blocks it is handed. The grid species and the
-// statement shape are stubbed: both reach the stores, which touch `document`
-// at load, and neither is what this file tests (the stub records what the
-// table block handed it).
+// The answer slot's renderer (W5, D2 items 6 and 7): each block kind lands in
+// its register, figures wear .fig whether or not the model bolded them, links
+// open in the browser for http(s) only and stay text for anything else, and
+// the live region holds (polite on the newest exchange, :empty when nothing
+// renders). The parser's own rules are display.test's; this file checks what
+// the renderer makes of the blocks it is handed, which after D2 includes the
+// two calls the parser deliberately does NOT make: how long a marked lead-in
+// may be before it is a sentence, and where a list folds. The grid species and
+// the statement shape are stubbed, and so is the read-only SQL face: all three
+// reach the stores, which touch `document` at load, and none of them is what
+// this file tests (the stub records what the block handed it).
 
 import { describe, expect, mock, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -15,6 +17,9 @@ mock.module("../../grid/Grid", () => ({
   Grid: ({ statement, readOnly, maxRows }: { statement: { columns: { name: string }[]; rows: unknown[][] }; readOnly?: boolean; maxRows?: number }) => (
     <table data-readonly={readOnly ? "" : undefined} data-max-rows={maxRows} data-cols={statement.columns.map((c) => c.name).join(",")} data-rows={statement.rows.length} />
   ),
+}));
+mock.module("../SqlFace", () => ({
+  SqlFace: ({ text, variant }: { text: string; variant?: string }) => <code data-variant={variant}>{text}</code>,
 }));
 mock.module("../AnswerBlock", () => ({
   statementFromRun: (run: { columns: string[]; rows: unknown[][] }) => ({
@@ -27,6 +32,12 @@ const { AnswerText } = await import("../AnswerText");
 
 const html = (raw: string, hasRun = true, live = true) =>
   renderToStaticMarkup(<AnswerText raw={raw} hasRun={hasRun} live={live} />);
+
+/** AnswerText's own FOLD_AT, restated: the renderer keeps it private and this
+ * file is what pins the number */
+const FOLD_AT = 12;
+/** an ordered list of n steps, the shape a model writes when it is listing */
+const steps = (n: number) => [...Array(n)].map((_, i) => `${i + 1}. Step ${i + 1}.`).join("\n");
 
 const INSIGHT = [
   "**Across 2,763 orders:**",
@@ -123,17 +134,100 @@ describe("AnswerText", () => {
     );
   });
 
+  // D2 item 7: with a run on screen the SQL row owns the statement and the
+  // fence never reaches the slot (the case above); with none it is the model's
+  // own, and it takes the code block's box with the app's one read-only SQL
+  // view inside it instead of plain mono. Every other tag keeps the <pre>
+  test("a statement no run owns wears the SQL face; another language stays a plain <pre>", () => {
+    const out = html("The join:\n\n```sql\nSELECT 1\n```", false);
+    expect(out).toContain('<div class="ans-sql"><code data-variant="prose">SELECT 1</code></div>');
+    expect(out).not.toContain("<pre");
+    // untagged, opening on a statement: the same face, since the parser reads
+    // the words and not the tag
+    expect(html("```\nSELECT 1\n```", false)).toContain('class="ans-sql"');
+    expect(html('```json\n{"a": 1}\n```', false)).toContain("<pre>{&quot;a&quot;: 1}</pre>");
+  });
+
   // D1 item 5: the ordinal is drawn in the item's own gutter cell, which costs
   // `list-style: none`, and WebKit takes a list's semantics away with its
   // markers. Both list kinds carry the role back, and a list past nine items
   // (the case the fixed gutter exists for) is still one list of n items
   test("a list keeps its semantics past the marker: role on both kinds, every item present", () => {
-    const steps = ["Create the enum", "Add the column", "Backfill it", "Drop the old one"];
-    const numbered = html([...Array(14)].map((_, i) => `${i + 1}. ${steps[i % 4]}.`).join("\n"));
+    const numbered = html(steps(FOLD_AT));
     expect(numbered).toContain('<ol role="list">');
-    expect(numbered.match(/<li>/g)).toHaveLength(14);
+    expect(numbered.match(/<li/g)).toHaveLength(FOLD_AT);
     // the ordinals are the list's own, never text inside the item
     expect(numbered).not.toContain("10.");
     expect(html("- one\n- two")).toContain('<ul role="list">');
+  });
+
+  // ---- D2 item 6: the fold --------------------------------------------------
+
+  test("the threshold: twelve items stand whole, the thirteenth folds the list", () => {
+    const twelve = html(steps(FOLD_AT));
+    expect(twelve.match(/<li/g)).toHaveLength(FOLD_AT);
+    expect(twelve).not.toContain("ans-fold");
+    expect(twelve).not.toContain("Show All");
+
+    const thirteen = html(steps(FOLD_AT + 1));
+    // the twelfth is the last one drawn: a folded list is honestly a list of
+    // twelve with a line under it, never a thirteen that hides one
+    expect(thirteen.match(/<li/g)).toHaveLength(FOLD_AT);
+    expect(thirteen).toContain('Step <span class="fig">12</span>.');
+    expect(thirteen).not.toContain('Step <span class="fig">13</span>.');
+    expect(thirteen).toContain('<div class="ans-fold" data-ordered="">');
+    expect(thirteen).toContain('<button type="button" class="linkish">Show All 13</button>');
+  });
+
+  test("the count names the whole list, not the tail it is hiding", () => {
+    // the maintainer's own case: seventy ERP tables as an ordered list
+    expect(html(steps(70))).toContain(">Show All 70</button>");
+    // a bulleted list folds the same way, and its line takes the bullet's own
+    // text column (no data-ordered)
+    const bullets = html([...Array(70)].map((_, i) => `- erp_table_${i + 1}`).join("\n"));
+    expect(bullets).toContain('<ul role="list">');
+    expect(bullets).toContain('<div class="ans-fold">');
+    expect(bullets).toContain(">Show All 70</button>");
+    // Title Case, no terminal period, no ellipsis: the line acts at once
+    // (WRITING rule 1). The count never needs a plural: a fold takes thirteen
+    // items at least, and `1 turn / 3 turns` is footerStatus's, pinned in
+    // display.test.ts
+    expect(bullets).not.toContain("Show all");
+    expect(bullets).not.toContain("Show All 70.");
+    expect(bullets).not.toContain("Show All 70…");
+  });
+
+  test("the fold is a box round the list, and the list alone: the line is its sibling", () => {
+    const out = html(steps(20));
+    // the box is what the height spring travels; it draws nothing and holds
+    // nothing but the list, so the line can leave at once while the box grows
+    expect(out).toContain('<div class="ans-list"><ol role="list">');
+    expect(out).toContain("</ol></div><div class=\"ans-fold\"");
+  });
+
+  // ---- D2 item 7: the lead-in's length --------------------------------------
+
+  test("a marked lead-in of at most four words is a label; a longer one is a sentence", () => {
+    // the four the parser already sees: short enough to set in small caps
+    expect(html("**Across 2,763 orders:**\n\n- one")).toContain(
+      '<div class="ans-lead">Across <span class="fig">2,763</span> orders:</div>',
+    );
+    expect(html("## Orders by payment state\n\nSomething.")).toContain(
+      '<div class="ans-lead">Orders by payment state</div>',
+    );
+    // the maintainer's own screenshot: six words, a sentence, and a sentence
+    // set in small caps shouts
+    const long = html("## Here are the 70 ERP tables:\n\n- erp_fx_rate");
+    expect(long).not.toContain("ans-lead");
+    expect(long).toContain('<p class="ans-colon">Here are the <span class="fig">70</span> ERP tables:</p>');
+  });
+
+  test("a paragraph the model ended with a colon opens the group under it", () => {
+    expect(html("The grain differs on every one of them:\n\n- a")).toContain(
+      '<p class="ans-colon">The grain differs on every one of them:</p>',
+    );
+    expect(html("The grain differs on every one of them.")).toContain(
+      "<p>The grain differs on every one of them.</p>",
+    );
   });
 });
