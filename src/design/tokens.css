@@ -233,6 +233,8 @@ textarea::placeholder {
 }
 .badge-danger { background: var(--danger-soft); color: var(--danger); }
 .badge-accent { background: var(--accent-soft); color: var(--accent); }
+/* the LOCKED tint (prod-chip.locked): read-only ceremony, the large tier */
+.badge-ok { background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--ok); }
 
 /* keyboard focus: one themed ring, everywhere (there was NONE before) */
 button:focus-visible,

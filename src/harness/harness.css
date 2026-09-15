@@ -1,0 +1,31 @@
+/* Ask fixture harness page: the app background, one gutter of margin, and the
+   real .card chrome (v2.css) around the pane. Nothing here styles the pane. */
+.harness {
+  height: 100%;
+  padding: var(--sp-6);
+  background: var(--bg-app);
+  overflow: auto;
+}
+.harness-card {
+  flex-shrink: 0;
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+}
+/* the Structure view is a TAB's surface, not a pane: it scrolls itself inside
+   the card the way the browser's tab does, and the card is only there so the
+   frame has the app's own edge around it (A2) */
+.harness-structure {
+  height: 100%;
+  overflow: auto;
+}
+
+/* Settings › Models is a modal over the window, not a face of the card (C2b):
+   the card is only here so the frame has the app's own edge around the
+   section, and the section scrolls inside it exactly as the modal's own body
+   does. The skin is `.settings-modal`'s, unchanged, so what the frame shows
+   is the row as Settings draws it */
+.harness-scroll {
+  height: 100%;
+  overflow: auto;
+}

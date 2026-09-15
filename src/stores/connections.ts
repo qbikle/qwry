@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import * as ipc from "../ipc/commands";
 import { terminatedSessions } from "./sessionFlags";
+import { useRecents } from "./recents";
 
 /** app-ordered session death: mark BEFORE the IPC so an in-flight run's
  * connection-closed rejection classifies as a cancel, not an error
@@ -267,6 +268,14 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
     // SchemaTree's persisted table pins die with the profile too
     localStorage.removeItem(`qwry.pins.${id}`);
     useSettings.getState().dropConnTheme(id);
+    // and its permission to be changed: an id the app hands out again must
+    // never inherit one (A4). Not in `dropAgentConn`, which also fires when
+    // the model row falls back to App default and would revoke edits for a
+    // choice about models
+    useSettings.getState().setAgentWrites(id, false);
+    // and what its `@` completion remembered reaching for (B2): the store is
+    // self-bounded, so an orphan would only be harmless, never right
+    useRecents.getState().drop(id);
     // its workspace dies with it (pinned tabs survive as orphans)
     void import("./tabs").then(({ useTabs }) => useTabs.getState().purgeProfileTabs(id));
   },
@@ -376,6 +385,10 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
   setTxTab: (key, inTx) =>
     set((s) => {
       if (!!s.txTabs[key] === inTx) return s;
+      // a fresh transaction on this tab is not the one that ended: the record
+      // of how the last one went dies with it, so no reader can describe a
+      // transaction by its predecessor's ending
+      if (inTx) txEnds.delete(key);
       return { txTabs: { ...s.txTabs, [key]: inTx } };
     }),
 
@@ -523,6 +536,13 @@ async function connectInner(
   // hydrate the persisted schema snapshot NOW: sidebar + completion are
   // live at t=0 while the handshake and the fresh introspect run behind it
   void import("./schema").then(({ useSchema }) => useSchema.getState().hydrate(profileId));
+  // what this connection knows (A2): appdb rows, no session needed, read here
+  // with the snapshot so the Structure view's hint lines, the palette's
+  // definitions and the run's KNOWLEDGE block all see them from t=0
+  void import("./knowledge").then(({ useKnowledge }) =>
+    // a knowledge read that fails costs the connection nothing (LESSONS 5)
+    useKnowledge.getState().load(profileId).catch((e: unknown) => console.error("knowledge load failed", e)),
+  );
   try {
     const sessionId = await ipc.connect(profileId);
     // the profile was edited/deleted mid-handshake: this session belongs to
@@ -683,6 +703,46 @@ async function healInner(
     void get().ensureTabSession(profileId, tabId);
   }
   return { ok: true, rebuilt };
+}
+
+// ---- ending a tab's transaction (B1) ---------------------------------------
+// COMMIT and ROLLBACK are the tab's two acts, and they have ONE implementation
+// here, because two surfaces now send them: the status bar's TX OPEN control
+// and the Ask block's own band, which stands on the change it ran (DESIGN
+// rule 15's first question). A second copy in the pane would be the founding
+// sin rule 1 exists to prevent, and the two would drift the first time either
+// grew a step.
+
+/** how the app ends a tab's transaction */
+export type TxEnd = "commit" | "rollback";
+
+/** the end the app SENT on a tab's session, so a reader watching the
+ * transaction close can say which way it went (Ask's headline reads it).
+ * Cleared when a new transaction opens on that tab, and never written for a
+ * transaction that ended anywhere else (a typed COMMIT, a dead session): what
+ * the app did not do, it cannot report (LESSONS 9). Session-lived, like the
+ * tab's transaction itself. */
+export const txEnds = new Map<string, TxEnd>();
+
+/** End the open transaction on one tab's session. Straight on the session,
+ * never through `run()`, which would wipe the result grid the user is
+ * inspecting mid-transaction. False = there was no session to send it on, or
+ * the send failed and the session's closed event resets the tx state. */
+export async function endTabTx(key: string, end: TxEnd): Promise<boolean> {
+  const sid = useConnections.getState().tabSessions[key];
+  if (!sid) return false;
+  // stamped BEFORE the round trip: the server's own tx-state event can close
+  // the flag first, and a reader woken by it must find the answer already
+  // there
+  txEnds.set(key, end);
+  try {
+    await ipc.execute(sid, end === "commit" ? "COMMIT" : "ROLLBACK");
+  } catch {
+    txEnds.delete(key);
+    return false;
+  }
+  useConnections.getState().setTxTab(key, false);
+  return true;
 }
 
 /** open explicit transactions across a profile's tab sessions */

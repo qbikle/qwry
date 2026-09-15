@@ -9,7 +9,7 @@ import { createPortal } from "react-dom";
 import { motion } from "motion/react";
 import { ChevronRight } from "lucide-react";
 import { menuIn } from "../../design/springs";
-import { AnchoredOverlay } from "./Overlay";
+import { AnchoredOverlay, type AnchorAlign } from "./Overlay";
 import { MAX_OVERLAY_Z } from "./escStack";
 import "./contextmenu.css";
 
@@ -17,6 +17,15 @@ export type MenuNode =
   | {
       kind: "item";
       label: string;
+      /** the SHAPE this row hands you, drawn at the label's own size. AGENT-UX
+       *  16b read "menu rows carry a label, a hint and an arrow, never an
+       *  icon", with the drawing's picker as its one exception; D2 amends it
+       *  to the line the exception was already drawing: a menu of ACTIONS on
+       *  one object is bare, a menu of KINDS, where the row hands you a shape
+       *  or a widget, wears its glyph. `Pen ▾` and the canvas's `+` are both
+       *  kind menus and both set it; `More` and every other action menu stay
+       *  bare, so no menu grows a gutter it has no use for */
+      glyph?: ReactNode;
       /** identifier hints stay strings (mono, data register); shortcut hints
        *  pass <Kbd chord=…/> (UI font, glyph register): WRITING.md split */
       hint?: ReactNode;
@@ -49,11 +58,15 @@ export function ContextMenu({
   items,
   onClose,
   layerClassName,
+  align,
 }: {
   point: { x: number; y: number };
   items: MenuNode[];
   onClose: () => void;
   layerClassName?: string;
+  /** "end" hangs the menu's RIGHT edge on the point: a menu opened by a button
+   *  at the right of a strip, where a left-aligned one would stand beside it */
+  align?: AnchorAlign;
 }) {
   const sel = selectable(items);
   const [active, setActive] = useState<number>(sel[0] ?? -1);
@@ -151,6 +164,7 @@ export function ContextMenu({
       onClose={onClose}
       onKey={onKey}
       layerClassName={layerClassName}
+      align={align}
     >
       {(layerZ) => (
         <>
@@ -192,6 +206,7 @@ export function ContextMenu({
                     else activate(it);
                   }}
                 >
+                  {it.kind === "item" && it.glyph && <span className="ctx-glyph">{it.glyph}</span>}
                   <span className="ctx-label">{it.label}</span>
                   {it.kind === "item" && it.hint && (
                     <span className="ctx-hint">{it.hint}</span>
@@ -340,6 +355,7 @@ function SubPanel({
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => !it.disabled && onActivate(it)}
             >
+              {it.glyph && <span className="ctx-glyph">{it.glyph}</span>}
               <span className="ctx-label">{it.label}</span>
               {it.hint && <span className="ctx-hint">{it.hint}</span>}
             </div>

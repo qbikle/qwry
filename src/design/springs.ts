@@ -29,6 +29,11 @@ const PANEL = { type: "spring", stiffness: 420, damping: 36, mass: 0.9 } as cons
 const RAIL = { type: "spring", stiffness: 600, damping: 24, mass: 0.6 } as const;
 const DRAWER = { type: "spring", stiffness: 520, damping: 40, mass: 0.8 } as const;
 const SWAP = { type: "spring", stiffness: 700, damping: 40, mass: 0.5 } as const;
+// the right pane's mode swap (Ask ↔ Inspector): a 32px slide that reads as
+// ease-out with no bounce, Stage Manager's register. ζ = 40 / (2·√400) = 1.0,
+// critically damped: no overshoot by construction; 90% of the travel in
+// ~200 ms, settled by ~300 ms
+const SLIDE = { type: "spring", stiffness: 400, damping: 40, mass: 1 } as const;
 
 export const spring = {
   /** palette / fn-search / modals entering */
@@ -43,7 +48,24 @@ export const spring = {
   get turn() {
     return reduced ? INSTANT : TURN;
   },
+  /** shared-layout morphs: an element travelling to become another (the Ask
+   * suggestion chip → question echo, AGENT-UX section 6); PANEL-class so the
+   * travel settles instead of snapping */
+  get layout() {
+    return reduced ? INSTANT : PANEL;
+  },
+  /** the side pane's mode swap, both directions (App.tsx); reduced motion
+   * drops the travel and the swap is a crossfade at the instant variant */
+  get slide() {
+    return reduced ? INSTANT : SLIDE;
+  },
 };
+
+/** the mode swap's off-stage pose: Ask sits left of the Inspector (the
+ * titlebar order), so Ask leaves and returns on the left, the Inspector on
+ * the right. Reduced motion travels nothing (crossfade only) */
+export const slideOffset = (side: "left" | "right"): number =>
+  reduced ? 0 : side === "left" ? -32 : 32;
 
 export const popIn = {
   get initial() {

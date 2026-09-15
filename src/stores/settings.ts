@@ -1,5 +1,11 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+// the two provider tables only, by their own paths rather than through
+// providers/index.ts: they are pure data with no imports of their own, where
+// the barrel would drag every adapter into the eager settings module
+import { carriesImages } from "../agent/providers/presets";
+import { baseModelId, visionOf } from "../agent/providers/registry";
+import type { ProviderId } from "../agent/providers/types";
 import {
   applyTheme,
   DEFAULT_PALETTE,
@@ -34,6 +40,42 @@ interface SettingsState {
   statementTimeoutSecs: number;
   setStatementTimeoutSecs: (n: number) => void;
 
+  /** Ask: the provider the agent talks to, and the model within it
+   * (AGENT-SPEC section 9). Plain strings, because they are persisted wire
+   * values validated against the model registry at use time; the API key
+   * itself lives in the Keychain and never lands here. */
+  agentProvider: string | null;
+  agentModel: string | null;
+  /** per-connection overrides, sparse: an absent entry follows the app-wide
+   * choice, so setting one never disturbs the others */
+  agentByConn: Record<string, { provider: string; model: string }>;
+  setAgentModel: (provider: string | null, model: string | null) => void;
+  setAgentConnModel: (profileId: string, provider: string, model: string) => void;
+  /** a deleted profile's model choice dies with it. NOT its edits permission:
+   * this also fires when the user picks `App default` in the model row, and a
+   * model choice is not a permission (A4). `connections.deleteProfile` revokes
+   * the permission itself, where the connection actually dies */
+  dropAgentConn: (profileId: string) => void;
+  /** A4: per-connection permission for Ask to PROPOSE a change (one INSERT /
+   * UPDATE / DELETE in the final fence, never a tool call). Sparse and off by
+   * default: an absent entry is off, so a connection that was never switched
+   * on cannot be switched on by a bad merge. A production connection has no
+   * row at all (ModelsSettings) and the dry run refuses before it connects */
+  agentWrites: Record<string, boolean>;
+  setAgentWrites: (profileId: string, on: boolean) => void;
+  /** C2b: per-install answers to the registry's `"unknown"` vision rows, keyed
+   * by model, sparse and off by default. A per-model fact belongs to the model
+   * (registry.ts), and this is the same fact learned on one machine rather
+   * than from a document, so it stays out of the registry file and lands here */
+  agentVision: Record<string, boolean>;
+  setAgentVision: (modelId: string, on: boolean) => void;
+  /** per-provider base URL overrides (local runtimes, gateways), sparse: an
+   * absent entry means the preset default; the loop and the probes read the
+   * same map so what Settings tested is what a run reaches */
+  agentBaseUrls: Record<string, string>;
+  /** null (or an empty string) drops the override */
+  setAgentBaseUrl: (providerId: string, url: string | null) => void;
+
   /** default ⇧⌘F style: id into FORMAT_PRESETS */
   formatPreset: string;
   setFormatPreset: (id: string) => void;
@@ -47,7 +89,10 @@ interface SettingsState {
 
   /** settings modal */
   settingsOpen: boolean;
-  setSettingsOpen: (v: boolean) => void;
+  /** the section a caller asked the modal to open scrolled to (`models` from
+   * the Ask picker); runtime only, cleared when the modal closes */
+  settingsSection: string | null;
+  setSettingsOpen: (v: boolean, section?: string) => void;
 
   /** gutter glass opacity 0.1–0.9 (lower = more see-through vibrancy) */
   glassAlpha: number;
@@ -158,6 +203,12 @@ function sanitizeSettings(persisted: unknown, current: SettingsState): SettingsS
     ),
     wrapLines: typeof p.wrapLines === "boolean" ? p.wrapLines : current.wrapLines,
     statementTimeoutSecs: finite(p.statementTimeoutSecs, 0, 7200, current.statementTimeoutSecs),
+    agentProvider: typeof p.agentProvider === "string" ? p.agentProvider : null,
+    agentModel: typeof p.agentModel === "string" ? p.agentModel : null,
+    agentByConn: sanitizeAgentConns(p.agentByConn),
+    agentWrites: sanitizeAgentWrites(p.agentWrites),
+    agentVision: sanitizeAgentVision(p.agentVision),
+    agentBaseUrls: sanitizeBaseUrls(p.agentBaseUrls),
     formatPreset: typeof p.formatPreset === "string" ? p.formatPreset : current.formatPreset,
     formatKeywordCase: pick(
       p.formatKeywordCase,
@@ -179,6 +230,96 @@ function sanitizeSettings(persisted: unknown, current: SettingsState): SettingsS
     connThemes: sanitizeConnThemes(p.connThemes, knownPalettes),
     customThemes,
   };
+}
+
+/** persisted agent model choices, one per connection. A half-written entry
+ * is dropped rather than repaired: a connection with no override follows the
+ * app-wide choice, which is always a valid state. */
+function sanitizeAgentConns(v: unknown): Record<string, { provider: string; model: string }> {
+  if (typeof v !== "object" || v === null) return {};
+  const out: Record<string, { provider: string; model: string }> = {};
+  for (const [k, raw] of Object.entries(v as Record<string, unknown>)) {
+    const e = raw as { provider?: unknown; model?: unknown } | null;
+    if (e && typeof e.provider === "string" && typeof e.model === "string") {
+      out[k] = { provider: e.provider, model: e.model };
+    }
+  }
+  return out;
+}
+
+/** A4 (AGENT-UX 13.1): may Ask propose a change on this connection? The
+ * per-connection switch, and never on production, where the switch has no row
+ * to be on: the capability does not exist there this wave, so what depends on
+ * it is ABSENT rather than disabled (DESIGN rule 2's matrix). Pure and
+ * dependency-free, so a component can call it inside its own selector, the
+ * agent store can call it before its first await, and the grid can ask the
+ * question without pulling the Ask chunk in behind it.
+ */
+export function writesAllowed(
+  agentWrites: Record<string, boolean>,
+  profileId: string,
+  isProd: boolean,
+): boolean {
+  return !isProd && agentWrites[profileId] === true;
+}
+
+/** persisted write permissions, one per connection (A4). Only `true`
+ * survives: anything else is off, and off is what an absent entry means, so a
+ * corrupt map can never read as a granted permission. */
+function sanitizeAgentWrites(v: unknown): Record<string, boolean> {
+  if (typeof v !== "object" || v === null) return {};
+  const out: Record<string, boolean> = {};
+  for (const [k, raw] of Object.entries(v as Record<string, unknown>)) {
+    if (raw === true) out[k] = true;
+  }
+  return out;
+}
+
+/** persisted vision answers, one per model (C2b). Only `true` survives, the
+ * shape agentWrites uses: a corrupt map can never read as a yes, and off is
+ * what an absent entry already means. */
+function sanitizeAgentVision(v: unknown): Record<string, boolean> {
+  if (typeof v !== "object" || v === null) return {};
+  const out: Record<string, boolean> = {};
+  for (const [k, raw] of Object.entries(v as Record<string, unknown>)) {
+    if (raw === true) out[k] = true;
+  }
+  return out;
+}
+
+/** May Ask put an image on this model's question? Three facts in order: the
+ * wire has to carry one at all, then the model's own flag, then this install's
+ * answer for a model the registry cannot speak for. An override lifts
+ * `"unknown"` and nothing else: `false` is a measured no, and a switch that
+ * could overrule it would be a switch that lies. Pure, so the drawing's `Ask`
+ * can ask the question inside its own selector. */
+export function imagesAllowed(
+  agentVision: Record<string, boolean>,
+  providerId: ProviderId,
+  model: string,
+): boolean {
+  if (!carriesImages(providerId)) return false;
+  const flag = visionOf(model, providerId);
+  return flag === true || (flag === "unknown" && agentVision[baseModelId(model)] === true);
+}
+
+/** Does the Models pane offer this model the one vision switch? Only where
+ * nothing knows the answer: a model flagged either way has nothing to ask, and
+ * a wire that carries no image has nothing to offer (DESIGN rule 2's matrix,
+ * where a capability that does not exist is absent rather than disabled). */
+export function visionUnknown(providerId: ProviderId, model: string): boolean {
+  return carriesImages(providerId) && visionOf(model, providerId) === "unknown";
+}
+
+/** persisted base URL overrides, one per provider; anything but a non-empty
+ * string is dropped, and a dropped entry means the preset default */
+function sanitizeBaseUrls(v: unknown): Record<string, string> {
+  if (typeof v !== "object" || v === null) return {};
+  const out: Record<string, string> = {};
+  for (const [k, raw] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof raw === "string" && raw.trim() !== "") out[k] = raw.trim();
+  }
+  return out;
 }
 
 /** map entries whose palette no longer exists fall back to the default
@@ -222,6 +363,49 @@ export const useSettings = create<SettingsState>()(
         // 0 = no timeout; else clamp 1s..2h
         set({ statementTimeoutSecs: n <= 0 ? 0 : Math.max(1, Math.min(7200, Math.round(n))) }),
 
+      agentProvider: null,
+      agentModel: null,
+      agentByConn: {},
+      setAgentModel: (provider, model) => set({ agentProvider: provider, agentModel: model }),
+      setAgentConnModel: (profileId, provider, model) =>
+        set((s) => ({ agentByConn: { ...s.agentByConn, [profileId]: { provider, model } } })),
+      dropAgentConn: (profileId) =>
+        set((s) => {
+          const next = { ...s.agentByConn };
+          delete next[profileId];
+          return { agentByConn: next };
+        }),
+      agentWrites: {},
+      // off is the absent entry, so switching a connection off leaves nothing
+      // behind that a later merge could read as a permission
+      setAgentWrites: (profileId, on) =>
+        set((s) => {
+          const next = { ...s.agentWrites };
+          if (on) next[profileId] = true;
+          else delete next[profileId];
+          return { agentWrites: next };
+        }),
+      agentVision: {},
+      // keyed the way the registry matches: llama-server reports gguf paths,
+      // and a switch flipped on a path must answer for the file name the model
+      // rows are written against
+      setAgentVision: (modelId, on) =>
+        set((s) => {
+          const next = { ...s.agentVision };
+          if (on) next[baseModelId(modelId)] = true;
+          else delete next[baseModelId(modelId)];
+          return { agentVision: next };
+        }),
+      agentBaseUrls: {},
+      setAgentBaseUrl: (providerId, url) =>
+        set((s) => {
+          const next = { ...s.agentBaseUrls };
+          const trimmed = url?.trim() ?? "";
+          if (trimmed) next[providerId] = trimmed;
+          else delete next[providerId];
+          return { agentBaseUrls: next };
+        }),
+
       formatPreset: "standard",
       setFormatPreset: (formatPreset) => set({ formatPreset }),
       formatKeywordCase: "upper",
@@ -231,7 +415,9 @@ export const useSettings = create<SettingsState>()(
       setUiZoom: (n) => set({ uiZoom: clampZoom(n) }),
 
       settingsOpen: false,
-      setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+      settingsSection: null,
+      setSettingsOpen: (settingsOpen, section) =>
+        set({ settingsOpen, settingsSection: settingsOpen ? section ?? null : null }),
 
       glassAlpha: 0.55,
       setGlass: (a) => set({ glassAlpha: Math.max(0, Math.min(1, a)) }),
@@ -304,6 +490,12 @@ export const useSettings = create<SettingsState>()(
         gridDensity: s.gridDensity,
         wrapLines: s.wrapLines,
         statementTimeoutSecs: s.statementTimeoutSecs,
+        agentProvider: s.agentProvider,
+        agentModel: s.agentModel,
+        agentByConn: s.agentByConn,
+        agentWrites: s.agentWrites,
+        agentVision: s.agentVision,
+        agentBaseUrls: s.agentBaseUrls,
         formatPreset: s.formatPreset,
         formatKeywordCase: s.formatKeywordCase,
         uiZoom: s.uiZoom,

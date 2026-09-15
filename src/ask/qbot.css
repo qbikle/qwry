@@ -1,0 +1,178 @@
+/* qbot's own pixels (B4). The geometry is the maintainer's Paint drawing at
+   1:10, cleaned to half units: viewBox 0 0 56 70, bounds x 1-55, y 1-69, the
+   parts in the order antenna, eye, leg-l, leg-r, body, highlights, bulb
+   (ask-sketch-b4.html section B4 labels every one of them). The body is a
+   STROKED CIRCLE and the legs are LINES, never one path: a descender inside
+   the body path cannot pivot at the hip, and the geometry hides the join, so
+   the letterform still reads as one stroke. Colours are tokens only; Qbot.tsx
+   says why the body is the accent and what the two wired loops do.
+
+   Slot and size live in ask.css (.qbot-slot): it is the container this height
+   reads and the box the enter and the leave animate. */
+
+/* 72px tall at the 320 floor, 96 at 392, 112 from 440 up. 368 is the slot's
+   content width at a 392 pane (the pane less 2 * sp-3), so a slot with borders
+   would adjust the constant */
+svg.qbot {
+  display: block;
+  width: auto;
+  height: clamp(72px, calc(96px + (100cqw - 368px) / 3), 112px);
+  overflow: visible;
+  animation: qbot-bob calc(var(--dur-slow) * 13) ease-in-out infinite;
+}
+
+.qbot-antenna {
+  fill: none;
+  stroke: var(--fg-muted);
+  stroke-width: 1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.qbot-eye {
+  fill: var(--bg-app);
+  stroke: none;
+}
+/* the grey leg is the tier-2 text colour, which keeps it a leg and not a
+   second body; it pivots where its centre line crosses the ring's */
+.qbot-leg-l {
+  fill: none;
+  stroke: var(--fg-muted);
+  stroke-width: 11;
+  stroke-linecap: round;
+  transform-box: view-box;
+  transform-origin: 8px 35px;
+  animation: qbot-sway-l calc(var(--dur-slow) * 13) ease-in-out calc(var(--dur-slow) * -3.25) infinite;
+}
+/* the q's descender: the body's colour, hip at the ring's rightmost centre
+   point, a quarter beat behind the bob like its neighbour */
+.qbot-leg-r {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 13;
+  stroke-linecap: round;
+  transform-box: view-box;
+  transform-origin: 40.5px 31px;
+  animation: qbot-sway-r calc(var(--dur-slow) * 13) ease-in-out calc(var(--dur-slow) * -3.25) infinite;
+}
+.qbot-body {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 13;
+  stroke-linecap: round;
+}
+.qbot-hl {
+  fill: var(--fg);
+  stroke: none;
+}
+/* the gaze: both marks drop 1.5 user units (2px at 96) while the composer has
+   focus and come back on blur, on the hover register. The eye disc never
+   moves, so the letterform never changes, and the composer is straight below,
+   so down is the truth */
+.qbot-hls {
+  transition: transform var(--dur-quick) var(--ease-std);
+}
+.qbot[data-gaze] .qbot-hls {
+  transform: translateY(1.5px);
+}
+/* one cycle at a time: Qbot.tsx re-rolls the length at every end, so the
+   cadence's shape is the keyframes' and its period is never twice the same.
+   The fallback is the sketch's own 8040 ms, for a mark rendered without JS */
+.qbot-hl-small {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: qbot-twinkle var(--qbot-twinkle-dur, calc(var(--dur-slow) * 33.5)) ease-in-out;
+}
+/* 13 and 19 are coprime: the bob and the glow never fall into a pattern */
+.qbot-bulb {
+  fill: var(--warn);
+  stroke: none;
+  animation: qbot-glow calc(var(--dur-slow) * 19) ease-in-out calc(var(--dur-slow) * -5) infinite;
+}
+
+/* the pane is not on screen: paused in place, never restarted (Qbot.tsx) */
+.qbot[data-paused],
+.qbot[data-paused] * {
+  animation-play-state: paused;
+}
+
+/* The loops. Every period is a multiple of --dur-slow: springs.ts's presets
+   are transitions, and a spring has a rest state to settle into where a loop
+   has none, so no preset is added and none is bent. Everything rides transform
+   or opacity; nothing lays out. The two loop opacities are decoration and say
+   so (rule 3: never a tier). */
+@keyframes qbot-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px); /* CSS px: the svg root is an HTML box here */
+  }
+}
+@keyframes qbot-sway-l {
+  0%,
+  100% {
+    transform: rotate(-2deg);
+  }
+  50% {
+    transform: rotate(2deg);
+  }
+}
+/* anti-phase to its neighbour: the feet part and meet */
+@keyframes qbot-sway-r {
+  0%,
+  100% {
+    transform: rotate(2deg);
+  }
+  50% {
+    transform: rotate(-2deg);
+  }
+}
+@keyframes qbot-glow {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7; /* optical */
+  }
+}
+/* the sweep's cadence frozen into two unlike passes (DECISIONS W2d: beat 1800,
+   breath 300, beat 650, pause 900, each jittered ±20%, the second quick beat
+   some of the time): 1980 . 255 . 585 . 1035 || 1620 . 360 . 750 . 135 . 555 .
+   765 ms. The mark rests at 1 and dips at each beat's midpoint; no two
+   consecutive spans are equal, so there is no beat to count */
+@keyframes qbot-twinkle {
+  0%,
+  24.63%,
+  27.8%,
+  35.07%,
+  47.95%,
+  68.1%,
+  72.57%,
+  81.9%,
+  83.58%,
+  90.49%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  12.31%,
+  31.44%,
+  58.02%,
+  77.24%,
+  87.03% {
+    opacity: 0.3; /* optical */
+    transform: scale(1.05);
+  }
+}
+
+/* reduced motion is the rest pose: translateY 0, legs at 0 degrees, the small
+   mark at 1, the bulb at 1. The gaze collapses through tokens.css's own
+   transition kill, so it becomes a 2px jump. The harness shoots this face */
+@media (prefers-reduced-motion: reduce) {
+  svg.qbot,
+  svg.qbot * {
+    animation: none;
+  }
+}

@@ -13,23 +13,8 @@ fn env(k: &str) -> String {
 #[tokio::test]
 #[ignore]
 async fn staging_connect_and_query() {
-    let profile = Profile {
-        id: "test".into(),
-        name: "staging".into(),
-        host: env("QWRY_TEST_HOST"),
-        port: 5432,
-        dbname: env("QWRY_TEST_DB"),
-        user: env("QWRY_TEST_USER"),
-        sslmode: "prefer".into(),
-        color: None,
-        glyph: None,
-        is_prod: false,
-        ssh_host: None,
-        ssh_port: None,
-        ssh_user: None,
-        ssh_key: None,
-    };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, Box::new(|_, _| {}), Box::new(|_| {}))
+    let profile = test_profile("test", env("QWRY_TEST_DB"));
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, false, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -74,23 +59,8 @@ async fn staging_connect_and_query() {
 #[tokio::test]
 #[ignore]
 async fn staging_introspect() {
-    let profile = Profile {
-        id: "test".into(),
-        name: "staging".into(),
-        host: env("QWRY_TEST_HOST"),
-        port: 5432,
-        dbname: env("QWRY_TEST_DB"),
-        user: env("QWRY_TEST_USER"),
-        sslmode: "prefer".into(),
-        color: None,
-        glyph: None,
-        is_prod: false,
-        ssh_host: None,
-        ssh_port: None,
-        ssh_user: None,
-        ssh_key: None,
-    };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, Box::new(|_, _| {}), Box::new(|_| {}))
+    let profile = test_profile("test", env("QWRY_TEST_DB"));
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, false, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -133,23 +103,8 @@ async fn staging_introspect() {
 async fn staging_edit_pipeline() {
     use qwry_lib::driver::postgres::edit::RowEdit;
 
-    let profile = Profile {
-        id: "test".into(),
-        name: "staging".into(),
-        host: env("QWRY_TEST_HOST"),
-        port: 5432,
-        dbname: env("QWRY_TEST_DB"),
-        user: env("QWRY_TEST_USER"),
-        sslmode: "prefer".into(),
-        color: None,
-        glyph: None,
-        is_prod: false,
-        ssh_host: None,
-        ssh_port: None,
-        ssh_user: None,
-        ssh_key: None,
-    };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, Box::new(|_, _| {}), Box::new(|_| {}))
+    let profile = test_profile("test", env("QWRY_TEST_DB"));
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, false, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -225,23 +180,8 @@ async fn staging_edit_pipeline() {
 async fn staging_matched_rollback() {
     use qwry_lib::driver::postgres::edit::RowEdit;
 
-    let profile = Profile {
-        id: "test".into(),
-        name: "staging".into(),
-        host: env("QWRY_TEST_HOST"),
-        port: 5432,
-        dbname: env("QWRY_TEST_DB"),
-        user: env("QWRY_TEST_USER"),
-        sslmode: "prefer".into(),
-        color: None,
-        glyph: None,
-        is_prod: false,
-        ssh_host: None,
-        ssh_port: None,
-        ssh_user: None,
-        ssh_key: None,
-    };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, Box::new(|_, _| {}), Box::new(|_| {}))
+    let profile = test_profile("test", env("QWRY_TEST_DB"));
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, false, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -342,23 +282,8 @@ async fn staging_matched_rollback() {
 async fn staging_statement_at_a_time() {
     use qwry_lib::driver::QueryEvent;
 
-    let profile = Profile {
-        id: "test".into(),
-        name: "staging".into(),
-        host: env("QWRY_TEST_HOST"),
-        port: 5432,
-        dbname: env("QWRY_TEST_DB"),
-        user: env("QWRY_TEST_USER"),
-        sslmode: "prefer".into(),
-        color: None,
-        glyph: None,
-        is_prod: false,
-        ssh_host: None,
-        ssh_port: None,
-        ssh_user: None,
-        ssh_key: None,
-    };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, Box::new(|_, _| {}), Box::new(|_| {}))
+    let profile = test_profile("test", env("QWRY_TEST_DB"));
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, false, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -469,23 +394,8 @@ async fn staging_streaming_and_cancel() {
     use qwry_lib::driver::QueryEvent;
     use std::sync::Arc;
 
-    let profile = Profile {
-        id: "test".into(),
-        name: "staging".into(),
-        host: env("QWRY_TEST_HOST"),
-        port: 5432,
-        dbname: env("QWRY_TEST_DB"),
-        user: env("QWRY_TEST_USER"),
-        sslmode: "prefer".into(),
-        color: None,
-        glyph: None,
-        is_prod: false,
-        ssh_host: None,
-        ssh_port: None,
-        ssh_user: None,
-        ssh_key: None,
-    };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, Box::new(|_, _| {}), Box::new(|_| {}))
+    let profile = test_profile("test", env("QWRY_TEST_DB"));
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, false, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -595,7 +505,7 @@ async fn staging_prod_read_only() {
         ssh_user: None,
         ssh_key: None,
     };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, Box::new(|_, _| {}), Box::new(|_| {}))
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, false, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -640,23 +550,8 @@ async fn staging_prod_read_only() {
 #[tokio::test]
 #[ignore]
 async fn staging_table_ddl() {
-    let profile = Profile {
-        id: "test-ddl".into(),
-        name: "staging".into(),
-        host: env("QWRY_TEST_HOST"),
-        port: 5432,
-        dbname: env("QWRY_TEST_DB"),
-        user: env("QWRY_TEST_USER"),
-        sslmode: "prefer".into(),
-        color: None,
-        glyph: None,
-        is_prod: false,
-        ssh_host: None,
-        ssh_port: None,
-        ssh_user: None,
-        ssh_key: None,
-    };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, Box::new(|_, _| {}), Box::new(|_| {}))
+    let profile = test_profile("test-ddl", env("QWRY_TEST_DB"));
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, false, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
     let ddl = session
@@ -704,23 +599,8 @@ async fn staging_batched_and_hinted_paths() {
         ColumnMapHint, EditMapHint, RowEdit, TableIdentityHint,
     };
 
-    let profile = Profile {
-        id: "test-hint".into(),
-        name: "staging".into(),
-        host: env("QWRY_TEST_HOST"),
-        port: 5432,
-        dbname: env("QWRY_TEST_DB"),
-        user: env("QWRY_TEST_USER"),
-        sslmode: "prefer".into(),
-        color: None,
-        glyph: None,
-        is_prod: false,
-        ssh_host: None,
-        ssh_port: None,
-        ssh_user: None,
-        ssh_key: None,
-    };
-    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, Box::new(|_, _| {}), Box::new(|_| {}))
+    let profile = test_profile("test-hint", env("QWRY_TEST_DB"));
+    let session = postgres::connect(&profile, &env("QWRY_TEST_PASSWORD"), None, None, None, false, Box::new(|_, _| {}), Box::new(|_| {}))
         .await
         .expect("connect");
 
@@ -956,6 +836,7 @@ async fn connect_db2(id: &str) -> qwry_lib::driver::postgres::PgSession {
         None,
         None,
         None,
+        false,
         Box::new(|_, _| {}),
         Box::new(|_| {}),
     )
@@ -1711,6 +1592,7 @@ async fn staging_introspect_catalog_cache_roundtrip() {
         None,
         None,
         None,
+        false,
         Box::new(|_, _| {}),
         Box::new(|_| {}),
     )
@@ -2480,6 +2362,7 @@ async fn staging_undo_prod_locked() {
         None,
         None,
         None,
+        false,
         Box::new(|_, _| {}),
         Box::new(|_| {}),
     )

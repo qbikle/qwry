@@ -23,6 +23,7 @@ Two invariants govern every feature:
 - **Record view + row diff.** ⇧Space flips a row into a transposed single-record inspector with prev/next; select two rows to highlight exactly which columns differ.
 - **Verified-batch editing of any query result.** Run any SELECT, joins included; qwry maps result cells back to source tables via wire-protocol metadata, shows the exact `UPDATE … WHERE … RETURNING` before commit, and verifies each row matched exactly one target. Read-only cells tell you *why*, with the recipe to make them editable.
 - **Prod safe-mode.** Connections flagged production get a persistent warning strip, a locked titlebar chip, and guards in front of destructive statements (`UPDATE`/`DELETE` without `WHERE`, streamed impact estimates).
+- **Ask: natural-language to SQL, in the panel.** Ask a question in plain English; the agent writes the SQL, runs it read-only (AST-gated: only SELECT/WITH/EXPLAIN can execute), and answers next to the SQL and the result grid.
 
 Beyond those: FROM-scoped SQL completion with FK-aware `JOIN … ON` suggestions, per-tab dedicated connections (real `BEGIN`/`COMMIT` isolation with a transaction chip), out-of-band query cancel that a stuck session can't block, structure tab with constraints/indexes/triggers/per-table stats, multi-column sort with NULLS control, filter builder with a raw-WHERE escape hatch that shows you the SQL it built, CSV import wizard with dry-run validation and per-row error reporting, first-class JSON tree editing, `.sql` file open/save, searchable per-connection history, ⌘K palette, EXPLAIN ANALYZE visualizer, SSH tunnels via your system `ssh`, Keychain-stored credentials, and a theme engine with curated palettes.
 
@@ -110,7 +111,7 @@ The Rust core (`src-tauri/src/`) owns everything that touches a database. A `DbD
 
 The frontend (`src/`) is React 19 with zustand stores, a CodeMirror 6 editor driven by a custom completion engine on lezer, and a hand-rolled virtualized grid on TanStack Virtual. All motion goes through spring presets; all styling through the token system in `src/design/tokens.css`. Perf budgets are enforced, not aspirational: cold start < 500 ms, keystroke-to-completion < 16 ms, 60 fps grid scroll minimum.
 
-The `docs/` directory is the project's memory. `ARCHITECTURE.md` is the design truth, `ROADMAP.md` holds the phase plan plus a dated session log of what was built and every gotcha hit along the way, `DECISIONS.md` is an ADR-lite ledger, and `GAPS.md` tracks known debt. Development happens wave-by-wave (implement, gate, adversarial audit, ship) and the docs are updated in the same wave, always. Read them first if you're contributing.
+The `docs/` directory is the project's memory. `ARCHITECTURE.md` is the design truth, `ROADMAP.md` holds what shipped and what is open as key points, `ROADMAP_log.md` the dated session log of what was built and every gotcha hit along the way, `DECISIONS.md` is an ADR-lite ledger, and `GAPS.md` tracks known debt. Development happens wave-by-wave (implement, gate, adversarial audit, ship) and the docs are updated in the same wave, always. Read them first if you're contributing.
 
 ## Development
 

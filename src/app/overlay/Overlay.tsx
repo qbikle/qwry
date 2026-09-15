@@ -134,6 +134,12 @@ export function Modal({
   );
 }
 
+/** Which side of the anchor point the box hangs from: "start" opens rightward
+ *  from it (a right-click, the default) and "end" ends ON it, the form a menu
+ *  under a button at the right of a strip takes, whose right edge is the one
+ *  the reader's eye is already on. Either flips when there is no room. */
+export type AnchorAlign = "start" | "end";
+
 /** Clamp a box anchored at a viewport point: flips left/up near the right/bottom
  *  edge, then clamps inside the viewport. Measures `offsetWidth/Height` (the
  *  untransformed layout box) so a `motion` entrance scale doesn't undersize it.
@@ -142,6 +148,7 @@ export function useClampedPosition(
   ref: RefObject<HTMLElement | null>,
   point: { x: number; y: number },
   margin = 8,
+  align: AnchorAlign = "start",
 ): { left: number; top: number } | null {
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   useLayoutEffect(() => {
@@ -152,8 +159,13 @@ export function useClampedPosition(
       const height = el.offsetHeight;
       const vw = window.innerWidth;
       const vh = window.innerHeight;
-      let left = point.x;
-      if (left + width + margin > vw) left = point.x - width; // flip left of anchor
+      let left = align === "end" ? point.x - width : point.x;
+      // each alignment flips to the other side when its own has no room
+      if (align === "end") {
+        if (left < margin) left = point.x;
+      } else if (left + width + margin > vw) {
+        left = point.x - width;
+      }
       left = Math.min(Math.max(margin, left), Math.max(margin, vw - width - margin));
       let top = point.y;
       if (top + height + margin > vh) top = point.y - height; // flip above anchor
@@ -174,7 +186,7 @@ export function useClampedPosition(
     };
     // ref is stable; point identity intentionally excluded (x/y are the inputs)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [point.x, point.y, margin]);
+  }, [point.x, point.y, margin, align]);
   return pos;
 }
 
@@ -189,6 +201,7 @@ export function AnchoredOverlay({
   onKey,
   layerClassName,
   margin = 8,
+  align = "start",
   role,
   label,
   children,
@@ -198,6 +211,8 @@ export function AnchoredOverlay({
   onKey?: (e: KeyboardEvent) => void;
   layerClassName?: string;
   margin?: number;
+  /** which of the box's own edges the point names (see AnchorAlign) */
+  align?: AnchorAlign;
   /** ARIA role for the anchored panel (e.g. "menu", "dialog"). Popovers are
    *  deliberately NOT focus-trapped; keyboard nav runs through onKey */
   role?: string;
@@ -206,7 +221,7 @@ export function AnchoredOverlay({
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const z = useOverlayLayer(onClose, onKey);
-  const pos = useClampedPosition(wrapRef, point, margin);
+  const pos = useClampedPosition(wrapRef, point, margin, align);
 
   return createPortal(
     <div

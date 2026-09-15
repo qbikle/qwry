@@ -39,8 +39,13 @@ driver/postgres/introspect.rs  pg_catalog → SchemaSnapshot
 driver/postgres/edit.rs    table_oid/attnum → editability map, UPDATE gen
 tunnel.rs                  ssh -L subprocess lifecycle
 secrets.rs                 keyring per-profile
-appdb.rs                   rusqlite: history, tabs, profiles
-commands.rs                #[tauri::command] handlers (thin)
+appdb.rs                   rusqlite: history, tabs, profiles, agent threads/turns/answers, canvases
+commands.rs                #[tauri::command] handlers (thin); open_session(force_read_only)
+agent.rs                   Ask: gated agent session, pg_query AST gate + function deny-list,
+                           describe/peek/run_readonly/probe, Keychain keys (AGENT-SPEC)
+agent_http.rs              provider HTTP relay: Keychain key injected, SSE bytes over a Channel
+agent_claude.rs            the `claude -p` child: direct exec, stdout lines over a Channel
+agent_mcp.rs               streamable-HTTP MCP server (rmcp on hyper) for claude -p, per-thread token
 ```
 
 ### DbDriver trait
@@ -84,7 +89,7 @@ enum QueryEvent {
 ```
 app/         floating-card shell (v2.css), breadcrumb, menu wiring
 home/        Dashboard (connection grid + recent activity) + ConnectionEditor
-stores/      zustand: connections, tabs, results, schema, edits, settings, inspector
+stores/      zustand: connections, tabs, results, schema, edits, settings, inspector, agent, ask, sidePane, starters
 ipc/         typed invoke/Channel wrappers; types.ts mirrors Rust types
 editor/      SqlEditor.tsx; completion/{context,engine,joins}.ts; lint.ts
 grid/        Grid/Cell/Header; selection.ts; clipboard.ts; editing.ts
@@ -94,12 +99,16 @@ browser/     table data browser + structure tab
 palette/     cmdk ⌘K
 explain/     plan tree visualizer
 design/      tokens.css, theme.ts (palette engine), springs.ts, icons (lucide)
+agent/       agent core: prompt/tools/providers, mention+context resolution — no UI (AGENT-SPEC)
+ask/         AskPanel + parts (composer, thread, trace drawer, model picker), ask.css (AGENT-UX)
+harness/     AskHarness.tsx + fixtures: named states for design-lint pixel evidence
+canvas/      canvas tab: CanvasTab (dispatches the doc's blocks) + CanvasResult wrapping ResultBlock (reused from ask/) + NoteBlock, stores/canvas.ts the store (AGENT-SPEC §2, AGENT-UX §16)
 ```
 
 ### v0.2 frontend designs
 
 - **Theme engine** (`design/theme.ts`): a palette is *seeds*, expanded to the full CSS-var token set as inline vars at startup (no flash). Two kinds: **hue** (curated 8 Pokémon palettes: accent+hue+tint → tinted neutral ramp) and **anchors** (custom: bg/fg/primary/secondary → surfaces by sRGB mix). `--accent-fg` is auto-contrast; custom themes synthesise their opposite light/dark variant so the mode toggle flips them too.
-- **Floating-card shell** (`app/v2.css`): transparent window, `window-vibrancy` material showing through `--gutter` between `.card` panels; inspector animates its *width* so the main card reflows in lockstep (no transform desync).
+- **Floating-card shell** (`app/v2.css`): transparent window, `window-vibrancy` material showing through `--gutter` between `.card` panels; the right pane (one pane, two modes — Inspector and Ask, AGENT-UX §1) animates its *width* so the main card reflows in lockstep (no transform desync).
 - **Per-tab results/edits**: `useResults`/`useEdits` keyed `byTab` with the active tab mirrored to top-level store fields; every consumer reads unchanged and a background tab's stream can't corrupt the visible tab. `committing`/`preview` stay global.
 
 ### v0.2.5 frontend designs
@@ -144,7 +153,7 @@ Custom DOM grid, TanStack Virtual on both axes. Pending-edit overlay model in `e
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-Left **connection rail** = circular avatars (colour + glyph), drag-reorder, 🏠 → home (dashboard / connection editor). Floating **sidebar card** (Databases switcher / Tables / Saved), **main card** (tabs / editor / results), **inspector card** slides in by animating its width so the main card reflows in lockstep. `--gutter` between cards shows the window vibrancy, tinted to the active theme.
+Left **connection rail** = circular avatars (colour + glyph), drag-reorder, 🏠 → home (dashboard / connection editor). Floating **sidebar card** (Databases switcher / Tables / Saved), **main card** (tabs / editor / results), **right pane** (one pane, two modes — Inspector shown here, or Ask, AGENT-UX §1) slides in by animating its width so the main card reflows in lockstep. `--gutter` between cards shows the window vibrancy, tinted to the active theme.
 
 ## Keyboard map (core)
 

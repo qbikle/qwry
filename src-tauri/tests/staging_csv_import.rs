@@ -44,6 +44,7 @@ async fn connect(id: &str) -> postgres::PgSession {
         None,
         None,
         None,
+        false,
         Box::new(|_, _| {}),
         Box::new(|_| {}),
     )

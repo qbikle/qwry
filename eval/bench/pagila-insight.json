@@ -1,0 +1,42 @@
+[
+  {
+    "id": "ins-01", "tier": 3, "tags": ["insight"],
+    "question": "What stands out in rentals by month?",
+    "gold_sql": null
+  },
+  {
+    "id": "ins-02", "tier": 3, "tags": ["insight"],
+    "question": "Give me insights on the payment table.",
+    "gold_sql": null
+  },
+  {
+    "id": "ins-03", "tier": 3, "tags": ["insight"],
+    "question": "Summarise payments in the first half of 2026.",
+    "gold_sql": null
+  },
+  {
+    "id": "ins-04", "tier": 3, "tags": ["insight"],
+    "question": "Is there anything anomalous in the payment amounts?",
+    "gold_sql": null
+  },
+  {
+    "id": "ins-05", "tier": 3, "tags": ["insight"],
+    "question": "How do the two stores compare, and is anything worth flagging?",
+    "gold_sql": null
+  },
+  {
+    "id": "ins-06", "tier": 3, "tags": ["insight"],
+    "question": "What patterns show up between film rental rates and film lengths?",
+    "gold_sql": null
+  },
+  {
+    "id": "ins-07", "tier": 3, "tags": ["insight"],
+    "question": "Give me an overview of customer rental activity.",
+    "gold_sql": null
+  },
+  {
+    "id": "ins-08", "tier": 3, "tags": ["insight"],
+    "question": "Which film categories stand out in the rental data?",
+    "gold_sql": null
+  }
+]
