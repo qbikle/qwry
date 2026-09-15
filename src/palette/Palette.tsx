@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   BookA,
   Bookmark,
+  Bug,
   Check,
   Clock,
   Database,
@@ -27,8 +28,9 @@ import {
   X,
 } from "lucide-react";
 import { loadCanvasPort } from "../canvas/port";
+import { clear as clearTrace, dump as dumpTrace } from "../canvas/trace";
 import { editorFormat, editorTimeTraveling } from "../editor/editorBus";
-import { copyCueError, copyCueShow } from "../lib/copyCue";
+import { copyCue, copyCueError, copyCueShow } from "../lib/copyCue";
 import { checkOf, driftLabel, lastCheckOf, runChecks } from "../stores/checks";
 import {
   definitionsOf,
@@ -542,6 +544,28 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
             >
               <LayoutGrid size={12} /> New Drawing
             </Command.Item>
+            {import.meta.env.DEV && (
+              // D5's own door, and only ever in `tauri dev`: the canvas writes
+              // its layout commits and its gestures to a ring, and this is how
+              // they leave the machine that has the bug. The release palette
+              // never holds this row, so the shipped list is the list that was
+              // designed (DESIGN rule 11)
+              <Command.Item
+                value="copy canvas trace debug gesture layout"
+                onSelect={() => {
+                  // the text is read BEFORE the write, and only a write that
+                  // landed clears the ring: a failed copy must not take the
+                  // evidence with it (LESSONS 3, LESSONS 9)
+                  const text = dumpTrace();
+                  close();
+                  void copyCue(text, "Copied trace").then((ok) => {
+                    if (ok) clearTrace();
+                  });
+                }}
+              >
+                <Bug size={12} /> Copy Canvas Trace
+              </Command.Item>
+            )}
           </Command.Group>
 
           <Command.Group heading="Open Tabs">

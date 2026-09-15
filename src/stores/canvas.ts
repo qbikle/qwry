@@ -112,6 +112,7 @@ import {
 } from "../canvas/strokes";
 import type { DrawTool } from "../canvas/blockTools";
 import { setCanvasPort } from "../canvas/port";
+import { cellsMoved, gestureId, trace, type TraceCause } from "../canvas/trace";
 import { useAgent } from "./agent";
 import { useAsk } from "./ask";
 import { useSidePane } from "./sidePane";
@@ -1291,6 +1292,14 @@ export const useCanvas = create<CanvasState>((set, get) => ({
         // nothing here schedules a write, and `save` only ever writes what a
         // change has scheduled
         docs[r.id] = read.doc;
+        if (import.meta.env.DEV && read.migrated)
+          trace("commit", {
+            cause: "migrate",
+            canvas: r.id,
+            user: false,
+            blocks: cellsMoved(undefined, read.doc.blocks),
+            gesture: gestureId(),
+          });
       }
       set((s) => ({
         canvases: { ...s.canvases, [profileId]: metas },
@@ -1407,10 +1416,11 @@ export const useCanvas = create<CanvasState>((set, get) => ({
       return cell && b.cell && !sameCell(cell, b.cell) ? { ...b, cell } : b;
     });
     const put = at >= 0 ? at + 1 : held.length;
-    setDoc(canvasId, {
-      blocks: [...held.slice(0, put), ...landed, ...held.slice(put)],
-      lastColumns: columns,
-    });
+    setDoc(
+      canvasId,
+      { blocks: [...held.slice(0, put), ...landed, ...held.slice(put)], lastColumns: columns },
+      { cause: "model" },
+    );
     return landed.map((b) => b.id);
   },
 
@@ -1422,7 +1432,7 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     if (at < 0) {
       // the clear still stands: a re-run whose first act is a replace of a
       // block the user deleted has still started over
-      if (kept.length !== doc.blocks.length) setDoc(canvasId, { blocks: kept });
+      if (kept.length !== doc.blocks.length) setDoc(canvasId, { blocks: kept }, { cause: "model" });
       return null;
     }
     const old = kept[at];
@@ -1443,13 +1453,17 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     const span = block.span ? askedSpan(made, block.span, columns) : { w: held.w, h: held.h };
     const to = block.at ? cornerAt(block.at, span, columns) : { ...held, ...span };
     const cells = new Map(pinAt(itemsOf(laid), made.id, to, columns).map((i) => [i.id, i.cell]));
-    setDoc(canvasId, {
-      blocks: laid.map((b) => {
-        const cell = cells.get(b.id);
-        return cell && b.cell && !sameCell(cell, b.cell) ? { ...b, cell } : b;
-      }),
-      lastColumns: columns,
-    });
+    setDoc(
+      canvasId,
+      {
+        blocks: laid.map((b) => {
+          const cell = cells.get(b.id);
+          return cell && b.cell && !sameCell(cell, b.cell) ? { ...b, cell } : b;
+        }),
+        lastColumns: columns,
+      },
+      { cause: "model" },
+    );
     // the block that stood here is gone: its name goes back to plain text and
     // the exchange that wrote it stops counting it
     useAsk.getState().forgetBlock(old.id);
@@ -1610,7 +1624,10 @@ export const useCanvas = create<CanvasState>((set, get) => ({
   },
 
   moveTo: (canvasId, blockId, to, columns) => {
-    commitLayout(canvasId, columns, (items) => moveCells(items, blockId, to, columns), { user: true });
+    commitLayout(canvasId, columns, (items) => moveCells(items, blockId, to, columns), {
+      user: true,
+      cause: "move",
+    });
   },
 
   resizeTo: (canvasId, blockId, span, columns, opts) => {
@@ -1627,6 +1644,7 @@ export const useCanvas = create<CanvasState>((set, get) => ({
       // not a hand on the corner: it keeps `autoH` and it does not commit a
       // migration on its own (§2.3)
       user: !opts?.auto,
+      cause: opts?.auto ? "growTo/autoH" : "resize",
       clearAutoH: opts?.auto ? undefined : blockId,
     });
   },
@@ -1670,7 +1688,7 @@ export const useCanvas = create<CanvasState>((set, get) => ({
       // persisted: a window that only opens a document is not an edit
       // (LESSONS 5)
       if (doc.lastColumns !== columns)
-        setDoc(canvasId, { blocks: doc.blocks, lastColumns: columns }, { persist: false });
+        setDoc(canvasId, { blocks: doc.blocks, lastColumns: columns }, { persist: false, cause: "reflow" });
       return;
     }
     const flowed = new Map(reflowCells(itemsOf(laid), columns).map((i) => [i.id, i.cell]));
@@ -1684,7 +1702,7 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     if (blocks.length === doc.blocks.length && blocks.every((b, i) => b === doc.blocks[i])) return;
     // the same door every gesture commits through: written, persisted, and the
     // widgets that moved travel on spring.layout (AGENT-UX 16q, 16t)
-    setDoc(canvasId, { blocks, lastColumns: columns });
+    setDoc(canvasId, { blocks, lastColumns: columns }, { cause: "reflow" });
   },
 
   columnsOf: (canvasId) => columnsOfDoc(get().docs[canvasId]),
@@ -1896,12 +1914,24 @@ function mapMeta(
 function setDoc(
   canvasId: string,
   doc: Partial<CanvasDoc> & { blocks: Block[] },
-  opts?: { persist?: boolean },
+  opts?: { persist?: boolean; cause?: TraceCause },
 ): void {
   const write = opts?.persist !== false;
+  // the cells this write is about to replace, read BEFORE it lands: after the
+  // set they are gone, and they are the half of a commit a trace is for
+  // (LESSONS 3, the same rule an await obeys)
+  const was = import.meta.env.DEV ? useCanvas.getState().docs[canvasId]?.blocks : undefined;
   useCanvas.setState((s) => ({
     docs: { ...s.docs, [canvasId]: { ...s.docs[canvasId], ...doc, v: 2 } },
   }));
+  if (import.meta.env.DEV)
+    trace("commit", {
+      cause: opts?.cause ?? "other",
+      canvas: canvasId,
+      user: write,
+      blocks: cellsMoved(was, doc.blocks),
+      gesture: gestureId(),
+    });
   if (write) persist(canvasId);
 }
 
@@ -1912,7 +1942,7 @@ function commitLayout(
   canvasId: string,
   columns: number,
   run: (items: GridItem[]) => GridItem[],
-  opts: { user: boolean; clearAutoH?: string },
+  opts: { user: boolean; cause: TraceCause; clearAutoH?: string },
 ): void {
   const doc = useCanvas.getState().docs[canvasId];
   if (!doc || !Number.isFinite(columns) || columns < 1) return;
@@ -1934,7 +1964,7 @@ function commitLayout(
   // words' is recomputed from the words on every open, and writing it would
   // make opening a canvas look like editing one (D4 leaves the narrower
   // window's reflow on the other side of this line: that one IS a commit)
-  setDoc(canvasId, { blocks, lastColumns: columns }, { persist: opts.user });
+  setDoc(canvasId, { blocks, lastColumns: columns }, { persist: opts.user, cause: opts.cause });
 }
 
 /** land one element on the cells it was given: pinned there, whatever it
@@ -2129,9 +2159,11 @@ async function save(canvasId: string): Promise<void> {
       title: meta.title,
       doc_json: writeDoc(doc),
     });
+    if (import.meta.env.DEV) trace("persist", { canvas: canvasId, ok: true });
     if (useCanvas.getState().saveError) useCanvas.setState({ saveError: false });
   } catch (e) {
     // surface and retry: a silently failing save would lie about safety
+    if (import.meta.env.DEV) trace("persist", { canvas: canvasId, ok: false });
     console.error("canvas_upsert failed", e);
     useCanvas.setState({ saveError: true });
     const r = retries.get(canvasId);
@@ -2153,6 +2185,7 @@ function persist(canvasId: string): void {
     canvasId,
     setTimeout(() => {
       timers.delete(canvasId);
+      if (import.meta.env.DEV) trace("persist", { canvas: canvasId, fired: true });
       void save(canvasId);
     }, SAVE_DEBOUNCE_MS),
   );

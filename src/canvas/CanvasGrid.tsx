@@ -90,6 +90,7 @@ import {
   type Metrics,
 } from "./grid";
 import { laidOut, minSpanFor, NOTE_ROWS_MAX, useCanvas, type Block } from "../stores/canvas";
+import { gestureLive, ipx, trace } from "./trace";
 import { Widget, type WidgetRef } from "./widget";
 import "./grid.css";
 
@@ -342,6 +343,7 @@ export function createGrab(cfg: GrabConfig): Grab {
     cfg.slot(held.id)?.hold(null);
     cfg.ghost.show(null);
     held = null;
+    if (import.meta.env.DEV) gestureLive(null);
   };
 
   /** the element under the hand, drawn: a move follows the pointer un-sprung,
@@ -459,6 +461,10 @@ export function createGrab(cfg: GrabConfig): Grab {
         stale: false,
       };
       cfg.slot(id)?.hold(kind);
+      if (import.meta.env.DEV) {
+        gestureLive(id);
+        trace("gesture", { phase: "down", id, kind, x: ipx(x), y: ipx(y), base: it.cell, ghost: null });
+      }
     },
 
     move(x, y) {
@@ -472,6 +478,8 @@ export function createGrab(cfg: GrabConfig): Grab {
         cfg.ghost.at(g.base, true);
         cfg.ghost.say(sizeLabel(g.base));
         cfg.ghost.show(g.kind);
+        if (import.meta.env.DEV)
+          trace("gesture", { phase: "threshold", id: g.id, kind: g.kind, x: ipx(x), y: ipx(y), base: g.base, ghost: g.base });
       }
       // the element itself answers the pointer every frame; the engine answers
       // only when the cell it is over changes
@@ -482,6 +490,8 @@ export function createGrab(cfg: GrabConfig): Grab {
       const owed = g.stale;
       g.stale = false;
       preview(g, m, owed);
+      if (import.meta.env.DEV)
+        trace("gesture", { phase: "move", id: g.id, kind: g.kind, x: ipx(x), y: ipx(y), base: g.base, ghost: g.target, owed });
     },
 
     rebase(id) {
@@ -539,8 +549,23 @@ export function createGrab(cfg: GrabConfig): Grab {
       // (LESSONS 3): the cell it stands on now is what its landing is measured
       // against, and the one it was pressed on may be two commits old (D4)
       const at = cfg.items().find((i) => i.id === g.id)?.cell ?? g.base;
-      const landed = new Map<string, Drop>([[g.id, dropOf(g, cfg.metrics(), at)]]);
+      const drop = dropOf(g, cfg.metrics(), at);
+      const landed = new Map<string, Drop>([[g.id, drop]]);
       for (const id of g.shifted) landed.set(id, { dx: 0, dy: 0 });
+      if (import.meta.env.DEV)
+        trace("gesture", {
+          phase: "up",
+          id: g.id,
+          kind: g.kind,
+          x: ipx(g.startX + g.dx),
+          y: ipx(g.startY + g.dy),
+          base: g.base,
+          ghost: g.target,
+          cell: g.target,
+          land: { dx: ipx(drop.dx), dy: ipx(drop.dy) },
+          frame: at,
+          shifted: g.shifted.length,
+        });
       // the gesture is OVER before the document hears about it: the commit can
       // render synchronously, and a surface that still wore the gesture's mark
       // read the render as one made mid-drag and threw the landing away
@@ -553,6 +578,8 @@ export function createGrab(cfg: GrabConfig): Grab {
     cancel() {
       const g = held;
       if (!g) return;
+      if (import.meta.env.DEV)
+        trace("gesture", { phase: "cancel", id: g.id, kind: g.kind, x: ipx(g.startX + g.dx), y: ipx(g.startY + g.dy), base: g.base, ghost: g.target });
       // nothing is written: every element travels back to where it stands,
       // which for the held one is the cell it stands on NOW, drift and all
       for (const id of g.shifted) cfg.slot(id)?.travel(0, 0);
@@ -717,7 +744,11 @@ const GridSlot = memo(function GridSlot({
       // the corner writes a width the words then re-wrap inside, and a height
       // committed under that hand moves the very cell the drop is about to be
       // measured against (LESSONS 3, one gesture is one commit)
-      if (host.dataset.gesture !== undefined) return;
+      if (host.dataset.gesture !== undefined) {
+        if (import.meta.env.DEV)
+          trace("autoH", { id: block.id, px: null, want: null, now: standing.current.h, early: "gesture" });
+        return;
+      }
       const title = host.querySelector<HTMLElement>(".blk-q");
       const face = getComputedStyle(box);
       const chrome =
@@ -727,8 +758,17 @@ const GridSlot = memo(function GridSlot({
         parseFloat(face.borderBottomWidth);
       const px = (ta ? ta.scrollHeight : inner.offsetHeight) + chrome + (title ? title.offsetHeight + PART_GAP : 0);
       const cells = Math.min(NOTE_ROWS_MAX, cellsForPx(px));
+      // a measure that answers with the rows it already has is not an event:
+      // the observer fires on every reflow, and recording those would fill the
+      // ring with the one outcome that never moved anything
       if (cells === standing.current.h) return;
-      if (cells < standing.current.h && editing) return;
+      if (cells < standing.current.h && editing) {
+        if (import.meta.env.DEV)
+          trace("autoH", { id: block.id, px: ipx(px), want: cells, now: standing.current.h, early: "editing" });
+        return;
+      }
+      if (import.meta.env.DEV)
+        trace("autoH", { id: block.id, px: ipx(px), want: cells, now: standing.current.h, early: null });
       onGrow(block.id, cells);
     };
     measure();
@@ -792,7 +832,10 @@ const GridSlot = memo(function GridSlot({
     // another element, the engine simply owes a fresh answer for the layout it
     // moved into
     if (prev.x !== cell.x || prev.y !== cell.y) drifted(block.id);
-    if (node.dataset.gesture !== undefined) return;
+    if (node.dataset.gesture !== undefined) {
+      if (import.meta.env.DEV) trace("land", { id: block.id, from: null, cell, drop: null, held: true });
+      return;
+    }
     const drop = landed(block.id);
     const px = (c: Cell) => ({
       w: c.w * m.cellW + (c.w - 1) * m.gutter,
@@ -800,6 +843,8 @@ const GridSlot = memo(function GridSlot({
     });
     const dx = drop ? drop.dx : (prev.x - cell.x) * (m.cellW + m.gutter);
     const dy = drop ? drop.dy : (prev.y - cell.y) * (CELL_H + m.gutter);
+    if (import.meta.env.DEV)
+      trace("land", { id: block.id, from: { dx: ipx(dx), dy: ipx(dy) }, cell, drop: drop !== null, held: false });
     if (dx !== 0 || dy !== 0) {
       h.offset(dx, dy);
       h.travel(0, 0);
@@ -946,6 +991,16 @@ export function CanvasGrid({
     if (!node) return;
     const apply = (width: number): number => {
       const m = cellMetrics(width);
+      // read against the pitch that still stands: after the line below, the
+      // count this one was measured from is gone (LESSONS 3's own shape)
+      if (import.meta.env.DEV)
+        trace("measure", {
+          width: ipx(width),
+          columns: m.columns,
+          cellW: ipx(m.cellW),
+          gutter: ipx(m.gutter),
+          changed: m.columns !== metrics.current.columns,
+        });
       metrics.current = m;
       node.style.setProperty("--cw", `${m.cellW}px`);
       node.style.setProperty("--gut", `${m.gutter}px`);
