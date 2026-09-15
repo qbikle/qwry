@@ -245,6 +245,12 @@
 // widget in its one new place, the dropped one on the placeholder's cells and
 // the hole the lift left standing.
 //
+// D4 (the same maintainer's second recording): d4-derived = the page whose
+// layout was authored six columns wide, standing at the five the floor holds,
+// the flowed layout at rest and the document's own now; d4-derived-drop = the
+// moment after a drop at that count, which the next measure can no longer take
+// back (one layout, D4).
+//
 // B4 (the sketch's "B4 · qbot" rows): b4-empty = the empty state with the
 // composer focused, qbot's two eye marks 2px lower than at rest; `empty` is
 // the same state at rest and now shows qbot, so the two are the gaze's pair,
@@ -387,6 +393,8 @@ const CANVAS_STATES = [
   "d2-note-grown",
   "d3-drag-nonintersecting",
   "d3-drop-settled",
+  "d4-derived",
+  "d4-derived-drop",
 ] as const;
 /** the B3 four and the C2a six stand on a taller card: neither a four-block
  * answer with a chart among them nor a page of cells fits A3's 760
@@ -463,6 +471,12 @@ const D2_TALL_CANVAS_STATES: readonly string[] = ["d2-widgets", "d2-add-menu"];
 const D3_DRAG_CARD_H = 700;
 const D3_DROP_CARD_H = 940;
 const D3_CANVAS_STATES: readonly string[] = ["d3-drag-nonintersecting", "d3-drop-settled"];
+/** and D4's own pair (fixtures.d4.ts d4CanvasCardH), each MEASURED as zero
+ * overflow on `.cv-scroll` at 640, 960 and 1280: the reflowed page is five
+ * rows at the floor and the drop pushes it to seven */
+const D4_REST_CARD_H = 738;
+const D4_DROP_CARD_H = 978;
+const D4_CANVAS_STATES: readonly string[] = ["d4-derived", "d4-derived-drop"];
 const D2_CANVAS_STATES: readonly string[] = [
   "d2-widgets",
   "d2-add-menu",
@@ -471,29 +485,33 @@ const D2_CANVAS_STATES: readonly string[] = [
   "d2-note-grown",
 ];
 const canvasCardH = (state: string): number =>
-  D3_CANVAS_STATES.includes(state)
-    ? state === "d3-drop-settled"
-      ? D3_DROP_CARD_H
-      : D3_DRAG_CARD_H
-    : state === "c2-draw-small"
-      ? SMALL_CANVAS_CARD_H
-      : state === "c2-draw-empty"
-        ? FRESH_CANVAS_CARD_H
-        : state === "c2-draw" || state === "c2-draw-tools" || state === "c2-draw-novision"
-          ? DRAW_CANVAS_CARD_H
-          : state === "c2-empty" || state === "c2-empty-place"
-            ? EMPTY_CANVAS_CARD_H
-            : D2_TALL_CANVAS_STATES.includes(state)
-              ? D2_TALL_CANVAS_CARD_H
-              : D2_CANVAS_STATES.includes(state)
-                ? D2_CANVAS_CARD_H
-                : D1_TALL_CANVAS_STATES.includes(state)
-                  ? D1_TALL_CANVAS_CARD_H
-                  : DOC_CANVAS_STATES.includes(state)
-                    ? DOC_CANVAS_CARD_H
-                    : TALL_CANVAS_STATES.includes(state)
-                      ? TALL_CANVAS_CARD_H
-                      : CANVAS_CARD_H;
+  D4_CANVAS_STATES.includes(state)
+    ? state === "d4-derived-drop"
+      ? D4_DROP_CARD_H
+      : D4_REST_CARD_H
+    : D3_CANVAS_STATES.includes(state)
+      ? state === "d3-drop-settled"
+        ? D3_DROP_CARD_H
+        : D3_DRAG_CARD_H
+      : state === "c2-draw-small"
+        ? SMALL_CANVAS_CARD_H
+        : state === "c2-draw-empty"
+          ? FRESH_CANVAS_CARD_H
+          : state === "c2-draw" || state === "c2-draw-tools" || state === "c2-draw-novision"
+            ? DRAW_CANVAS_CARD_H
+            : state === "c2-empty" || state === "c2-empty-place"
+              ? EMPTY_CANVAS_CARD_H
+              : D2_TALL_CANVAS_STATES.includes(state)
+                ? D2_TALL_CANVAS_CARD_H
+                : D2_CANVAS_STATES.includes(state)
+                  ? D2_CANVAS_CARD_H
+                  : D1_TALL_CANVAS_STATES.includes(state)
+                    ? D1_TALL_CANVAS_CARD_H
+                    : DOC_CANVAS_STATES.includes(state)
+                      ? DOC_CANVAS_CARD_H
+                      : TALL_CANVAS_STATES.includes(state)
+                        ? TALL_CANVAS_CARD_H
+                        : CANVAS_CARD_H;
 const MARGIN = 24;
 
 // ---- args -------------------------------------------------------------------

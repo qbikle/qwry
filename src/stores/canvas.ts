@@ -39,6 +39,25 @@
 // per pointer move, and it reads A3's ordered list back as rows of cells
 // (`migrateV1`) without writing over that document until the user's own first
 // change: a read must not look like an edit.
+//
+// D4: there is ONE layout, the document's own cells, and no width ever shows a
+// view of the document the document does not hold. A page narrower than the
+// layout's right edge commits ONE reflow (`reflowTo`) through the same door a
+// drop commits through, and every gesture after it lands in the layout the next
+// measured frame reads. The session-lived layout C2a held aside for a narrower
+// window is gone: while it stood, a narrow window DREW cells the document did
+// not hold and the cache handed the wide arrangement back whole when the window
+// came back, which is a layout stored twice and the bug class DESIGN rule 14
+// retires. What it is NOT is an explanation of the maintainer's second
+// recording: the probe reproduces none of it on the tree that still had the
+// cache, and his own frames measure a native count. That failure is open
+// (ROADMAP_log, D4), and no comment here may stand in for it.
+//
+// The trade-off is stated rather than hidden: opening a document on a page
+// narrower than its layout WRITES, once, and a widening back does not bring the
+// wider arrangement back, because no copy of it survives to bring back. Reading
+// order is what a reflow keeps; the `x` a wider page once gave an element is
+// what it costs.
 
 import { create } from "zustand";
 import {
@@ -729,10 +748,10 @@ export function laidOut(blocks: readonly Block[], columns: number): Block[] {
 }
 
 /** how wide the page this document was laid out for is: its own record first
- * (`lastColumns`, written by whatever laid it out), then the layout it
- * actually holds, then the fallback. Advisory all the way down: it decides
- * where a headless write lands and what the outline says, never whether an
- * operation is allowed (LESSONS 5) */
+ * (`lastColumns`, written by whatever laid it out and by whatever last
+ * rendered it), then the layout it actually holds, then the fallback. Advisory
+ * all the way down: it decides where a headless write lands and what the
+ * outline says, never whether an operation is allowed (LESSONS 5) */
 function columnsOfDoc(doc: CanvasDoc | undefined): number {
   if (!doc) return COLUMNS_FALLBACK;
   if (doc.lastColumns && doc.lastColumns > 0) return Math.min(COLUMNS_MAX, doc.lastColumns);
@@ -1100,20 +1119,23 @@ interface CanvasState {
    * (DESIGN rule 14). Its width is untouched: the hand that shrank it chose
    * that. */
   fitChart: (canvasId: string, blockId: string, columns: number) => void;
-  /** C2: the page is this many columns wide now. Wider than the layout was
-   * stored at, the stored layout stands (empty columns at the right until
-   * something is moved there); NARROWER, a derived layout is computed in
-   * reading order, is never written to appdb, and the stored one comes back
-   * whole when the window does. The user's first change at a derived count
-   * commits it, which is the only way it ever becomes the document */
+  /** D4: the page is this many columns wide now, and a reflow is a COMMIT.
+   * Rendered at the layout's own right edge or wider, nothing runs: a wider
+   * window only adds empty columns at the right until something is moved
+   * there. Rendered NARROWER, `reflow` runs ONCE and its answer is written
+   * through the same `setDoc` a drop writes through, persisted and animated on
+   * spring.layout like any other commit. There is no second layout held aside
+   * for the window to come back to, which is what once drew a width the
+   * document did not hold (AGENT-UX 16q). Either way it records the count it
+   * was told, in memory, so a door with no surface places what it adds on the
+   * page the reader is looking at */
   reflowTo: (canvasId: string, columns: number) => void;
-  /** C2: record the count the page stands at, for the model's outline. In
-   * memory: a read is not an edit */
-  setColumns: (canvasId: string, columns: number) => void;
   /** C2: how wide this canvas is laid out, for a door with no surface to ask
    * (the model's write, a block added from Ask while the tab is closed). Its
-   * own record first, then the layout it actually holds, then the fallback:
-   * advisory all the way down, and a refusal nowhere (LESSONS 5) */
+   * own record first (`lastColumns`: the count the layout was last COMMITTED
+   * at, or the count a surface has since RENDERED it at, whichever came last),
+   * then the layout it actually holds, then the fallback: advisory all the way
+   * down, and a refusal nowhere (LESSONS 5) */
   columnsOf: (canvasId: string) => number;
   setFace: (canvasId: string, blockId: string, face: BlockFace) => void;
   /** the one flip glyph: the next face in the cycle this block actually has */
@@ -1269,7 +1291,6 @@ export const useCanvas = create<CanvasState>((set, get) => ({
         // nothing here schedules a write, and `save` only ever writes what a
         // change has scheduled
         docs[r.id] = read.doc;
-        native.delete(r.id);
       }
       set((s) => ({
         canvases: { ...s.canvases, [profileId]: metas },
@@ -1604,7 +1625,7 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     commitLayout(canvasId, columns, (items) => resizeCells(items, blockId, want, columns), {
       // the surface measuring a note is the DOCUMENT following its own content,
       // not a hand on the corner: it keeps `autoH` and it does not commit a
-      // migration or a derived layout on its own (§2.3, §4.6)
+      // migration on its own (§2.3)
       user: !opts?.auto,
       clearAutoH: opts?.auto ? undefined : blockId,
     });
@@ -1635,48 +1656,35 @@ export const useCanvas = create<CanvasState>((set, get) => ({
   reflowTo: (canvasId, columns) => {
     const doc = get().docs[canvasId];
     if (!doc || !Number.isFinite(columns) || columns < 1) return;
-    const held = native.get(canvasId);
+    const laid = laidOut(doc.blocks, columnsOfDoc(doc));
     // what a narrowing is measured against is the LAYOUT's own right edge, not
     // the count the document last rendered at: `lastColumns` is raised by every
-    // wider window that opens it, so reading it re-flowed a 7-column layout at
-    // 7 the moment the reader had once seen it at 10 (AGENT-UX 16q)
-    let from = held;
-    if (!from) {
-      const laid = laidOut(doc.blocks, columnsOfDoc(doc));
-      from = { columns: Math.max(1, rightEdgeOf(laid)), blocks: laid };
+    // commit a wider window makes, so reading it re-flowed a 7-column layout at
+    // 7 the moment the reader had once edited it at 10 (AGENT-UX 16q)
+    if (columns >= Math.max(1, rightEdgeOf(laid))) {
+      // the page draws the layout whole, so nothing is committed. The COUNT is
+      // still recorded, in memory: it is what a door with no surface reads to
+      // place what it adds (the model's write, a delete's compaction), and
+      // left at the last narrow commit it lands a new widget under everything
+      // on a page whose top row is standing empty. Advisory, and never
+      // persisted: a window that only opens a document is not an edit
+      // (LESSONS 5)
+      if (doc.lastColumns !== columns)
+        setDoc(canvasId, { blocks: doc.blocks, lastColumns: columns }, { persist: false });
+      return;
     }
-    if (columns >= from.columns) {
-      // the window came back: the stored layout returns intact, and a document
-      // that was never narrowed simply records the count
-      native.delete(canvasId);
-      if (!held) return get().setColumns(canvasId, columns);
-      return setDoc(canvasId, { blocks: from.blocks, lastColumns: columns }, { persist: false });
-    }
-    if (!held) native.set(canvasId, from);
-    const flowed = new Map(reflowCells(itemsOf(from.blocks), columns).map((i) => [i.id, i.cell]));
-    // the derived layout is compared against the page as it STANDS, and a
-    // block the flow lands where it already is keeps its object: a window drag
-    // inside one column band is two custom-property writes and no React render
-    // at a derived width as well as at a stored one (spec 6.3, AGENT-UX 16r)
-    const standing = new Map(doc.blocks.map((b) => [b.id, b]));
-    const blocks = from.blocks.map((b) => {
+    const flowed = new Map(reflowCells(itemsOf(laid), columns).map((i) => [i.id, i.cell]));
+    // a block the flow lands where it already is keeps its object, so a window
+    // drag inside one column band is two custom-property writes and no React
+    // render (spec 6.3, AGENT-UX 16r)
+    const blocks = laid.map((b) => {
       const cell = flowed.get(b.id);
-      if (!cell || !b.cell || sameCell(cell, b.cell)) return b;
-      const now = standing.get(b.id);
-      return now?.cell && sameCell(now.cell, cell) ? now : { ...b, cell };
+      return cell && b.cell && !sameCell(cell, b.cell) ? { ...b, cell } : b;
     });
-    const settled =
-      doc.lastColumns === columns &&
-      blocks.length === doc.blocks.length &&
-      blocks.every((b, i) => b === doc.blocks[i]);
-    if (settled) return;
-    setDoc(canvasId, { blocks, lastColumns: columns }, { persist: false });
-  },
-
-  setColumns: (canvasId, columns) => {
-    const doc = get().docs[canvasId];
-    if (!doc || !Number.isFinite(columns) || columns < 1 || doc.lastColumns === columns) return;
-    setDoc(canvasId, { blocks: doc.blocks, lastColumns: columns }, { persist: false });
+    if (blocks.length === doc.blocks.length && blocks.every((b, i) => b === doc.blocks[i])) return;
+    // the same door every gesture commits through: written, persisted, and the
+    // widgets that moved travel on spring.layout (AGENT-UX 16q, 16t)
+    setDoc(canvasId, { blocks, lastColumns: columns });
   },
 
   columnsOf: (canvasId) => columnsOfDoc(get().docs[canvasId]),
@@ -1854,7 +1862,6 @@ export const useCanvas = create<CanvasState>((set, get) => ({
       ),
     }));
     clearTimer(canvasId);
-    native.delete(canvasId);
     for (const b of doomed) useAsk.getState().forgetBlock(b.id);
     useAgent.getState().forgetCanvasBlocks(doomed.map((b) => b.id));
     try {
@@ -1886,21 +1893,12 @@ function mapMeta(
   );
 }
 
-/** the STORED layout, kept aside while a narrower window renders a derived one
- * (canvas-grid 4.6): a derived layout is never written to appdb, and the layout
- * the user made returns whole when the window does. A change at the derived
- * count commits it and the entry goes, which is what makes an edit an edit. */
-const native = new Map<string, { columns: number; blocks: Block[] }>();
-
 function setDoc(
   canvasId: string,
   doc: Partial<CanvasDoc> & { blocks: Block[] },
   opts?: { persist?: boolean },
 ): void {
   const write = opts?.persist !== false;
-  // a write is a change, and a change is the document: a derived flow and the
-  // migration's rows both stop being provisional here
-  if (write) native.delete(canvasId);
   useCanvas.setState((s) => ({
     docs: { ...s.docs, [canvasId]: { ...s.docs[canvasId], ...doc, v: 2 } },
   }));
@@ -1931,9 +1929,11 @@ function commitLayout(
     return clear ? { ...b, cell, autoH: undefined } : { ...b, cell };
   });
   if (!changed) return;
-  // a layout the DOCUMENT made for itself (a note measuring its own words, a
-  // narrower window) stands in memory and rides the next change out: opening a
-  // canvas must never look like editing one
+  // a layout the DOCUMENT made for itself, a note measuring its own words,
+  // stands in memory and rides the next change out: a height that is the
+  // words' is recomputed from the words on every open, and writing it would
+  // make opening a canvas look like editing one (D4 leaves the narrower
+  // window's reflow on the other side of this line: that one IS a commit)
   setDoc(canvasId, { blocks, lastColumns: columns }, { persist: opts.user });
 }
 

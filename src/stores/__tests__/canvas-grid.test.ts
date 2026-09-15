@@ -181,6 +181,14 @@ const V1_JSON = JSON.stringify({
 });
 
 const docOf = (id: string): CanvasDoc => useCanvas.getState().docs[id];
+
+/** a canvas this many columns wide, for a door with no surface to ask: the
+ * count the layout was last COMMITTED at is the document's own field, and
+ * nothing but a commit writes it (D4) */
+const atColumns = (id: string, columns: number): void =>
+  useCanvas.setState((s: { docs: Record<string, CanvasDoc> }) => ({
+    docs: { ...s.docs, [id]: { ...s.docs[id], lastColumns: columns } },
+  }));
 const blocksOf = (id: string): Block[] => docOf(id)?.blocks ?? [];
 const cellOf = (canvasId: string, blockId: string): Cell =>
   blocksOf(canvasId).find((b) => b.id === blockId)!.cell!;
@@ -677,50 +685,76 @@ describe("moveTo, resizeTo and the engine", () => {
   });
 });
 
-describe("reflowTo and setColumns", () => {
-  test("a narrower window flows in reading order and never writes", async () => {
+describe("reflowTo: one layout, and a reflow is a commit (D4)", () => {
+  /** the reading order a layout stands in: what a reflow keeps and the only
+   * thing a reflow-then-widen round trip promises (AGENT-UX 16q) */
+  const reading = (id: string): string[] =>
+    blocksOf(id)
+      .filter((b) => b.cell)
+      .sort((a, b) => a.cell!.y - b.cell!.y || a.cell!.x - b.cell!.x)
+      .map((b) => b.id);
+
+  test("a narrower window flows in reading order and COMMITS, once", async () => {
     const cv = canvas();
     const ids = ["a", "b", "c"].map((t) => useCanvas.getState().addNote(cv, t));
     await saved();
-    const stored0 = stored.find((c) => c.id === cv)!.doc_json;
     writes.length = 0;
 
     useCanvas.getState().reflowTo(cv, 3);
     expect(blocksOf(cv).map((b) => b.cell!.y)).toEqual([0, 1, 2]);
     expect(blocksOf(cv).every((b) => b.cell!.x === 0)).toBe(true);
     expect(docOf(cv).lastColumns).toBe(3);
+    expect(reading(cv)).toEqual(ids);
     await saved();
-    // a derived layout is never the stored one
-    expect(writes).toHaveLength(0);
-    expect(stored.find((c) => c.id === cv)!.doc_json).toBe(stored0);
-
-    // and the stored layout comes back whole when the window does
-    useCanvas.getState().reflowTo(cv, 7);
-    expect(cellOf(cv, ids[1])).toEqual({ x: 3, y: 0, w: 3, h: 1 });
-    await saved();
-    expect(writes).toHaveLength(0);
+    // the flow is the document now, and appdb was told exactly once
+    expect(writes).toHaveLength(1);
+    expect(parseDoc(stored.find((c) => c.id === cv)!.doc_json)!.blocks.map((b) => b.cell)).toEqual(
+      blocksOf(cv).map((b) => b.cell),
+    );
   });
 
-  test("a change at a derived count commits it: the user touched it", async () => {
+  test("a widening adds columns at the right and restores nothing", async () => {
     const cv = canvas();
     const ids = ["a", "b", "c"].map((t) => useCanvas.getState().addNote(cv, t));
+    useCanvas.getState().reflowTo(cv, 3);
+    const flowed = blocksOf(cv).map((b) => b.cell);
     await saved();
     writes.length = 0;
 
-    useCanvas.getState().reflowTo(cv, 3);
-    useCanvas.getState().moveTo(cv, ids[0], { x: 0, y: 1 }, 3);
-    await saved();
-    expect(writes).toHaveLength(1);
-    // the document is the flow now, so a wider window does not undo it
+    // the layout the wider window once held does not come back: no second copy
+    // of it survives to come back FROM, and reading order is what a reflow
+    // keeps (the trade-off AGENT-UX 16q states rather than hides)
     useCanvas.getState().reflowTo(cv, 7);
-    expect(blocksOf(cv).every((b) => b.cell!.x === 0)).toBe(true);
+    expect(blocksOf(cv).map((b) => b.cell)).toEqual(flowed);
+    expect(reading(cv)).toEqual(ids);
+    await saved();
+    expect(writes).toHaveLength(0);
   });
 
-  test("a layout stands at its OWN count, whatever width has since opened it", () => {
-    // the stored layout is 7 wide (a note at the right with air to its left);
-    // a window that merely OPENS it at 10 raises `lastColumns` to 10, and a
-    // count read from there re-flowed the layout at the count it was made
-    // under: the honoured x was lost on the way back (AGENT-UX 16q)
+  test("a commit at a narrower count stands, whatever measures the page next", async () => {
+    const cv = canvas();
+    const ids = ["a", "b", "c"].map((t) => useCanvas.getState().addNote(cv, t));
+    useCanvas.getState().reflowTo(cv, 3);
+    await saved();
+    writes.length = 0;
+
+    useCanvas.getState().moveTo(cv, ids[0], { x: 0, y: 4 }, 3);
+    const landed = cellOf(cv, ids[0]);
+    expect(landed).toEqual({ x: 0, y: 4, w: 3, h: 1 });
+    // the frame after: the same count, a wider one, a narrower one. The cell
+    // the hand put there is the document's, and no measure takes it back
+    useCanvas.getState().reflowTo(cv, 3);
+    expect(cellOf(cv, ids[0])).toEqual(landed);
+    useCanvas.getState().reflowTo(cv, 7);
+    expect(cellOf(cv, ids[0])).toEqual(landed);
+    await saved();
+    expect(writes).toHaveLength(1);
+  });
+
+  test("a layout stands at its OWN right edge, whatever width has since opened it", () => {
+    // a layout 7 wide, a note at the right with air to its left. A window that
+    // merely opens it at 10 must not re-flow it at 7 on the way back, which is
+    // what reading a count the window wrote would do (AGENT-UX 16q)
     const cv = canvas();
     useCanvas.setState((st: { docs: Record<string, CanvasDoc> }) => ({
       docs: {
@@ -741,16 +775,39 @@ describe("reflowTo and setColumns", () => {
     expect(blocksOf(cv).map((b) => b.cell!)).toEqual(authored);
     useCanvas.getState().reflowTo(cv, 10);
     expect(blocksOf(cv).map((b) => b.cell!)).toEqual(authored);
-    expect(docOf(cv).lastColumns).toBe(10);
     useCanvas.getState().reflowTo(cv, 7);
     expect(blocksOf(cv).map((b) => b.cell!)).toEqual(authored);
-    // and a window narrower than the layout still derives one
+    // and a window narrower than the layout's edge flows, and keeps the flow
     useCanvas.getState().reflowTo(cv, 5);
+    expect(cellOf(cv, "note")).toEqual({ x: 0, y: 0, w: 2, h: 1 });
+    expect(reading(cv)).toEqual(["note", "chart", "table"]);
+    useCanvas.getState().reflowTo(cv, 10);
     expect(cellOf(cv, "note")).toEqual({ x: 0, y: 0, w: 2, h: 1 });
   });
 
+  test("a widening records the count it was rendered at, in memory, and writes nothing", async () => {
+    // `lastColumns` is what a door with no surface reads to place what it adds
+    // (a model write, a delete's compaction). Left at the last narrow commit,
+    // a new widget lands stacked under everything while the top row of the
+    // page the reader is looking at stands empty (AGENT-UX 16q, LESSONS 5)
+    const cv = canvas();
+    ["a", "b", "c"].forEach((t) => useCanvas.getState().addNote(cv, t));
+    useCanvas.getState().reflowTo(cv, 3);
+    await saved();
+    writes.length = 0;
+    const flowed = blocksOf(cv).map((b) => b.cell);
+
+    useCanvas.getState().reflowTo(cv, 10);
+    expect(useCanvas.getState().columnsOf(cv)).toBe(10);
+    expect(docOf(cv).lastColumns).toBe(10);
+    // the LAYOUT is untouched by the record, and appdb never hears about it
+    expect(blocksOf(cv).map((b) => b.cell)).toEqual(flowed);
+    await saved();
+    expect(writes).toHaveLength(0);
+  });
+
   test("a window drag inside one column band changes nothing at all", () => {
-    // at a DERIVED width every measure ran reflowTo, which always setDoc'd new
+    // at a flowed width every measure ran reflowTo, which always setDoc'd new
     // block objects for everything it had displaced, so a window drag that
     // held the count committed a React render per frame (AGENT-UX 16r)
     const cv = canvas();
@@ -764,16 +821,17 @@ describe("reflowTo and setColumns", () => {
     expect(blocksOf(cv).every((b, i) => b === blocks[i])).toBe(true);
   });
 
-  test("setColumns records the count for the model and writes nothing", async () => {
+  test("a canvas that is gone, and a column count that is not one, write nothing", async () => {
     const cv = canvas();
     useCanvas.getState().addNote(cv, "a");
     await saved();
     writes.length = 0;
 
-    useCanvas.getState().setColumns(cv, 10);
-    expect(docOf(cv).lastColumns).toBe(10);
-    expect(useCanvas.getState().columnsOf(cv)).toBe(10);
-    useCanvas.getState().setColumns(cv, 10);
+    const blocks = blocksOf(cv);
+    useCanvas.getState().reflowTo("not-a-canvas", 3);
+    useCanvas.getState().reflowTo(cv, 0);
+    useCanvas.getState().reflowTo(cv, Number.NaN);
+    expect(blocksOf(cv).every((b, i) => b === blocks[i])).toBe(true);
     await saved();
     expect(writes).toHaveLength(0);
     // a canvas nothing has measured answers the fallback, and refuses nothing
@@ -891,7 +949,7 @@ describe("the model's at and span", () => {
 
   test("a span the canvas cannot give is clamped, never refused", () => {
     const cv = canvas();
-    useCanvas.getState().setColumns(cv, 5);
+    atColumns(cv, 5);
     const ids = useCanvas
       .getState()
       .applyModelBlocks(cv, [

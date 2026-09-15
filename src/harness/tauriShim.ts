@@ -67,7 +67,8 @@
 //   canvas_upsert                           recorded on `canvasUpserts` and
 //                                           nothing else: every canvas edit is
 //                                           written debounced, and a probe reads
-//                                           back what the last one saved
+//                                           back what the last one saved, and
+//                                           counts them (one write per gesture)
 //   canvas_delete                           nothing, for the same reason
 //   agent_mcp_serve                         a canned endpoint, its `tools`
 //                                           argument recorded on `mcpServed`:
@@ -101,6 +102,7 @@
 import type { Channel, InvokeArgs } from "@tauri-apps/api/core";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { GateVerdict, HttpChunk, HttpDone, WritePreview, WriteVerb } from "../ipc/types";
+import { useCanvas } from "../stores/canvas";
 import { FIXTURE, LOCAL_MODELS_JSON, LOCAL_MODELS_URL } from "./fixtures";
 import { B2_PILL_STATES } from "./fixtures.b2pills";
 import { B2_POPOVER_STATES, b2ThreadRows } from "./fixtures.b2popover";
@@ -230,12 +232,16 @@ export function installTauriShim(): void {
   mockWindows("main");
   // the recorders, on the window: a probe drives this page over CDP and has no
   // module handle, and these four arrays are the harness's whole record of
-  // what the product wrote. The frames never look, and neither does the app
+  // what the product wrote. The frames never look, and neither does the app.
+  // Beside them, `canvas` is the document store itself, put here for the same
+  // reason: a probe that drives a gesture has to read the cell the STORE
+  // holds, not the cell the DOM happens to be animating toward (D4)
   (window as unknown as { __harness?: unknown }).__harness = {
     clipboardWrites,
     canvasUpserts,
     canvasResults,
     mcpServed,
+    canvas: useCanvas,
   };
   mockIPC(
     (cmd, payload) => {

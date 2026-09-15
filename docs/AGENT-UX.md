@@ -2412,23 +2412,74 @@ D3's rule 1.
 horizontal scroller, the grid fills whatever width its container gives it
 and stops.
 
-**Reflow, when the column count drops.** One layout is stored, at the
-column count it was last edited under. Rendered at that count or wider, the
-stored layout stands untouched: a wider window only adds empty columns at
-the right until something is moved there. The count that decides is the
-LAYOUT's own right edge (`max(x + w)`), never the advisory `lastColumns`,
-which every window that merely opens the document raises to its own width:
-measured against that, a layout authored at 7, opened once at 10 and shown
-again at 7 was re-flowed at the count it was made under and lost the
-placement it was made with. Rendered at FEWER columns, a
-layout is DERIVED and never persisted: every element's `w` is capped at the
-new count, and every element is re-placed in reading order, `(y, x)`, into
-the first free rectangle, scanning rows top to bottom and columns left to
-right; nothing is lost, the stored layout returns intact the moment the
-window widens back, and an EDIT made at a derived count commits it as the
-document's own, at that count: the user touched it, so it is now the
-layout. Honouring `x` at a narrower derived count was tried on the research
-fixture and refused, it leaves holes the flow does not.
+**Reflow, when the column count changes, is a commit (D4, 2026-09-15,
+replacing this section's own derived/native split, C2a, 2026-09-11).** ONE
+layout stands in the document, full stop: no second, session-lived layout
+is held aside for a narrower window, and no width ever shows a view of the
+document the document itself does not hold (DESIGN rule 2, DESIGN rule 6,
+DESIGN rule 14, a layout stored twice is the bug class this retires). This
+replaces DECISIONS' own C2a lines on derived-versus-native layout and
+`lastColumns` ("a narrower window derives a layout; it never writes one";
+"a derived width commits nothing while the column count holds"). What the
+split actually did, measured rather than assumed: a narrow window DREW
+cells the document did not hold, and the cache handed the wide arrangement
+back whole the moment the window widened, carrying off whatever had been
+placed at the narrow count (the window case on the tree that still had the
+cache reads `d4-short` back at `[3,0,3,1]` after a 1280 → 660 → 1280 round
+trip). What the split did NOT do is explain the maintainer's second
+recording, and this section no longer says it did. On that same tree every
+gesture case passes at 660, 960 and 1280 (75 PASS, 0 FAIL, `d4-probe-head`);
+structurally a persisted commit dropped the cache before any later frame
+could re-derive from it, so no gesture commit could be thrown away at any
+width; and his own frames measure a card about 1265 CSS px wide drawing ten
+columns, a NATIVE count with no derived layout in play. **The mechanism
+that threw his resize and his drop away is unreproduced and open**
+(ROADMAP_log, D4). The named candidates are the landing offset read off the
+cell the element was PRESSED on rather than the one it is drawn at (fixed
+here, §16t), and a commit landing mid-gesture drawing the held widget cells
+away from its own placeholder, which IS reproduced and fixed (§16t's second
+paragraph) and which is the shape of his f110 exactly, but which does not
+revert anything and so cannot be the whole of it. What no measurement in
+this wave produces is the revert itself: his f035, f050 and f125 each end
+with the document back at the layout it started from. A law that names a cause it cannot reproduce is a
+law the next recording lands on wrong (LESSONS 9, truthful feedback;
+LESSONS 12, one review is not review). Rendered at the layout's own right edge
+(`max(x + w)`) or wider, nothing runs: a wider window only adds empty
+columns at the right until something is moved there, and the count that
+decides this is the right edge, never the advisory `lastColumns`, which
+every window that merely opens the document raises to its own width
+regardless (a layout authored at 7, opened once at 10, is still a 7-wide
+layout, not a 10-wide one that happened to be seen). Rendered NARROWER than
+that edge, `reflow()` runs ONCE: every element's `w` is capped at the new
+count and every element is re-placed in reading order, `(y, x)`, into the
+first free rectangle, scanning rows top to bottom and columns left to
+right, exactly as before. What changes is what happens to the result: it
+is written through the SAME `setDoc` every gesture commit uses, persisted,
+and its moved elements travel on `spring.layout` like any other commit
+(§16t), never held in memory and never conditional on a hand touching it
+afterward. Only a count a frame was PAINTED at may commit one: a measure of
+zero width, which is what a pane mid-collapse or a card behind
+`display: none` reports and what `columnsFor` answers 1 to, commits nothing
+at all, because a reflow written from it flows every widget in the document
+to one column wide and there is no second layout left to come back from
+(measured: a 120 ms `display: none` blip rewrote a four-widget document to
+`w: 1` and persisted it). `lastColumns` is written alongside it and stays
+advisory (LESSONS 5, the model's outline reads it, nothing gates on it):
+PERSISTED, it is the count the layout was last COMMITTED at; in memory it
+follows the count the page is RENDERED at, wide or narrow, so a door with
+no surface (a model write, a delete's compaction) places what it adds on
+the page the reader is looking at instead of on the last narrow one it was
+committed at. A render never persists it: a window that only opens a
+document is not an edit. **The trade-off this
+carries is stated, not hidden**: a widening back does not restore the
+wider arrangement the layout held before it narrowed, because no second
+copy of that arrangement survives to restore from; reading order is what a
+reflow keeps (the property test, below), not the specific `x, y` a wider
+page once gave an element. Honouring `x` at a narrower count was tried on
+the research fixture and refused for the same reason it always was, it
+leaves holes the flow does not. Every gesture's commit now lands in the one
+layout the very next frame reads, because there is no other layout left
+for that frame to prefer over it.
 
 **Four properties hold after every operation** (place, move, resize,
 reflow, compact), proven over at least 2,000 random layouts, not merely
@@ -2582,9 +2633,43 @@ frame at most (a chart's own `ResizeObserver` already fires after layout);
 neighbours make room on `spring.layout` only when the snapped span actually
 changes; release snaps the box itself on `spring.layout`. A window resize
 that does not cross a column boundary stretches cells INSTANTLY, a layout
-effect, never an animation (§16r); a column-count change re-derives the
+effect, never an animation (§16r); a column-count change commits the
 layout (§16q) and every element that moved travels on `spring.layout`, the
-same spring a face flip already rides (§16g). A model-written element still
+same spring a face flip already rides (§16g).
+
+**The landing offset is read from the same commit it lands into (D4,
+2026-09-15).** On release, the dragged element's starting offset for its
+`spring.layout` run is `the box the gesture drew minus the committed cell's
+frame`, both sides measured from the SAME metrics the commit itself just
+used (`--cw` / `--gut` / `CELL_H` as that commit's own `ResizeObserver`
+frame read them, never a frame read a tick later): the offset is written
+straight onto the drag layer's motion value with no transition, a jump,
+then sprung to 0 on `spring.layout` in the same breath the cell frame is
+written by the commit (§16q). "The box the gesture drew" is the offset the
+drag layer was last given against the cell the element is RENDERED at, not
+the cell it was pressed on, because the two part the moment a commit lands
+mid-gesture.
+
+**A commit that lands mid-gesture moves the frame, and the gesture takes
+the move straight back out (D4, 2026-09-15).** A page narrowing under the
+hand, a note next door growing a row with its own words, a model write:
+each writes new cells, and the held element's frame moves with them. In the
+same React commit, the drag layer absorbs exactly what the frame moved by
+(`rebase`, jumped and never sprung, the pitch's own change included, since
+a column-count change rewrites `--cw` before anything renders), the snap is
+re-read from the box rather than from the pressed cell, and the engine
+re-answers for where that box now is, so the placeholder never leaves it.
+Written without that, the widget jumps by the commit's own delta, stands
+cells away from its own placeholder for the rest of the gesture and springs
+home from there: measured on the pre-D4 tree at 4.32 cells out, drawn 361px
+off the left edge of the page, where the same case now reads 0.32 cells,
+which is the third of a cell the probe deliberately releases past the snap
+(`d4-probe`, the fifth gesture; FAIL before, PASS after, at 660, 960 and
+1280). With one layout and one commit per column-count change, the frame a
+landing reads and the frame a landing lands on are always the same write;
+reduced motion folds into the same collapse the paragraph below already
+states. A
+model-written element still
 lands on `panelIn` at its place (§16i, unchanged), the elements below it
 making room on `spring.layout`; a replaced element still lands where the
 old one stood on `swapIn` (§16j, unchanged). Reduced motion collapses every
@@ -2619,7 +2704,7 @@ difference a person sees on the same page they left.
 | `More` rows: result / note | 4 / 3 | 3 / 1 (`Move Up` / `Move Down` retired) |
 | resize handles per element | 0 | 1 |
 | drag surfaces per element | 0 | 1 (the grip), 2 on a result (plus its title line) |
-| stored layouts per document | 1 (the order) | 1 (`x, y, w, h` plus the column count it was edited at); a narrower render's own layout is derived, never stored |
+| stored layouts per document | 1 (the order) | 1 (`x, y, w, h` plus the column count it was edited at); a narrower render's own layout is derived, never stored (**superseded by D4, 2026-09-15, §16q: still 1, and still the only one that ever exists, a narrower render's reflow now commits into it rather than deriving a second copy beside it**) |
 | gaps between blocks | 3 numbers (16, 24 above a title, 8 within) | 1 gutter (12) plus the 8 within, unchanged |
 | page inset | 20 | 16 |
 | transient strings during a gesture | 0 | 1 (`3 x 3`) |
@@ -2632,7 +2717,11 @@ alternative; default spans and content-driven heights per kind, recomputed
 for the 120 pitch; push-down-then-float-up compaction and reflow-by-reading
 -order as the only two layout operations (**amended by D3, 2026-09-15,
 §16q: a gesture pushes down and stops, and the float-up is the page's
-own operation, on a delete, a new widget's slot and a reflow**);
+own operation, on a delete, a new widget's slot and a reflow**); a
+narrower render's own layout held derived and unpersisted until a hand
+edited it (**superseded by D4, 2026-09-15, §16q: one layout only, a
+reflow commits the moment it runs, and a widening back keeps the
+narrowed reading order rather than restoring the wider arrangement**);
 absolute positioning with a two-layer transform, never CSS Grid's own
 placement; the grip-plus-title
 -line move surface, one corner resize handle, the placeholder-and-lattice

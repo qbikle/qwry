@@ -67,7 +67,6 @@ function stage(items: GridItem[]) {
   for (const it of items) {
     const r: Recorder = { slot: null as unknown as SlotHandle, offsets: [], travels: [], holds: [], sizes: [] };
     r.slot = {
-      cell: it.cell,
       hold: (kind) => r.holds.push(kind),
       offset: (x, y) => r.offsets.push([x, y]),
       travel: (x, y) => r.travels.push([x, y]),
@@ -80,9 +79,10 @@ function stage(items: GridItem[]) {
   const said: string[] = [];
   const shown: (GestureKind | null)[] = [];
   const labels: string[] = [];
+  let metrics: () => Metrics = () => METRICS;
   const grab = createGrab({
     items: () => items,
-    metrics: () => METRICS,
+    metrics: () => metrics(),
     slot: (id) => slots.get(id)?.slot,
     min: () => ({ w: 2, h: 1 }),
     name: (id) => id,
@@ -94,7 +94,21 @@ function stage(items: GridItem[]) {
     live: (text) => said.push(text),
     commit: (kind, id, cell, landed) => commits.push({ kind, id, cell, landed: new Map(landed) }),
   });
-  return { grab, slots, commits, ghosts, said, shown, labels };
+  // the LAYOUT, as the surface hands it over: a commit that lands mid-gesture
+  // is this array changing, which is what the product does to it (D4)
+  return {
+    grab,
+    items,
+    slots,
+    commits,
+    ghosts,
+    said,
+    shown,
+    labels,
+    pitch: (read: () => Metrics) => {
+      metrics = read;
+    },
+  };
 }
 
 /** the last of a recorder's writes (the tsconfig's lib predates Array.at) */
@@ -183,6 +197,96 @@ describe("the gesture's own law", () => {
     expect(s.commits[0].landed.get("a")).toEqual({ dx: 0, dy: PITCH / 2 + 10 - PITCH });
     expect(wrote.offsets).toHaveLength(offsets);
     expect(wrote.travels).toHaveLength(travels);
+  });
+
+  // D4: between the press and the release, the DOCUMENT may move the element
+  // the hand is holding (a column-count commit, a note next door measuring its
+  // own words, a model write). Three things then have to hold at once: the box
+  // must not move, because the pointer did not; the drop must commit the cell
+  // the box is over, not the one the frame was carried to; and the landing
+  // must be the box against THAT cell. Measured from the pressed cell instead,
+  // the widget stands cells from its own placeholder for the rest of the
+  // gesture and springs home from there, which is what the maintainer filmed
+  test("a commit that moves the held element leaves the box where the pointer put it", () => {
+    const s = stage(PAGE.map((i) => ({ ...i })));
+    s.grab.down("move", "a", 0, 0);
+    s.grab.move(0, 2 * PITCH + 10);
+    expect(last(s.slots.get("a")!.offsets)).toEqual([0, 2 * PITCH + 10]);
+    const target = last(s.ghosts)!.cell;
+    // the page re-flowed under the hand: `a` is drawn two columns right and
+    // one row down of where it was pressed
+    s.items[0] = { id: "a", cell: { x: 2, y: 1, w: 2, h: 1 } };
+    s.grab.rebase("a");
+    // the frame moved by two columns and a row, so the drag layer gives them
+    // straight back: the box has not moved a pixel
+    expect(last(s.slots.get("a")!.offsets)).toEqual([-2 * PITCH, 2 * PITCH + 10 - PITCH]);
+    // and the placeholder still stands where the box does
+    expect(last(s.ghosts)!.cell).toEqual(target);
+    s.grab.up();
+    expect(s.commits[0].cell).toEqual(target);
+    // the landing is what the box owes its own committed frame: the third of a
+    // cell the pointer was let go past the snap, and nothing else
+    expect(s.commits[0].landed.get("a")).toEqual({ dx: 0, dy: 10 });
+  });
+
+  test("a resize's landing reads the same cell, and its box the pressed span", () => {
+    const s = stage(PAGE.map((i) => ({ ...i })));
+    s.grab.down("resize", "b", 0, 0);
+    s.grab.move(PITCH, PITCH);
+    s.items[1] = { id: "b", cell: { x: 1, y: 3, w: 4, h: 2 } };
+    s.grab.rebase("b");
+    s.grab.up();
+    const cell = s.commits[0].cell;
+    // the corner did not move, so neither did the box: the offset is what the
+    // drag layer owes the committed frame, and the BOX is the one the gesture
+    // has been writing per frame, the pressed span plus the pointer's travel
+    expect(s.commits[0].landed.get("b")).toEqual({
+      dx: (2 - cell.x) * PITCH,
+      dy: (0 - cell.y) * PITCH,
+      from: { w: 4 * 108 + 3 * 12 + PITCH, h: 2 * 108 + 12 + PITCH },
+    });
+  });
+
+  // and the commit does not have to touch the held element at all: the engine
+  // answers for a LAYOUT, so a neighbour the document moved is a new question
+  test("a commit that moves a neighbour is answered again, in the layout it moved into", async () => {
+    const items = PAGE.map((i) => ({ ...i }));
+    const s = stage(items);
+    s.grab.down("move", "a", 0, 0);
+    s.grab.move(2 * PITCH, 0); // `a` lands on `b`, so the engine pushes `b` down
+    expect(last(s.slots.get("b")!.travels)).toEqual([0, PITCH]);
+    // the document then moved `b` itself, while the hand still holds `a`
+    items[1] = { id: "b", cell: { x: 2, y: 1, w: 4, h: 2 } };
+    s.grab.rebase("b");
+    // the answer is owed to the end of the React commit, not to this line
+    await Promise.resolve();
+    const cell = last(s.ghosts)!.cell;
+    const answer = moveCells(items, "a", { x: cell.x, y: cell.y }, METRICS.columns).find((i) => i.id === "b")!
+      .cell;
+    const t = last(s.slots.get("b")!.travels)!;
+    // where `b` is DRAWN is where the engine puts it in the layout that now
+    // stands: un-answered, it stands a row below that, on the push it no
+    // longer owes
+    expect({ x: items[1]!.cell.x + t[0] / PITCH, y: items[1]!.cell.y + t[1] / PITCH }).toEqual({
+      x: answer.x,
+      y: answer.y,
+    });
+  });
+
+  // the other half of the same rule: the PITCH can change without a single
+  // cell changing (a window drag that crosses a column boundary writes --cw
+  // before anything renders), and the frame moves then too
+  test("a pitch change under the hand moves no box either", () => {
+    const s = stage(PAGE.map((i) => ({ ...i })));
+    s.grab.down("move", "b", 0, 0); // b stands at x 2, so its frame is 2 pitches in
+    s.grab.move(0, PITCH);
+    let pitch = { ...METRICS };
+    s.pitch(() => pitch);
+    pitch = { columns: 7, cellW: 88, gutter: 12 }; // a narrower page, same cells
+    s.grab.rebase();
+    // the frame moved left by two cells' worth of the difference; the box did
+    // not move at all
+    expect(last(s.slots.get("b")!.offsets)).toEqual([2 * (120 - 100), PITCH]);
   });
 
   // D3 rule 2: what the placeholder and the pushed neighbours SHOW during the

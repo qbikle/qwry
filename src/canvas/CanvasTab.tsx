@@ -844,7 +844,6 @@ export function CanvasTab({ canvasId }: { canvasId: string }) {
         <CanvasGrid
           canvasId={canvasId}
           blocks={blocks}
-          columnsHint={(doc as (typeof doc & { lastColumns?: number }) | undefined)?.lastColumns}
           renderBlock={renderBlock}
           keyOf={keyOf}
           nameOf={naming}

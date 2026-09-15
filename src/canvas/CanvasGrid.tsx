@@ -2,13 +2,33 @@
 // 108 with a 12 gutter, the column count read from the width (5 at the 640
 // floor, 7 at 960, 10 at 1280), the cell stretching to fill and the row unit
 // fixed, because a table row is 26px and a line of text 20px on every screen
-// there is.
+// there is. The count is MEASURED before an element is drawn at it: the first
+// render is the grid host and nothing in it, the layout effect measures, and
+// the elements mount at the count the page actually has. No guessed count ever
+// reaches the screen, so nothing has to slide off one (D4).
 //
 // Position is STATE, never the DOM (LESSONS 7). Every element is absolutely
 // placed by one calc() over the container's --cw / --gut / --ch and its own
 // --x / --y / --w / --h, so a window resize that does not cross a column
 // boundary is two custom-property writes on one node and ZERO React renders,
 // and a drag is one transform on one composited layer.
+//
+// A COLUMN-COUNT CHANGE IS A COMMIT (D4). A page narrower than the layout's
+// right edge flows once, into the document, through the same `setDoc` a drop
+// goes through, and the elements it moved travel on spring.layout like any
+// other change. There is no second layout kept for the window to come back to:
+// while there was, a width DREW cells the document did not hold, and the
+// session cache handed the wide arrangement back whole when the window came
+// back (measured, AGENT-UX 16q). What the maintainer filmed is not explained
+// by that cache and this file does not claim it is: his page was at a native
+// count, and the mechanism is still open (ROADMAP_log, D4).
+//
+// A commit can land WHILE a hand is holding something: the page narrows under
+// the drag, a note next door measures its own words, a model writes. The cell
+// frame moves then, and the gesture absorbs the move (`rebase`) rather than
+// letting the box jump out from under the pointer: the offset the drag layer
+// is drawn at takes the frame's travel back out, and the engine re-answers for
+// where the pointer now is in the layout the page now shows.
 //
 // A gesture commits ONCE, at its end. Between pointerdown and pointerup this
 // file renders nothing: the pointer's offset is written to a motion value
@@ -60,8 +80,6 @@ import { GripVertical } from "lucide-react";
 import { spring } from "../design/springs";
 import {
   CELL_H,
-  CELL_W_BASE,
-  GUTTER,
   bounds,
   cellMetrics,
   cellsForPx,
@@ -79,11 +97,6 @@ import "./grid.css";
  * line stays a click (TabBar's own threshold, the app's click-versus-drag) */
 const THRESHOLD = 4;
 
-/** the column count the first render lays out at, before the page has been
- * measured. Nothing paints at it: the measure is a layout effect, so the real
- * count is in before the frame is (Chart.tsx's own precedent) */
-const COLUMNS_FIRST = 8;
-
 /** the gap between a block's own parts (canvas.css `.blk > * + *`), which the
  * note's measure has to add back: what it measures is the words */
 const PART_GAP = 8;
@@ -94,9 +107,10 @@ export type GestureKind = "move" | "resize";
 
 /** the document's layout at this column count. The store answers for both
  * halves of it: `laidOut` gives a rect to any block that has none (a whole
- * document with none is A3's list and migrates), and `reflowTo` is what
- * derives a narrower page, so the surface never holds a second opinion about
- * where anything stands (DESIGN rule 14: one fact, one slot). */
+ * document with none is A3's list and migrates), and `reflowTo` commits a
+ * narrower page's flow into the document itself, so the surface never holds a
+ * second opinion about where anything stands (DESIGN rule 14: one fact, one
+ * slot). */
 export function layoutOf(blocks: readonly Block[], columns: number): { blocks: Block[]; items: GridItem[] } {
   const laid = laidOut(blocks, columns);
   return { blocks: laid, items: laid.map((b) => ({ id: b.id, cell: b.cell as Cell })) };
@@ -176,10 +190,13 @@ export function snapSpan(
 
 // ---- the gesture machine ---------------------------------------------------
 
-/** one element, as the gesture writes to it. The surface backs these with
- * motion values (no React render); a test backs them with a recorder */
+/** one element, as the gesture writes to it: four writes and no reads. Where
+ * the element STANDS is not among them, because the layout is one fact and
+ * `items()` is where it is kept (DESIGN rule 14): a handle that carried its own
+ * copy of the cell was a second one, read a render behind the first. The
+ * surface backs these with motion values (no React render); a test backs them
+ * with a recorder */
 export interface SlotHandle {
-  cell: Cell;
   /** the gesture's own mark on the element: the lift on a move, the accent on
    * the resize handle, and nothing at all when it is over */
   hold: (kind: GestureKind | null) => void;
@@ -233,6 +250,13 @@ export interface Grab {
   move: (x: number, y: number) => void;
   up: () => void;
   cancel: () => void;
+  /** the page moved under the hand while it held something: a column count
+   * committing a reflow, a note next door measuring its own words, a model
+   * write, or the pitch itself changing with the window. The gesture reads the
+   * layout back, absorbs whatever the held element's own frame moved by so the
+   * box under the pointer does not jump, and re-answers for where that box now
+   * is (D4). `id` is a guard for the caller that knows which element it is */
+  rebase: (id?: string) => void;
   /** the gesture that is live, if one is */
   at: () => { kind: GestureKind; id: string } | null;
 }
@@ -250,20 +274,55 @@ interface Held {
   target: Cell;
   /** every element this gesture has displaced, so the drop can clear them */
   shifted: string[];
+  /** the cell frame this element was last drawn against, in px: what `rebase`
+   * measures the document's own moves from */
+  anchorX: number;
+  anchorY: number;
+  /** how far the DOCUMENT has moved this element's frame since the press, in
+   * px: a reflow, a note growing next door, a model write, and the pitch
+   * itself changing under all three. The drag layer takes it back out, so the
+   * box stays where the pointer put it */
+  driftX: number;
+  driftY: number;
+  /** a commit landed and the engine owes a fresh answer for it */
+  stale: boolean;
 }
+
+/** the offset the drag layer is DRAWN at: the pointer's own travel on a move,
+ * nothing on a resize (the corner writes a box, not a place), less every pixel
+ * the document has moved this element by while the hand held it */
+const offsetOf = (g: Held): { dx: number; dy: number } =>
+  g.kind === "move"
+    ? { dx: g.dx - g.driftX, dy: g.dy - g.driftY }
+    : { dx: -g.driftX, dy: -g.driftY };
 
 /** where the pointer left the held element, measured against the cell the drop
  * is committing it to. A move is an OFFSET on the drag layer, which is the one
  * property the settle animates; a resize is the BOX the corner stopped at,
- * which springs to the span, and its offset is whatever the clamped x owes */
-function dropOf(g: Held, m: Metrics): Drop {
+ * which springs to the span, and its offset is whatever the clamped x owes.
+ *
+ * Both halves are read off what the gesture actually DREW (D4): `offsetOf` is
+ * the offset the drag layer was last given, and `at` is the cell the element
+ * is rendered at as the pointer lifts, never the one it was pressed on. A
+ * commit between the two moves that cell, the drag layer has already taken the
+ * move back out, and the box on screen is `at` plus that offset. Measured from
+ * the pressed cell instead, the landing is a whole reflow out and the widget
+ * springs home from nowhere near its placeholder. The frame it is going to is
+ * `g.target`; the difference is what springs to nothing, and every number here
+ * is read from the same metrics the commit itself uses (16t). */
+function dropOf(g: Held, m: Metrics, at: Cell): Drop {
   const px = m.cellW + m.gutter;
   const py = CELL_H + m.gutter;
-  if (g.kind === "move")
-    return { dx: g.dx - (g.target.x - g.base.x) * px, dy: g.dy - (g.target.y - g.base.y) * py };
+  const o = offsetOf(g);
+  const dx = o.dx + (at.x - g.target.x) * px;
+  const dy = o.dy + (at.y - g.target.y) * py;
+  if (g.kind === "move") return { dx, dy };
   return {
-    dx: (g.base.x - g.target.x) * px,
-    dy: (g.base.y - g.target.y) * py,
+    dx,
+    dy,
+    // the box on screen is the one the gesture has been writing per frame,
+    // which is the PRESSED span plus the pointer's travel: that is what the
+    // span springs from, whatever the document did to the cell meanwhile
     from: {
       w: g.base.w * m.cellW + (g.base.w - 1) * m.gutter + g.dx,
       h: g.base.h * CELL_H + (g.base.h - 1) * m.gutter + g.dy,
@@ -285,12 +344,103 @@ export function createGrab(cfg: GrabConfig): Grab {
     held = null;
   };
 
+  /** the element under the hand, drawn: a move follows the pointer un-sprung,
+   * a resize writes the box its corner is at, and both take back out whatever
+   * the document has moved the cell frame by */
+  const paint = (g: Held, m: Metrics): void => {
+    const slot = cfg.slot(g.id);
+    if (!slot) return;
+    const o = offsetOf(g);
+    slot.offset(o.dx, o.dy);
+    if (g.kind === "resize")
+      slot.size(
+        g.base.w * m.cellW + (g.base.w - 1) * m.gutter + g.dx,
+        g.base.h * CELL_H + (g.base.h - 1) * m.gutter + g.dy,
+      );
+  };
+
+  /** the engine's answer for where the pointer is now, written to the
+   * placeholder and to every element it displaces. The preview is the engine's,
+   * so the placeholder can never stand where the element will not land. It runs
+   * on a CHANGED cell, a few times in a gesture and never once a frame, and on
+   * a commit that moved the layout under the hand, because the same pointer
+   * over a new layout is a new answer. Every neighbour's travel is measured
+   * from the layout `items()` holds and never from a copy of it, so an answer
+   * given inside a React commit is right whatever order the slots' own effects
+   * ran in (DESIGN rule 14) */
+  const preview = (g: Held, m: Metrics, force: boolean): void => {
+    // the cell the element is OVER is the cell its own box is over, and its
+    // box is the drag layer's offset against the frame it stands on now: the
+    // pointer's travel, less whatever the document moved the frame by. Read
+    // from the raw travel instead, a page that re-flowed under the hand snaps
+    // the drop a whole reflow away from where the widget is drawn
+    const o = offsetOf(g);
+    const want =
+      g.kind === "move"
+        ? snapCell(g.base, o.dx, o.dy, m, m.columns)
+        : snapSpan(g.base, g.dx, g.dy, m, m.columns, cfg.min(g.id));
+    if (
+      !force &&
+      want.x === g.target.x &&
+      want.y === g.target.y &&
+      want.w === g.target.w &&
+      want.h === g.target.h
+    )
+      return;
+    const items = cfg.items();
+    const next =
+      g.kind === "move"
+        ? move(items, g.id, { x: want.x, y: want.y }, m.columns)
+        : resize(items, g.id, { w: want.w, h: want.h }, m.columns);
+    const px = m.cellW + m.gutter;
+    const py = CELL_H + m.gutter;
+    const standing = new Map(items.map((i) => [i.id, i.cell]));
+    const shifted: string[] = [];
+    for (const p of next) {
+      if (p.id === g.id) continue;
+      const s = cfg.slot(p.id);
+      const from = standing.get(p.id);
+      if (!s || !from) continue;
+      const ox = (p.cell.x - from.x) * px;
+      const oy = (p.cell.y - from.y) * py;
+      if (ox === 0 && oy === 0 && !g.shifted.includes(p.id)) continue;
+      s.travel(ox, oy);
+      if (ox !== 0 || oy !== 0) shifted.push(p.id);
+    }
+    g.shifted = shifted;
+    g.target = next.find((p) => p.id === g.id)?.cell ?? want;
+    cfg.ghost.at(g.target, false);
+    cfg.ghost.say(sizeLabel(g.target));
+  };
+
+  /** the engine owes a fresh answer: a commit moved cells under the hand. It
+   * is queued to the end of the React commit that moved them (a microtask,
+   * still before the browser paints) because the neighbours' own placement
+   * effects run in that same commit and whichever writes their layer last
+   * wins */
+  const owe = (g: Held): void => {
+    if (g.stale) return;
+    g.stale = true;
+    queueMicrotask(() => {
+      if (held === g) flush(g);
+    });
+  };
+
+  /** the owed answer, given. The release takes it first, so a drop can never
+   * commit a target the engine gave for a layout that is already gone */
+  const flush = (g: Held): void => {
+    if (!g.stale) return;
+    g.stale = false;
+    preview(g, cfg.metrics(), true);
+  };
+
   return {
     at: () => (held && held.moved ? { kind: held.kind, id: held.id } : null),
 
     down(kind, id, x, y) {
       const it = cfg.items().find((i) => i.id === id);
       if (!it) return;
+      const m = cfg.metrics();
       held = {
         kind,
         id,
@@ -302,6 +452,11 @@ export function createGrab(cfg: GrabConfig): Grab {
         moved: false,
         target: it.cell,
         shifted: [],
+        anchorX: it.cell.x * (m.cellW + m.gutter),
+        anchorY: it.cell.y * (CELL_H + m.gutter),
+        driftX: 0,
+        driftY: 0,
+        stale: false,
       };
       cfg.slot(id)?.hold(kind);
     },
@@ -318,48 +473,49 @@ export function createGrab(cfg: GrabConfig): Grab {
         cfg.ghost.say(sizeLabel(g.base));
         cfg.ghost.show(g.kind);
       }
+      // the element itself answers the pointer every frame; the engine answers
+      // only when the cell it is over changes
       const m = cfg.metrics();
-      const slot = cfg.slot(g.id);
-      const want =
-        g.kind === "move"
-          ? snapCell(g.base, g.dx, g.dy, m, m.columns)
-          : snapSpan(g.base, g.dx, g.dy, m, m.columns, cfg.min(g.id));
-      // the element itself answers the pointer every frame: a move follows it
-      // un-sprung, a resize writes its box
-      if (g.kind === "move") slot?.offset(g.dx, g.dy);
-      else
-        slot?.size(
-          g.base.w * m.cellW + (g.base.w - 1) * m.gutter + g.dx,
-          g.base.h * CELL_H + (g.base.h - 1) * m.gutter + g.dy,
-        );
-      if (want.x === g.target.x && want.y === g.target.y && want.w === g.target.w && want.h === g.target.h) {
+      paint(g, m);
+      // a pointer frame that beats the owed answer to it gives that answer:
+      // the layout moved, so the engine re-runs even over the same snapped cell
+      const owed = g.stale;
+      g.stale = false;
+      preview(g, m, owed);
+    },
+
+    rebase(id) {
+      const g = held;
+      if (!g) return;
+      // something ELSE on the page moved: this gesture's own frame is where it
+      // was, and what the engine owes is an answer for the layout it moved into
+      if (id !== undefined && id !== g.id) {
+        if (g.moved) owe(g);
         return;
       }
-      // the preview is the engine's, so the placeholder can never stand where
-      // the element will not land. It runs on a CHANGED cell, a few times in
-      // a gesture, never once a frame
-      const items = cfg.items();
-      const next =
-        g.kind === "move"
-          ? move(items, g.id, { x: want.x, y: want.y }, m.columns)
-          : resize(items, g.id, { w: want.w, h: want.h }, m.columns);
-      const px = m.cellW + m.gutter;
-      const py = CELL_H + m.gutter;
-      const shifted: string[] = [];
-      for (const p of next) {
-        if (p.id === g.id) continue;
-        const s = cfg.slot(p.id);
-        if (!s) continue;
-        const ox = (p.cell.x - s.cell.x) * px;
-        const oy = (p.cell.y - s.cell.y) * py;
-        if (ox === 0 && oy === 0 && !g.shifted.includes(p.id)) continue;
-        s.travel(ox, oy);
-        if (ox !== 0 || oy !== 0) shifted.push(p.id);
+      const m = cfg.metrics();
+      const cell = cfg.items().find((i) => i.id === g.id)?.cell ?? g.base;
+      const x = cell.x * (m.cellW + m.gutter);
+      const y = cell.y * (CELL_H + m.gutter);
+      if (x === g.anchorX && y === g.anchorY) return;
+      if (!g.moved) {
+        // nothing is lifted yet, so the element simply travels with the page
+        g.base = cell;
+        g.anchorX = x;
+        g.anchorY = y;
+        return;
       }
-      g.shifted = shifted;
-      g.target = next.find((p) => p.id === g.id)?.cell ?? want;
-      cfg.ghost.at(g.target, false);
-      cfg.ghost.say(sizeLabel(g.target));
+      // it IS lifted, so the box under the pointer must not move: the frame's
+      // travel goes into the drag layer, jumped and never sprung, in the same
+      // frame the frame itself moved (LESSONS 7). The span stays the one the
+      // corner was pressed on; only the place follows the document
+      g.driftX += x - g.anchorX;
+      g.driftY += y - g.anchorY;
+      g.anchorX = x;
+      g.anchorY = y;
+      g.base = { ...g.base, x: cell.x, y: cell.y };
+      paint(g, m);
+      owe(g);
     },
 
     up() {
@@ -370,12 +526,20 @@ export function createGrab(cfg: GrabConfig): Grab {
         clear();
         return;
       }
+      // a commit that landed since the last pointer frame is answered first:
+      // what the drop commits has to be the engine's answer for the layout the
+      // page SHOWS, not for one a reflow has already replaced
+      flush(g);
       // the document takes the new place and every displaced neighbour takes
       // the preview's, in this ONE write, which also carries what each of them
       // has left to do. Nothing is written to a handle here: the landing rides
       // the same frame as the cell frame it lands on, so the drop is one
-      // spring and never a jump back followed by one (D3 rule 3)
-      const landed = new Map<string, Drop>([[g.id, dropOf(g, cfg.metrics())]]);
+      // spring and never a jump back followed by one (D3 rule 3). The held
+      // element's own cell is read from the layout BEFORE anything is cleared
+      // (LESSONS 3): the cell it stands on now is what its landing is measured
+      // against, and the one it was pressed on may be two commits old (D4)
+      const at = cfg.items().find((i) => i.id === g.id)?.cell ?? g.base;
+      const landed = new Map<string, Drop>([[g.id, dropOf(g, cfg.metrics(), at)]]);
       for (const id of g.shifted) landed.set(id, { dx: 0, dy: 0 });
       // the gesture is OVER before the document hears about it: the commit can
       // render synchronously, and a surface that still wore the gesture's mark
@@ -389,11 +553,12 @@ export function createGrab(cfg: GrabConfig): Grab {
     cancel() {
       const g = held;
       if (!g) return;
-      // nothing is written: every element travels back to where it stands
+      // nothing is written: every element travels back to where it stands,
+      // which for the held one is the cell it stands on NOW, drift and all
       for (const id of g.shifted) cfg.slot(id)?.travel(0, 0);
       const slot = cfg.slot(g.id);
-      if (g.kind === "move") slot?.travel(0, 0);
-      else slot?.size(null, null);
+      if (g.kind === "resize") slot?.size(null, null);
+      slot?.travel(0, 0);
       clear();
     },
   };
@@ -435,9 +600,9 @@ interface SlotProps {
    * neighbour the preview already pushed. Null is a document change, which
    * travels from the box it just left (D2 item 12) */
   landed: (id: string) => Drop | null;
-  /** whether THIS render is a column-count reflow, which is the page's own
-   * fact and read here rather than counted per slot */
-  reflowing: () => boolean;
+  /** a commit moved this element's cells while a hand was holding it: the
+   * gesture re-anchors, and nothing else here runs (D4) */
+  drifted: (id: string) => void;
   /** this widget holds the caret: the note's measure reads the TEXTAREA then,
    * and never shrinks under it (D2 item 3) */
   editing: boolean;
@@ -460,7 +625,7 @@ const GridSlot = memo(function GridSlot({
   canvasId,
   metrics,
   landed,
-  reflowing,
+  drifted,
   editing,
   register,
   onGrow,
@@ -469,13 +634,16 @@ const GridSlot = memo(function GridSlot({
   children,
 }: SlotProps) {
   const el = useRef<HTMLDivElement>(null);
+  const standing = useRef<Cell>(cell);
+  standing.current = cell;
   const dx = useMotionValue(0);
   const dy = useMotionValue(0);
   const scale = useMotionValue(1);
   const handle = useRef<SlotHandle | null>(null);
+  // the cell this element is RENDERED at, for its own measure to compare a
+  // height against. The gesture reads the layout itself and never this
   if (handle.current === null) {
     handle.current = {
-      cell,
       hold: (kind) => {
         const node = el.current;
         if (!node) return;
@@ -511,12 +679,6 @@ const GridSlot = memo(function GridSlot({
       },
     };
   }
-  // the handle mirrors the cell the element is RENDERED at, so a gesture's
-  // arithmetic is against what is on the page and not against a stale close
-  useLayoutEffect(() => {
-    const h = handle.current;
-    if (h) h.cell = cell;
-  }, [cell]);
   useLayoutEffect(() => register(block.id, handle.current as SlotHandle), [block.id, register]);
 
   // a note's cells follow its words until a hand takes the corner. The words
@@ -551,8 +713,11 @@ const GridSlot = memo(function GridSlot({
     if (!box || !inner) return;
     let frame = 0;
     const measure = () => {
-      const h = handle.current;
-      if (!h) return;
+      // a gesture owns this element's box for as long as it lasts: a hand on
+      // the corner writes a width the words then re-wrap inside, and a height
+      // committed under that hand moves the very cell the drop is about to be
+      // measured against (LESSONS 3, one gesture is one commit)
+      if (host.dataset.gesture !== undefined) return;
       const title = host.querySelector<HTMLElement>(".blk-q");
       const face = getComputedStyle(box);
       const chrome =
@@ -562,8 +727,8 @@ const GridSlot = memo(function GridSlot({
         parseFloat(face.borderBottomWidth);
       const px = (ta ? ta.scrollHeight : inner.offsetHeight) + chrome + (title ? title.offsetHeight + PART_GAP : 0);
       const cells = Math.min(NOTE_ROWS_MAX, cellsForPx(px));
-      if (cells === h.cell.h) return;
-      if (cells < h.cell.h && editing) return;
+      if (cells === standing.current.h) return;
+      if (cells < standing.current.h && editing) return;
       onGrow(block.id, cells);
     };
     measure();
@@ -609,18 +774,26 @@ const GridSlot = memo(function GridSlot({
     const h = handle.current;
     if (!node || !h) return;
     const m = metrics();
-    // a narrower window is a REFLOW, not a document change: the page derives a
-    // new layout for every element at once and chrome does not animate under a
-    // window drag (DESIGN rule 2's stable-chrome clause), and it is also what
-    // makes the first render's guess (COLUMNS_FIRST) silent. The page answers
-    // for it, never a count kept here: a slot the reflow gave the same cell
-    // does not re-render, kept a stale count, and read the NEXT change as a
-    // reflow — which is how a DROP came to be swallowed (DESIGN rule 14). The
-    // drop wins over the mark in any case: it is the gesture's own instruction
-    // for this one element, where the mark is about the whole page
-    const drop = landed(block.id);
+    // a column-count change is a COMMIT like any other (D4), so it animates
+    // like any other: the widgets the flow moved travel from where they stood
+    // on spring.layout. Nothing marks a render as a reflow any more, and
+    // nothing has to: the first render draws no element at a guessed count, so
+    // there is no frame an element has to be kept from sliding off. The mark
+    // that used to stand here was read by a slot the reflow had given the same
+    // cell, which kept a stale count and swallowed the NEXT change - a DROP
+    //
+    // A commit can land while a HAND is holding something, and the gesture
+    // hears about it from whichever element moved. If that is the element
+    // being held, the two layers must not both move: the cell frame takes the
+    // document's change and the gesture takes it straight back out, in this
+    // same frame, so the box stays under the pointer (LESSONS 7). Drawn the
+    // other way round, the widget jumps by the commit's own delta and stands
+    // cells away from its placeholder for the rest of the gesture. If it is
+    // another element, the engine simply owes a fresh answer for the layout it
+    // moved into
+    if (prev.x !== cell.x || prev.y !== cell.y) drifted(block.id);
     if (node.dataset.gesture !== undefined) return;
-    if (!drop && reflowing()) return;
+    const drop = landed(block.id);
     const px = (c: Cell) => ({
       w: c.w * m.cellW + (c.w - 1) * m.gutter,
       h: c.h * CELL_H + (c.h - 1) * m.gutter,
@@ -633,13 +806,28 @@ const GridSlot = memo(function GridSlot({
     } else if (drop) h.offset(0, 0);
     const from = drop ? drop.from : prev.w === cell.w && prev.h === cell.h ? null : px(prev);
     if (!from) {
-      if (drop) h.size(null, null);
+      // the box is the CELL's again, always, and never only after a drop: an
+      // inline width left standing here pins the element to a pitch the window
+      // has since changed, and it never resizes with the page again (D4)
+      sizing.current?.stop();
+      sizing.current = null;
+      h.size(null, null);
       return;
     }
     const to = px(cell);
     sizing.current?.stop();
     h.size(from.w, from.h);
-    const run = animate(node, { width: `${to.w}px`, height: `${to.h}px` }, spring.layout);
+    // the box travels on ONE value, written through the same handle the
+    // gesture writes its own box through. Animated through the ELEMENT, the
+    // spring's end values stay in motion's own record of this node and the
+    // next render that touches it writes them back as an inline width and
+    // height, long after the spring is over: measured, a keyboard resize
+    // pinned the widget to the pitch it was resized at for the rest of the
+    // session, overlapping its neighbour at every other width
+    const run = animate(0, 1, {
+      ...spring.layout,
+      onUpdate: (p) => h.size(from.w + (to.w - from.w) * p, from.h + (to.h - from.h) * p),
+    });
     sizing.current = run;
     void run.finished
       .then(() => {
@@ -649,7 +837,7 @@ const GridSlot = memo(function GridSlot({
         }
       })
       .catch(() => {});
-  }, [cell, block.id, landed, reflowing, metrics]);
+  }, [cell, block.id, landed, drifted, metrics]);
 
   return (
     <motion.div
@@ -684,9 +872,6 @@ const GridSlot = memo(function GridSlot({
 export interface CanvasGridProps {
   canvasId: string;
   blocks: Block[];
-  /** the column count the document was last laid out at, if it knows one: the
-   * first render's guess, and never painted at (LESSONS 5: it informs) */
-  columnsHint?: number;
   /** the block itself, drawn by the surface that owns the kinds, and the cells
    * it stands on: the faces read their size from them */
   renderBlock: (block: Block, cell: Cell) => ReactNode;
@@ -714,7 +899,6 @@ const ARROWS: Record<string, { x: number; y: number }> = {
 export function CanvasGrid({
   canvasId,
   blocks,
-  columnsHint,
   renderBlock,
   keyOf,
   nameOf,
@@ -725,13 +909,17 @@ export function CanvasGrid({
   const host = useRef<HTMLDivElement>(null);
   const live = useRef<HTMLDivElement>(null);
   const size = useRef<HTMLSpanElement>(null);
-  const [columns, setColumns] = useState(columnsHint ?? COLUMNS_FIRST);
+  // how wide the page is, in cells. ZERO until the layout effect below has
+  // measured it, and an element is drawn at no other number: a guessed count
+  // would put every widget on the screen in a place the measure then moves it
+  // out of, and a commit animates from where things WERE (D4)
+  const [columns, setColumns] = useState(0);
   // which widget holds the caret, so the note's measure knows to read the
   // textarea and to refuse a shrink under it (D2 item 3). The store's, not a
   // prop: one caret on the document, and the palette's `New Note` writes it
   // from outside this tree
   const editingId = useCanvas((s) => s.editing);
-  const metrics = useRef<Metrics>(cellMetrics(columns * (CELL_W_BASE + GUTTER)));
+  const metrics = useRef<Metrics>(cellMetrics(0));
   const slots = useRef(new Map<string, SlotHandle>());
 
   const gx = useMotionValue(0);
@@ -750,17 +938,6 @@ export function CanvasGrid({
   const naming = useRef(nameOf);
   naming.current = nameOf;
 
-  // the page re-flowed for THIS render: one fact in one place, cleared after
-  // every render (this effect carries no dependency list on purpose) and read
-  // by the slots on their way past. It is declared before the measure below so
-  // the order inside one commit is clear-then-measure: a count the measure
-  // changes is still standing when the render it causes reaches the slots
-  const flowing = useRef(false);
-  const reflowing = useCallback(() => flowing.current, []);
-  useLayoutEffect(() => {
-    flowing.current = false;
-  });
-
   // one measure a frame, and React only at a column boundary: the cell width
   // and the gutter are two custom properties on this one node, so a window
   // drag that adds no column renders nothing at all (spec 6.3)
@@ -775,13 +952,25 @@ export function CanvasGrid({
       node.style.setProperty("--ch", `${CELL_H}px`);
       return m.columns;
     };
-    // the page is this many columns wide now: the store keeps the stored
-    // layout and hands back a derived one while it is narrower, so the
-    // surface never holds a layout of its own (canvas.ts reflowTo)
+    // the page is this many columns wide now. A page narrower than the layout
+    // flows once, into the document, and the surface never holds a layout of
+    // its own (canvas.ts reflowTo). Both calls land in the same React batch as
+    // the first render's, so the elements mount at the count and the cells the
+    // page really has
     const widthChanged = (width: number) => {
-      const before = metrics.current.columns;
+      // a width of ZERO is not a width this page was ever drawn at: a card in
+      // a `display: none` pane, a tab being swapped, a pane mid-collapse all
+      // measure it, and `columnsFor(0)` is 1. Committed, that flows every
+      // widget in the document to one column wide and there is no second
+      // layout left to come back from, so the count a reflow commits at is
+      // only ever a count a frame was PAINTED at (D4, LESSONS 5)
+      if (!(width > 0)) return;
       const n = apply(width);
-      if (n !== before) flowing.current = true;
+      // the pitch is written to the host before any of this renders, so an
+      // element a hand is holding has ALREADY moved by the time the reflow
+      // commits: the gesture re-anchors here, and again after the commit's own
+      // render moves its cells (GridSlot, `drifted`)
+      grab.current?.rebase();
       setColumns(n);
       useCanvas.getState().reflowTo(canvasId, n);
     };
@@ -838,6 +1027,11 @@ export function CanvasGrid({
     });
     return () => page(null);
   }, [page]);
+
+  /** a commit moved a held element's cells: the gesture absorbs it (D4) */
+  const drifted = useCallback((id: string) => {
+    grab.current?.rebase(id);
+  }, []);
 
   const onGrow = useCallback(
     (id: string, rows: number) => {
@@ -1014,12 +1208,18 @@ export function CanvasGrid({
     [canvasId, nameOf],
   );
 
+  // nothing is drawn until the page has been measured: the layout effect runs
+  // before the browser paints, so the first frame a person sees is the first
+  // frame at the real count, and an element that measures its own words (a
+  // note) measures them at the width it will actually stand in (D4)
+  const measured = columns > 0;
   const rows = bounds(layout.items, columns).rows;
   // the pitch stands in the style prop as well as in the imperative write, so
-  // the FIRST render already lays out at cells (an element measuring itself in
-  // its own layout effect runs before this component's, and a slot with no
-  // --cw is a slot of no width). React's own diff is prop against prop, so a
-  // window drag that wrote --cw imperatively is never undone by a later render
+  // the elements' first render already lays out at cells (an element measuring
+  // itself in its own layout effect runs before this component's, and a slot
+  // with no --cw is a slot of no width). React's own diff is prop against
+  // prop, so a window drag that wrote --cw imperatively is never undone by a
+  // later render
   const vars = {
     "--rows": String(rows),
     "--cw": `${metrics.current.cellW}px`,
@@ -1034,31 +1234,32 @@ export function CanvasGrid({
         <span className="cvg-size" ref={size} />
       </motion.div>
       <AnimatePresence initial={false}>
-        {layout.items.map((it) => {
-          const b = byId.get(it.id);
-          if (!b) return null;
-          return (
-            <GridSlot
-              key={keyOf(b)}
-              block={b}
-              cell={it.cell}
-              label={geometrySaid(nameOf(b), kindOf(b), it.cell)}
-              canvasId={canvasId}
-              metrics={pitchNow}
-              landed={landed}
-              reflowing={reflowing}
-              editing={editingId === it.id}
-              register={register}
-              onGrow={onGrow}
-              onDown={onDown}
-              onKey={onKey}
-            >
-              {renderBlock(b, it.cell)}
-            </GridSlot>
-          );
-        })}
+        {measured &&
+          layout.items.map((it) => {
+            const b = byId.get(it.id);
+            if (!b) return null;
+            return (
+              <GridSlot
+                key={keyOf(b)}
+                block={b}
+                cell={it.cell}
+                label={geometrySaid(nameOf(b), kindOf(b), it.cell)}
+                canvasId={canvasId}
+                metrics={pitchNow}
+                landed={landed}
+                drifted={drifted}
+                editing={editingId === it.id}
+                register={register}
+                onGrow={onGrow}
+                onDown={onDown}
+                onKey={onKey}
+              >
+                {renderBlock(b, it.cell)}
+              </GridSlot>
+            );
+          })}
       </AnimatePresence>
-      {draft && (
+      {measured && draft && (
         // the caret line: a slot like any other, so the cell a click landed in
         // is where the words start. It is the PAGE's and not the document's
         // until its first words, so it stands outside the presence list and
