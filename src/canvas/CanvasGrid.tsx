@@ -27,6 +27,14 @@
 // pointer frame, which is what keeps a drag frame under 16ms with 200
 // elements on the page.
 //
+// And the release writes to no handle at all (D3 rule 3). The landing rides
+// the one commit and is applied where the new cell frame is applied, in the
+// same frame: the held element is parked at the offset the pointer left it at
+// and springs to nothing, the neighbours it pushed are already home. Written
+// the other way round - handles on pointerup, cells one render later - the
+// element painted once at the place it came from and then sprang, which is the
+// jump back and forth the maintainer filmed.
+//
 // Chrome at rest stays at 0 per element and 0 per page. The grip is the first
 // action of a cluster that is already revealed on hover; the corner handle is
 // revealed with it; the lattice, the placeholder and the size label belong to
@@ -192,6 +200,19 @@ export interface GhostHandle {
   show: (kind: GestureKind | null) => void;
 }
 
+/** what one element has left to do when the commit's cells come back through
+ * React (D3 rule 3). A neighbour the preview already pushed is HOME and this
+ * is two zeroes: it does not move at all. The held one carries where the
+ * pointer let go, against the cell it was given: a move as the drag layer's
+ * own offset, which springs to nothing, and a resize as the box the corner was
+ * left at, which springs to the span. */
+export interface Drop {
+  dx: number;
+  dy: number;
+  /** a resize only: the px box the corner stopped at */
+  from?: { w: number; h: number };
+}
+
 export interface GrabConfig {
   items: () => readonly GridItem[];
   metrics: () => Metrics;
@@ -200,11 +221,11 @@ export interface GrabConfig {
   name: (id: string) => string;
   ghost: GhostHandle;
   live: (text: string) => void;
-  /** the ONE write of a gesture, at its end. `settled` is every element this
-   * gesture has ALREADY put where the document is about to say it stands (the
-   * held one and every neighbour it travelled), so the surface knows not to
-   * animate them a second time when the new cells come back through React */
-  commit: (kind: GestureKind, id: string, cell: Cell, settled: readonly string[]) => void;
+  /** the ONE write of a gesture, at its end, carrying every element this
+   * gesture moved and what that element has left to do. Nothing is written to
+   * a handle after this: the cell frame and the landing go in one frame, so a
+   * drop is one spring and never a jump followed by one */
+  commit: (kind: GestureKind, id: string, cell: Cell, landed: ReadonlyMap<string, Drop>) => void;
 }
 
 export interface Grab {
@@ -229,6 +250,25 @@ interface Held {
   target: Cell;
   /** every element this gesture has displaced, so the drop can clear them */
   shifted: string[];
+}
+
+/** where the pointer left the held element, measured against the cell the drop
+ * is committing it to. A move is an OFFSET on the drag layer, which is the one
+ * property the settle animates; a resize is the BOX the corner stopped at,
+ * which springs to the span, and its offset is whatever the clamped x owes */
+function dropOf(g: Held, m: Metrics): Drop {
+  const px = m.cellW + m.gutter;
+  const py = CELL_H + m.gutter;
+  if (g.kind === "move")
+    return { dx: g.dx - (g.target.x - g.base.x) * px, dy: g.dy - (g.target.y - g.base.y) * py };
+  return {
+    dx: (g.base.x - g.target.x) * px,
+    dy: (g.base.y - g.target.y) * py,
+    from: {
+      w: g.base.w * m.cellW + (g.base.w - 1) * m.gutter + g.dx,
+      h: g.base.h * CELL_H + (g.base.h - 1) * m.gutter + g.dy,
+    },
+  };
 }
 
 /** the drag and the resize, as one machine with two targets. No React, no
@@ -325,32 +365,25 @@ export function createGrab(cfg: GrabConfig): Grab {
     up() {
       const g = held;
       if (!g) return;
-      const slot = cfg.slot(g.id);
       if (!g.moved) {
         // it was a click, and it belongs to whatever was pressed
         clear();
         return;
       }
-      const m = cfg.metrics();
       // the document takes the new place and every displaced neighbour takes
-      // the preview's, in this one write; the elements are already standing
-      // there, so their offsets go to zero in the same frame and nothing
-      // travels twice
-      cfg.commit(g.kind, g.id, g.target, [g.id, ...g.shifted]);
-      for (const id of g.shifted) cfg.slot(id)?.offset(0, 0);
-      if (g.kind === "move") {
-        // the drop settles from wherever the finger left it onto the cells
-        // the placeholder stood on
-        slot?.offset(
-          g.dx - (g.target.x - g.base.x) * (m.cellW + m.gutter),
-          g.dy - (g.target.y - g.base.y) * (CELL_H + m.gutter),
-        );
-        slot?.travel(0, 0);
-      } else {
-        slot?.size(null, null);
-      }
-      cfg.live(g.kind === "move" ? movedSaid(cfg.name(g.id), g.target) : resizedSaid(cfg.name(g.id), g.target));
+      // the preview's, in this ONE write, which also carries what each of them
+      // has left to do. Nothing is written to a handle here: the landing rides
+      // the same frame as the cell frame it lands on, so the drop is one
+      // spring and never a jump back followed by one (D3 rule 3)
+      const landed = new Map<string, Drop>([[g.id, dropOf(g, cfg.metrics())]]);
+      for (const id of g.shifted) landed.set(id, { dx: 0, dy: 0 });
+      // the gesture is OVER before the document hears about it: the commit can
+      // render synchronously, and a surface that still wore the gesture's mark
+      // read the render as one made mid-drag and threw the landing away
+      const said = g.kind === "move" ? movedSaid(cfg.name(g.id), g.target) : resizedSaid(cfg.name(g.id), g.target);
       clear();
+      cfg.commit(g.kind, g.id, g.target, landed);
+      cfg.live(said);
     },
 
     cancel() {
@@ -397,10 +430,14 @@ interface SlotProps {
   /** the page's pitch, read when it is used and never closed over: a window
    * drag between a render and an act must not commit a stale layout */
   metrics: () => Metrics;
-  /** whether the gesture machine has ALREADY put this element where the
-   * document now says it stands. True exactly once per commit, so the travel
-   * below never replays a drop (D2 item 12) */
-  fromGesture: (id: string) => boolean;
+  /** what a gesture that just committed left this element to do, read exactly
+   * once per commit: the held one's park-and-spring, or two zeroes for a
+   * neighbour the preview already pushed. Null is a document change, which
+   * travels from the box it just left (D2 item 12) */
+  landed: (id: string) => Drop | null;
+  /** whether THIS render is a column-count reflow, which is the page's own
+   * fact and read here rather than counted per slot */
+  reflowing: () => boolean;
   /** this widget holds the caret: the note's measure reads the TEXTAREA then,
    * and never shrinks under it (D2 item 3) */
   editing: boolean;
@@ -422,7 +459,8 @@ const GridSlot = memo(function GridSlot({
   label,
   canvasId,
   metrics,
-  fromGesture,
+  landed,
+  reflowing,
   editing,
   register,
   onGrow,
@@ -450,11 +488,16 @@ const GridSlot = memo(function GridSlot({
         }
         animate(scale, kind === "move" ? 1.02 : 1, spring.pop);
       },
+      // `jump`, never `set`: an offset is a PLACE and carries no momentum, and
+      // a pointer's own frames are the fastest momentum there is. Written with
+      // `set`, the last two frames of a drag (the finger, then the drop's
+      // residual) handed the settle below a velocity of the whole travel, so
+      // the element shot past its cell by more than a row and came back — one
+      // spring reading as a jump back and forth (D3 rule 3, the maintainer's
+      // second finding)
       offset: (x, y) => {
-        dx.stop();
-        dy.stop();
-        dx.set(x);
-        dy.set(y);
+        dx.jump(x);
+        dy.jump(y);
       },
       travel: (x, y) => {
         animate(dx, x, spring.layout);
@@ -546,16 +589,18 @@ const GridSlot = memo(function GridSlot({
     [canvasId, block.id, metrics],
   );
 
-  // and the document's OWN layout changes travel (D2 item 12). A gesture
-  // springs its neighbours through the handles and lands them itself; a change
+  // one frame, one animation: the cell frame is React's, written once with no
+  // transition of its own, and what travels over it is the drag layer, always
+  // through these same two handles. A DROP lands here rather than in the
+  // pointer handler (D3 rule 3) because that is what puts the landing and the
+  // cell frame in the SAME frame: the held one is parked at the offset the
+  // pointer left it at and springs to nothing, a neighbour the preview already
+  // pushed is home and writes one zero, and neither jumps back first. A change
   // the DOCUMENT made — a note growing a row with its words, `+ 4 more` giving
   // a chart the rows its bars need, a keyboard resize — only wrote new cells,
-  // and the page jumped to them. What animates is the DIFFERENCE: the element
-  // is parked at the box it just left, on the same two handles a drag writes
-  // to, and sprung to the cell frame's own geometry on spring.layout. Reduced
-  // motion collapses the preset and it simply stands there.
+  // so the element is parked at the box it just left instead (D2 item 12).
+  // Reduced motion collapses the preset and it simply stands there.
   const was = useRef<Cell>(cell);
-  const wasColumns = useRef(-1);
   const sizing = useRef<{ stop: () => void } | null>(null);
   useLayoutEffect(() => {
     const prev = was.current;
@@ -566,28 +611,31 @@ const GridSlot = memo(function GridSlot({
     const m = metrics();
     // a narrower window is a REFLOW, not a document change: the page derives a
     // new layout for every element at once and chrome does not animate under a
-    // window drag (DESIGN rule 2's stable-chrome clause). The count is the
-    // tell, and it is also what makes the first render's guess (COLUMNS_FIRST)
-    // silent. A drop has already put this element where it belongs, and so
-    // have the neighbours it displaced: replaying either would be one travel
-    // twice. Both marks are read before either return, so neither is left
-    // standing for the next change to trip over
-    const reflow = wasColumns.current !== m.columns;
-    wasColumns.current = m.columns;
-    const dropped = fromGesture(block.id);
-    if (reflow || dropped || node.dataset.gesture !== undefined) return;
+    // window drag (DESIGN rule 2's stable-chrome clause), and it is also what
+    // makes the first render's guess (COLUMNS_FIRST) silent. The page answers
+    // for it, never a count kept here: a slot the reflow gave the same cell
+    // does not re-render, kept a stale count, and read the NEXT change as a
+    // reflow — which is how a DROP came to be swallowed (DESIGN rule 14). The
+    // drop wins over the mark in any case: it is the gesture's own instruction
+    // for this one element, where the mark is about the whole page
+    const drop = landed(block.id);
+    if (node.dataset.gesture !== undefined) return;
+    if (!drop && reflowing()) return;
     const px = (c: Cell) => ({
       w: c.w * m.cellW + (c.w - 1) * m.gutter,
       h: c.h * CELL_H + (c.h - 1) * m.gutter,
     });
-    const dx = (prev.x - cell.x) * (m.cellW + m.gutter);
-    const dy = (prev.y - cell.y) * (CELL_H + m.gutter);
+    const dx = drop ? drop.dx : (prev.x - cell.x) * (m.cellW + m.gutter);
+    const dy = drop ? drop.dy : (prev.y - cell.y) * (CELL_H + m.gutter);
     if (dx !== 0 || dy !== 0) {
       h.offset(dx, dy);
       h.travel(0, 0);
+    } else if (drop) h.offset(0, 0);
+    const from = drop ? drop.from : prev.w === cell.w && prev.h === cell.h ? null : px(prev);
+    if (!from) {
+      if (drop) h.size(null, null);
+      return;
     }
-    if (prev.w === cell.w && prev.h === cell.h) return;
-    const from = px(prev);
     const to = px(cell);
     sizing.current?.stop();
     h.size(from.w, from.h);
@@ -601,7 +649,7 @@ const GridSlot = memo(function GridSlot({
         }
       })
       .catch(() => {});
-  }, [cell, block.id, fromGesture, metrics]);
+  }, [cell, block.id, landed, reflowing, metrics]);
 
   return (
     <motion.div
@@ -702,6 +750,17 @@ export function CanvasGrid({
   const naming = useRef(nameOf);
   naming.current = nameOf;
 
+  // the page re-flowed for THIS render: one fact in one place, cleared after
+  // every render (this effect carries no dependency list on purpose) and read
+  // by the slots on their way past. It is declared before the measure below so
+  // the order inside one commit is clear-then-measure: a count the measure
+  // changes is still standing when the render it causes reaches the slots
+  const flowing = useRef(false);
+  const reflowing = useCallback(() => flowing.current, []);
+  useLayoutEffect(() => {
+    flowing.current = false;
+  });
+
   // one measure a frame, and React only at a column boundary: the cell width
   // and the gutter are two custom properties on this one node, so a window
   // drag that adds no column renders nothing at all (spec 6.3)
@@ -720,7 +779,9 @@ export function CanvasGrid({
     // layout and hands back a derived one while it is narrower, so the
     // surface never holds a layout of its own (canvas.ts reflowTo)
     const widthChanged = (width: number) => {
+      const before = metrics.current.columns;
       const n = apply(width);
+      if (n !== before) flowing.current = true;
       setColumns(n);
       useCanvas.getState().reflowTo(canvasId, n);
     };
@@ -790,11 +851,16 @@ export function CanvasGrid({
    * worth in px, both read it at the moment they act */
   const pitchNow = useCallback(() => metrics.current, []);
 
-  /** the elements a gesture has already landed, cleared as each one's new cell
-   * comes back through React: the surface animates a document change and never
-   * a drop (D2 item 12) */
-  const placed = useRef(new Set<string>());
-  const fromGesture = useCallback((id: string) => placed.current.delete(id), []);
+  /** what the gesture that just committed left each element it moved to do,
+   * read once as that element's new cell comes back through React: the surface
+   * animates a document change one way and a drop the other (D2 item 12, D3
+   * rule 3) */
+  const drops = useRef(new Map<string, Drop>());
+  const landed = useCallback((id: string) => {
+    const drop = drops.current.get(id);
+    if (drop) drops.current.delete(id);
+    return drop ?? null;
+  }, []);
 
   const register = useCallback((id: string, handle: SlotHandle) => {
     slots.current.set(id, handle);
@@ -853,12 +919,25 @@ export function CanvasGrid({
         const node = live.current;
         if (node) node.textContent = text;
       },
-      commit: (kind, id, cell, settled) => {
-        for (const at of settled) placed.current.add(at);
+      commit: (kind, id, cell, landing) => {
+        for (const [at, drop] of landing) drops.current.set(at, drop);
         const store = useCanvas.getState();
         const n = metrics.current.columns;
+        const doc = store.docs[canvasId];
         if (kind === "move") store.moveTo(canvasId, id, { x: cell.x, y: cell.y }, n);
         else store.resizeTo(canvasId, id, { w: cell.w, h: cell.h }, n);
+        // a gesture that ended on the cells it began on writes no document, so
+        // no render comes to carry the landing: it happens here instead, on
+        // the same handles and the same one spring
+        if (useCanvas.getState().docs[canvasId] !== doc) return;
+        for (const [at, drop] of drops.current) {
+          const s = slots.current.get(at);
+          if (!s) continue;
+          s.offset(drop.dx, drop.dy);
+          if (drop.dx !== 0 || drop.dy !== 0) s.travel(0, 0);
+          if (drop.from) s.size(null, null);
+        }
+        drops.current.clear();
       },
     });
   }
@@ -966,7 +1045,8 @@ export function CanvasGrid({
               label={geometrySaid(nameOf(b), kindOf(b), it.cell)}
               canvasId={canvasId}
               metrics={pitchNow}
-              fromGesture={fromGesture}
+              landed={landed}
+              reflowing={reflowing}
               editing={editingId === it.id}
               register={register}
               onGrow={onGrow}

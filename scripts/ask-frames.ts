@@ -237,6 +237,14 @@
 // whole; d2-note-grown = a note that grew with its words beside one a hand
 // sized, its foot fading.
 //
+// D3 (the maintainer's screen recording of 2026-09-15): on the CANVAS root,
+// d3-drag-nonintersecting = a widget lifted and held over empty cells with
+// another below and to its right standing exactly where it stood, the finding
+// this wave answers (a gesture moves only what it touches); d3-drop-settled =
+// the page one frame after a drop that DID land on something, the pushed
+// widget in its one new place, the dropped one on the placeholder's cells and
+// the hole the lift left standing.
+//
 // B4 (the sketch's "B4 · qbot" rows): b4-empty = the empty state with the
 // composer focused, qbot's two eye marks 2px lower than at rest; `empty` is
 // the same state at rest and now shows qbot, so the two are the gaze's pair,
@@ -377,6 +385,8 @@ const CANVAS_STATES = [
   "d2-diff-chips",
   "d2-chart-fit",
   "d2-note-grown",
+  "d3-drag-nonintersecting",
+  "d3-drop-settled",
 ] as const;
 /** the B3 four and the C2a six stand on a taller card: neither a four-block
  * answer with a chart among them nor a page of cells fits A3's 760
@@ -447,6 +457,12 @@ const D1_TALL_CANVAS_STATES: readonly string[] = ["d1-chart-overflow", "d1-compa
 const D2_TALL_CANVAS_CARD_H = 1580;
 const D2_CANVAS_CARD_H = 740;
 const D2_TALL_CANVAS_STATES: readonly string[] = ["d2-widgets", "d2-add-menu"];
+/** and D3's own pair (fixtures.d3.ts d3CanvasCardH): the drop state IS the
+ * drag state with its push taken, which is two rows more of page, so reading
+ * both on one card would leave the drag two rows of air */
+const D3_DRAG_CARD_H = 700;
+const D3_DROP_CARD_H = 940;
+const D3_CANVAS_STATES: readonly string[] = ["d3-drag-nonintersecting", "d3-drop-settled"];
 const D2_CANVAS_STATES: readonly string[] = [
   "d2-widgets",
   "d2-add-menu",
@@ -455,25 +471,29 @@ const D2_CANVAS_STATES: readonly string[] = [
   "d2-note-grown",
 ];
 const canvasCardH = (state: string): number =>
-  state === "c2-draw-small"
-    ? SMALL_CANVAS_CARD_H
-    : state === "c2-draw-empty"
-      ? FRESH_CANVAS_CARD_H
-      : state === "c2-draw" || state === "c2-draw-tools" || state === "c2-draw-novision"
-        ? DRAW_CANVAS_CARD_H
-        : state === "c2-empty" || state === "c2-empty-place"
-          ? EMPTY_CANVAS_CARD_H
-          : D2_TALL_CANVAS_STATES.includes(state)
-            ? D2_TALL_CANVAS_CARD_H
-            : D2_CANVAS_STATES.includes(state)
-              ? D2_CANVAS_CARD_H
-              : D1_TALL_CANVAS_STATES.includes(state)
-                ? D1_TALL_CANVAS_CARD_H
-                : DOC_CANVAS_STATES.includes(state)
-                  ? DOC_CANVAS_CARD_H
-                  : TALL_CANVAS_STATES.includes(state)
-                    ? TALL_CANVAS_CARD_H
-                    : CANVAS_CARD_H;
+  D3_CANVAS_STATES.includes(state)
+    ? state === "d3-drop-settled"
+      ? D3_DROP_CARD_H
+      : D3_DRAG_CARD_H
+    : state === "c2-draw-small"
+      ? SMALL_CANVAS_CARD_H
+      : state === "c2-draw-empty"
+        ? FRESH_CANVAS_CARD_H
+        : state === "c2-draw" || state === "c2-draw-tools" || state === "c2-draw-novision"
+          ? DRAW_CANVAS_CARD_H
+          : state === "c2-empty" || state === "c2-empty-place"
+            ? EMPTY_CANVAS_CARD_H
+            : D2_TALL_CANVAS_STATES.includes(state)
+              ? D2_TALL_CANVAS_CARD_H
+              : D2_CANVAS_STATES.includes(state)
+                ? D2_CANVAS_CARD_H
+                : D1_TALL_CANVAS_STATES.includes(state)
+                  ? D1_TALL_CANVAS_CARD_H
+                  : DOC_CANVAS_STATES.includes(state)
+                    ? DOC_CANVAS_CARD_H
+                    : TALL_CANVAS_STATES.includes(state)
+                      ? TALL_CANVAS_CARD_H
+                      : CANVAS_CARD_H;
 const MARGIN = 24;
 
 // ---- args -------------------------------------------------------------------

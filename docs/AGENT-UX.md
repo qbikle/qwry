@@ -2344,36 +2344,68 @@ cap, the D1 fixture's own shrink case) stands exactly as written above.
 
 A pure module (`src/canvas/grid.ts`), no React, no DOM, imported by the
 store, the surface and the model's tools alike, and tested without any of
-them. Two operations only, never a third: **push down, then float up.** A
-moved or resized element is pinned where it landed; everything it now
-overlaps is pushed down just enough to clear it, in `(y, x, id)` order; the
-whole layout then compacts upward, the pinned element staying put.
-**Reaffirmed, not reopened (D2, 2026-09-14, Q7a): a widget dragged down
-into empty space stays exactly where it was dropped, the hole it leaves
-above it standing.** The question the maintainer put back on the table
-("does it stay where you dropped it, or rise to the first free row")
-answers to this same sentence, chosen as the sketch drew it, so the law
-this file already carries and the shipped tree (DECISIONS, C2a: "a drop
-is PINNED through the compaction") needed no rewrite here; the sentence
-that read the other way is the qwry-agent-lab RESEARCH doc's own §4.5,
-outside this file's ownership, already recorded as overruled by the
-product doc at the point DECISIONS.md settles it. Swap was
-counted and refused: it is only defined when two rects share a span, and a
-size grammar makes that the exception rather than the rule, so a swap
-gesture would still need this same push down as its own fallback, and the
-gesture would then carry two rules for one idea. The total order is
-`(y, x, id)`, ids are uuids, so the order is total, not merely consistent,
-and a pass is fully determined by its input alone: no random source, no
-clock, no reliance on an object's own key order.
+them. **A gesture moves only what it touches (D3, 2026-09-15, replacing
+this section's own "push down, then float up" as `move()`'s and
+`resize()`'s rule, C2a, 2026-09-11).** A moved or resized element is
+pinned where it landed; everything it now overlaps is pushed down just
+enough to clear it, in `(y, x, id)` order, transitively for whatever a
+pushed element then overlaps in turn; nothing else moves, and no float-up
+runs on a move or a resize, not in the drag preview and not on commit.
+Float-up is removed from `move()` and `resize()` outright, and survives
+in two shapes, neither of them a gesture's: `compact()` itself, whose one
+live caller is the store's `compacted()` on a delete or a doomed-agent
+cut (the page rearranging itself, §16g's own "the gap it leaves
+closes"), and `firstFit()`'s row-major scan, which is how `place()` seats
+a new widget and how `reflow()` re-lays the layout at a lower column
+count. A hole a gesture leaves behind stands, above an element now as it
+already could beside one (next paragraph). The maintainer's own recording
+is why a rule D2 had just reaffirmed is replaced rather than kept:
+lifting the note "Hi" (top-left, 3x2) and dragging it down slid an
+unrelated note at the canvas's lower-right UPWARD though the two never
+intersect, because `move()` handed the WHOLE layout to `compact()` with
+only the dragged element pinned, the drag
+surface ran that same compaction to preview the placeholder, and the
+store's commit ran it again on release: the layout moved twice for one
+drop, and the settle read as the two widgets bouncing rather than
+landing once. **Reaffirmed still (D2, 2026-09-14, Q7a, restated under
+D3's own rule): a widget dragged down into empty space stays exactly
+where it was dropped, the hole it leaves above it standing.** This holds
+for a different reason now: before this wave, compaction pinned the
+dragged element against its own float; after it, nothing floats up on a
+move at all, so the hole was never going anywhere to begin with.
+DECISIONS' own C2a line ("a drop is PINNED through the compaction") is
+superseded by its D3 entry: the drop is pinned against compaction full
+stop, because `move()` calls no compaction. The sentence that read the
+other way is the qwry-agent-lab RESEARCH doc's own §4.5, outside this
+file's ownership, already recorded as overruled by the product doc at
+the point DECISIONS.md settles it. Swap was counted and refused: it is
+only defined when two rects share a span, and a size grammar makes that
+the exception rather than the rule, so a swap gesture would still need
+this same push down as its own fallback, and the gesture would then carry
+two rules for one idea. The total order is `(y, x, id)`, ids are uuids,
+so the order is total, not merely consistent, and a pass is fully
+determined by its input alone: no random source, no clock, no reliance on
+an object's own key order.
 
 Compaction moves an element's `y` to the lowest free row; it never moves
 `x`. **The user's `x` is honoured**, at the layout's own column count, so a
 hole BESIDE a wide element can stand (a gap beside a five-wide values row
-is a placed thing, not a bug) while a hole ABOVE one cannot. A floats-left
-rule that also closes gaps at the side (the iOS grammar, product research
-§1) was counted and refused for the opposite reason: a note placed at the
-right with room at its left would slide left under it, and a person who
-left that air placed the note exactly as they placed its row.
+is a placed thing, not a bug) while a hole ABOVE one, under `compact()`
+itself, cannot. A floats-left rule that also closes gaps at the side (the
+iOS grammar, product research §1) was counted and refused for the
+opposite reason: a note placed at the right with room at its left would
+slide left under it, and a person who left that air placed the note
+exactly as they placed its row. **Since D3, closing a hole ABOVE an
+element is the page's own act, never a gesture's**: `move()` and
+`resize()` call no compaction at all, so a hole above a moved or resized
+element now stands the same way a hole beside one always could. Two paths
+still close one, and both are the page rearranging itself rather than a
+hand placing something: `compact()` on a delete or a cut, and
+`firstFit()` under `place()` and `reflow()`. Whether a DELETE should
+still close every hole above it now that a gesture's holes stand is the
+maintainer's to answer and is put in the ROADMAP_log note, not taken
+here: §16g's "the gap it leaves closes" is pre-existing law, outside
+D3's rule 1.
 
 **The canvas grows DOWN only.** Nothing on the grid ever scrolls sideways;
 "grows right" is resolved as a WIDER WINDOW adding columns (§16o), never a
@@ -2526,9 +2558,25 @@ Multi-select, group move and align are open, named, and not half-built.
 
 No new preset, `springs.ts` is unchanged, A3's own headline holding again: a
 drag lifts on `spring.pop` and follows the pointer un-sprung; the
-placeholder and every pushed neighbour travel on `spring.layout`; the drop
-settles the element onto the placeholder on `spring.layout` while the lift
-comes off on `spring.pop`. A resize writes the box to the pointer per
+placeholder and every pushed neighbour travel on `spring.layout` as the
+gesture's own preview computes them. **One spring on release (D3,
+2026-09-15): the preview is the commit**, byte-for-byte the layout
+`move()`/`resize()` itself writes, so a neighbour already standing in its
+pushed place when the pointer lifts does not move again. The dragged
+element alone animates on release: its drag-layer transform travels from
+wherever the pointer left it to its committed cell on `spring.layout`,
+the one spring the drop plays for position; the shadow and the panel fill
+the lift added come off on `spring.pop`, a separate property, not a
+second position spring. The cell frame is written once, with no
+transition of its own, and nothing re-layouts after `spring.layout`
+settles: no second `setDoc`, no second pass. This replaces the old
+sentence here ("the drop settles the element onto the placeholder on
+`spring.layout` while the lift comes off on `spring.pop`"), which
+described the drop but not the commit a frame behind it: the store
+re-ran `compact()` over the whole layout after the spring had already
+been told where to land, so a widget the preview had already settled
+moved a second time and the drop read as a bounce, not a landing (the
+maintainer's recording, D3, 2026-09-15). A resize writes the box to the pointer per
 frame, no spring, its content re-laying out on the FRAME AFTER, once per
 frame at most (a chart's own `ResizeObserver` already fires after layout);
 neighbours make room on `spring.layout` only when the snapped span actually
@@ -2582,8 +2630,11 @@ Settles: the cell (108 and 12, page inset 16) and why 112 does not stand
 unamended; the row unit fixed at 108 against a rendered or a 56px
 alternative; default spans and content-driven heights per kind, recomputed
 for the 120 pitch; push-down-then-float-up compaction and reflow-by-reading
--order as the only two layout operations; absolute positioning with a
-two-layer transform, never CSS Grid's own placement; the grip-plus-title
+-order as the only two layout operations (**amended by D3, 2026-09-15,
+§16q: a gesture pushes down and stops, and the float-up is the page's
+own operation, on a delete, a new widget's slot and a reflow**);
+absolute positioning with a two-layer transform, never CSS Grid's own
+placement; the grip-plus-title
 -line move surface, one corner resize handle, the placeholder-and-lattice
 snap picture, and the keyboard route beside it; `Move Up` / `Move Down`
 retiring from every menu; that no new spring preset exists anywhere in this

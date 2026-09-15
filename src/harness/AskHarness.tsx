@@ -276,6 +276,13 @@ import {
   d2CanvasSeed,
   type D2CanvasState,
 } from "./fixtures.d2canvas";
+import {
+  d3CanvasCardH,
+  D3_CANVAS_STATES,
+  d3CanvasAfterMount,
+  d3CanvasSeed,
+  type D3CanvasState,
+} from "./fixtures.d3";
 import "../app/v2.css";
 import "./harness.css";
 
@@ -631,7 +638,8 @@ type AnyCanvasState =
   | C2DrawState
   | C2EmptyState
   | D1CanvasState
-  | D2CanvasState;
+  | D2CanvasState
+  | D3CanvasState;
 
 interface CanvasParams {
   state: AnyCanvasState;
@@ -657,6 +665,9 @@ const isD1Canvas = (state: string): state is D1CanvasState =>
 const isD2Canvas = (state: string): state is D2CanvasState =>
   (D2_CANVAS_STATES as readonly string[]).includes(state);
 
+const isD3Canvas = (state: string): state is D3CanvasState =>
+  (D3_CANVAS_STATES as readonly string[]).includes(state);
+
 /** the card each wave is read on: A3's three blocks stand in 760, B3's four
  * with a chart among them need 800, and C2's page of cells is read from its
  * top at the same 800 except where the LAYOUT is the subject, where the card
@@ -667,21 +678,25 @@ const isD2Canvas = (state: string): state is D2CanvasState =>
  * (d1CanvasCardH): two charts and a note, or a refusal and a diff, run past
  * A3's 760, and the note pair does not. D2's five carry theirs the same way
  * (d2CanvasCardH): the four-widget page runs to eleven rows at the floor, and
- * the other three stand on a card of their own */
+ * the other three stand on a card of their own. D3's two carry their own pair
+ * (d3CanvasCardH): the drop state is the drag state with its push taken, which
+ * is two rows more of page */
 const canvasCardH = (state: string): number =>
-  isC2Draw(state)
-    ? c2DrawCardH(state)
-    : isC2Empty(state)
-      ? C2_EMPTY_CARD_H
-      : isD2Canvas(state)
-        ? d2CanvasCardH(state)
-        : isD1Canvas(state)
-          ? d1CanvasCardH(state)
-          : isC2Grid(state)
-            ? c2GridCardH(state)
-            : isB3Canvas(state)
-              ? B3_CANVAS_CARD_H
-              : CANVAS_CARD_H;
+  isD3Canvas(state)
+    ? d3CanvasCardH(state)
+    : isC2Draw(state)
+      ? c2DrawCardH(state)
+      : isC2Empty(state)
+        ? C2_EMPTY_CARD_H
+        : isD2Canvas(state)
+          ? d2CanvasCardH(state)
+          : isD1Canvas(state)
+            ? d1CanvasCardH(state)
+            : isC2Grid(state)
+              ? c2GridCardH(state)
+              : isB3Canvas(state)
+                ? B3_CANVAS_CARD_H
+                : CANVAS_CARD_H;
 
 function canvasParamsFrom(search: string): CanvasParams {
   const q = new URLSearchParams(search);
@@ -694,7 +709,8 @@ function canvasParamsFrom(search: string): CanvasParams {
     isC2Draw(raw) ||
     isC2Empty(raw) ||
     isD1Canvas(raw) ||
-    isD2Canvas(raw);
+    isD2Canvas(raw) ||
+    isD3Canvas(raw);
   return {
     state: known ? (raw as AnyCanvasState) : "a3-canvas",
     w: (CANVAS_WIDTHS as readonly number[]).includes(w) ? w : 960,
@@ -708,19 +724,21 @@ function canvasParamsFrom(search: string): CanvasParams {
 function seedCanvas({ state, theme }: CanvasParams) {
   // every wave's seed has the A3 seed's shape, whole: one branch on the state
   // name is the difference between the three waves' documents
-  const seed = isC2Draw(state)
-    ? c2DrawSeed(state)
-    : isC2Empty(state)
-      ? c2EmptySeed()
-      : isD2Canvas(state)
-        ? d2CanvasSeed(state)
-        : isD1Canvas(state)
-          ? d1CanvasSeed(state)
-          : isC2Grid(state)
-            ? c2GridSeed(state)
-            : isB3Canvas(state)
-              ? b3CanvasSeed(state)
-              : canvasSeed(state);
+  const seed = isD3Canvas(state)
+    ? d3CanvasSeed(state)
+    : isC2Draw(state)
+      ? c2DrawSeed(state)
+      : isC2Empty(state)
+        ? c2EmptySeed()
+        : isD2Canvas(state)
+          ? d2CanvasSeed(state)
+          : isD1Canvas(state)
+            ? d1CanvasSeed(state)
+            : isC2Grid(state)
+              ? c2GridSeed(state)
+              : isB3Canvas(state)
+                ? b3CanvasSeed(state)
+                : canvasSeed(state);
   // the model is the harness's own everywhere but one state: C2b's
   // `c2-draw-novision` runs on a row the registry documents WITHOUT vision,
   // because the frame's whole subject is the `Ask` that is then not in the
@@ -753,19 +771,21 @@ function CanvasHarness({ state, w, canvasId }: CanvasParams & { canvasId: string
       // poses a pointer mid-gesture, C2b's presses the drawing's own picker
       // open and leaves a finger on the empty page — the things a still
       // cannot hold
-      const hook = isC2Draw(state)
-        ? c2DrawAfterMount(state)
-        : isC2Empty(state)
-          ? c2EmptyAfterMount(state)
-          : isD2Canvas(state)
-            ? d2CanvasAfterMount(state)
-            : isD1Canvas(state)
-              ? d1CanvasAfterMount(state)
-              : isC2Grid(state)
-                ? c2GridAfterMount(state)
-                : isB3Canvas(state)
-                  ? b3CanvasAfterMount(state)
-                  : canvasAfterMount(state);
+      const hook = isD3Canvas(state)
+        ? d3CanvasAfterMount(state)
+        : isC2Draw(state)
+          ? c2DrawAfterMount(state)
+          : isC2Empty(state)
+            ? c2EmptyAfterMount(state)
+            : isD2Canvas(state)
+              ? d2CanvasAfterMount(state)
+              : isD1Canvas(state)
+                ? d1CanvasAfterMount(state)
+                : isC2Grid(state)
+                  ? c2GridAfterMount(state)
+                  : isB3Canvas(state)
+                    ? b3CanvasAfterMount(state)
+                    : canvasAfterMount(state);
       void hook.then(() => {
         if (live) document.documentElement.dataset.harnessReady = "1";
       });

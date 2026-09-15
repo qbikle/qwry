@@ -1061,12 +1061,13 @@ interface CanvasState {
   remove: (canvasId: string, blockId: string) => void;
   /** move a block one ROW up (-1) or down (+1), the menu's own act on a grid:
    * the same `moveTo` a drag ends in, so the two routes share one algorithm
-   * (the rows below make way and the layout floats up) */
+   * (what the row lands on makes way, and nothing else moves) */
   move: (canvasId: string, blockId: string, delta: 1 | -1) => void;
-  /** C2, a gesture's END: the element is pinned where it was dropped, what it
-   * overlaps is pushed down, the layout floats up. ONE setDoc, never one per
-   * pointer move: a block lands whole, and the 400 ms debounce is written for
-   * exactly that */
+  /** C2, a gesture's END: the element is pinned where it was dropped and what
+   * it overlaps is pushed down, transitively; nothing else moves and the hole
+   * it leaves stands (D3 rule 1, the engine's own `move`). ONE setDoc, never
+   * one per pointer move: a block lands whole, and the 400 ms debounce is
+   * written for exactly that */
   moveTo: (canvasId: string, blockId: string, to: { x: number; y: number }, columns: number) => void;
   /** C2: the same commit with a new span, held at the kind's own floor. A hand
    * resize clears `autoH` (the height is the user's now); `auto` is the
@@ -1937,7 +1938,7 @@ function commitLayout(
 }
 
 /** land one element on the cells it was given: pinned there, whatever it
- * overlaps pushed down, the layout floated up. The drop's own rule, so a
+ * overlaps pushed down and nothing else touched. The drop's own rule, so a
  * model's `at` and a hand's release resolve a collision the same way */
 function pinAt(items: readonly GridItem[], id: string, cell: Cell, columns: number): GridItem[] {
   const others = items.filter((i) => i.id !== id);

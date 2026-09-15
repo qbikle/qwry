@@ -4,9 +4,12 @@
 // Two contracts carry everything else. First, a cell's WIDTH stretches with the
 // container and its HEIGHT never does: every pixel a block holds is typed in
 // unscaled CSS px (a bar pitch 24, a grid row 26, a text line 20), and width is
-// the one axis all of it already reflows against. Second, collision is push
-// down then float up, never swap: it is the one rule that yields a valid layout
-// for arbitrary spans, so the gesture has one outcome instead of two.
+// the one axis all of it already reflows against. Second, a GESTURE MOVES ONLY
+// WHAT IT TOUCHES (D3): move() and resize() push the widgets they intersect
+// DOWN and nothing else, never swap, never float anything up. Float-up is the
+// PAGE's operation, not a gesture's, and lives on in compact() for its one
+// caller, the store's compacted() on a delete or a cut (the page rearranging
+// itself), and in firstFit() for reflow() and place().
 //
 // The total order is (y, x, id). Ids are uuids, so that is a total order and
 // every pass is fully determined by its input. No Math.random, no Date, no
@@ -231,8 +234,8 @@ export function place(items: readonly GridItem[], span: Span, columns: number): 
 }
 
 /** the moved element is PINNED where it was dropped; everything it now overlaps
- *  is pushed DOWN just enough to clear, in (y, x, id) order, and the whole
- *  layout then floats up with the moved element still pinned. One rule. */
+ *  is pushed DOWN just enough to clear, and everything THOSE then overlap goes
+ *  the same way. Nothing else moves. One rule. */
 export function move(
   items: readonly GridItem[],
   id: string,
@@ -245,7 +248,7 @@ export function move(
   const w = Math.min(Math.max(1, int(target.cell.w, 1)), cols);
   const h = tall(target.cell.h);
   const cell: Cell = { x: clamp(int(to.x, 0), 0, cols - w), y: row(to.y), w, h };
-  return compact(withCell(items, id, cell), cols, id);
+  return pushDown(withCell(items, id, cell), cols, id);
 }
 
 /** identical, with the new span: w clamps into the columns and into SPAN_MAX,
@@ -257,7 +260,40 @@ export function resize(items: readonly GridItem[], id: string, span: Span, colum
   const w = clamp(int(span.w, 1), 1, Math.min(cols, SPAN_MAX.w));
   const h = clamp(int(span.h, 1), 1, SPAN_MAX.h);
   const cell: Cell = { x: clamp(int(target.cell.x, 0), 0, cols - w), y: row(target.cell.y), w, h };
-  return compact(withCell(items, id, cell), cols, id);
+  return pushDown(withCell(items, id, cell), cols, id);
+}
+
+/** the gesture's whole collision rule (D3): the held element stands where the
+ *  hand left it, every element it now intersects drops to the first row that
+ *  clears its bottom edge, and the walk repeats for whatever THOSE then
+ *  intersect. A hole a gesture opens stands: a widget the hand never touched
+ *  must not travel, which is what "the preview is the commit" costs and what
+ *  made a drag into empty space haul the whole page up behind it.
+ *
+ *  It drains, and the reason is the push itself: nothing is enqueued that did
+ *  not just move STRICTLY down, and ROW_MAX is the ceiling every y is held to,
+ *  so the walk is finite on any document, corrupt ones included. Order is
+ *  (y, x, id), so the answer is the input's alone. */
+function pushDown(items: readonly GridItem[], cols: number, pinned: string): GridItem[] {
+  const cells = new Map<string, Cell>();
+  for (const it of items) cells.set(it.id, fit(it.cell, cols));
+  const order = ordered(items).map((i) => i.id);
+  const wave: string[] = [pinned];
+  while (wave.length > 0) {
+    const from = wave.shift() as string;
+    const a = cells.get(from);
+    if (!a) continue;
+    for (const other of order) {
+      if (other === pinned || other === from) continue;
+      const b = cells.get(other);
+      if (!b || !overlaps(a, b)) continue;
+      const y = row(a.y + a.h);
+      if (y <= b.y) continue;
+      cells.set(other, { x: b.x, y, w: b.w, h: b.h });
+      wave.push(other);
+    }
+  }
+  return items.map((i) => ({ id: i.id, cell: cells.get(i.id) ?? { ...i.cell } }));
 }
 
 /** the column count changed. Cap every w to `columns`, then re-place every

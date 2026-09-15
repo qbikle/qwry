@@ -196,11 +196,39 @@ describe("the operations", () => {
     expect(out.find((i) => i.id === "e000")!.cell).toEqual({ x: 0, y: 1, w: 2, h: 1 });
   });
 
-  test("a drop into empty space stands where it was dropped", () => {
+  // D3 rule 1, and the finding the maintainer's screen recording carried: a
+  // widget the gesture never touched used to float up into the vacated slot,
+  // so dragging one element down hauled the whole page with it
+  test("a gesture moves ONLY what it touches, and the hole it opens stands", () => {
     const items = doc({ x: 0, y: 0, w: 2, h: 1 }, { x: 0, y: 1, w: 2, h: 1 });
     const out = move(items, "e000", { x: 3, y: 4 }, 5);
     expect(out[0]!.cell).toEqual({ x: 3, y: 4, w: 2, h: 1 });
-    expect(out[1]!.cell).toEqual({ x: 0, y: 0, w: 2, h: 1 });
+    expect(out[1]!.cell).toEqual({ x: 0, y: 1, w: 2, h: 1 });
+  });
+
+  test("a widget off the dragged one's path keeps its cell exactly, through a move and a resize", () => {
+    // the video's own page: a note top-left, a taller one below and right of it
+    const items = doc({ x: 0, y: 0, w: 3, h: 2 }, { x: 3, y: 3, w: 2, h: 3 });
+    const kept = { x: 3, y: 3, w: 2, h: 3 };
+    for (const to of [{ x: 0, y: 2 }, { x: 0, y: 6 }, { x: 0, y: 1 }, { x: 0, y: 0 }])
+      expect(move(items, "e000", to, 5)[1]!.cell).toEqual(kept);
+    expect(resize(items, "e000", { w: 3, h: 3 }, 5)[1]!.cell).toEqual(kept);
+  });
+
+  test("a push is transitive: what the pushed element lands on moves down too", () => {
+    const items = doc(
+      { x: 0, y: 0, w: 2, h: 1 },
+      { x: 0, y: 1, w: 2, h: 1 },
+      { x: 0, y: 2, w: 2, h: 1 },
+      { x: 3, y: 0, w: 2, h: 1 },
+    );
+    const out = move(items, "e000", { x: 0, y: 1 }, 5);
+    expect(out[0]!.cell.y).toBe(1);
+    expect(out[1]!.cell.y).toBe(2);
+    expect(out[2]!.cell.y).toBe(3);
+    // and the one standing beside the column the push ran down never moves
+    expect(out[3]!.cell).toEqual({ x: 3, y: 0, w: 2, h: 1 });
+    expect(noOverlap(out)).toBe(true);
   });
 
   test("a move clamps into the columns instead of refusing", () => {
@@ -364,6 +392,26 @@ describe("the invariants, over random documents", () => {
       }
     }
   });
+});
+
+test("a move over 200 elements is under 2 ms, cascade and all", () => {
+  // the push walk is a queue, not one pass, so the number that matters is a
+  // drop into the MIDDLE of a dense page, where what it lands on lands on
+  // something else. One drag frame is one of these (CanvasGrid previews on the
+  // changed cell), so this is the 16 ms budget's own arithmetic
+  const columns = 10;
+  const items = randomDoc(200, columns);
+  const victim = items[100]!.id;
+  const to = { x: 0, y: 4 };
+  for (let i = 0; i < 5; i++) move(items, victim, to, columns);
+  const runs: number[] = [];
+  for (let i = 0; i < 25; i++) {
+    const t = performance.now();
+    move(items, victim, to, columns);
+    runs.push(performance.now() - t);
+  }
+  runs.sort((a, b) => a - b);
+  expect(runs[12]!).toBeLessThan(2);
 });
 
 test("compact over 200 elements is under 2 ms", () => {

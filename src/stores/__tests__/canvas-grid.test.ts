@@ -610,9 +610,22 @@ describe("moveTo, resizeTo and the engine", () => {
     expect(cellOf(cv, ids[2]).y).toBe(1);
     useCanvas.getState().moveTo(cv, ids[2], { x: 0, y: 0 }, 7);
     expect(cellOf(cv, ids[2])).toEqual({ x: 0, y: 0, w: 3, h: 1 });
-    // the one that stood there is pushed down and floats up to the next row
+    // the one that stood there is pushed down to the next row
     expect(cellOf(cv, ids[0]).y).toBe(1);
+    // and the one it never touched is exactly where it was
+    expect(cellOf(cv, ids[1])).toEqual({ x: 3, y: 0, w: 3, h: 1 });
     expect(noOverlap(blocksOf(cv))).toBe(true);
+  });
+
+  // D3 rule 1, through the commit path the drag ends in: a gesture moves only
+  // what it touches, so the hole a lifted widget leaves stands and a widget
+  // below it never rises into one
+  test("a drop into empty space leaves its hole standing, and moves nothing else", () => {
+    const { cv, ids } = three();
+    useCanvas.getState().moveTo(cv, ids[0], { x: 0, y: 4 }, 7);
+    expect(cellOf(cv, ids[0])).toEqual({ x: 0, y: 4, w: 3, h: 1 });
+    expect(cellOf(cv, ids[1])).toEqual({ x: 3, y: 0, w: 3, h: 1 });
+    expect(cellOf(cv, ids[2])).toEqual({ x: 0, y: 1, w: 3, h: 1 });
   });
 
   test("a resize holds the kind's floor and takes the height off autoH", () => {

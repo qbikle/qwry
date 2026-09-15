@@ -41,6 +41,8 @@ mockIPC(() => undefined);
 const { createGrab, geometrySaid, movedSaid, resizedSaid, sizeLabel, snapCell, snapSpan } = await import(
   "../CanvasGrid"
 );
+const { move: moveCells } = await import("../grid");
+type Drop = import("../CanvasGrid").Drop;
 type GestureKind = import("../CanvasGrid").GestureKind;
 type SlotHandle = import("../CanvasGrid").SlotHandle;
 type Cell = import("../grid").Cell;
@@ -73,7 +75,7 @@ function stage(items: GridItem[]) {
     };
     slots.set(it.id, r);
   }
-  const commits: { kind: GestureKind; id: string; cell: Cell }[] = [];
+  const commits: { kind: GestureKind; id: string; cell: Cell; landed: Map<string, Drop> }[] = [];
   const ghosts: { cell: Cell; instant: boolean }[] = [];
   const said: string[] = [];
   const shown: (GestureKind | null)[] = [];
@@ -90,7 +92,7 @@ function stage(items: GridItem[]) {
       show: (kind) => shown.push(kind),
     },
     live: (text) => said.push(text),
-    commit: (kind, id, cell) => commits.push({ kind, id, cell }),
+    commit: (kind, id, cell, landed) => commits.push({ kind, id, cell, landed: new Map(landed) }),
   });
   return { grab, slots, commits, ghosts, said, shown, labels };
 }
@@ -157,11 +159,59 @@ describe("the gesture's own law", () => {
     // `a` is dropped onto `b`: the engine pushes b down, so b travels
     s.grab.down("move", "a", 0, 0);
     s.grab.move(2 * PITCH, 0);
-    expect(s.slots.get("b")?.travels.length).toBeGreaterThan(0);
+    const travelled = s.slots.get("b")!.travels.length;
+    expect(travelled).toBeGreaterThan(0);
     s.grab.up();
-    // on the release the neighbours are already standing where the document
-    // now puts them, so their offset goes to zero rather than travelling twice
-    expect(last(s.slots.get("b")?.offsets ?? [])).toEqual([0, 0]);
+    // the release writes to NO handle (D3 rule 3): the landing rides the one
+    // commit, so it lands in the same frame as the cell frame it lands on, and
+    // a neighbour already standing in its pushed place has two zeroes to do
+    expect(s.slots.get("b")?.travels).toHaveLength(travelled);
+    expect(s.commits[0].landed.get("b")).toEqual({ dx: 0, dy: 0 });
+  });
+
+  test("the drop is ONE spring: the pointer's own last offset, and nothing else written", () => {
+    const s = stage(PAGE.map((i) => ({ ...i })));
+    s.grab.down("move", "a", 0, 0);
+    // a cell and a half down: the drop snaps two rows, so 60px of the travel
+    // is what the drag layer has left to spring away
+    s.grab.move(0, PITCH + PITCH / 2 + 10);
+    const wrote = s.slots.get("a")!;
+    const offsets = wrote.offsets.length;
+    const travels = wrote.travels.length;
+    s.grab.up();
+    expect(s.commits[0].cell.y).toBe(2);
+    expect(s.commits[0].landed.get("a")).toEqual({ dx: 0, dy: PITCH / 2 + 10 - PITCH });
+    expect(wrote.offsets).toHaveLength(offsets);
+    expect(wrote.travels).toHaveLength(travels);
+  });
+
+  // D3 rule 2: what the placeholder and the pushed neighbours SHOW during the
+  // drag is byte for byte the layout the commit writes. The same pointer path
+  // goes to both, and the two answers are compared cell by cell
+  test("the preview IS the commit, over four pointer paths", () => {
+    for (const [dx, dy] of [
+      [2 * PITCH, 0],
+      [0, 2 * PITCH],
+      [-PITCH, 3 * PITCH],
+      [3 * PITCH, PITCH],
+    ]) {
+      const items = PAGE.map((i) => ({ ...i }));
+      const s = stage(items);
+      s.grab.down("move", "a", 0, 0);
+      for (let i = 1; i <= 8; i++) s.grab.move((dx! * i) / 8, (dy! * i) / 8);
+      const shown = new Map<string, Cell>(items.map((i) => [i.id, i.cell]));
+      shown.set("a", last(s.ghosts)!.cell);
+      for (const [id, r] of s.slots) {
+        const t = last(r.travels);
+        if (id === "a" || !t) continue;
+        const base = items.find((i) => i.id === id)!.cell;
+        shown.set(id, { ...base, x: base.x + t[0] / PITCH, y: base.y + t[1] / PITCH });
+      }
+      s.grab.up();
+      const cell = s.commits[0].cell;
+      for (const it of moveCells(items, "a", { x: cell.x, y: cell.y }, METRICS.columns))
+        expect(shown.get(it.id)).toEqual(it.cell);
+    }
   });
 
   test("Escape writes nothing and everything travels back", () => {
@@ -186,8 +236,13 @@ describe("the gesture's own law", () => {
     expect(s.commits[0].kind).toBe("resize");
     expect(s.commits[0].cell.w).toBe(5);
     expect(s.commits[0].cell.h).toBe(3);
-    // the box goes back to the cell frame on the release
-    expect(last(s.slots.get("b")?.sizes ?? [])).toEqual([null, null]);
+    // and the box the corner stopped at rides the commit, so it springs to the
+    // span over the cell frame that same frame rather than snapping to it
+    expect(s.commits[0].landed.get("b")).toEqual({
+      dx: 0,
+      dy: 0,
+      from: { w: 4 * 108 + 3 * 12 + PITCH, h: 2 * 108 + 12 + PITCH },
+    });
     expect(s.said[0]).toBe(resizedSaid("b", s.commits[0].cell));
   });
 
