@@ -5,6 +5,12 @@ import { headToken } from "../editor/statements";
 import { terminatedSessions } from "./sessionFlags";
 import { dropTabQueryScroll } from "../grid/scrollMemory";
 import { skey, useConnections } from "./connections";
+import {
+  humanSessionError,
+  isDeathStrip,
+  isSessionDeath,
+  noteForgottenStamp,
+} from "./liveSession";
 import { isTabVisible, useTabs } from "./tabs";
 import { copyCueShow } from "../lib/copyCue";
 
@@ -469,10 +475,9 @@ export const useResults = create<ResultsState>((set, get) => ({
           .catch((e2) => console.error("history_add failed", e2));
       }
       writeTab(set, tabId, (t) => ({
-        globalError: t.statements.some((st) => st.error) ? null : err,
+        globalError: t.statements.some((st) => st.error) ? null : humanSessionError(err),
       }));
-      const msg = (err?.message ?? "").toLowerCase();
-      if (/connection|closed|communicat|broken pipe|reset|terminat|no such session/.test(msg)) {
+      if (isSessionDeath(err?.message)) {
         // reap the EXECUTED session only; sibling tabs on the profile keep
         // their live sessions (flipping the whole profile contradicted the
         // per-session reaping in markDisconnected)
@@ -519,9 +524,10 @@ export const useResults = create<ResultsState>((set, get) => ({
       // tab's sibling sessions on other profiles
       const profileId = entry?.[0].split("::")[0] ?? get().executedProfileId;
       const msg = (e as { message?: string }).message ?? String(e);
-      // the session is already gone: nothing to terminate; just forget it so
-      // the next run builds a fresh one
-      if (msg.includes("no such session")) {
+      // the session is already gone: nothing to terminate (a dead transport
+      // carries no pg_terminate_backend either); just forget it so the next
+      // run builds a fresh one
+      if (isSessionDeath(msg)) {
         if (profileId) conns.markDisconnected(profileId, sessionId);
         return;
       }
@@ -572,6 +578,44 @@ useTabs.subscribe((s, p) => {
     }
     prevTabIds = ids;
   }
+});
+
+/** heal reached this tab: a strip a dead session wrote is stale and comes
+ * down. Every other one (a syntax error, a real constraint failure, a "0
+ * rows" note) is still true and stays exactly where it is. */
+export function clearDeathStrip(tabId: string) {
+  const t = useResults.getState().byTab[tabId];
+  if (!t?.globalError || !isDeathStrip(t.globalError.message, t.globalError.code)) return;
+  writeTab(useResults.setState, tabId, { globalError: null });
+}
+
+// A session the app forgot is a handle nobody may send again. Forgetting
+// happens in five branches of connections.ts and the stamp used to survive
+// all five, so the next send addressed a session the app had already dropped
+// and the backend answered with NoSession under a green dot. ONE mechanism
+// here covers every branch: whatever leaves tabSessions takes the stamps that
+// named it with it. Rows, statements and the profile stamp stay — the data is
+// real; only the dead handle goes.
+useConnections.subscribe((s, p) => {
+  if (s.tabSessions === p.tabSessions) return;
+  const live = new Set(Object.values(s.tabSessions));
+  const gone = new Set(Object.values(p.tabSessions).filter((sid) => !live.has(sid)));
+  if (gone.size === 0) return;
+  useResults.setState((rs) => {
+    const byTab = { ...rs.byTab };
+    let changed = false;
+    for (const [tabId, t] of Object.entries(rs.byTab)) {
+      if (!t.executedSessionId || !gone.has(t.executedSessionId)) continue;
+      // the dead id outlives the stamp by one step: the commit path asks
+      // whether it died holding a transaction (liveSession.liveSessionFor)
+      noteForgottenStamp(tabId, t.executedSessionId);
+      byTab[tabId] = { ...t, executedSessionId: null };
+      changed = true;
+    }
+    if (!changed) return rs;
+    const mirror = byTab[rs.active];
+    return mirror ? { byTab, executedSessionId: mirror.executedSessionId } : { byTab };
+  });
 });
 
 // driver-tracked transaction state → the tx chip / amber tab dot. The driver

@@ -29,6 +29,7 @@ Plan docs: [`ROADMAP_v0.5.md`](./ROADMAP_v0.5.md) (v0.3 → v0.5 push, complete)
 - **v0.9.11-truecolor → v0.9.13-lighthouse** (07-23/24): stable-chrome law, Match Connection theming, per-connection themes + Switch species, auto-update over GitHub Releases (inert until the repo is public).
 - **Session 14** (08-20): ⌘Z in the JSON editor, tab scroll restore, selection-tinted headers, session self-heal across sleep/tunnel death, inline rebuilt-session consent + ⇧⌘R.
 - **Session 15** (08-21/23, v0.9.7-alpha.4): record-view JSON scroll + pencil affordance, ⇧⌘R "the rebuild" choreography, principal-review fixes.
+- **Session 16** (09-16): session identity — one resolver (`liveSessionFor` / `withLiveSession`, `src/stores/liveSession.ts`) replacing edits.ts's commit-only re-resolve, a dead tab session's stamp cleared everywhere it's held the instant any store learns the session is gone, heal re-stamps the active tab and takes down only the strips a dead session wrote. Closes the maintainer's `no such session` strip standing under a green connection dot that ⇧⌘R could not touch.
 
 ## Open
 

@@ -695,13 +695,11 @@ async function healInner(
   if (!healed) return { ok: false, rebuilt };
   healArmed.add(profileId);
   replenishSpare(profileId);
-  // eager active-tab warm: back at the laptop, the first ⌘↩/⌘S pays no
-  // handshake. Other tabs rebuild lazily off the fresh spare.
-  const { useTabs } = await import("./tabs");
-  const tabId = useTabs.getState().activeId;
-  if (tabId && get().activeProfileId === profileId && !get().tabSessions[skey(profileId, tabId)]) {
-    void get().ensureTabSession(profileId, tabId);
-  }
+  // what the heal rebuilt has to reach the tabs: the active tab's stamp is
+  // re-resolved (and warmed, as the old eager ensureTabSession did) and the
+  // strips a dead session wrote come down. Dynamic import: the resolver
+  // reaches results/browser/edits, and this store stays under all three.
+  void import("./liveSession").then(({ afterHeal }) => afterHeal(profileId));
   return { ok: true, rebuilt };
 }
 
@@ -743,6 +741,20 @@ export async function endTabTx(key: string, end: TxEnd): Promise<boolean> {
   }
   useConnections.getState().setTxTab(key, false);
   return true;
+}
+
+/** a session to run a SIDE query on for a profile: the PRIMARY first (a side
+ * query on a tab session is what ⌘. cancels, and it queues behind the tab's
+ * own work), any live tab session when the primary is gone. The Structure
+ * stats, the browse estimate, the exact count and the grid's side queries all
+ * asked this in the same four lines, four times (DESIGN rule 15). */
+export function anySessionOn(profileId: string | null | undefined): string | undefined {
+  if (!profileId) return undefined;
+  const s = useConnections.getState();
+  return (
+    s.sessions[profileId] ??
+    Object.entries(s.tabSessions).find(([k]) => k.startsWith(`${profileId}::`))?.[1]
+  );
 }
 
 /** open explicit transactions across a profile's tab sessions */

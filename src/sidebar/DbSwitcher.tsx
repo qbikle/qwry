@@ -2,9 +2,8 @@ import { useState } from "react";
 import { motion } from "motion/react";
 import { Check, ChevronDown } from "lucide-react";
 import { menuIn } from "../design/springs";
-import { useConnections } from "../stores/connections";
+import { anySessionOn, useConnections } from "../stores/connections";
 import { useRefreshFx } from "../stores/refreshFx";
-import { useResults } from "../stores/results";
 import { useTabs } from "../stores/tabs";
 import * as ipc from "../ipc/commands";
 import { DbGlyph } from "./DbGlyph";
@@ -33,15 +32,12 @@ export function DbSwitcher({ profileId, dbname, name }: { profileId: string; dbn
     setErr(null);
     // prefer the PRIMARY session: opening the switcher must not mint (or
     // consume the pre-warmed spare for) a tab session just to run one
-    // SELECT datname. Fallbacks: the last-run session (only if it belongs to
-    // THIS profile), then a tab session as the true last resort.
+    // SELECT datname. Any live tab session of the profile is the fallback,
+    // and minting one is the last resort.
     const conn = useConnections.getState();
-    const res = useResults.getState();
     const tabId = useTabs.getState().activeId;
     const sid =
-      conn.sessions[profileId] ??
-      (res.executedProfileId === profileId ? res.executedSessionId : null) ??
-      (tabId ? await conn.ensureTabSession(profileId, tabId) : null);
+      anySessionOn(profileId) ?? (tabId ? await conn.ensureTabSession(profileId, tabId) : null);
     if (!sid) {
       setErr("not connected");
       return;

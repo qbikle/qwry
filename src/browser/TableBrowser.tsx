@@ -13,7 +13,7 @@ import {
   useBrowser,
   type Filter,
 } from "../stores/browser";
-import { useConnections } from "../stores/connections";
+import { anySessionOn, useConnections } from "../stores/connections";
 import { useSchema, type EnumInfo, type TableInfo } from "../stores/schema";
 import * as ipc from "../ipc/commands";
 import { useResults } from "../stores/results";
@@ -623,13 +623,7 @@ function BrowseFooter({
   const [est, setEst] = useState<string | null>(null);
   useEffect(() => {
     setEst(null);
-    const conn = useConnections.getState();
-    const pid = conn.activeProfileId;
-    // primary preferred; any live tab session works (primary can be dead)
-    const sid = pid
-      ? (conn.sessions[pid] ??
-        Object.entries(conn.tabSessions).find(([k]) => k.startsWith(`${pid}::`))?.[1])
-      : undefined;
+    const sid = anySessionOn(activeProfileId);
     if (!sid) return;
     let stale = false;
     const lit = (v: string) => `'${v.replace(/'/g, "''")}'`;

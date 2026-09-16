@@ -16,6 +16,7 @@ import { draftHasContent, useBrowser, type DraftCell } from "../stores/browser";
 import { useTabs } from "../stores/tabs";
 import { qualify, qi } from "../lib/sqlIdent";
 import { useConnections } from "../stores/connections";
+import { humanSessionError, liveSessionFor, withLiveSession } from "../stores/liveSession";
 import { useInspector } from "../stores/inspector";
 import { useSchema, type ColumnInfo } from "../stores/schema";
 import { RecordView } from "./RecordView";
@@ -1940,13 +1941,8 @@ export function Grid({
     // capture the result's OWN context BEFORE any await: a tab switch during
     // the confirm modal / delete round trip must not aim the re-run or the
     // undo offer at another tab (same capture discipline as edits.ts commit())
-    const {
-      active: tabId,
-      executedSql,
-      executedSessionId: sessionId,
-      executedProfileId,
-    } = useResults.getState();
-    if (!sessionId || !executedSql) return;
+    const { active: tabId, executedSql, executedProfileId } = useResults.getState();
+    if (!tabId || !executedSql) return;
     const tableName = map.tables[deletableTableOid] ?? "table";
     const n = locators.length;
     const preview = locators
@@ -1978,7 +1974,12 @@ export function Grid({
         ? useSchema.getState().snapshots[executedProfileId]
         : undefined;
       const mapHint = buildEditMapHint(map, resSnap);
-      const outcome = await ipc.deleteRows(sessionId, executedSql, statement.index, deletableTableOid, locators, mapHint);
+      // the sid comes back with the outcome: the undo offer is stamped with
+      // the session that actually committed, which a rebuild can have changed
+      const { sid, outcome } = await withLiveSession(tabId, async (sessionId) => ({
+        sid: sessionId,
+        outcome: await ipc.deleteRows(sessionId, executedSql, statement.index, deletableTableOid, locators, mapHint),
+      }));
       if (!outcome.committed) {
         // backend rolled the batch back (a locator matched ≠ 1 row): nothing changed
         const msgs = [...new Set(outcome.results.filter((r) => !r.ok).map((r) => r.message).filter(Boolean))];
@@ -1997,12 +1998,10 @@ export function Grid({
       }
       if (executedProfileId) {
         const { refreshUndoOffer } = await import("../stores/edits");
-        void refreshUndoOffer(tabId, sessionId, executedProfileId);
+        void refreshUndoOffer(tabId, sid, executedProfileId);
       }
     } catch (e) {
-      useResults.setState({
-        globalError: { message: (e as { message?: string }).message ?? String(e), position: null, code: null },
-      });
+      useResults.setState({ globalError: humanSessionError(e) });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readOnly, sel.rect, deletableTableOid, editMap, rows, statement.index, statement.truncated, rowAt]);
@@ -2036,25 +2035,30 @@ export function Grid({
       )
       .slice(0, 8); // context menus shouldn't fire a query storm
     if (inbound.length === 0) return;
-    const sessionId = useResults.getState().executedSessionId;
-    if (!sessionId) return;
+    const tabId = useResults.getState().active;
+    if (!tabId) return;
     const lit = `'${value.replace(/'/g, "''")}'`;
     let stale = false;
-    for (const k of inbound) {
-      const key = `${k.src_schema}.${k.src_table}.${k.src_cols[0]}`;
-      const sql = `EXPLAIN (FORMAT JSON) SELECT 1 FROM ${qualify(k.src_schema, k.src_table)} WHERE ${qi(k.src_cols[0])} = ${lit}`;
-      void ipc
-        .execute(sessionId, sql)
-        .then((out) => {
-          if (stale) return;
-          const txt = out.statements[0]?.rows[0]?.[0];
-          const n = txt
-            ? (JSON.parse(txt) as { Plan?: { "Plan Rows"?: number } }[])[0]?.Plan?.["Plan Rows"]
-            : undefined;
-          if (typeof n === "number") setFkEstimates((prev) => ({ ...prev, [key]: n }));
-        })
-        .catch(() => {});
-    }
+    // one resolve for the whole fan-out: a menu that opens on a tab whose
+    // session died estimates on the rebuilt one instead of printing nothing
+    void liveSessionFor(tabId).then((live) => {
+      if (stale || !live) return;
+      for (const k of inbound) {
+        const key = `${k.src_schema}.${k.src_table}.${k.src_cols[0]}`;
+        const sql = `EXPLAIN (FORMAT JSON) SELECT 1 FROM ${qualify(k.src_schema, k.src_table)} WHERE ${qi(k.src_cols[0])} = ${lit}`;
+        void ipc
+          .execute(live.sid, sql)
+          .then((out) => {
+            if (stale) return;
+            const txt = out.statements[0]?.rows[0]?.[0];
+            const n = txt
+              ? (JSON.parse(txt) as { Plan?: { "Plan Rows"?: number } }[])[0]?.Plan?.["Plan Rows"]
+              : undefined;
+            if (typeof n === "number") setFkEstimates((prev) => ({ ...prev, [key]: n }));
+          })
+          .catch(() => {});
+      }
+    });
     return () => {
       stale = true;
     };

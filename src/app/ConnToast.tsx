@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { TriangleAlert, X } from "lucide-react";
 import { popIn } from "../design/springs";
 import { useConnections } from "../stores/connections";
+import { humanCloseReason } from "../stores/liveSession";
 
 /** global toast for connect failures (auth, network): shows on any view,
  * including the dashboard where the inline editor error isn't mounted */
@@ -85,7 +86,7 @@ export function ConnToast() {
               Connection lost
               {closedProfile ? ` · ${closedProfile.name || closedProfile.host}` : ""}
             </div>
-            <div className="conn-toast-msg">{closed.reason}</div>
+            <div className="conn-toast-msg">{humanCloseReason(closed.reason)}</div>
           </div>
           <button className="conn-toast-close iconbtn" title="Dismiss" onClick={clearClosedToast}>
             <X size={14} />

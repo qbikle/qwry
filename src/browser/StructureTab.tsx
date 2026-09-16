@@ -10,7 +10,7 @@ import { Check, Copy } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import * as ipc from "../ipc/commands";
 import type { TableStats } from "../ipc/types";
-import { useConnections } from "../stores/connections";
+import { anySessionOn, useConnections } from "../stores/connections";
 import { copyCueError } from "../lib/copyCue";
 import { hintLineFor, knowledgeTarget, parseHintLine, saveHintLine, useKnowledge } from "../stores/knowledge";
 import type { TableInfo } from "../stores/schema";
@@ -33,18 +33,6 @@ const CONSTRAINT_KIND: Record<string, string> = {
 /** the way in, and the one place this feature says its name (DESIGN rule 11) */
 const PLACEHOLDER = "Hint for Ask…";
 
-
-/** any live session on the active profile (primary preferred; it can be
- * dead while tab sessions live on) */
-function pickSession(): string | undefined {
-  const conn = useConnections.getState();
-  const pid = conn.activeProfileId;
-  if (!pid) return undefined;
-  return (
-    conn.sessions[pid] ??
-    Object.entries(conn.tabSessions).find(([k]) => k.startsWith(`${pid}::`))?.[1]
-  );
-}
 
 /** The hint line (A2 item 2): the slot where this view already printed the
  * live COMMENT, made editable. Three faces in one text and the tier says whose
@@ -219,7 +207,7 @@ export function StructureTab({ table }: { table: TableInfo }) {
   useEffect(() => {
     setStats(null);
     setError(null);
-    const sid = pickSession();
+    const sid = anySessionOn(activeProfileId);
     if (!sid) {
       setError("not connected");
       return;

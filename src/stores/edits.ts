@@ -4,7 +4,14 @@ import * as ipc from "../ipc/commands";
 import type { EditabilityMap, EditMapHint, EditOutcome, RowEdit } from "../ipc/types";
 import { buildEditMapHint, tableIdentityHints } from "../lib/editHints";
 import { useResults } from "./results";
-import { sessionDiedWithTx, skey, useConnections } from "./connections";
+import { skey, useConnections } from "./connections";
+import {
+  humanSessionError,
+  isDeathStrip,
+  liveSessionFor,
+  withLiveSession,
+  type RebuiltKind,
+} from "./liveSession";
 import { useSchema, type SchemaSnapshot } from "./schema";
 
 export interface PendingEdit {
@@ -102,63 +109,6 @@ interface EditsState extends TabEdits {
   clearUndoOffer: () => void;
 }
 
-function sessionAndSql(): { sessionId: string; sql: string } | null {
-  const res = useResults.getState();
-  const sessionId = res.executedSessionId;
-  if (!sessionId || !res.executedSql) return null;
-  return { sessionId, sql: res.executedSql };
-}
-
-/** how a resolved session relates to the one the result ran on: null = same
- * session; "info" = rebuilt (autocommit result, the verified pipeline is the
- * real safety); "tx" = rebuilt AND the dead session held an open transaction
- * (its staged reality is gone — this deserves a real warning) */
-export type RebuiltKind = "info" | "tx" | null;
-
-/** resolve a LIVE session for commit/preview. The result's executedSessionId
- * may be dead (network drop, dev rebuild): re-resolve a session ON THE
- * PROFILE THE RESULT CAME FROM. Never the active rail selection: clicking
- * another connected profile (staging→prod!) must not redirect a ⌘S commit
- * to a different database.
- * Consent for a rebuilt session is the PREVIEW SURFACE's concern now: this
- * returns what happened and the modal says it inline. The old confirmDanger
- * here stacked on the open preview (read as buggy, and its Enter=Cancel ate
- * the commit the user was mid-keystroke on). */
-async function liveSessionId(tabId: string): Promise<{ sid: string; rebuilt: RebuiltKind } | null> {
-  const conn = useConnections.getState();
-  const res = useResults.getState();
-  const tab = res.byTab[tabId];
-  const profileId = tab?.executedProfileId ?? null;
-  if (profileId && tabId) {
-    const sid = await conn.ensureTabSession(profileId, tabId);
-    if (sid) {
-      let rebuilt: RebuiltKind = null;
-      // a REBUILT session gets stamped back: pg-notice routing keys on
-      // executedSessionId, so trigger NOTICEs raised during a commit on the
-      // new session would otherwise match no tab and vanish
-      if (tab && tab.executedSessionId !== sid) {
-        rebuilt =
-          tab.executedSessionId && sessionDiedWithTx(tab.executedSessionId) ? "tx" : "info";
-        useResults.setState((st) => {
-          const cur = st.byTab[tabId];
-          if (!cur) return st;
-          const next = { ...cur, executedSessionId: sid };
-          return {
-            byTab: { ...st.byTab, [tabId]: next },
-            ...(st.active === tabId ? { executedSessionId: sid } : {}),
-          };
-        });
-      }
-      return { sid, rebuilt };
-    }
-  }
-  // no session could be resolved. The old fallback handed back the DEAD
-  // executedSessionId, and the backend's NoSession error surfaced as a
-  // baffling red strip under a green dot; an honest null reads as
-  // "no live connection" instead.
-  return null;
-}
-
 /** ctid row-movement guard: rows move under UPDATE/VACUUM FULL, so a ctid
  * locator alone could hit a different row: pin identity with the row's old
  * values (every same-table column in the result; truncated cells excluded,
@@ -254,7 +204,7 @@ const isSchemaErr = (e: unknown): boolean => {
   return typeof code === "string" && code.startsWith("42");
 };
 
-const errMsg = (e: unknown) => (e as { message?: string }).message ?? String(e);
+const errMsg = (e: unknown) => humanSessionError(e).message;
 
 /** schema snapshot of the profile a tab's result came from (hint source) */
 function snapshotFor(tabId: string): SchemaSnapshot | undefined {
@@ -269,9 +219,12 @@ async function refetchMap(
   stmtIndex: number,
 ): Promise<EditabilityMap | null> {
   const rt = useResults.getState().byTab[tabId];
-  if (!rt?.executedSessionId || !rt.executedSql) return null;
+  const sql = rt?.executedSql;
+  if (!sql) return null;
   try {
-    const map = await ipc.editability(rt.executedSessionId, rt.executedSql, stmtIndex, null);
+    const map = await withLiveSession(tabId, (sid) =>
+      ipc.editability(sid, sql, stmtIndex, null),
+    );
     writeEdits(set, tabId, (t) => ({ maps: { ...t.maps, [stmtIndex]: map } }));
     return map;
   } catch {
@@ -397,15 +350,14 @@ export const useEdits = create<EditsState>((set, get) => ({
   ensureMap: (stmtIndex) => {
     const tabId = get().active;
     if ((get().byTab[tabId] ?? blankEdits()).maps[stmtIndex]) return;
-    const ctx = sessionAndSql();
-    if (!ctx) return;
+    const sql = useResults.getState().byTab[tabId]?.executedSql;
+    if (!sql) return;
     writeEdits(set, tabId, (t) => ({ maps: { ...t.maps, [stmtIndex]: "loading" } }));
     // snapshot identity hints let the backend skip its pg_class trip; the
     // map lands after ONE round trip (the prepare)
     const snap = snapshotFor(tabId);
     const hints = snap ? tableIdentityHints(snap) : null;
-    ipc
-      .editability(ctx.sessionId, ctx.sql, stmtIndex, hints)
+    void withLiveSession(tabId, (sid) => ipc.editability(sid, sql, stmtIndex, hints))
       .then((map) => writeEdits(set, tabId, (t) => ({ maps: { ...t.maps, [stmtIndex]: map } })))
       .catch(() =>
         writeEdits(set, tabId, (t) => ({ maps: { ...t.maps, [stmtIndex]: "unavailable" } })),
@@ -422,7 +374,9 @@ export const useEdits = create<EditsState>((set, get) => ({
       for (const k of Object.keys(t.maps)) {
         const idx = Number(k);
         if (t.maps[idx] === "loading") continue;
-        if (!res.byTab[tabId]?.executedSessionId) continue;
+        // the SQL is what a refetch needs; the session it runs on is
+        // resolved live inside refetchMap
+        if (!res.byTab[tabId]?.executedSql) continue;
         void refetchMap(set, tabId, idx);
       }
     }
@@ -511,7 +465,7 @@ export const useEdits = create<EditsState>((set, get) => ({
     // "the app is sluggish". With a warm mapping the preview itself is
     // generated with ZERO server round trips.
     set({ preview: { statements: [], error: null, loading: true } });
-    const live = await liveSessionId(tabId);
+    const live = await liveSessionFor(tabId);
     if (!live) {
       set({ preview: { statements: [], error: "no live connection" } });
       return;
@@ -577,7 +531,7 @@ export const useEdits = create<EditsState>((set, get) => ({
     // a rebuild detected HERE (between preview and Enter) restamps silently:
     // the consent surface is the preview chip, and the verified pipeline
     // refuses any row that moved regardless of which session carries it
-    const live = await liveSessionId(tabId);
+    const live = await liveSessionFor(tabId);
     if (!live) {
       set({ committing: false, lastError: "no live connection" });
       return;
@@ -795,6 +749,17 @@ export const useEdits = create<EditsState>((set, get) => ({
 
   clearUndoOffer: () => setUndoOffer(null),
 }));
+
+/** heal reached these tabs: a lastError a dead session wrote is stale. It is
+ * global (one commit at a time), so it counts only while the tab that wrote
+ * it is the one on screen; a constraint failure or a rolled-back batch is
+ * still true and stays (liveSession.afterHeal). */
+export function clearDeathStrip(tabIds: string[]) {
+  const s = useEdits.getState();
+  if (s.lastError && tabIds.includes(s.active) && isDeathStrip(s.lastError)) {
+    useEdits.setState({ lastError: null });
+  }
+}
 
 export const editKey = keyOf;
 

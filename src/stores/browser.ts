@@ -3,7 +3,8 @@ import type { TableInfo } from "./schema";
 import { useSchema } from "./schema";
 import { useResults } from "./results";
 import { useTabs } from "./tabs";
-import { useConnections } from "./connections";
+import { anySessionOn, useConnections } from "./connections";
+import { humanSessionError, isDeathStrip, withLiveSession } from "./liveSession";
 import * as ipc from "../ipc/commands";
 import {
   browseCountSql,
@@ -539,13 +540,7 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     // rail-bound count would print another database's number directly
     // beneath the origin's rows (same rule as loadMore/import binding)
     const pid = useResults.getState().byTab[tabId]?.executedProfileId ?? conn.activeProfileId;
-    // primary preferred (never queued behind the tab session's own page
-    // fetches); any live tab session on that profile works as fallback:
-    // same rule as the planner-estimate probe
-    const sid = pid
-      ? (conn.sessions[pid] ??
-        Object.entries(conn.tabSessions).find(([k]) => k.startsWith(`${pid}::`))?.[1])
-      : undefined;
+    const sid = anySessionOn(pid);
     if (!sid) {
       writeBrowse(set, tabId, { countError: "origin connection not available" });
       return;
@@ -575,7 +570,7 @@ export const useBrowser = create<BrowserState>((set, get) => ({
         tabId,
         code === "57014"
           ? { counting: false }
-          : { counting: false, countError: (e as { message?: string }).message ?? String(e) },
+          : { counting: false, countError: humanSessionError(e).message },
       );
     } finally {
       if (countSessions.get(tabId)?.epoch === epoch) countSessions.delete(tabId);
@@ -651,10 +646,8 @@ export const useBrowser = create<BrowserState>((set, get) => ({
           return;
         }
       }
-      const sessionId = tabRes.executedSessionId;
-      const pageSql =
-        pinned && sessionId ? pageSqlFromLastRow(table, filters, rawWhere, pinned, stmt) : null;
-      if (!pageSql || !sessionId) {
+      const pageSql = pinned ? pageSqlFromLastRow(table, filters, rawWhere, pinned, stmt) : null;
+      if (!pageSql) {
         // Offset fallback for anything keyset can't serve safely (see
         // keysetKeys / pageSqlFromLastRow): re-run from the jump offset with
         // a grown LIMIT (the pre-keyset behavior). O(n²) and, without a
@@ -667,17 +660,22 @@ export const useBrowser = create<BrowserState>((set, get) => ({
         return;
       }
       pageInflight.add(tabId);
-      void fetchPage(sessionId, pageSql)
-        .then((page) => {
-          if (page) appendPage(set, tabId, sessionId, stmt.rows, page);
+      // the sid comes back with the page: a rebuilt session is the one
+      // appendPage's identity check has to be measured against
+      void withLiveSession(tabId, async (sid) => ({ sid, page: await fetchPage(sid, pageSql) }))
+        .then(({ sid, page }) => {
+          if (page) appendPage(set, tabId, sid, stmt.rows, page);
         })
         .catch((e) => {
           const code = (e as { code?: string | null } | null)?.code ?? null;
           // user-initiated cancels aren't a broken paginator; don't latch
           if (code === "57014" || code === "57P01") return;
-          const message = `couldn't load more rows: ${
-            (e as { message?: string }).message ?? String(e)
-          }. Refresh to retry`;
+          // a dead session already says what to do about itself; only a real
+          // paginator failure needs the retry sentence after it
+          const err = humanSessionError(e);
+          const message = `couldn't load more rows: ${err.message}${
+            isDeathStrip(err.message, err.code) ? "" : ". Refresh to retry"
+          }`;
           writeBrowse(set, tabId, { paginationBroken: message });
           // surface on the tab's results banner (globalError renders above
           // the loaded rows without replacing them)
@@ -714,18 +712,20 @@ export const useBrowser = create<BrowserState>((set, get) => ({
 
   insertRow: async (cols, values, tabId = get().active, table = get().table ?? undefined) => {
     if (!table) return { ok: false, error: "no table open" };
-    // insert on the same session the browse query ran on (shares the tab txn)
+    // the tab's own session, so the insert shares its transaction (resolved
+    // live: the browse ran minutes ago and that session may be gone)
     const rt = useResults.getState().byTab[tabId];
-    const sessionId = rt?.executedSessionId ?? null;
-    if (!sessionId) return { ok: false, error: "not connected" };
     try {
-      await ipc.insertRow(sessionId, table.schema, table.name, cols, values);
+      await withLiveSession(tabId, (sid) =>
+        ipc.insertRow(sid, table.schema, table.name, cols, values),
+      );
       // reload so the new row shows, reading the ORIGIN the INSERT landed on
-      // (entry-time executedProfileId: the profile that owns sessionId)
+      // (entry-time executedProfileId: the profile every session of this tab
+      // belongs to, rebuilt or not)
       get().reloadAfterWrite(tabId, rt?.executedProfileId ?? null);
       return { ok: true };
     } catch (e) {
-      return { ok: false, error: (e as { message?: string }).message ?? String(e) };
+      return { ok: false, error: humanSessionError(e).message };
     }
   },
 
@@ -830,6 +830,20 @@ async function commitDraftInner(
     if (res.ok) writeBrowse(set, tabId, { draftRow: null, draftError: null });
     else writeBrowse(set, tabId, { draftError: res.error ?? "insert failed" });
   }
+}
+
+/** heal reached this tab: the strips a dead session wrote come down, and
+ * nothing else does — a NOT NULL refusal, a dropped-column draft refusal and
+ * a count that returned nothing are all still true (liveSession.afterHeal). */
+export function clearDeathStrips(tabId: string) {
+  const t = useBrowser.getState().byTab[tabId];
+  if (!t) return;
+  const patch: Partial<BrowseTab> = {};
+  if (isDeathStrip(t.paginationBroken)) patch.paginationBroken = null;
+  if (isDeathStrip(t.draftError)) patch.draftError = null;
+  if (isDeathStrip(t.countError)) patch.countError = null;
+  if (Object.keys(patch).length === 0) return;
+  writeBrowse(useBrowser.setState, tabId, patch);
 }
 
 // follow the editor's active tab (useTabs owns the canonical active tab id)

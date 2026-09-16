@@ -98,3 +98,22 @@ from the maintainer, say so and cite it; the pushback is wanted.
     rule 14), and a successful run's footer went on miscounting because no
     one had complained about that one yet. Read the count once, at the seam
     where it arrives, and hand that value to every slot.
+14. **A forgotten handle is a fact every store must hear, not a detail the
+    next caller re-derives.** The connection dot tracks the PRIMARY session,
+    so five separate paths could drop a TAB session's id (a lone tab death,
+    a per-profile wipe, an invalidation, a tab close, heal's own reaping)
+    while the dot stayed green and told nobody. The stamp naming that dead
+    id (`executedSessionId`) sat untouched through all five, and ten call
+    sites handed it to the backend raw. The maintainer's report was the
+    proof: browsing a table, the strip read `no such session` under a green
+    dot, and ⇧⌘R, which only re-tests connections, could not touch it,
+    because nothing about that command spoke to a tab's stamp. The id a
+    backend hands back is not yours to keep forever: it is on loan for as
+    long as that session lives, and the instant your own store learns the
+    session is gone, every place holding the id must hear it, not just the
+    one path that happened to notice first. A commit-time-only re-resolve
+    (`edits.ts`'s prior `liveSessionId`) fixed the write path and left every
+    read behind it exposed: the half-measure this wave replaces with one
+    resolver sitting on the only door a backend call goes through, so death
+    clears the handle everywhere it is held and a heal re-stamps it, rather
+    than waiting on a second reviewer to find the next site six months on.

@@ -15,6 +15,7 @@ import { buildEditMapHint } from "../lib/editHints";
 import { copyCue } from "../lib/copyCue";
 import { ctidGuardPairs, editKey, useEdits } from "../stores/edits";
 import { useInspector } from "../stores/inspector";
+import { humanSessionError, withLiveSession } from "../stores/liveSession";
 import { useResults } from "../stores/results";
 import { useSchema } from "../stores/schema";
 import { Kbd } from "../design/Kbd";
@@ -150,9 +151,9 @@ export function Inspector() {
     const res = useResults.getState();
     const stmt = res.statements.find((x) => x.index === target.stmtIndex);
     if (!stmt) return;
-    const sessionId = res.executedSessionId;
+    const tabId = res.active;
     const sql = res.executedSql;
-    if (!sessionId || !sql) return;
+    if (!tabId || !sql) return;
     // server-side SQL generation (fetch_cell): real column names via the map
     // (result aliases don't leak into the WHERE), proper ident quoting,
     // dot-safe table identity; zero catalog trips with a warm mapping
@@ -171,16 +172,15 @@ export function Inspector() {
     const hint = buildEditMapHint(editMap, snap);
     let stale = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
-    ipc
-      .fetchCell(sessionId, sql, target.stmtIndex, target.col, locator, hint)
+    void withLiveSession(tabId, (sid) =>
+      ipc.fetchCell(sid, sql, target.stmtIndex, target.col, locator, hint),
+    )
       .then((v) => {
         if (!stale && k) useInspector.getState().setFullValue(k, v);
       })
       .catch((e) => {
         if (stale) return;
-        useInspector
-          .getState()
-          .setFullValueError((e as { message?: string }).message ?? String(e));
+        useInspector.getState().setFullValueError(humanSessionError(e).message);
         if (!autoRetried.current) {
           autoRetried.current = true;
           retryTimer = setTimeout(() => setRetrySeq((s) => s + 1), 1500);
