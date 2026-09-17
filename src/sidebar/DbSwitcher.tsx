@@ -4,6 +4,7 @@ import { Check, ChevronDown } from "lucide-react";
 import { menuIn } from "../design/springs";
 import { anySessionOn, useConnections } from "../stores/connections";
 import { useRefreshFx } from "../stores/refreshFx";
+import { useRetrying } from "../stores/refresh";
 import { useTabs } from "../stores/tabs";
 import * as ipc from "../ipc/commands";
 import { DbGlyph } from "./DbGlyph";
@@ -29,6 +30,10 @@ export function DbSwitcher({ profileId, dbname, name }: { profileId: string; dbn
   // profile connected cannot hide, so the state it fell to is the state it
   // shows
   const connState = useConnections((s) => s.connState[profileId] ?? "connected");
+  // the glyph says what the crumb dot and the strip say: lost with a retry
+  // coming is amber, lost with nothing coming is red (E2 R6)
+  const retrying = useRetrying(profileId);
+  const state = connState === "connected" ? "" : ` ${connState}`;
 
   const toggle = async () => {
     if (open) {
@@ -95,7 +100,7 @@ export function DbSwitcher({ profileId, dbname, name }: { profileId: string; dbn
   return (
     <div className="dbsw">
       <button
-        className={`sb-dbhead${connState === "connected" ? "" : ` ${connState}`}`}
+        className={`sb-dbhead${state}${retrying ? " retrying" : ""}`}
         onClick={() => void toggle()}
         title={`${name} · ${dbname}`}
         disabled={busy}

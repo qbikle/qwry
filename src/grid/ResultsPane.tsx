@@ -276,12 +276,16 @@ function useCountdown(at: number | null): number | null {
 
 /** the hard tier's heal failed: the rows stay exactly where they are and this
  * strip is the only thing that changes, because the countdown is the one fact
- * the amber glyph and the rail dot cannot carry (E2 R6). */
+ * the amber glyph and the rail dot cannot carry (E2 R6). retrying comes off
+ * the same retryAt this strip already counts down (DESIGN rule 14), so the
+ * strip wears the same danger/warn split the dot and glyph read off
+ * useRetrying instead of a second, independent read of the fact. */
 function LostLine() {
   const at = useRefresh((s) => s.dead?.retryAt ?? null);
   const left = useCountdown(at);
+  const retrying = left !== null;
   return (
-    <span className="status-lost">
+    <span className={`status-lost${retrying ? " retrying" : ""}`}>
       {left === null ? "connection lost" : `connection lost. Retrying in ${left} s`}
     </span>
   );

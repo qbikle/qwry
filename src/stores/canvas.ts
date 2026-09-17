@@ -69,7 +69,7 @@ import {
   disconnect,
   execute,
 } from "../ipc/commands";
-import type { ExecOutcome } from "../ipc/types";
+import type { DriverError, ExecOutcome } from "../ipc/types";
 import {
   CANVAS_BLOCK_ROWS,
   COLUMNS_FALLBACK,
@@ -1256,7 +1256,11 @@ function readSafely(json: string, canvasId: string): { doc: CanvasDoc; migrated:
 }
 
 function firstLine(e: unknown): string {
-  const raw = e instanceof Error ? e.message : String(e);
+  // a DriverError is a plain object, not an Error: the wire is where most of
+  // these come from, and String()ing one prints `[object Object]` at the
+  // reader (LESSONS 9)
+  const m = (e as { message?: unknown } | null)?.message;
+  const raw = typeof m === "string" ? m : String(e);
   return raw.split("\n")[0].trim() || "the comparison failed";
 }
 
@@ -1827,12 +1831,15 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     const block = get().docs[canvasId]?.blocks.find((b) => b.id === blockId);
     const meta = metaOf(get(), canvasId);
     if (!block || !meta || !refetchable(block)) return;
-    const session = anySessionOn(meta.profileId);
-    // nothing to send on: the widget keeps what it holds, which is what a
-    // connection that is not there looks like here (E2 R6)
-    if (!session) return;
     const sql = block.sql;
     try {
+      // nothing to send on. A widget that cannot refetch must not blank as
+      // though it were (R3), and a silent return would have said nothing at
+      // all: this throw settles inside track's own grace, so no skeleton ever
+      // shows, and the reader is told why on the block's own strip, the slot
+      // a refetch that failed on the wire already uses (R6, LESSONS 9)
+      const session = anySessionOn(meta.profileId);
+      if (!session) throw canvasLost();
       const run = runOf(await execute(session, sql));
       if (!run) throw new Error("the statement returned no rows to read");
       get().replaceResult(canvasId, blockId, run);
@@ -2111,6 +2118,15 @@ function runOf(out: ExecOutcome): AgentRun | null {
     ms: stmt.ms,
   };
 }
+
+/** the connection this document sends on is gone. liveSession's own sentence
+ * for a tab, in the canvas's noun and its shape, so the strip a reader lands
+ * on reads like every other lost connection in the app (liveSession.ts LOST) */
+const canvasLost = (): DriverError => ({
+  message: "connection to this canvas was lost. Refresh to reconnect",
+  position: null,
+  code: null,
+});
 
 /** a refetch that did not land, in the status line's own grammar: the driver's
  * own first line, under a lead that says which act failed. Inventing a

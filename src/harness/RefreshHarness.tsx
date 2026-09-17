@@ -20,11 +20,15 @@
 // taken. Without `at` nothing is ever frozen, which is the probe's mode:
 // e2-probe.ts samples the band and the surfaces over real time instead.
 //
-// The two marks are separate on purpose. `data-harness-seeded` goes up when
+// The three marks are separate on purpose. `data-harness-seeded` goes up when
 // the stores hold the state and BEFORE the act fires, so a probe watching for
 // it (Page.addScriptToEvaluateOnNewDocument, so its observer is installed
 // before any page script) can never miss t0; `data-harness-ready` follows the
-// freeze, so a frame never lands between.
+// freeze, so a frame never lands between. `data-harness-t0` carries the
+// instant of the stamp itself, because a sampler only LEARNS of the mark on
+// its next frame while the hard tier's first requests go out some 14 ms after
+// it: anchored on the observation instead of on the instant, a poller one
+// frame late reads a refetch that did go out as one that never happened.
 //
 // Reduced motion is Chrome's own lever (--force-prefers-reduced-motion), never
 // a harness costume: the product reads the media query, so a URL flag here
@@ -60,7 +64,7 @@ import { useCanvas } from "../stores/canvas";
 import { skey, useConnections } from "../stores/connections";
 import { useEdits } from "../stores/edits";
 import { useInspector } from "../stores/inspector";
-import { useRefresh } from "../stores/refresh";
+import { useRefresh, useRetrying } from "../stores/refresh";
 import { useResults } from "../stores/results";
 import { useSchema } from "../stores/schema";
 import { useSettings } from "../stores/settings";
@@ -308,6 +312,7 @@ function Shell({ state, w, tier, at, alive }: Params & { alive: boolean }) {
   // the product shows this dot only while the connection answers, and E2's
   // dead state is the one that stops answering (R6)
   const connState = useConnections((s) => s.connState[E2_PROFILE_ID]);
+  const retrying = useRetrying(E2_PROFILE_ID);
   const crumbs = [
     e2Profile.name,
     e2Profile.dbname,
@@ -323,6 +328,7 @@ function Shell({ state, w, tier, at, alive }: Params & { alive: boolean }) {
         await e2AfterMount(state);
         if (!live) return;
         e2ResetCalls();
+        document.documentElement.dataset.harnessT0 = String(performance.now());
         document.documentElement.dataset.harnessSeeded = "1";
         const fire =
           tier === "hard"
@@ -358,7 +364,9 @@ function Shell({ state, w, tier, at, alive }: Params & { alive: boolean }) {
             <span className="v2-breadcrumb">
               {/* App.tsx's own dot: it wears the connection's state instead of
                   unmounting, so the crumb never moves under the reader (R6) */}
-              <span className={`conn-dot ${connState ?? "disconnected"}`} />
+              <span
+                className={`conn-dot ${connState ?? "disconnected"}${retrying ? " retrying" : ""}`}
+              />
               {crumbs.map((seg, i, arr) => (
                 <span key={i} className="crumb">
                   {i > 0 && <span className="crumb-sep">/</span>}

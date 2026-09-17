@@ -1672,5 +1672,11 @@
   color: var(--fg);
 }
 .status-lost {
+  color: var(--danger);
+}
+/* a retry already scheduled reads as the same warning colour as the dot and
+   the sidebar glyph (v2.css .conn-dot.retrying, .sb-dbhead.retrying): one
+   fact, one colour, in every slot that shows it (DESIGN rule 14) */
+.status-lost.retrying {
   color: var(--warn);
 }

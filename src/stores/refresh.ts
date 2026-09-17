@@ -17,7 +17,7 @@ import { prefersReducedMotion } from "../design/springs";
 import { readOnlyHeads } from "../lib/sqlHeads";
 import { nextRetryAt, requestHeal } from "./heal";
 import { afterHeal } from "./liveSession";
-import { useConnections } from "./connections";
+import { anySessionOn, useConnections } from "./connections";
 import { useResults } from "./results";
 import { useSchema } from "./schema";
 import { useTabs } from "./tabs";
@@ -191,17 +191,35 @@ export const useRefresh = create<RefreshState>((set, get) => ({
 }));
 
 /** the schema, then the tab you are looking at: the order the band crosses
- * them is the order they blank, and track() is what holds each one there */
+ * them is the order they blank, and track() is what holds each one there.
+ *
+ * A heal that answered ok is not yet a connection to send on: what it left
+ * behind is, so the session is resolved here through the one resolver every
+ * other side query uses: the primary first, then any live tab session
+ * (connections.anySessionOn, DESIGN rule 15). With neither there
+ * is nothing on this window that CAN refetch, and a surface that cannot
+ * refetch must not blank as though it were: the run ends on the dead strip
+ * instead (R3, R6). */
 async function surfacePass(profileId: string, g: number): Promise<void> {
-  const sid = useConnections.getState().sessions[profileId];
-  if (sid) {
-    useRefresh
-      .getState()
-      .track("tree", useSchema.getState().fetch(profileId, sid), surfaceEl("tree"));
+  const sid = anySessionOn(profileId);
+  if (!sid) {
+    useRefresh.setState({ dead: { profileId, retryAt: nextRetryAt(profileId) } });
+    return;
   }
+  useRefresh
+    .getState()
+    .track("tree", useSchema.getState().fetch(profileId, sid), surfaceEl("tree"));
   if (gen !== g) return;
   await refreshActiveTab();
 }
+
+/** "lost, retrying" is ONE fact, and the dot, the sidebar glyph and the strip
+ * are three slots that say it (DESIGN rule 14): they read it here, off the
+ * same `retryAt` LostLine counts down, so a connection with a retry coming
+ * wears the warning colour everywhere and --danger is left to the one case
+ * that has nothing coming (R6). */
+export const useRetrying = (profileId: string | null | undefined): boolean =>
+  useRefresh((s) => !!profileId && s.dead?.profileId === profileId && s.dead.retryAt !== null);
 
 /** heal settled on a profile, whoever asked for it. Only a hard refresh whose
  * own heal failed is still waiting on one: its retry cycles the surfaces, and

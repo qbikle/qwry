@@ -254,12 +254,17 @@ describe("refreshWidget", () => {
     expect(blockAt("cmp").face).toBe("diff");
   });
 
-  test("nothing is sent when the connection has no session", async () => {
+  test("nothing is sent when the connection has no session, and the block says why", async () => {
     seed([widget("w")]);
     useConnections.setState({ sessions: {}, tabSessions: {} });
     await refreshAll();
     expect(ran).toEqual([]);
     expect(blockAt("w").rows).toEqual([["old"]]);
+    // the same slot a refetch that failed on the wire writes to: a widget
+    // with nothing to send on is news, not silence (E2 R6, LESSONS 9)
+    expect(blockAt("w").mismatch).toBe(
+      "could not refresh · connection to this canvas was lost. Refresh to reconnect",
+    );
   });
 
   test("a block the document no longer holds sends nothing", async () => {

@@ -259,6 +259,13 @@
 .sb-dbhead.disconnected .sb-db-icon {
   color: var(--danger);
 }
+/* lost, with heal's next attempt already scheduled: one fact, so the glyph,
+   the crumb dot and the status strip wear one colour (E2 R6, DESIGN rule 14).
+   --danger is left to the disconnect with nothing coming after it */
+.sb-dbhead.error.retrying .sb-db-icon,
+.sb-dbhead.disconnected.retrying .sb-db-icon {
+  color: var(--warn);
+}
 .sb-db-name {
   font-weight: 600;
   font-size: var(--text-md);
@@ -399,6 +406,11 @@
 .conn-dot.error,
 .conn-dot.disconnected {
   background: var(--danger);
+}
+/* the glyph's own retry rule, on the dot that names the same profile */
+.conn-dot.error.retrying,
+.conn-dot.disconnected.retrying {
+  background: var(--warn);
 }
 
 .v2-breadcrumb + .v2-tool,

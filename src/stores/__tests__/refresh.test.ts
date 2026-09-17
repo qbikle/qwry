@@ -93,6 +93,7 @@ mockIPC(() => undefined);
 
 const { healSettled, refreshActiveTab, useRefresh } = await import("../refresh");
 const { readOnlyHeads } = await import("../../lib/sqlHeads");
+const { useConnections } = await import("../connections");
 const { useEdits } = await import("../edits");
 const { useResults } = await import("../results");
 const { useTabs } = await import("../tabs");
@@ -165,6 +166,9 @@ beforeEach(() => {
   useTabs.setState({ tabs: [], activeId: null });
   useResults.setState({ byTab: {}, active: TAB });
   useEdits.setState({ byTab: {} });
+  // the world a hard refresh normally lands in: a heal that held left a
+  // session behind, which is what the surfaces then send on
+  useConnections.setState({ sessions: { p1: "A" }, tabSessions: {} });
 });
 
 describe("frontReachMs: the band's front is the clock", () => {
@@ -353,6 +357,25 @@ describe("the dead connection (R6)", () => {
     retryAt = Date.now() + 5_000;
     await healSettled("p1", false);
     expect(useRefresh.getState().dead?.retryAt).toBe(retryAt);
+  });
+
+  test("a heal that held but left no session cycles nothing either", async () => {
+    // the verdict said ok and the map is empty: there is no address to send
+    // on, so no surface may blank as though something were on the wire, and
+    // the strip carries the connection instead of a skeleton (R3, R6)
+    useConnections.setState({ sessions: {}, tabSessions: {} });
+    retryAt = Date.now() + 2_000;
+    await useRefresh.getState().hardRefresh("p1");
+    const s = useRefresh.getState();
+    expect(s.sweepSeq).toBe(1);
+    expect(s.cycling).toEqual({});
+    expect(s.dead).toEqual({ profileId: "p1", retryAt });
+  });
+
+  test("a live tab session is an address too", async () => {
+    useConnections.setState({ sessions: {}, tabSessions: { "p1::t9": "B" } });
+    await useRefresh.getState().hardRefresh("p1");
+    expect(useRefresh.getState().dead).toBeNull();
   });
 
   test("a background heal on a live connection cycles nothing", async () => {

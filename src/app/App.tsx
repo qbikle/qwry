@@ -27,6 +27,7 @@ import { ConnToast } from "./ConnToast";
 import { CopyToast } from "./CopyToast";
 import { UpdateToast } from "./UpdateToast";
 import { RefreshSweep } from "./RefreshSweep";
+import { useRetrying } from "../stores/refresh";
 import { useExplain } from "../stores/explain";
 import { useCloseGuard } from "../stores/closeGuard";
 import { useFind } from "../stores/find";
@@ -187,6 +188,9 @@ export function App() {
   // because a profile is selected cannot hide when that profile goes (E2 R6,
   // DESIGN rule 2), so it changes COLOUR and never position
   const crumbConn = activeProfileId ? (connState[activeProfileId] ?? "disconnected") : null;
+  // and it wears the RETRY too: amber while heal has another attempt coming,
+  // red only once nothing is (E2 R6)
+  const crumbRetrying = useRetrying(activeProfileId);
   const connected = crumbConn === "connected";
   const railProd = !!activeProfile?.is_prod && connected;
   // prod ceremony keys on the ORIGIN too: when the rows came from a foreign
@@ -875,7 +879,10 @@ export function App() {
       <div className="v2-titlebar" data-tauri-drag-region>
         <motion.span className="v2-breadcrumb" key={crumbs.join("›")} {...swapIn}>
           {crumbConn && (
-            <span className={`conn-dot ${crumbConn}`} title={activeProfile?.name} />
+            <span
+              className={`conn-dot ${crumbConn}${crumbRetrying ? " retrying" : ""}`}
+              title={activeProfile?.name}
+            />
           )}
           {crumbs.map((seg, i, arr) => (
             <span key={i} className="crumb">
