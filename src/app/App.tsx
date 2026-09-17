@@ -26,6 +26,7 @@ import { CloseGuardModal } from "./CloseGuardModal";
 import { ConnToast } from "./ConnToast";
 import { CopyToast } from "./CopyToast";
 import { UpdateToast } from "./UpdateToast";
+import { RefreshSweep } from "./RefreshSweep";
 import { useExplain } from "../stores/explain";
 import { useCloseGuard } from "../stores/closeGuard";
 import { useFind } from "../stores/find";
@@ -182,7 +183,11 @@ export function App() {
   const gridFontSize = useSettings((s) => s.gridFontSize);
 
   const activeProfile = profiles.find((p) => p.id === activeProfileId) ?? null;
-  const connected = activeProfileId ? connState[activeProfileId] === "connected" : false;
+  // the crumb's dot wears the connection's own state: chrome on screen
+  // because a profile is selected cannot hide when that profile goes (E2 R6,
+  // DESIGN rule 2), so it changes COLOUR and never position
+  const crumbConn = activeProfileId ? (connState[activeProfileId] ?? "disconnected") : null;
+  const connected = crumbConn === "connected";
   const railProd = !!activeProfile?.is_prod && connected;
   // prod ceremony keys on the ORIGIN too: when the rows came from a foreign
   // prod connection, the chip binds to the ORIGIN session. The chip's verb is
@@ -819,35 +824,25 @@ export function App() {
           useEdits.getState().discardAll(),
         );
       }
-      if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "r") {
+      // the browser's own two tiers (E2 R1). ⌘R reloads what you are looking
+      // at: the active tab alone, no sweep, no glyph ceremony
+      if (e.metaKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "r") {
         e.preventDefault(); // also blocks webview reload
-        void Promise.all([
-          import("../stores/connections"),
-          import("../stores/schema"),
-        ]).then(([{ useConnections }, { useSchema }]) => {
-          const { activeProfileId, sessions } = useConnections.getState();
-          if (activeProfileId && sessions[activeProfileId]) {
-            void useSchema.getState().fetch(activeProfileId, sessions[activeProfileId]);
-          }
-        });
+        void import("../stores/refresh").then(({ useRefresh }) =>
+          useRefresh.getState().softRefresh(),
+        );
       }
+      // ⇧⌘R is the hard reload: the connection probed and rebuilt, the schema
+      // refetched, then every surface, under one sweep. The escape hatch for
+      // "anything feels stale".
       if (e.metaKey && e.shiftKey && !e.altKey && e.key.toLowerCase() === "r") {
-        // ⇧⌘R: the whole-connection sibling of ⌘R — probe every session,
-        // rebuild the dead ones, re-warm the spare, refresh the schema.
-        // The escape hatch for "anything feels stale".
         e.preventDefault();
         void Promise.all([
-          import("../stores/heal"),
+          import("../stores/refresh"),
           import("../stores/connections"),
-          import("../stores/schema"),
-        ]).then(([{ requestHeal }, { useConnections }, { useSchema }]) => {
-          const { activeProfileId, sessions } = useConnections.getState();
-          if (!activeProfileId) return;
-          requestHeal(activeProfileId, true);
-          // a live primary refreshes schema NOW; a dead one gets its refresh
-          // from the heal's gentle reconnect itself
-          const sid = sessions[activeProfileId];
-          if (sid) void useSchema.getState().fetch(activeProfileId, sid);
+        ]).then(([{ useRefresh }, { useConnections }]) => {
+          const pid = useConnections.getState().activeProfileId;
+          if (pid) void useRefresh.getState().hardRefresh(pid);
         });
       }
     };
@@ -879,7 +874,9 @@ export function App() {
 
       <div className="v2-titlebar" data-tauri-drag-region>
         <motion.span className="v2-breadcrumb" key={crumbs.join("›")} {...swapIn}>
-          {connected && <span className="conn-dot" title={activeProfile?.name} />}
+          {crumbConn && (
+            <span className={`conn-dot ${crumbConn}`} title={activeProfile?.name} />
+          )}
           {crumbs.map((seg, i, arr) => (
             <span key={i} className="crumb">
               {i > 0 && <span className="crumb-sep">/</span>}
@@ -1074,6 +1071,7 @@ export function App() {
       <ConnToast />
       <CopyToast />
       <UpdateToast />
+      <RefreshSweep />
     </div>
   );
 }

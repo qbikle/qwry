@@ -11,7 +11,7 @@
 // RECORDS every session id it is handed: a forgotten id reaching the backend
 // is the bug itself, not a detail of how it is reached.
 
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 
 // the stores paint the theme and read localStorage as they evaluate; bun has
 // neither (the same shim as checks.test.ts, kept identical so one fix serves
@@ -54,6 +54,10 @@ const connects: string[] = [];
 let connSeq = 0;
 /** how many of the next insert_row calls answer with the backend's NoSession */
 let refusals = 0;
+/** the same, for the page fetch a scroll sends: loadMore writes the
+ * pagination strip from its own catch, and the catch is the only place that
+ * sentence exists */
+let pageRefusals = 0;
 
 mockIPC((cmd, payload) => {
   const a = (payload ?? {}) as Record<string, unknown>;
@@ -70,6 +74,12 @@ mockIPC((cmd, payload) => {
         throw new Error("no such session");
       }
       return { statements: [] };
+    case "execute_stream":
+      if (pageRefusals > 0) {
+        pageRefusals--;
+        throw new Error("no such session");
+      }
+      return undefined;
     default:
       return undefined;
   }
@@ -87,6 +97,7 @@ const {
 const { useConnections } = await import("../connections");
 const { useResults } = await import("../results");
 const { useBrowser } = await import("../browser");
+const { keysetKeys } = await import("../browseSql");
 const { useEdits } = await import("../edits");
 const { useTabs } = await import("../tabs");
 const ipc = await import("../../ipc/commands");
@@ -148,9 +159,60 @@ const users: TableInfo = {
   pk: ["id"],
 };
 
-/** the strip a dead session leaves behind, as browser.ts's own catch writes it */
-const DEATH_STRIP = "couldn't load more rows: connection to this tab was lost. Refresh to reconnect";
+/** the same table as a scroll sees it: the PK is a real column, so keyset
+ * pagination builds a seek and loadMore reaches the send that fails */
+const paged: TableInfo = {
+  ...users,
+  columns: [
+    { name: "id", attnum: 1, type: "int8", type_oid: 20, not_null: true, default: null },
+    { name: "name", attnum: 2, type: "text", type_oid: 25, not_null: false, default: null },
+  ],
+};
+
 const LOST = "connection to this tab was lost. Refresh to reconnect";
+
+/** the strip a dead session leaves behind, PRODUCED by browser.ts's own catch
+ * rather than copied out of it: a hand-written sentence here would keep
+ * passing the day loadMore's template moved, and what these tests are about
+ * is whether a heal takes down the thing a reader is actually looking at. */
+let DEATH_STRIP = "";
+beforeAll(async () => {
+  seed();
+  DEATH_STRIP = await brokenPage();
+  if (!DEATH_STRIP.includes(LOST)) {
+    throw new Error(`loadMore wrote something else: ${DEATH_STRIP}`);
+  }
+});
+
+/** one scroll past the loaded page, onto a session the backend has forgotten:
+ * the store writes its pagination latch and the banner above the rows, and
+ * hands back what it wrote. */
+async function brokenPage(): Promise<string> {
+  const stmt = {
+    index: 0,
+    sql: "SELECT id, name FROM users",
+    columns: [{ name: "id" }, { name: "name" }],
+    rows: [["1", "ada"]],
+    truncated: new Set<string>(),
+    affected: null,
+    ms: 1,
+    rowCount: 1,
+    capped: false,
+    done: true,
+    error: null,
+  };
+  const t = resultsTab({ statements: [stmt] as never });
+  useResults.setState({ byTab: { t1: t }, active: "t1", ...t });
+  useEdits.setState({ active: "t1", byTab: {} });
+  const b = browseTab({ limit: 1, pinnedKeys: keysetKeys(paged, [], null) });
+  useBrowser.setState({ byTab: { t1: b }, active: "t1", table: paged, ...b });
+  pageRefusals = 2;
+  useBrowser.getState().loadMore();
+  await settle();
+  const wrote = useBrowser.getState().byTab.t1.paginationBroken;
+  if (!wrote) throw new Error("loadMore never reached its catch: this setup drifted");
+  return wrote;
+}
 
 /** the add-row a user reaches for, as the store runs it: a staged draft on
  * the active browse tab, committed through the store's own writer */
@@ -439,6 +501,13 @@ describe("isDeathStrip", () => {
     expect(isDeathStrip("terminating connection due to idle-in-transaction timeout", "25P03")).toBe(
       true,
     );
+    // PG14's idle_session_timeout: the DBA's own setting, nothing qwry can
+    // prevent, so its strip has to come down on a heal like every other death
+    expect(isDeathStrip("terminating connection due to idle-session timeout", "57P05")).toBe(true);
+    // and on the phrase alone, for a driver that reports the kill without the
+    // "terminating connection" preamble in front of it
+    expect(isDeathStrip("server closed: idle-session timeout", "57P05")).toBe(true);
+    expect(isSessionDeath("terminating connection due to idle-session timeout")).toBe(true);
   });
 
   test("leaves news that merely spells a connection", () => {
@@ -473,24 +542,35 @@ describe("humanSessionError", () => {
   });
 
   test("the literal never appears in any string the app renders", async () => {
+    // every strip below is read back from the store that WROTE it, on a
+    // refusal it was actually handed, and every read is asserted: a slot
+    // nothing ever filled passes a "does not contain" test by being empty,
+    // which is how five reads can agree about nothing at all
     refusals = 2;
-    const strips: string[] = [];
-    const bad = await withLiveSession("t1", (sid) =>
+    const refused = await withLiveSession("t1", (sid) =>
       ipc.insertRow(sid, "public", "users", ["a"], ["1"]),
-    ).then(() => ({ message: "" }), (e: unknown) => e as { message: string });
-    strips.push(bad.message, humanSessionError(new Error("no such session")).message);
+    ).then(() => "", (e: unknown) => (e as { message: string }).message);
+    expect(refused).toBe(LOST);
+    expect(humanSessionError(new Error("no such session")).message).toBe(LOST);
 
     // the add-row strip as the store writes it, not as a test imagines it
     refusals = 2;
     await commitADraft();
     await settle();
-    const b = useBrowser.getState().byTab.t1;
-    strips.push(b.draftError ?? "", b.paginationBroken ?? "", b.countError ?? "");
-    strips.push(useResults.getState().byTab.t1.globalError?.message ?? "");
-    strips.push(useEdits.getState().lastError ?? "");
+    const draft = useBrowser.getState().byTab.t1.draftError;
+    expect(draft).toBe(LOST);
 
-    for (const s of strips) expect(s).not.toContain("no such session");
-    expect(strips).toContain(LOST);
+    // one scroll further: the pagination latch, and the banner the same catch
+    // raises over the rows that are still on screen
+    const page = await brokenPage();
+    expect(page).toBe(DEATH_STRIP);
+    expect(useBrowser.getState().byTab.t1.paginationBroken).toBe(DEATH_STRIP);
+    expect(useResults.getState().byTab.t1.globalError?.message).toBe(DEATH_STRIP);
+
+    for (const strip of [refused, draft ?? "", page]) {
+      expect(strip).not.toContain("no such session");
+      expect(strip).toContain(LOST);
+    }
   });
 });
 

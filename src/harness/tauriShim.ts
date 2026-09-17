@@ -97,15 +97,46 @@
 //                                           reads back what the last one wrote
 //                                           (the OS clipboard is not a headless
 //                                           page's to touch)
+//   introspect / execute_stream /           the refresh harness's backend (E2),
+//   execute / session_probe / connect /     the only stubs here that take TIME:
+//   fetch_cell / editability /              the sketch's timeline IS round trips
+//   undo_log_latest                         landing at 700 / 900 / 500 ms, and a
+//                                           shim that answered at once would draw
+//                                           every surface's cycle in one frame.
+//                                           `e2-dead` is the one state where the
+//                                           probe answers false and connect
+//                                           refuses, so a hard refresh sweeps and
+//                                           nothing cycles (R6); the last two are
+//                                           the browse path's own bookkeeping, so
+//                                           a cell reads editable and no undo is
+//                                           offered over a fixture commit
 //   everything else                         rejects Error("harness: <cmd> has no fixture")
 
 import type { Channel, InvokeArgs } from "@tauri-apps/api/core";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
-import type { GateVerdict, HttpChunk, HttpDone, WritePreview, WriteVerb } from "../ipc/types";
+import type {
+  EditabilityMap,
+  ExecOutcome,
+  GateVerdict,
+  HttpChunk,
+  HttpDone,
+  QueryEvent,
+  WritePreview,
+  WriteVerb,
+} from "../ipc/types";
 import { useCanvas } from "../stores/canvas";
 import { FIXTURE, LOCAL_MODELS_JSON, LOCAL_MODELS_URL } from "./fixtures";
 import { B2_PILL_STATES } from "./fixtures.b2pills";
 import { B2_POPOVER_STATES, b2ThreadRows } from "./fixtures.b2popover";
+import {
+  E2_COLUMNS,
+  E2_LAT,
+  E2_ROWS,
+  E2_SESSION,
+  E2_USERS as E2_TABLE,
+  e2Snapshot,
+  e2WidgetResult,
+} from "./fixtures.e2";
 import { MENTION_STATES, mentionThreadRows } from "./fixtures.mentions";
 import { SHELL_THREAD_ROWS } from "./fixtures.shell";
 import { structureStats } from "./fixtures.structure";
@@ -228,6 +259,125 @@ function writePreview(sql: string): WritePreview {
   };
 }
 
+// ---- the refresh harness's backend (E2) ------------------------------------
+//
+// Five commands with LATENCY, because the sketch's whole timeline is round
+// trips landing at different moments: a shim that answered instantly would
+// draw every surface's cycle as one frame and prove nothing. `lat` scales all
+// three together (0 = instant, for a probe reading the guards rather than the
+// choreography); the defaults are the sketch's own 700 / 900 / 500.
+
+const e2Lat = (which: keyof typeof E2_LAT): number => {
+  const raw = new URLSearchParams(location.search).get("lat");
+  const n = raw === null ? NaN : Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : E2_LAT[which];
+};
+
+const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+let e2Live = true;
+
+/** Whether the refresh harness's connection answers. Flipped by the harness
+ * AFTER it has armed heal through the product's own door, because `e2-dead`
+ * has to be a connection that WAS alive and died: heal refuses a profile the
+ * user never connected, and a harness that skipped the arming would get R6's
+ * picture for the wrong reason. */
+export function e2SetAlive(alive: boolean): void {
+  e2Live = alive;
+}
+
+const e2Alive = (): boolean => e2Live;
+
+/** what the refresh harness's backend was asked for, and WHEN. The DOM says
+ * whether a surface blanked; only this says when the refetch behind it went
+ * out — and R3's grace runs from that moment, not from the gesture, because
+ * the hard tier cannot send anything until its heal has answered. A probe
+ * with only the gesture's t0 would read every surface as late (the clipboard
+ * recorder's own reason: the harness records what the product SENT) */
+const e2Calls: { cmd: string; t: number }[] = [];
+
+const e2Say = (cmd: string): void => {
+  e2Calls.push({ cmd, t: performance.now() });
+};
+
+/** the log starts when the window is the window the gesture arrives at: the
+ * seed's own connect and probe are the harness building the picture, and a
+ * reader of this log is asking what the ACT sent */
+export function e2ResetCalls(): void {
+  e2Calls.length = 0;
+}
+
+const isWrite = (sql: string): boolean =>
+  /^(insert|update|delete)\b/i.test(sql.trim().replace(/^(--[^\n]*\n|\s)+/, ""));
+
+/** the fixture page, streamed as the driver streams one: a statement, its
+ * columns, its rows and the two dones. A write gets the affected count and no
+ * rows, which is what `e2-query-wrote` stands on */
+async function e2Stream(payload: InvokeArgs | undefined): Promise<void> {
+  const args = record(payload);
+  const sql = typeof args.sql === "string" ? args.sql : "";
+  const channel = args.onEvent as Channel<QueryEvent> | undefined;
+  const send = (ev: QueryEvent) => channel?.onmessage(ev);
+  await wait(e2Lat("rows"));
+  send({ type: "statement_start", index: 0, sql });
+  const write = isWrite(sql);
+  if (!write) {
+    send({ type: "columns", index: 0, columns: E2_COLUMNS });
+    send({ type: "rows", index: 0, rows: E2_ROWS.map((r) => [...r]), truncated: [] });
+  }
+  send({
+    type: "statement_done",
+    index: 0,
+    affected: write ? 1 : null,
+    ms: 38.4,
+    row_count: write ? 0 : E2_ROWS.length,
+    capped: false,
+  });
+  send({ type: "finished", total_ms: 38.4 });
+}
+
+/** the one-shot commands: the browse footer's exact count, the switcher's
+ * database list, a transaction's own COMMIT. One statement each, so nothing
+ * on the read path has to special-case an empty outcome */
+function e2Execute(sql: string): ExecOutcome {
+  const count = /count\(/i.test(sql);
+  return {
+    statements: [
+      {
+        index: 0,
+        sql,
+        columns: count ? [{ name: "count", type_oid: 20, table_oid: 0, attnum: 1 }] : [],
+        rows: count ? [[String(842_113)]] : [],
+        affected: null,
+        ms: 11.2,
+      },
+    ],
+  };
+}
+
+/** the users result's own map: every column of the one table, the PK on `id`,
+ * so a staged edit in the harness is the same staged edit the product makes */
+function e2Editability(statementIndex: unknown): EditabilityMap {
+  const oid = E2_TABLE.table_oid;
+  return {
+    statement_index: typeof statementIndex === "number" ? statementIndex : 0,
+    columns: E2_COLUMNS.map((c, col) => ({
+      col,
+      table_oid: oid,
+      attnum: c.attnum,
+      editable: c.name !== "id",
+      reason: c.name === "id" ? "primary key" : null,
+      type_name: E2_TABLE.columns.find((t) => t.name === c.name)?.type ?? "text",
+      cast: E2_TABLE.columns.find((t) => t.name === c.name)?.type ?? "text",
+      is_ctid: false,
+      warn: null,
+    })),
+    pk_cols: { [oid]: [0] },
+    tables: { [oid]: `${E2_TABLE.schema}.${E2_TABLE.name}` },
+    table_refs: { [oid]: { schema: E2_TABLE.schema, name: E2_TABLE.name } },
+  };
+}
+
 export function installTauriShim(): void {
   mockWindows("main");
   // the recorders, on the window: a probe drives this page over CDP and has no
@@ -242,6 +392,7 @@ export function installTauriShim(): void {
     canvasResults,
     mcpServed,
     canvas: useCanvas,
+    e2Calls,
   };
   mockIPC(
     (cmd, payload) => {
@@ -270,6 +421,44 @@ export function installTauriShim(): void {
           return structureStats();
         case "agent_http_stream":
           return httpStream(payload);
+        // the refresh harness's five (E2): the schema, the rows, the one-shot
+        // reads, and the two the hard tier's heal turns on
+        case "introspect":
+          e2Say("introspect");
+          return wait(e2Lat("tree")).then(() => e2Snapshot);
+        case "execute_stream":
+          e2Say("execute_stream");
+          return e2Stream(payload);
+        case "execute": {
+          const sql = typeof record(payload).sql === "string" ? String(record(payload).sql) : "";
+          // a canvas widget's refetch is the one `execute` the sketch gives a
+          // landing of its own: it waits that widget's round trip and answers
+          // with that widget's rows, so the canvas frame shows a refetch that
+          // LANDED rather than three error strips
+          const w = e2WidgetResult(sql);
+          e2Say(w ? `widget:${w.id}` : "execute");
+          if (!w) return e2Execute(sql);
+          return wait(w.lat).then(() => ({
+            statements: [
+              { index: 0, sql, columns: w.columns, rows: w.rows, affected: null, ms: w.ms },
+            ],
+          }));
+        }
+        case "session_probe":
+          e2Say("session_probe");
+          return e2Alive();
+        case "connect":
+          e2Say("connect");
+          if (!e2Alive()) throw new Error("connection refused");
+          return E2_SESSION;
+        case "fetch_cell":
+          return wait(e2Lat("cell")).then(() => null);
+        // the browse path's bookkeeping: without a map every cell reads as
+        // uneditable, which is a different picture from the product's
+        case "editability":
+          return e2Editability(record(payload).statementIndex);
+        case "undo_log_latest":
+          return null;
         case "agent_gate": {
           const args = record(payload);
           return gate(typeof args.sql === "string" ? args.sql : "", args.mode);

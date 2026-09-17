@@ -73,7 +73,17 @@
 // further scroll (LESSONS 7: one scroll authority per gesture). Focus never
 // moves into the canvas on a write: the composer keeps the caret.
 
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { motion } from "motion/react";
 import { BarChart3, Ellipsis, MessageSquare, PenLine, Plus, Type } from "lucide-react";
 import { ResultBlock, type ResultFace } from "../ask/ResultBlock";
@@ -97,6 +107,7 @@ import {
   type StatusLine,
 } from "../stores/canvas";
 import { canSeeImages } from "../stores/agent";
+import { useRefresh } from "../stores/refresh";
 import { useSettings } from "../stores/settings";
 import { CANVAS_NAME_CAP } from "../agent/tools";
 import { CanvasGrid, Grip, type GridPage } from "./CanvasGrid";
@@ -307,6 +318,11 @@ const CanvasRow = memo(function CanvasRow({
   menuHere: boolean;
   onMenu: (blockId: string, x: number, y: number) => void;
 }) {
+  // E2 R3: this widget's own refetch is in flight and the sweep's front has
+  // reached it. The key is the widget's, not the element's, so the skeleton
+  // survives the remount a fresh run's key change causes and leaves when the
+  // store says the cycle is over, not when the rows happen to land
+  const cycling = useRefresh((s) => !!s.cycling[`widget:${block.id}`]);
   const enter = {
     initial: entering ? arrive.initial : false,
     animate: arrive.animate,
@@ -371,8 +387,14 @@ const CanvasRow = memo(function CanvasRow({
   return (
     <motion.div
       {...enter}
-      className="blk"
+      className={`blk${cycling ? " cycling" : ""}`}
       data-block={block.id}
+      data-refresh-surface={`widget:${block.id}`}
+      // the rows the table face is standing on, so its skeleton is as tall as
+      // the rows it replaces and not as tall as the cell (E2 R3, same
+      // geometry). The header row is the + 1; what overruns the box is
+      // clipped by the box, exactly as the grid's own rows are
+      style={{ "--skel-rows": block.rows.length + 1 } as CSSProperties}
       tabIndex={0}
       onContextMenu={(e) => {
         // the faces box owns its own right-click (the grid retargets

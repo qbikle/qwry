@@ -67,7 +67,9 @@ import {
   canvasList,
   canvasUpsert,
   disconnect,
+  execute,
 } from "../ipc/commands";
+import type { ExecOutcome } from "../ipc/types";
 import {
   CANVAS_BLOCK_ROWS,
   COLUMNS_FALLBACK,
@@ -79,6 +81,7 @@ import type { AgentRun, CanvasFace } from "../agent/types";
 import { canonicalToken } from "../agent/mentions";
 import { figureText, SCALAR_MAX_COLS } from "../ask/ScalarResult";
 import { msText } from "../lib/duration";
+import { readOnlyHeads } from "../lib/sqlHeads";
 import {
   basePx,
   cellsForPx,
@@ -116,7 +119,7 @@ import { cellsMoved, gestureId, trace, type TraceCause } from "../canvas/trace";
 import { useAgent } from "./agent";
 import { useAsk } from "./ask";
 import { useSidePane } from "./sidePane";
-import { useConnections } from "./connections";
+import { anySessionOn, useConnections } from "./connections";
 import { useRecents } from "./recents";
 import { useSettings } from "./settings";
 import { useTabs } from "./tabs";
@@ -1144,6 +1147,17 @@ interface CanvasState {
   /** run this block's SQL read-only on a sibling connection and keep the diff */
   compare: (canvasId: string, blockId: string, profileB: string) => Promise<CompareOutcome>;
   clearCompare: (canvasId: string, blockId: string) => void;
+  /** E2: one block's run replaced by a fresher one, in ONE write. Everything
+   * else the block is stays: its cell, its span, the face it wears, the
+   * question above it and the assumptions under it (E2 R4) */
+  replaceResult: (canvasId: string, blockId: string, run: AgentRun) => void;
+  /** E2 R4: one result widget's statement run again on the connection the
+   * document belongs to, its rows replaced when they land. What re-running a
+   * widget MEANS lives here; WHEN each one starts is the refresh store's
+   * (stores/refresh `refreshCanvas`). It never rejects: a widget that must not
+   * refetch, or whose statement does not come back, keeps the rows the reader
+   * had, and a failure says why on the block's own status line */
+  refreshWidget: (canvasId: string, blockId: string) => Promise<void>;
   /** the note being edited in place, if any. The edit itself is the UI's; the
    * id lives here because the palette's `New Note` is a keyboard route into
    * edit mode from outside the canvas component (A3 item 6) */
@@ -1792,6 +1806,46 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     });
   },
 
+  replaceResult: (canvasId, blockId, run) => {
+    patch(canvasId, blockId, (b) => {
+      if (b.kind !== "result") return b;
+      // the same door every other write goes through, so the row cap and the
+      // sentence that reports it stand in one place (capRun's own contract)
+      const { rows, status } = capRun(run);
+      // a face the fresh rows cannot carry is not corrected here: `values`
+      // falls back to the table at the surface, where the run is read
+      // (CanvasTab's `values`), so a one-row result that came back with
+      // twelve keeps the face its reader chose and draws the grid
+      return { ...b, columns: run.columns, rows, status, ms: run.ms, mismatch: undefined };
+    });
+  },
+
+  refreshWidget: async (canvasId, blockId) => {
+    // everything the run needs is read BEFORE the first await (LESSONS 3):
+    // the block can be deleted, and the rail moved to another connection,
+    // while the statement is on the wire
+    const block = get().docs[canvasId]?.blocks.find((b) => b.id === blockId);
+    const meta = metaOf(get(), canvasId);
+    if (!block || !meta || !refetchable(block)) return;
+    const session = anySessionOn(meta.profileId);
+    // nothing to send on: the widget keeps what it holds, which is what a
+    // connection that is not there looks like here (E2 R6)
+    if (!session) return;
+    const sql = block.sql;
+    try {
+      const run = runOf(await execute(session, sql));
+      if (!run) throw new Error("the statement returned no rows to read");
+      get().replaceResult(canvasId, blockId, run);
+    } catch (e) {
+      // the rows the reader had stay, and what failed rides the block's own
+      // status line, the slot a refused comparison rides (D1 item 9): nothing
+      // on this page goes blank for an error
+      patch(canvasId, blockId, (b) =>
+        b.kind === "result" ? { ...b, mismatch: refreshFailed(e) } : b,
+      );
+    }
+  },
+
   noteAskedFrom: (exchangeId, blockId) => {
     const from = holderOf(get(), blockId);
     if (!from) return;
@@ -2031,6 +2085,42 @@ function patch(canvasId: string, blockId: string, f: (b: Block) => Block): void 
   setDoc(canvasId, { blocks });
 }
 
+// ---- the refresh act (E2) -------------------------------------------------
+
+/** a widget a refresh can refetch: a result standing on a statement that is
+ * safe to run again (E2 R4, the same verdict a query tab's rerun reads). A
+ * note and a drawing hold no query, and a block standing on a COMPARISON
+ * holds two readings of one moment - its table cells ARE the diff's A side
+ * (DESIGN rule 14), so refetching one of them alone would leave the block
+ * showing a comparison of rows it no longer has. That widget keeps what it
+ * was given */
+const refetchable = (b: Block): b is ResultBlock & { sql: string } =>
+  b.kind === "result" && !!b.sql && !b.diff && readOnlyHeads(b.sql);
+
+/** what a refetch read. A block's SQL is one statement (both doors into the
+ * document are AST-gated reads), so the result set is the last one that came
+ * back with columns; a trailing semicolon is punctuation, not a second run */
+function runOf(out: ExecOutcome): AgentRun | null {
+  const stmt = [...out.statements].reverse().find((s) => s.columns.length > 0);
+  if (!stmt) return null;
+  return {
+    columns: stmt.columns.map((c) => c.name),
+    rows: stmt.rows,
+    rowCount: stmt.rows.length,
+    capped: false,
+    ms: stmt.ms,
+  };
+}
+
+/** a refetch that did not land, in the status line's own grammar: the driver's
+ * own first line, under a lead that says which act failed. Inventing a
+ * friendlier sentence for an error nobody here has read is how a status line
+ * starts lying (LESSONS 9, `compareMismatch`'s own rule) */
+const refreshFailed = (e: unknown): string => {
+  const line = firstLine(e);
+  return line ? `could not refresh · ${line}` : "could not refresh";
+};
+
 // ---- the model's blocks (B3) ----------------------------------------------
 
 /** Exchanges whose FIRST canvas write clears what their previous attempt
@@ -2250,6 +2340,18 @@ setCanvasPort({
   clearOnNextWrite: (exchangeId) => useCanvas.getState().clearOnNextWrite(exchangeId),
   assumeOn: (exchangeId, labels) => useCanvas.getState().assumeOn(exchangeId, labels),
 });
+
+// E2: what re-running a widget means, handed to the store that owns when each
+// one starts. Registered rather than imported, the same shape as the port
+// above: the refresh store reaches every surface in the window and a document
+// that pulled it in would carry the whole of it into the canvas chunk.
+// EXPORTED, and not fire-and-forget: refreshCanvas awaits it, because a ⇧⌘R
+// in the first frames after boot would otherwise find the seam empty and
+// silently refetch no widget at all (LESSONS 9 — a gesture that reports
+// nothing must not also do nothing)
+export const widgetSeam: Promise<void> = import("./refresh").then(({ setWidgetRefetch }) =>
+  setWidgetRefetch((canvasId, blockId) => useCanvas.getState().refreshWidget(canvasId, blockId)),
+);
 
 window.addEventListener?.("blur", () => void flushCanvases());
 document.addEventListener?.("visibilitychange", () => {

@@ -2,10 +2,11 @@
 // taste-gate skill). Renders the fixture harness route of the vite dev server
 // in headless Chrome and writes one PNG per state × width × theme.
 //
-//   bun scripts/ask-frames.ts [--harness ask|palette|structure|canvas]
+//   bun scripts/ask-frames.ts [--harness ask|palette|structure|canvas|refresh]
 //                             [--out <dir>] [--states a,b]
 //                             [--widths 320,560] [--themes dark,light]
-//                             [--scroll top] [--port 1420] [--jobs 6]
+//                             [--scroll top] [--tier hard|soft]
+//                             [--port 1420] [--jobs 6]
 //
 //   --harness  which root to drive. ask (default): the Ask pane, 320 · 392 ·
 //              560 in a 640-tall card. palette: a modal over the window, so one
@@ -20,7 +21,14 @@
 //              c2-resize, c2-migrated, c2-dense), its own widths
 //              (640 · 960 · 1280) and a 760-tall card, 800 for the B3 four and
 //              the C2a six. `--scroll` means nothing outside the Ask pane: the
-//              canvas is a document, read from its top
+//              canvas is a document, read from its top. refresh: E2's whole
+//              WINDOW at 640 · 960 · 1280 in a 640-tall shell, the only root
+//              whose subject is MOTION. Its states carry the millisecond they
+//              are read at, `state@at` (e2-table@460), and the harness freezes
+//              the page there; a state with no `@` is the window at rest.
+//              Chrome runs WITHOUT forced reduced motion for this root alone,
+//              and a frozen frame settles for nothing
+//   --tier     refresh only: which act plays, hard (default) or soft
 //   --out      where the PNGs land; default
 //              ~/projects/qwry-agent-lab/docs/research/w2d-frames
 //   --states   subset of answer,empty,busy,picker,failure,disconnected,small,
@@ -412,21 +420,54 @@ const TALL_CANVAS_STATES: readonly string[] = [
   "c2-dense",
 ];
 const CANVAS_WIDTHS = [640, 960, 1280] as const;
+
+/** E2: the refresh harness frames the WHOLE window, and its states carry a
+ * MILLISECOND, `state@at`, because a sweep is only evidence at an instant. A
+ * state with no `@` is that window at rest, the sketch's `idle` still. The
+ * default list is the sketch's own eight frames (docs/refresh-sketch-e2.html,
+ * its stills in research/e2-sketch-frames): the tree alone, all three
+ * cycling, the rows landing last, the staged tab's verdict, the query tab's
+ * rerun, the write's kept rows, the canvas's widgets, and the dead
+ * connection's retry window */
+const REFRESH_STATES = [
+  "e2-table",
+  "e2-table@0",
+  "e2-table@260",
+  "e2-table@300",
+  "e2-table@460",
+  "e2-table@1000",
+  "e2-table-staged@1200",
+  "e2-query@460",
+  "e2-query@560",
+  "e2-query-wrote@600",
+  "e2-query-wrote@1200",
+  "e2-canvas@560",
+  "e2-dead@1500",
+] as const;
+const REFRESH_WIDTHS = [640, 960, 1280] as const;
+/** the window's own height, the sketch's `.shell` (src/harness/fixtures.e2.ts
+ * E2_CARD_H): this script drives the page over CDP rather than importing it */
+const REFRESH_CARD_H = 640;
+
 const ALL_THEMES = ["dark", "light"] as const;
-const HARNESSES = ["ask", "palette", "structure", "canvas"] as const;
+const HARNESSES = ["ask", "palette", "structure", "canvas", "refresh"] as const;
 const SCROLLS = ["bottom", "top"] as const;
+const TIERS = ["hard", "soft"] as const;
 type Scroll = (typeof SCROLLS)[number];
+type Tier = (typeof TIERS)[number];
 type Harness = (typeof HARNESSES)[number];
 type State =
   | (typeof ALL_STATES)[number]
   | (typeof PALETTE_STATES)[number]
   | (typeof STRUCTURE_STATES)[number]
-  | (typeof CANVAS_STATES)[number];
+  | (typeof CANVAS_STATES)[number]
+  | (typeof REFRESH_STATES)[number];
 type Width =
   | (typeof ALL_WIDTHS)[number]
   | (typeof PALETTE_WIDTHS)[number]
   | (typeof STRUCTURE_WIDTHS)[number]
-  | (typeof CANVAS_WIDTHS)[number];
+  | (typeof CANVAS_WIDTHS)[number]
+  | (typeof REFRESH_WIDTHS)[number];
 type Theme = (typeof ALL_THEMES)[number];
 
 /** the pane's card is 640 tall inside one --sp-6 gutter on every side; the
@@ -543,32 +584,49 @@ const HARNESS = subset<Harness>(flag("harness"), HARNESSES, "harness")[0] ?? "as
 const PALETTE = HARNESS === "palette";
 const STRUCTURE = HARNESS === "structure";
 const CANVAS = HARNESS === "canvas";
+const REFRESH = HARNESS === "refresh";
 const ROOT_STATES = PALETTE
   ? PALETTE_STATES
   : STRUCTURE
     ? STRUCTURE_STATES
     : CANVAS
       ? CANVAS_STATES
-      : ALL_STATES;
+      : REFRESH
+        ? REFRESH_STATES
+        : ALL_STATES;
 const ROOT_WIDTHS = PALETTE
   ? PALETTE_WIDTHS
   : STRUCTURE
     ? STRUCTURE_WIDTHS
     : CANVAS
       ? CANVAS_WIDTHS
-      : ALL_WIDTHS;
+      : REFRESH
+        ? REFRESH_WIDTHS
+        : ALL_WIDTHS;
 const STATES = subset<State>(flag("states"), ROOT_STATES, "state");
 const WIDTHS = subset<Width>(flag("widths"), ROOT_WIDTHS, "width");
 const THEMES = subset<Theme>(flag("themes"), ALL_THEMES, "theme");
 const SCROLL = subset<Scroll>(flag("scroll"), SCROLLS, "scroll")[0] ?? "bottom";
 /** `--scroll bottom` written out overrides the harness's own top-parking states */
 const SCROLL_EXPLICIT = flag("scroll") !== undefined;
+/** E2 only: which act the run plays. `hard` (the default) is the sweep and
+ * every surface; `soft` the active tab alone, so the same states frame the
+ * tier that has no band at all */
+const TIER = subset<Tier>(flag("tier"), TIERS, "tier")[0] ?? "hard";
+/** E2 only: shoot the refresh root under the OS reduced-motion setting, which
+ * is the one thing this root suppresses by default (its subject is motion).
+ * R2 and R3 both have a clause for that setting — no band, no spin, every
+ * surface starting at once — and a clause with no frame is a claim */
+const REDUCED = process.argv.includes("--reduced");
 const PORT = Number(flag("port") ?? 1420);
 const JOBS = Math.max(1, Number(flag("jobs") ?? 6));
 /** a frame that has not been captured by then is a failure */
 const FRAME_CAP_MS = 45_000;
 /** real time between the harness's ready mark and the shot: fonts, the
- * portaled popover's layer and the grid's ResizeObserver pass land inside it */
+ * portaled popover's layer and the grid's ResizeObserver pass land inside it.
+ * A refresh frame with an `at` settles for NOTHING: its ready mark follows a
+ * freeze that stopped every animation and the clock itself, so waiting would
+ * only risk something the freeze did not catch moving under the shot */
 const SETTLE_MS = 700;
 /** either root stamps this in its post-mount effect */
 const READY = 'document.documentElement.dataset.harnessReady === "1"';
@@ -641,19 +699,38 @@ interface Frame {
   state: State;
   w: Width;
   theme: Theme;
+  /** E2: the millisecond the window is frozen at, null for the idle still */
+  at: number | null;
   file: string;
 }
+
+/** `state@at` splits into the state the harness seeds and the instant it
+ * freezes; every other root's states carry no `@` and freeze nothing */
+const splitAt = (state: State): { base: string; at: number | null } => {
+  const i = state.indexOf("@");
+  return i === -1
+    ? { base: state, at: null }
+    : { base: state.slice(0, i), at: Number(state.slice(i + 1)) };
+};
 
 const frames: Frame[] = [];
 for (const state of STATES)
   for (const w of WIDTHS)
-    for (const theme of THEMES)
+    for (const theme of THEMES) {
+      const { base, at } = splitAt(state);
       frames.push({
         state,
         w,
         theme,
-        file: join(OUT, `${state}-${w}-${theme}${!CANVAS && SCROLL === "top" ? "-top" : ""}.png`),
+        at,
+        file: join(
+          OUT,
+          REFRESH
+            ? `${base}-${at ?? "idle"}-${w}-${theme}${REDUCED ? "-rm" : ""}.png`
+            : `${state}-${w}-${theme}${!CANVAS && SCROLL === "top" ? "-top" : ""}.png`,
+        ),
       });
+    }
 
 interface Cdp {
   send: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
@@ -712,14 +789,27 @@ async function connect(profile: string, deadline: number): Promise<Cdp> {
 
 async function shoot(base: string, f: Frame): Promise<boolean> {
   // the palette is one width, its own; the canvas is a document read from its
-  // top, so `scroll` is the Ask pane's alone
+  // top, so `scroll` is the Ask pane's alone; the refresh root takes the act
+  // to play and the instant to freeze at instead
+  const { base: state, at } = splitAt(f.state);
   const url = PALETTE
     ? `${base}/?harness=palette&state=${f.state}&theme=${f.theme}`
-    : `${base}/?harness=${HARNESS}&state=${f.state}&w=${f.w}&theme=${f.theme}` +
-      (HARNESS === "ask" && (SCROLL === "top" || SCROLL_EXPLICIT) ? `&scroll=${SCROLL}` : "");
+    : REFRESH
+      ? `${base}/?harness=refresh&state=${state}&w=${f.w}&theme=${f.theme}` +
+        (at === null ? "" : `&tier=${TIER}&at=${at}`)
+      : `${base}/?harness=${HARNESS}&state=${f.state}&w=${f.w}&theme=${f.theme}` +
+        (HARNESS === "ask" && (SCROLL === "top" || SCROLL_EXPLICIT) ? `&scroll=${SCROLL}` : "");
   const width = f.w + 2 * MARGIN;
   const height =
-    (PALETTE ? PALETTE_H : STRUCTURE ? STRUCTURE_H : CANVAS ? canvasCardH(f.state) : CARD_H) +
+    (PALETTE
+      ? PALETTE_H
+      : STRUCTURE
+        ? STRUCTURE_H
+        : REFRESH
+          ? REFRESH_CARD_H
+          : CANVAS
+            ? canvasCardH(f.state)
+            : CARD_H) +
     2 * MARGIN;
   const profile = mkdtempSync(join(tmpdir(), "ask-frames-"));
   const proc = Bun.spawn(
@@ -728,7 +818,11 @@ async function shoot(base: string, f: Frame): Promise<boolean> {
       "--headless=new",
       "--disable-gpu",
       "--hide-scrollbars",
-      "--force-prefers-reduced-motion",
+      // every other root frames a SETTLED state, where reduced motion is the
+      // product's own settled face. E2 frames motion itself: forcing it here
+      // would take away the band the frame exists to show (R2), so the
+      // refresh root runs with the media query the product ships under
+      ...(REFRESH && !REDUCED ? [] : ["--force-prefers-reduced-motion"]),
       "--no-first-run",
       "--no-default-browser-check",
       "--disable-extensions",
@@ -764,7 +858,9 @@ async function shoot(base: string, f: Frame): Promise<boolean> {
       if (!ready) await Bun.sleep(100);
     }
     if (!ready) throw new Error("harness never became ready");
-    await Bun.sleep(SETTLE_MS);
+    // a frozen window has nothing left to settle: its ready mark follows the
+    // freeze, and waiting would only let something the freeze missed move
+    if (f.at === null) await Bun.sleep(SETTLE_MS);
     const shot = (await cdp.send("Page.captureScreenshot", { format: "png" })) as { data: string };
     const bytes = Buffer.from(shot.data, "base64");
     if (bytes.length === 0) return false;

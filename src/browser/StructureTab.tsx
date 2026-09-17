@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -10,15 +11,13 @@ import { Check, Copy } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import * as ipc from "../ipc/commands";
 import type { TableStats } from "../ipc/types";
+import { subTabRefresh } from "../stores/browser";
 import { anySessionOn, useConnections } from "../stores/connections";
+import { useRefresh } from "../stores/refresh";
 import { copyCueError } from "../lib/copyCue";
 import { hintLineFor, knowledgeTarget, parseHintLine, saveHintLine, useKnowledge } from "../stores/knowledge";
 import type { TableInfo } from "../stores/schema";
 import "./browser.css";
-
-/** TableBrowser's header Refresh routes here while Structure is active; it
- * used to rerun the DATA query, which does nothing for this surface */
-export const structureRefresh = { current: null as null | (() => void) };
 
 const CONSTRAINT_KIND: Record<string, string> = {
   p: "PRIMARY KEY",
@@ -201,34 +200,48 @@ export function StructureTab({ table }: { table: TableInfo }) {
   const activeProfileId = useConnections((s) => s.activeProfileId);
   const [stats, setStats] = useState<TableStats | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [bump, setBump] = useState(0);
   const [copied, setCopied] = useState<string | null>(null);
+  // this pane IS the table tab's main body while it shows, so it cycles with
+  // the refresh that fetched it (E2 R3)
+  const cycling = useRefresh((s) => !!s.cycling.main);
+  // only the newest load may land: a refresh fired while the first read is in
+  // flight would otherwise paint whichever answer arrives last
+  const epoch = useRef(0);
+
+  // a refresh does NOT clear: the stats on screen stay readable until the
+  // fresh ones land, and a read that failed leaves them there with the strip
+  // above them (R3). Only a different table or connection blanks the pane.
+  const load = useCallback((): Promise<void> => {
+    const mine = ++epoch.current;
+    const sid = anySessionOn(activeProfileId);
+    if (!sid) {
+      setError("not connected");
+      return Promise.resolve();
+    }
+    return ipc.tableStats(sid, table.schema, table.name).then(
+      (s) => {
+        if (epoch.current !== mine) return;
+        setStats(s);
+        setError(null);
+      },
+      (e: { message?: string }) => {
+        if (epoch.current === mine) setError(e.message ?? String(e));
+      },
+    );
+  }, [table.schema, table.name, activeProfileId]);
 
   useEffect(() => {
     setStats(null);
     setError(null);
-    const sid = anySessionOn(activeProfileId);
-    if (!sid) {
-      setError("not connected");
-      return;
-    }
-    let stale = false;
-    ipc
-      .tableStats(sid, table.schema, table.name)
-      .then((s) => !stale && setStats(s))
-      .catch((e) => !stale && setError((e as { message?: string }).message ?? String(e)));
-    return () => {
-      stale = true;
-    };
-    // bump = header Refresh clicks while this tab is showing
-  }, [table.schema, table.name, activeProfileId, bump]);
+    void load();
+  }, [load]);
 
   useEffect(() => {
-    structureRefresh.current = () => setBump((n) => n + 1);
+    subTabRefresh.structure = load;
     return () => {
-      structureRefresh.current = null;
+      if (subTabRefresh.structure === load) subTabRefresh.structure = null;
     };
-  }, []);
+  }, [load]);
 
   // fresh comments win over the (possibly stale) snapshot the tab carries
   const colComment = (name: string): string | null => {
@@ -271,7 +284,10 @@ export function StructureTab({ table }: { table: TableInfo }) {
       }));
 
   return (
-    <div className="tb-structure">
+    <div
+      className={`tb-structure${cycling ? " cycling" : ""}`}
+      data-refresh-surface="main"
+    >
       <HintLine target={tableTarget} comment={tableComment} />
       <h3>Columns</h3>
       <table className="st-table">
@@ -321,16 +337,17 @@ export function StructureTab({ table }: { table: TableInfo }) {
         </tbody>
       </table>
 
-      {error ? (
+      {/* a failed read keeps the stats it had and adds the strip (R3) */}
+      {error && (
         <div className="st-error">
           <span>Table stats failed: {error}</span>
-          <button className="btnish" onClick={() => setBump((n) => n + 1)}>
+          <button className="btnish" onClick={() => void load()}>
             Retry
           </button>
         </div>
-      ) : !stats ? (
-        <div className="st-loading">Loading table stats…</div>
-      ) : (
+      )}
+      {!stats && !error && <div className="st-loading">Loading table stats…</div>}
+      {stats && (
         <>
           <h3>Constraints</h3>
           {stats.constraints.length === 0 ? (

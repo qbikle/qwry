@@ -48,6 +48,16 @@ export function draftHasContent(row: Record<string, DraftCell> | null | undefine
 
 const PAGE = 1000;
 
+/** The Structure and DDL panes refetch their own catalog read, and the browse
+ * tab's refresh routes to whichever one is showing. They register here rather
+ * than exporting a ref each, so there is ONE list of what a table tab can
+ * reload and the store can reach it without importing a component. Each entry
+ * resolves when its fetch settles, which is what holds the skeleton up. */
+export const subTabRefresh: {
+  structure: (() => Promise<void>) | null;
+  ddl: (() => Promise<void>) | null;
+} = { structure: null, ddl: null };
+
 /** per-tab browse state (the browsed table itself lives on the Tab) */
 interface BrowseTab {
   tab: "data" | "structure" | "ddl";
@@ -146,11 +156,15 @@ interface BrowserState extends BrowseTab {
   /** ⌘L jump: re-fetch one page starting at row `offset` (0-based) */
   jumpToRow: (offset: number) => void;
   clearJump: () => void;
-  /** footer exact count: SELECT count(*) over the current browse WHERE */
-  runExactCount: () => Promise<void>;
+  /** footer exact count: SELECT count(*) over the current browse WHERE.
+   * `recount` is a refresh re-running it over the SAME where: the number on
+   * screen still describes those rows, so it holds its slot while the new one
+   * counts and survives a count that dies (E2 R3) */
+  runExactCount: (recount?: boolean) => Promise<void>;
   cancelExactCount: () => void;
   loadMore: () => void;
-  refresh: () => void;
+  /** the soft refresh act for a table tab, whichever sub-tab is showing */
+  refresh: () => Promise<void>;
   /** post-write reload (insert / import): re-run the browse reading the
    * connection the write landed on: under a different rail a plain run()
    * would repaint from the rail's database, the committed rows would silently
@@ -352,20 +366,24 @@ function appendPage(
  * clears the stale/broken pagination latches (a fresh result set resets
  * both) plus the exact-count footer (the number no longer describes the new
  * result; an in-flight count is orphaned via its epoch). profileId pins the
- * run to that profile (post-write reloads); default = rail semantics. */
-function run(set: SetFn, s: BrowserState, profileId?: string) {
-  if (!s.table) return;
+ * run to that profile (post-write reloads); default = rail semantics.
+ *
+ * A REFRESH run (E2 R4) is the same query with the same filters, sort, limit
+ * and jump offset: what it keeps is the count already on screen, which is
+ * re-run after the rows land rather than blanked before they do. */
+function run(set: SetFn, s: BrowserState, profileId?: string, refresh = false) {
+  if (!s.table) return Promise.resolve();
   const keys = keysFor(s.table, s.sortChain, profileId);
   countEpoch.set(s.active, (countEpoch.get(s.active) ?? 0) + 1);
   writeBrowse(set, s.active, {
     pinnedKeys: keys,
     pageStale: false,
     paginationBroken: null,
-    exactCount: null,
     counting: false,
     countError: null,
+    ...(refresh ? null : { exactCount: null }),
   });
-  void useResults.getState().run(
+  return useResults.getState().run(
     browseSql({
       table: s.table,
       filters: s.filters,
@@ -376,7 +394,7 @@ function run(set: SetFn, s: BrowserState, profileId?: string) {
       offset: s.jumpOffset,
     }),
     0,
-    profileId ? { profileId } : undefined,
+    { ...(profileId ? { profileId } : null), ...(refresh ? { refresh: true } : null) },
   );
 }
 
@@ -531,7 +549,7 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     run(set, get());
   },
 
-  runExactCount: async () => {
+  runExactCount: async (recount = false) => {
     const s = get();
     const tabId = s.active;
     if (!s.table || s.counting) return;
@@ -549,7 +567,11 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     countEpoch.set(tabId, epoch);
     countSessions.set(tabId, { sid, epoch });
     const sql = browseCountSql({ table: s.table, filters: s.filters, rawWhere: rawWhereArg(s) });
-    writeBrowse(set, tabId, { counting: true, countError: null, exactCount: null });
+    writeBrowse(set, tabId, {
+      counting: true,
+      countError: null,
+      ...(recount ? null : { exactCount: null }),
+    });
     try {
       const out = await ipc.execute(sid, sql);
       if (countEpoch.get(tabId) !== epoch) return; // superseded; never land stale
@@ -692,7 +714,20 @@ export const useBrowser = create<BrowserState>((set, get) => ({
     });
   },
 
-  refresh: () => run(set, get()),
+  refresh: async () => {
+    const s = get();
+    const tabId = s.active;
+    // "reload what I am looking at": on Structure and DDL that is the catalog
+    // behind the pane on screen, never the data query nobody can see (the old
+    // header ↻ already routed this way; both tiers now share the one route)
+    if (s.tab === "structure") return subTabRefresh.structure?.();
+    if (s.tab === "ddl") return subTabRefresh.ddl?.();
+    const hadCount = s.exactCount !== null;
+    await run(set, s, undefined, true);
+    // the footer's exact count is a second query: the rows are back, so the
+    // skeleton is gone, and the number catches up in its own slot (R4)
+    if (hadCount && get().active === tabId) void get().runExactCount(true);
+  },
 
   reloadAfterWrite: (tabId, profileId) => {
     if (get().active !== tabId) {

@@ -117,3 +117,26 @@ from the maintainer, say so and cite it; the pushback is wanted.
     resolver sitting on the only door a backend call goes through, so death
     clears the handle everywhere it is held and a heal re-stamps it, rather
     than waiting on a second reviewer to find the next site six months on.
+15. **Take the feedback, not the mechanism.** The maintainer asked for
+    `⌘R`/`⇧⌘R` to feel like a browser's reload and hard reload. Slack's own
+    `⌘R` is the literal version of that ask: it throws the renderer away and
+    rebuilds, which is cheap there because nothing on a chat screen costs
+    anything to recreate. Copied straight, the same rebuild here would have
+    cost a 40s result, staged edits, scroll position, the canvas layout, and
+    rolled back a live transaction; Slack's mechanism carries an assumption
+    (nothing on screen is expensive) that does not hold in an editor holding
+    a database session. The sketch (`docs/refresh-sketch-e2.html`) built the
+    request as two separate effects instead of one borrowed recipe: a sweep
+    that plays once and says only "a hard refresh started," and, separately,
+    each surface blanking to a same-geometry skeleton only when IT is truly
+    mid-refetch, so a tab with staged edits or an open transaction sits
+    through the whole gesture with nothing lost, because nothing on it ever
+    started a fetch. Lesson 14's own bug is the same class read from the
+    other side: `no such session` under a green dot was a mechanism (a
+    primary-session probe) standing in where the actual feedback (this tab's
+    own handle is dead) belonged, and the maintainer's strip is the evidence
+    both times. A familiar interaction is worth naming for what it FEELS
+    like, never for what it silently assumes is cheap to lose; re-derive the
+    mechanism against what this app actually holds, and play the failure
+    case in the sketch, before a line of product code, so the mechanism gets
+    checked against the feeling instead of standing in for it unread.

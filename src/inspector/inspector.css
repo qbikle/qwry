@@ -145,10 +145,15 @@
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
+  /* one transition for the card: the hover border, and the fade the refresh
+     cycle puts its text and fill through (the box itself stays) */
+  transition:
+    color var(--dur-slow) var(--ease-std),
+    background-color var(--dur-slow) var(--ease-std),
+    border-color var(--dur-quick) var(--ease-std);
 }
 .insp-value.editable {
   cursor: text;
-  transition: border-color var(--dur-quick) var(--ease-std);
 }
 .insp-value.editable:hover {
   border-color: var(--border-strong);
@@ -625,4 +630,58 @@
   display: inline-flex;
   align-items: baseline;
   color: var(--syn-prop);
+}
+
+/* ---- the refresh cycle (E2 R3) -----------------------------------------
+   The inspector follows the main body it reads from: while that result is
+   refetching, the value fades out at --dur-quick and the fresh one back at
+   --dur-slow. The header and the chips do not move: they name the COLUMN,
+   which a refetch of the same query cannot change, and stable chrome is the
+   contract (DESIGN rule 2).
+
+   What blanks is the box the value ACTUALLY occupies — one card here, a tree
+   of rows there — and the box is measured off that value rather than
+   described a second time (rule 14): --insp-skel-h is what Inspector.tsx
+   read from the value still on screen when the cycle began. A pane's worth of
+   bars over a pane holding one line is not this value's geometry, it is a
+   guess at another one's. */
+.insp-body {
+  position: relative;
+}
+.insp-body > * {
+  transition: opacity var(--dur-slow) var(--ease-std);
+}
+.inspector.cycling .insp-body > * {
+  opacity: 0;
+  transition-duration: var(--dur-quick);
+}
+/* the scalar card is the exception: its outline is the value's own box, so it
+   stays put and the measured bar lands INSIDE it (DESIGN rule 2, and the
+   sketch's `.ival` while it cycles). Only what the box holds goes — the text
+   and the raised fill — the way browser.css blanks the DDL body. */
+.inspector.cycling .insp-body > .insp-value {
+  opacity: 1;
+  color: transparent;
+  background-color: transparent;
+  transition-duration: var(--dur-quick);
+}
+.inspector.cycling .insp-body::after {
+  content: "";
+  position: absolute;
+  top: var(--insp-skel-top, 0);
+  left: var(--insp-skel-left, 0);
+  width: var(--insp-skel-w, 0);
+  height: var(--insp-skel-h, 0);
+  pointer-events: none;
+  background-repeat: no-repeat;
+  background-image: var(--skel-lines);
+  animation: skel-breathe calc(var(--dur-slow) * 5) var(--ease-std) var(--dur-quick) infinite
+    alternate;
+}
+/* the skeleton stays under reduced motion, the breathing goes (grid.css's own
+   rule: the state survives, the movement does not) */
+@media (prefers-reduced-motion: reduce) {
+  .inspector.cycling .insp-body::after {
+    animation: none;
+  }
 }

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import * as ipc from "../ipc/commands";
-import type { EditabilityMap, EditMapHint, EditOutcome, RowEdit } from "../ipc/types";
+import type { ColumnMeta, EditabilityMap, EditMapHint, EditOutcome, RowEdit } from "../ipc/types";
 import { buildEditMapHint, tableIdentityHints } from "../lib/editHints";
 import { useResults } from "./results";
 import { skey, useConnections } from "./connections";
@@ -35,9 +35,12 @@ const pushUndo = (t: { pending: Record<string, PendingEdit>; undoStack: Record<s
   redoStack: [] as Record<string, PendingEdit>[],
 });
 
+/** one statement's slot in a tab's map cache: the map, or why it is not there */
+export type EditMapSlot = EditabilityMap | "loading" | "unavailable";
+
 /** one tab's edit state */
 interface TabEdits {
-  maps: Record<number, EditabilityMap | "loading" | "unavailable">;
+  maps: Record<number, EditMapSlot>;
   pending: Record<string, PendingEdit>;
   flash: Set<string>;
   /** snapshots of `pending` for ⌘Z/⇧⌘Z over STAGED edits (not DB state) */
@@ -91,6 +94,11 @@ interface EditsState extends TabEdits {
   syncActive: (tabId: string) => void;
   resetTab: (tabId: string) => void;
   ensureMap: (stmtIndex: number) => void;
+  /** a refresh swapped this tab's result in: hand its editability maps back
+   * (E2 R4). One that still describes the fresh columns is kept, so the type
+   * glyphs, the inspector's badge and every editable cell survive the swap;
+   * the rest refetch. `prev` is the cache as it stood before resetTab. */
+  remapAfterRefresh: (tabId: string, prev: Record<number, EditMapSlot>) => void;
   /** DDL ran on this connection: background-refresh every tab's cached
    * editability maps (stale-while-revalidate; failures keep the old map) */
   refreshMapsAfterDdl: () => void;
@@ -232,6 +240,30 @@ async function refetchMap(
   }
 }
 
+/** hinted fetch of one statement's map into a NAMED tab. The active tab is
+ * only the common case: a refresh re-arms the tab its own run belongs to. */
+function fetchMap(set: SetFn, tabId: string, stmtIndex: number) {
+  const sql = useResults.getState().byTab[tabId]?.executedSql;
+  if (!sql) return;
+  writeEdits(set, tabId, (t) => ({ maps: { ...t.maps, [stmtIndex]: "loading" } }));
+  // snapshot identity hints let the backend skip its pg_class trip; the
+  // map lands after ONE round trip (the prepare)
+  const snap = snapshotFor(tabId);
+  const hints = snap ? tableIdentityHints(snap) : null;
+  void withLiveSession(tabId, (sid) => ipc.editability(sid, sql, stmtIndex, hints))
+    .then((map) => writeEdits(set, tabId, (t) => ({ maps: { ...t.maps, [stmtIndex]: map } })))
+    .catch(() =>
+      writeEdits(set, tabId, (t) => ({ maps: { ...t.maps, [stmtIndex]: "unavailable" } })),
+    );
+}
+
+/** does this map still describe these result columns? A map carries column
+ * identity (which table, which attnum) and never rows, so the same columns in
+ * the same order are the same map. */
+const describes = (map: EditabilityMap, cols: ColumnMeta[]) =>
+  map.columns.length === cols.length &&
+  map.columns.every((c, i) => c.table_oid === cols[i].table_oid && c.attnum === cols[i].attnum);
+
 interface PreviewEntry {
   stmtIndex: number;
   rowEdits: RowEdit[];
@@ -350,18 +382,19 @@ export const useEdits = create<EditsState>((set, get) => ({
   ensureMap: (stmtIndex) => {
     const tabId = get().active;
     if ((get().byTab[tabId] ?? blankEdits()).maps[stmtIndex]) return;
-    const sql = useResults.getState().byTab[tabId]?.executedSql;
-    if (!sql) return;
-    writeEdits(set, tabId, (t) => ({ maps: { ...t.maps, [stmtIndex]: "loading" } }));
-    // snapshot identity hints let the backend skip its pg_class trip; the
-    // map lands after ONE round trip (the prepare)
-    const snap = snapshotFor(tabId);
-    const hints = snap ? tableIdentityHints(snap) : null;
-    void withLiveSession(tabId, (sid) => ipc.editability(sid, sql, stmtIndex, hints))
-      .then((map) => writeEdits(set, tabId, (t) => ({ maps: { ...t.maps, [stmtIndex]: map } })))
-      .catch(() =>
-        writeEdits(set, tabId, (t) => ({ maps: { ...t.maps, [stmtIndex]: "unavailable" } })),
-      );
+    fetchMap(set, tabId, stmtIndex);
+  },
+
+  remapAfterRefresh: (tabId, prev) => {
+    for (const st of useResults.getState().byTab[tabId]?.statements ?? []) {
+      if (!st.done || st.error) continue;
+      const old = prev[st.index];
+      if (old && old !== "loading" && old !== "unavailable" && describes(old, st.columns)) {
+        writeEdits(set, tabId, (t) => ({ maps: { ...t.maps, [st.index]: old } }));
+        continue;
+      }
+      fetchMap(set, tabId, st.index);
+    }
   },
 
   refreshMapsAfterDdl: () => {

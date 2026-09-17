@@ -21,6 +21,14 @@ export function DbSwitcher({ profileId, dbname, name }: { profileId: string; dbn
   const [busy, setBusy] = useState(false);
   const fx = useRefreshFx();
   const fxHere = fx.profileId === profileId;
+  // the hard tier's verdict lands on COLOUR, never on the clap (E2 R6): the
+  // glyph wears the two states the connection rail's own dot already wears
+  // (rail.css), read off the same connState, so one connection can never read
+  // two ways in one window (DESIGN rule 14). The rail hides its dot when the
+  // profile is disconnected; a header that is only on screen BECAUSE the
+  // profile connected cannot hide, so the state it fell to is the state it
+  // shows
+  const connState = useConnections((s) => s.connState[profileId] ?? "connected");
 
   const toggle = async () => {
     if (open) {
@@ -86,19 +94,17 @@ export function DbSwitcher({ profileId, dbname, name }: { profileId: string; dbn
 
   return (
     <div className="dbsw">
-      <button className="sb-dbhead" onClick={() => void toggle()} title={`${name} · ${dbname}`} disabled={busy}>
+      <button
+        className={`sb-dbhead${connState === "connected" ? "" : ` ${connState}`}`}
+        onClick={() => void toggle()}
+        title={`${name} · ${dbname}`}
+        disabled={busy}
+      >
         <DbGlyph key={profileId} apart={fxHere && fx.apart} spinTurns={fxHere ? fx.spinTurns : 0} />
         <span className="sb-db-name">{dbname || name}</span>
         <ChevronDown size={12} className="sb-db-chev" />
       </button>
       <ServerInfo profileId={profileId} />
-      {/* on .dbsw (not the button) so the sweep also crosses the (i); its own
-          overflow box because .dbsw clipping would eat the switcher popover.
-          Gated on the TIMED window (fx.shining), never on shineSeq: a
-          remount after the window closed must not replay an old shine */}
-      {fxHere && fx.shining && (
-        <span key={fx.shineSeq} className="sb-shine" aria-hidden="true" />
-      )}
       {open && <div className="dbsw-backdrop" onMouseDown={() => setOpen(false)} />}
       {open && (
         <motion.div className="dbsw-pop" {...menuIn}>

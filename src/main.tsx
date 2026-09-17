@@ -26,6 +26,10 @@ if (harness === "ask") {
 } else if (harness === "canvas") {
   // the canvas's own root (A3): a face of the MAIN card, framed at its widths
   void import("./harness/AskHarness").then((m) => m.mountCanvasHarness(root));
+} else if (harness === "refresh") {
+  // the refresh root (E2): the WHOLE window, because ⌘R and ⇧⌘R cross every
+  // card and a sweep cannot be evidenced inside any one of them
+  void import("./harness/RefreshHarness").then((m) => m.mountRefreshHarness(root));
 } else {
   ReactDOM.createRoot(root).render(
     <React.StrictMode>

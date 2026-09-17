@@ -340,6 +340,32 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
               <MessageSquare size={12} /> Ask <kbd>⌘J</kbd>
             </Command.Item>
             <Command.Item
+              value="refresh reload tab rows results"
+              onSelect={() => {
+                void import("../stores/refresh").then(({ useRefresh }) =>
+                  useRefresh.getState().softRefresh(),
+                );
+                close();
+              }}
+            >
+              <RefreshCw size={12} /> Refresh <kbd>⌘R</kbd>
+            </Command.Item>
+            <Command.Item
+              value="refresh everything hard reload connection reconnect heal"
+              onSelect={() => {
+                const pid = useConnections.getState().activeProfileId;
+                if (pid) {
+                  void import("../stores/refresh").then(({ useRefresh }) =>
+                    useRefresh.getState().hardRefresh(pid),
+                  );
+                }
+                close();
+              }}
+            >
+              <RefreshCw size={12} /> Refresh Everything <kbd>⇧⌘R</kbd>
+            </Command.Item>
+            <Command.Item
+              value="refresh schema introspect tables columns"
               onSelect={() => {
                 const { activeProfileId: pid, sessions } = useConnections.getState();
                 if (pid && sessions[pid]) {
@@ -348,19 +374,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
                 close();
               }}
             >
-              <RefreshCw size={12} /> Refresh Schema <kbd>⌘R</kbd>
-            </Command.Item>
-            <Command.Item
-              value="refresh connection reconnect heal"
-              onSelect={() => {
-                const pid = useConnections.getState().activeProfileId;
-                if (pid) {
-                  void import("../stores/heal").then(({ requestHeal }) => requestHeal(pid, true));
-                }
-                close();
-              }}
-            >
-              <RefreshCw size={12} /> Refresh Connection <kbd>⇧⌘R</kbd>
+              <RefreshCw size={12} /> Refresh Schema
             </Command.Item>
             <Command.Item
               value="save query bookmark"

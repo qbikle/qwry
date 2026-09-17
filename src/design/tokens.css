@@ -62,6 +62,10 @@
   --ease-std: cubic-bezier(0.2, 0, 0, 1);
   --dur-quick: 120ms;
   --dur-slow: 240ms;
+  /* the hard-refresh sweep's own band (DESIGN.md rule 6): light on the dark
+     window, and the accent's tint on the light one, where white would have
+     nothing to read against */
+  --sweep-color: rgba(255, 255, 255, 0.11);
 
   /* search-match highlight */
   --hl-bg: #f5a623;
@@ -132,6 +136,7 @@
   --ok: #1a9d6b;
   --warn: #b9770a;
   --warn-soft: rgba(185, 119, 10, 0.13);
+  --sweep-color: color-mix(in srgb, var(--accent) 13%, transparent);
 
   /* borders */
   --border: #e1e5ec;
@@ -462,4 +467,32 @@ button:disabled {
 .btnish.primary .kbd, .btn.primary .kbd,
 .btnish.danger .kbd, .btn.danger .kbd {
   color: color-mix(in srgb, currentColor 75%, transparent);
+}
+
+/* ---- the refresh skeleton (E2 R3) --------------------------------------
+   Four surfaces blank while they refetch — the tree, the grid, a canvas
+   widget's face, the inspector's value — and each draws its OWN geometry,
+   because standing exactly where the data stood is the whole point of R3.
+   What they must NOT each invent is the breath and the bar rhythm: a
+   skeleton pulsing at one rate in the sidebar and another in the grid reads
+   as two acts, and four copies of one keyframe drift the day the token moves
+   (DESIGN rule 15). Both live here, once. */
+@keyframes skel-breathe {
+  to {
+    opacity: 0.55; /* optical */ /* a breath, not a contrast tier */
+  }
+}
+/* lines at the pane's own text rhythm: what a surface made of TEXT blanks to
+   (the Structure and DDL panes, the inspector's value) where a drawn table
+   would have to guess a shape it does not know. --skel-line-gap is the one
+   knob: a surface that knows its own line-height sets it and the bars land on
+   the lines the text was on */
+:root {
+  --skel-line-h: 11px;
+  --skel-line-gap: 26px;
+  --skel-lines: repeating-linear-gradient(
+    to bottom,
+    var(--bg-hover) 0 var(--skel-line-h),
+    transparent var(--skel-line-h) var(--skel-line-gap)
+  );
 }

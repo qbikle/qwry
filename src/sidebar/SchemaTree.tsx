@@ -19,6 +19,7 @@ import { copyCue } from "../lib/copyCue";
 import { useResults } from "../stores/results";
 import { useTabs } from "../stores/tabs";
 import { useConnections } from "../stores/connections";
+import { useRefresh } from "../stores/refresh";
 import {
   useSchema,
   type ColumnInfo,
@@ -120,6 +121,70 @@ const rowKey = (r: TreeRow): string => {
     case "ext":
       return `ex:${r.x.name}`;
   }
+};
+
+/** the row's own words, for the skeleton bar that stands in their place */
+const labelOf = (r: TreeRow): string => {
+  switch (r.kind) {
+    case "pin-header":
+      return "Pinned";
+    case "schema":
+      return r.schema;
+    case "table":
+      return r.t.name;
+    case "col":
+      return r.c.name;
+    case "parts":
+      return `${r.count} partitions`;
+    case "section":
+      return SECTION_LABEL[r.sec];
+    case "func":
+      return r.f.name;
+    case "seq":
+      return r.q.name;
+    case "enum":
+      return r.e.name;
+    case "ext-header":
+      return "Extensions";
+    case "ext":
+      return r.x.name;
+  }
+};
+
+/** the skeleton wears the ROW's own class, so every indent, height and gap in
+ * the ladder above answers for it too and no second geometry can drift from
+ * this one (DESIGN rule 14) */
+const skelClassOf = (r: TreeRow): string => {
+  switch (r.kind) {
+    case "pin-header":
+      return "tree-pin-header";
+    case "schema":
+      return "tree-schema";
+    case "table":
+      return `tree-table${r.nested ? " nested" : ""}`;
+    case "col":
+      return "tree-col";
+    case "parts":
+      return "tree-parts";
+    case "section":
+      return "tree-section";
+    case "ext-header":
+      return "tree-section top";
+    case "ext":
+      return "tree-obj ext";
+    default:
+      return "tree-obj";
+  }
+};
+
+/** how much of the row a bar fills: the label's own length, so a tree of long
+ * names blanks to a tree of long bars. A heading names a section rather than
+ * an object and reads shorter, which is what it looks like here too */
+const skelWidth = (r: TreeRow): string => {
+  const heading =
+    r.kind === "schema" || r.kind === "section" || r.kind === "ext-header" || r.kind === "pin-header";
+  const pct = Math.min(heading ? 46 : 88, 24 + labelOf(r).length * 3.6);
+  return `${Math.round(pct)}%`;
 };
 
 const SchemaRow = memo(function SchemaRow(p: {
@@ -338,6 +403,10 @@ function loadPins(profileId: string): PinRef[] {
 
 export function SchemaTree({ profileId }: { profileId: string }) {
   const snapshot = useSchema((s) => s.snapshots[profileId]);
+  /** E2 R3: the schema is being refetched by a refresh and the sweep's front
+   * has crossed this pane. A hydrate and a connect fill the tree for the
+   * first time and never cycle: there is nothing standing to fade */
+  const cycling = useRefresh((s) => !!s.cycling.tree);
   const loading = useSchema((s) => s.loading[profileId]);
   const error = useSchema((s) => s.errors[profileId]);
   const [filterInput, setFilterInput] = useState("");
@@ -541,6 +610,12 @@ export function SchemaTree({ profileId }: { profileId: string }) {
     setScrollEl(el);
     if (!el) return;
     const scroll = el;
+    // E2: the tree's surface is the box a reader SEES, which is the scroller;
+    // the list inside it is as tall as the schema, and its centre is where a
+    // 2,000-table snapshot puts it, far below the window the band crosses.
+    // React never writes this attribute on that ancestor, so the mark survives
+    // its renders (LESSONS 7's one exception: a property nothing else lists)
+    scroll.dataset.refreshSurface = "tree";
     const measure = () =>
       setListOffset(
         list.getBoundingClientRect().top - scroll.getBoundingClientRect().top + scroll.scrollTop,
@@ -550,7 +625,10 @@ export function SchemaTree({ profileId }: { profileId: string }) {
     // stale and every virtual row lands shifted; re-measure when it resizes
     const ro = new ResizeObserver(measure);
     if (list.previousElementSibling) ro.observe(list.previousElementSibling);
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      delete scroll.dataset.refreshSurface;
+    };
   }, [hasTree]);
 
   const rowVirt = useVirtualizer({
@@ -701,7 +779,7 @@ export function SchemaTree({ profileId }: { profileId: string }) {
   };
 
   return (
-    <div className="schema-tree">
+    <div className={`schema-tree${cycling ? " cycling" : ""}`}>
       <input
         className="tree-filter"
         placeholder="Filter tables…  ⌥⌘F"
@@ -787,6 +865,28 @@ export function SchemaTree({ profileId }: { profileId: string }) {
             </div>
           );
         })}
+        {cycling && (
+          // E2 R3: the same rows, at the same pitch, as bars. One per VISIBLE
+          // virtual row and none for the thousands below the fold, so a
+          // refresh of a big schema costs what drawing it costs
+          <div className="tree-skel" aria-hidden>
+            {rowVirt.getVirtualItems().map((vr) => {
+              const row = treeRows[vr.index];
+              if (!row) return null;
+              return (
+                <div
+                  key={vr.key}
+                  className="tree-srow"
+                  style={{ transform: `translateY(${vr.start - listOffset}px)` }}
+                >
+                  <div className={skelClassOf(row)}>
+                    <span className="tree-bar" style={{ width: skelWidth(row) }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
       {treeRows.length === 0 &&
         (filter ? (

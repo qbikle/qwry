@@ -239,46 +239,25 @@
   cursor: pointer;
   text-align: left;
 }
-/* heal-success shine: one soft accent band wipes top→bottom across the WHOLE
-   header row (db glyph, name, chevron, the (i)). Re-keyed per shine
-   (refreshFx.shineSeq); refreshFx decides when a heal EARNED it — this class
-   only ever means "the rebuild held". Self-clipping wrapper: overflow on
-   .dbsw itself would eat the switcher popover */
-.sb-shine {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
-.sb-shine::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    to bottom,
-    transparent 15%,
-    color-mix(in srgb, var(--accent) 18%, transparent) 50%,
-    transparent 85%
-  );
-  translate: 0 -100%;
-  animation: sb-shine calc(var(--dur-slow) * 2.5) var(--ease-std) forwards;
-}
-@keyframes sb-shine {
-  to {
-    translate: 0 100%;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .sb-shine::before {
-    animation: none;
-  }
-}
 .sb-dbhead:hover {
   background: var(--bg-hover);
 }
 .sb-db-icon {
   color: var(--accent);
   flex-shrink: 0;
+  /* the colour is the verdict, so it arrives at the pace a verdict reads at,
+     not instantly under a spinning glyph (E2 R6) */
+  transition: color var(--dur-slow) var(--ease-std);
+}
+/* a heal in flight, and a heal that did not land: the rail dot's own two
+   states (rail.css .rail-dot.connecting / .error), on the one piece of chrome
+   that cannot hide itself when the connection goes */
+.sb-dbhead.connecting .sb-db-icon {
+  color: var(--warn);
+}
+.sb-dbhead.error .sb-db-icon,
+.sb-dbhead.disconnected .sb-db-icon {
+  color: var(--danger);
 }
 .sb-db-name {
   font-weight: 600;
@@ -407,9 +386,69 @@
   background: var(--conn-color, var(--accent));
   margin-right: var(--sp-2);
   flex-shrink: 0;
+  /* the colour is the verdict, at the pace a verdict reads at (E2 R6) */
+  transition: background-color var(--dur-slow) var(--ease-std);
+}
+/* a heal in flight, and a connection that is not there: the sidebar glyph's
+   two states (v2.css .sb-dbhead.connecting / .error) on the dot that names
+   the same profile. It never hides — chrome that moves is chrome the reader
+   has to find again (DESIGN rule 2) */
+.conn-dot.connecting {
+  background: var(--warn);
+}
+.conn-dot.error,
+.conn-dot.disconnected {
+  background: var(--danger);
 }
 
 .v2-breadcrumb + .v2-tool,
 .prod-chip + .v2-tool {
   margin-left: 0;
+}
+
+/* ⇧⌘R's sweep (E2 R2; DESIGN.md rule 6 names the motion). ONE band crosses
+   the whole window top-left → bottom-right at constant speed: the front is
+   the clock each surface reads to start its own cycle, so the travel is
+   linear, the one linear timing the design law allows. Fixed to the window
+   rather than positioned inside the shell, so no card's stacking context has
+   to change to hold it; z-index sits above every content layer (the grid's
+   sticky chrome tops out at 10, the transaction banner at 12) and below the
+   first overlay (15), because a band must never wash over an open menu. */
+.v2-sweep {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 14;
+}
+.v2-sweep-band {
+  position: absolute;
+  top: -60%;
+  height: 220%;
+  width: 30%;
+  left: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--sweep-color) 45%,
+    var(--sweep-color) 55%,
+    transparent 100%
+  );
+  transform: translateX(-160%) skewX(-24deg);
+  animation: v2-sweep calc(var(--dur-slow) * 3) linear forwards;
+}
+@keyframes v2-sweep {
+  from {
+    transform: translateX(-160%) skewX(-24deg);
+  }
+  to {
+    transform: translateX(560%) skewX(-24deg);
+  }
+}
+/* reduced motion: no band at all. The surfaces still cycle, all at once,
+   because there is no front left for them to wait for */
+@media (prefers-reduced-motion: reduce) {
+  .v2-sweep {
+    display: none;
+  }
 }

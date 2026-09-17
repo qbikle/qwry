@@ -55,13 +55,17 @@ export function isSessionDeath(msg: string | null | undefined): boolean {
  * `reset_at` column. Over-reaping costs a rebuilt session; over-clearing
  * takes a true error off the screen while the user is reading it. */
 const DEATH_PHRASE =
-  /connection (closed|reset|failed|refused|has been closed|to this tab was lost)|closed the connection|terminating connection|error communicating|broken pipe|no such session|no live connection|origin connection not available/i;
+  /connection (closed|reset|failed|refused|has been closed|to this tab was lost)|closed the connection|terminating connection|idle-session|error communicating|broken pipe|no such session|no live connection|origin connection not available/i;
 
 /** SQLSTATEs a dying transport reports under: connection exception (08),
- * admin and crash shutdown (57P01-03), and PG's idle-in-transaction kill
- * (25P03 — the ten minutes humanCloseReason names). A death that never
- * reached the server, or reached it and got no answer, carries no code. */
-const DEATH_CODE = /^(08|57P0[123]|25P03)/;
+ * admin and crash shutdown (57P01-03), PG's idle-in-transaction kill
+ * (25P03 — the ten minutes humanCloseReason names), and, from PG14, a
+ * server-configured idle_session_timeout (57P05). The last is the DBA's
+ * setting, not qwry's: nothing in this app can prevent it, which is exactly
+ * why its strip has to come down on a heal like every other death. A death
+ * that never reached the server, or reached it and got no answer, carries no
+ * code. */
+const DEATH_CODE = /^(08|57P0[1235]|25P03)/;
 
 /** may a heal take this strip down? Only one a dead session wrote: the text
  * says death AND, when the error carries a SQLSTATE, so does the code. */

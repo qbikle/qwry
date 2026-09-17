@@ -80,6 +80,24 @@ enum QueryEvent {
 - **Editable results**: column editable iff `table_oid != 0` AND full PK of that table present in result columns (ctid fallback = editable-with-warning). `apply_edits` → ONE batched `BEGIN;U₁;…;Uₙ` simple-query message, per-statement RETURNING counts verified from the result stream (matched≠1 or any error → ROLLBACK ALL), then COMMIT/ROLLBACK; 2 round trips for any N. Planning runs on a frontend-fed cached mapping (EditabilityMap + snapshot names → zero catalog trips; trusted-but-verified, silent server-side fallback when absent/incomplete). Joined/computed columns read-only with reason.
 - **Sessions**: one dedicated PG connection per query tab (transactions coherent). CancelToken per session. `connect` takes an `on_close` callback the driver fires on socket death → `session-closed` event → frontend flips the dot + auto-reconnects (`ensureTabSession`).
 - **Session identity (frontend)**: `executedSessionId` on a tab is a handle the store may lose, not a fact it owns. `AppState::session` (`state.rs:47`) returns `None` for an id no longer in `AppState.sessions`, which every command maps to `DriverError::NoSession`; only `disconnect` (`commands.rs:432`) removes an id, so a NoSession always means the frontend forgot first and then sent the stale id anyway. Several store paths can forget a TAB session while the connection dot, which tracks the PRIMARY session, stays green: a lone tab-session death, a per-profile wipe, a profile invalidation, a tab close, and heal's own reaping. `liveSessionFor(tabId)` (`src/stores/liveSession.ts`) is the one resolver: it re-derives a tab's live session and re-stamps `executedSessionId` when it has changed. `withLiveSession(tabId, fn)` is the one door any backend call goes through: it resolves first, and on a NoSession race (resolve, then the id dies before the call lands) it forgets the stale id, re-resolves once, and retries before surfacing a human error. Session death, however the store learns of it, clears that session's stamp on every tab holding it, so the next write goes to a live id, never a dead one; a heal re-stamps the active tab when that tab's own result came from the healed profile (resolving a tab that ran elsewhere would reconnect that other profile) and clears the strips a dead session wrote, matched on the death sentences themselves rather than on the words they share with a constraint named `connections_pkey`. That is why refreshing the connection can fix a stamp a plain reconnect never touched.
+- **Refresh tiers**: `⌘R` (soft) and `⇧⌘R` (hard) are one implementation
+  each, not a header glyph and a palette item that quietly diverge (DESIGN
+  rule 15). Soft is `refreshActiveTab()`: the active tab's own kind decides
+  what reruns (a table's rows, a read-only query's statements, nothing on a
+  write or an open transaction, which the run works around rather than
+  through), no sweep, no glyph ceremony. Hard is `hardRefresh(profileId)`
+  (`src/stores/refresh.ts`): `healProfile` then `afterHeal` rebuild the
+  connection, the schema refetches, then every surface takes its turn; one
+  sweep plays at once, announcing the attempt, never its result, and a
+  background heal (wake, focus, session death) never plays it. Surfaces
+  register through `track(surface, work, el)` against a fixed taxonomy
+  (`tree`, `main`, `inspector`, `widget:<id>`), marking their own DOM root
+  `data-refresh-surface` and reading `cycling[surface]` off the store; a
+  surface cycles, a same-geometry skeleton out and the fresh data back, only
+  when it is itself mid-refetch, never on the sweep's word alone, and the
+  ask pane, which has nothing to refetch, never cycles. Kept across either
+  tier: scroll offset, filters, sort, the selected row (by PK where the
+  result has one, by index otherwise), and canvas layout.
 - **Introspection**: pg_catalog queries (tables, columns+types+nullability+defaults, PKs, FKs both directions, indexes, functions+signatures, enums) → `SchemaSnapshot { version }`, pushed via event. Refresh on connect / DDL detection / manual. The last snapshot persists per profile (appdb `schema_cache`, keyed by `connSig`) and hydrates INSTANTLY at connect start (stale-while-revalidate); a hydrate never overwrites, the server fetch always wins.
 - **Statement splitter**: lexer respecting `'…'`, `"…"`, `$tag$…$tag$`, `--`, `/*…*/`.
 - **SSH tunnel** (`tunnel.rs`): one `ssh -N -L` subprocess per SPEC (forward target + ssh params); `AppState.tunnels` is keyed by spec, so profiles with identical specs (DB-switcher clones) share one process. `ensure_tunnel` rebuilds on dead socket (`is_alive`); a repointed profile computes a new spec and gets its own tunnel. `profile_specs` tracks bindings; invalidate/delete drops a tunnel only when its last profile unbinds.

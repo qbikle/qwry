@@ -119,6 +119,24 @@ moments. JS choreography: `springs.ts` presets only. A transition literal
 that bypasses the tokens is a dialect; dialects are the reason surfaces feel
 unrelated while looking related.
 
+**The hard-refresh sweep is a named motion, not a dialect.** `⇧⌘R` alone
+plays it: one transform keyframe, `translateX(-160%)` to `translateX(560%)`
+of the band's own width (`skewX(-24deg)` fixed throughout), over
+`calc(var(--dur-slow) * 3)` = 720ms at constant, linear speed, the one
+linear timing this file allows. Every other rule in this file eases; this
+one cannot, because the sweep's own front is the clock each surface reads to
+start its cycle, and a speed that sped up or slowed down mid-flight would
+make that clock lie to whichever surface it reached. `--sweep-color` is the
+sweep's own token, themed like any other: `rgba(255,255,255,.11)` in dark,
+`color-mix(in srgb, var(--accent) 13%, transparent)` in light, where plain
+white has nothing to read against. It fires from exactly one place, a manual
+`⇧⌘R`: a background heal (wake, focus, a session dying on its own) never
+plays it, because the sweep announces a hand on the chord, not a fact the
+app discovered by itself. The surfaces it starts keep the file's ordinary
+durations regardless: a cycling surface fades its content out at
+`--dur-quick` and its fresh data back in at `--dur-slow`, `--ease-std`; only
+the sweep itself runs linear.
+
 ## Rule 7: Shortcut glyphs
 
 Full register in WRITING.md (it is text law). Summary: UI font never mono,
@@ -175,7 +193,8 @@ own actions as at most two icon buttons. Controls that configure an action
 sit beside that action (the model picker beside Send, never in the header); a
 status that belongs to the window stays in the window's chrome (PROD is the
 titlebar chip); provenance appears once per zone (the answer footer's connection dot,
-not the header AND the footer). A strip holding two ideas is two strips, or
+not the header AND the footer). The two refresh tiers add no header control
+of their own: the table header's `↻` is the soft tier. A strip holding two ideas is two strips, or
 one idea too many, and the strip's fixed height (rule 2) is not a licence to
 fill it. Precedent: the W2 Ask header, `icon · Ask · avatar · name · db ·
 READ-ONLY · model pill · tier · Threads · New`: ten things in 40px, and the

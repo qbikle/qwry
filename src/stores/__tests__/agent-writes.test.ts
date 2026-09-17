@@ -80,8 +80,13 @@ const { cancelTabSaves, useTabs } = await import("../tabs");
 const { runStatementInTab, useResults } = await import("../results");
 
 const real = { ...runner };
+// the stores are process-wide singletons: a stubbed action left in place here
+// is still stubbed when the next FILE runs, and a suite that then exercises
+// useResults.run silently tests nothing
+const realRun = useResults.getState().run;
 afterAll(() => {
   Object.assign(runner, real);
+  useResults.setState({ run: realRun });
   cancelTabSaves();
   clearMocks();
   for (const k of shimmed) Reflect.deleteProperty(globalThis, k);

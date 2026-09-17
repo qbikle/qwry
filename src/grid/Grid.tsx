@@ -593,9 +593,14 @@ export function Grid({
   const [widths, setWidths] = useState<number[]>([]);
   const widthsInitialized = useRef(false);
 
+  // the column SIGNATURE, not the array's identity: a refresh swaps a fresh
+  // result of the same shape under a mounted grid (E2 R4), and re-estimating
+  // widths from the new rows would shift every column under the reader's eye
+  // for no reason the reader can see
+  const widthSig = colSig(statement.columns);
   useEffect(() => {
     widthsInitialized.current = false;
-  }, [statement.index, statement.columns]);
+  }, [statement.index, widthSig]);
 
   useEffect(() => {
     if (widthsInitialized.current) return;
@@ -877,6 +882,28 @@ export function Grid({
   }, [layoutWidths, colOrder, hiddenCols, colVirt]);
 
   const sel = useSelection(viewLen, viewColLen);
+
+  // R4: a refresh swaps a fresh result in under a MOUNTED grid, which is what
+  // keeps the scroll offset. A range selection is VIEW coordinates over rows
+  // that may no longer be the same rows, so it survives only when the row
+  // count does; over a shrunk or grown result it is the wrong-row class
+  // (LESSONS 4). Streaming batches and loadMore change the count too, which
+  // is why the swap itself is the trigger and not the length.
+  const swappedAt = useResults((s) => (readOnly ? null : s.refreshedAt));
+  const rowsSeen = useRef(rows.length);
+  const swapSeen = useRef(swappedAt);
+  useEffect(() => {
+    if (swappedAt !== swapSeen.current) {
+      swapSeen.current = swappedAt;
+      if (rowsSeen.current !== rows.length) {
+        setEditing(null);
+        setRecord(null);
+        sel.reset();
+      }
+    }
+    rowsSeen.current = rows.length;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [swappedAt, rows.length]);
 
   // ANY view remap (quick-filter, sort, column reorder) invalidates an open
   // editor and the range selection: both hold VIEW coords, and batch actions

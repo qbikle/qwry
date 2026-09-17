@@ -577,3 +577,32 @@ textarea.st-hint {
 }
 .ddl-error { color: var(--danger); }
 
+
+/* ---- the refresh cycle, Structure and DDL (E2 R3) -----------------------
+   Whichever sub-tab shows IS the table tab's main body, so it cycles with the
+   refresh that fetched it: content out at --dur-quick, the fresh catalog read
+   back at --dur-slow, over lines at the pane's own text rhythm. Lines rather
+   than a drawn table: one pane is a text blob and the other is five tables of
+   unknown length, and a skeleton that guessed their shape would guess wrong
+   (DESIGN rule 13). The toolbar stays put; it names the table, not the read. */
+.tb-structure > *,
+.ddl-tab .ddl-body {
+  transition:
+    opacity var(--dur-slow) var(--ease-std),
+    color var(--dur-slow) var(--ease-std);
+}
+.tb-structure.cycling > * {
+  opacity: 0;
+  transition-duration: var(--dur-quick);
+}
+.ddl-tab.cycling .ddl-body {
+  color: transparent;
+  transition-duration: var(--dur-quick);
+}
+.tb-structure.cycling,
+.ddl-tab.cycling .ddl-body {
+  background-image: var(--skel-lines);
+  background-origin: content-box;
+  background-clip: content-box;
+  background-repeat: no-repeat;
+}

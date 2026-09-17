@@ -435,3 +435,97 @@ input.cv-title {
   color: var(--warn);
   font-weight: 400;
 }
+
+/* ---- the refresh cycle (E2 R3) ---------------------------------------------
+   A widget blanks only while it is truly refetching, and what it blanks to is
+   its OWN face's shape: rows where rows stood, bars where bars stood, figures
+   where the figures did. The bars are the faces box's own pseudo-element, so
+   the face underneath keeps its measured height and NOTHING reflows for a
+   skeleton (DESIGN rule 2's stable chrome, and `.rb`'s sprung height is
+   measured off `.rb-inner`, which only fades).
+
+   The block's title, its sentence and its status line are not refetching and
+   do not cycle: the question above a widget is the same question while its
+   rows travel, and the run's facts under it stay true until the new ones land
+   (E2 R3's "nothing stays blank" read at the widget's own scale). The SQL
+   face is left alone for the same reason: the statement is not what a refresh
+   goes and gets.
+
+   Out in --dur-quick, back in --dur-slow, --ease-std (E2 R3). */
+.blk .rb:is(.table, .chart, .values) .rb-inner {
+  transition: opacity var(--dur-slow) var(--ease-std);
+}
+.blk.cycling .rb:is(.table, .chart, .values) .rb-inner {
+  opacity: 0;
+  transition-duration: var(--dur-quick);
+}
+.blk .rb:is(.table, .chart, .values)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  background-repeat: repeat-y;
+  transition: opacity var(--dur-quick) var(--ease-std);
+}
+.blk.cycling .rb:is(.table, .chart, .values)::after {
+  opacity: 1;
+  /* the pulse waits out the fade above: an animation overrides the transition
+     it starts under, so without the delay the bars arrive at full strength
+     while the face is still there */
+  animation: skel-breathe calc(var(--dur-slow) * 5) var(--ease-std) var(--dur-quick) infinite alternate;
+}
+
+/* reduced motion keeps the skeleton and drops the breathing (grid.css's own
+   rule for the commit flash: the state stays, the motion goes) */
+@media (prefers-reduced-motion: reduce) {
+  .blk.cycling .rb:is(.table, .chart, .values)::after {
+    animation: none;
+  }
+}
+
+/* rows at the pitch the grid was drawing them at, inset by the gutter its
+   cells stand in (`--grid-rh` is the grid's own live row height) */
+.blk .rb.table::after {
+  /* as many rows as the face is standing on, never as many as the cell could
+     hold: a skeleton that fills the box says there is more coming than there
+     is. `bottom: auto` keeps the rows top-anchored under the header */
+  bottom: auto;
+  height: calc(var(--skel-rows, 6) * var(--grid-rh, 26px));
+  padding: 0 var(--sp-2);
+  background-origin: content-box;
+  background-clip: content-box;
+  background-image: linear-gradient(
+    to bottom,
+    transparent 0 24%,
+    var(--bg-hover) 24% 66%,
+    transparent 66% 100%
+  );
+  background-size: 100% var(--grid-rh, 26px);
+}
+
+/* bars, standing on the floor the plot stands on */
+.blk .rb.chart::after {
+  background-repeat: repeat-x;
+  background-position: left bottom;
+  background-image: linear-gradient(to right, var(--bg-hover) 0 64%, transparent 64% 100%);
+  /* eight of them across, so the row ends on a whole bar: a sliver clipped by
+     the box's right edge reads as a rendering fault, not as a chart */
+  background-size: 12.5% 68%;
+}
+
+/* a figure row: each cell a figure over its column's name, the pair the
+   values face draws (the default two columns; a wider row repeats the same
+   pair, which is what a skeleton of it looks like at any count) */
+.blk .rb.values::after {
+  background-repeat: repeat-x;
+  background-image:
+    linear-gradient(to right, var(--bg-hover) 0 56%, transparent 56% 100%),
+    linear-gradient(to right, var(--bg-hover) 0 36%, transparent 36% 100%);
+  background-size:
+    50% 16px,
+    50% 8px;
+  background-position:
+    left 8px,
+    left 32px;
+}

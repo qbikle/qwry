@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import * as ipc from "../ipc/commands";
 import type { ColumnMeta, DriverError, QueryEvent } from "../ipc/types";
+import type { EditMapSlot } from "./edits";
 import { headToken } from "../editor/statements";
 import { terminatedSessions } from "./sessionFlags";
 import { dropTabQueryScroll } from "../grid/scrollMemory";
@@ -12,6 +13,7 @@ import {
   noteForgottenStamp,
 } from "./liveSession";
 import { isTabVisible, useTabs } from "./tabs";
+import { useInspector, type InspectTarget } from "./inspector";
 import { copyCueShow } from "../lib/copyCue";
 
 export interface StatementState {
@@ -40,6 +42,12 @@ interface TabResult {
   cancelling: boolean;
   /** establishing this tab's DB session (first run in a fresh tab) */
   connecting: boolean;
+  /** a refresh run is in flight: the rows on screen are the OLD ones and stay
+   * there until the fresh set swaps in whole (E2 R5) */
+  refreshing: boolean;
+  /** when the last refresh run swapped; the status bar says "just now" for
+   * two seconds off this, then goes back to the plain ms */
+  refreshedAt: number | null;
   totalMs: number | null;
   executedSql: string | null;
   /** char offset of executedSql within the editor buffer at run time; lets
@@ -61,6 +69,8 @@ const blankTab = (): TabResult => ({
   running: false,
   cancelling: false,
   connecting: false,
+  refreshing: false,
+  refreshedAt: null,
   totalMs: null,
   executedSql: null,
   executedOffset: 0,
@@ -81,8 +91,15 @@ interface ResultsState extends TabResult {
   clearTab: (tabId: string) => void;
   /** opts.profileId pins the run to that profile instead of the rail-active
    * one: post-write reloads must read the connection they wrote to; every
-   * other caller keeps rail semantics (the v0.6 contract) */
-  run: (sqlOverride?: string, offset?: number, opts?: { profileId?: string }) => Promise<void>;
+   * other caller keeps rail semantics (the v0.6 contract).
+   * opts.refresh is E2's refresh mode: the result on screen is KEPT while the
+   * fresh one streams into a shadow buffer, and one store write swaps it in
+   * at the end (R5). A failed refresh keeps the old rows and adds the strip. */
+  run: (
+    sqlOverride?: string,
+    offset?: number,
+    opts?: { profileId?: string; refresh?: boolean },
+  ) => Promise<void>;
   cancel: () => Promise<void>;
   setActiveStatement: (i: number) => void;
   /** patch one statement's rows (edits commit); tabId defaults to the active
@@ -178,6 +195,121 @@ function queueRows(
   }
 }
 
+/** One QueryEvent folded into a tab's result shape. A plain run folds into
+ * the store as events land; a refresh run folds into a shadow buffer and
+ * swaps once, so neither tier owns a second copy of what an event MEANS
+ * (DESIGN rule 15). `rows` is not here: the live path batches it through the
+ * rAF queue, the shadow appends straight away, and only `foldRows` differs. */
+function foldEvent(t: TabResult, ev: QueryEvent): Partial<TabResult> | null {
+  switch (ev.type) {
+    case "statement_start":
+      return {
+        statements: [...t.statements, blankStatement(ev.index, ev.sql)],
+        activeStatement: ev.index,
+      };
+    case "columns":
+      return {
+        statements: t.statements.map((st) =>
+          st.index === ev.index ? { ...st, columns: ev.columns } : st,
+        ),
+      };
+    case "statement_done":
+      return {
+        statements: t.statements.map((st) =>
+          st.index === ev.index
+            ? {
+                ...st,
+                affected: ev.affected,
+                ms: ev.ms,
+                rowCount: ev.row_count,
+                capped: ev.capped,
+                done: true,
+              }
+            : st,
+        ),
+      };
+    case "error": {
+      const err = {
+        message: ev.message,
+        position: ev.position,
+        code: ev.code,
+        detail: ev.detail,
+        hint: ev.hint,
+      };
+      const exists = t.statements.some((st) => st.index === ev.index);
+      return exists
+        ? {
+            statements: t.statements.map((st) =>
+              st.index === ev.index ? { ...st, error: err, done: true } : st,
+            ),
+            activeStatement: ev.index,
+          }
+        : {
+            statements: [
+              ...t.statements,
+              { ...blankStatement(ev.index), error: err, done: true },
+            ],
+            activeStatement: ev.index,
+          };
+    }
+    default:
+      return null;
+  }
+}
+
+/** the truncated-cell keys a rows batch adds. `pending` is how many rows for
+ * this statement are still queued for the rAF flush, so the keys land on the
+ * row indices the batch will actually occupy. */
+function foldTruncated(
+  t: TabResult,
+  ev: Extract<QueryEvent, { type: "rows" }>,
+  pending: number,
+): Partial<TabResult> {
+  return {
+    statements: t.statements.map((st) => {
+      if (st.index !== ev.index) return st;
+      const truncated = new Set(st.truncated);
+      const base = st.rows.length + pending;
+      for (const [r, c] of ev.truncated) truncated.add(`${base + r}:${c}`);
+      return { ...st, truncated };
+    }),
+  };
+}
+
+/** R4: the inspected cell survives a refresh. Its row is found again by PK
+ * when the result set has one, kept by index when the row count is unchanged,
+ * and dropped when neither holds — a coordinate that no longer names the same
+ * row would print another row's value under the same header (LESSONS 4). */
+function reinspectRow(
+  before: StatementState,
+  after: StatementState,
+  row: number,
+  col: number,
+  pkCols: number[],
+): number | null {
+  if (before.columns[col]?.name !== after.columns[col]?.name) return null;
+  const old = before.rows[row];
+  const usablePk =
+    old !== undefined &&
+    pkCols.length > 0 &&
+    pkCols.every((c) => c < after.columns.length && !before.truncated.has(`${row}:${c}`));
+  if (usablePk) {
+    const hit = after.rows.findIndex((r) => pkCols.every((c) => r[c] === old[c]));
+    if (hit >= 0) return hit;
+  }
+  if (before.rows.length === after.rows.length && row < after.rows.length) return row;
+  return null;
+}
+
+/** the PK column indices of the result's own table, from the editability map
+ * the grid already fetched. A join with several tables resolves through the
+ * first editable column: that is the table whose rows the browse is showing. */
+function pkColsOf(map: EditMapSlot | undefined): number[] {
+  if (!map || typeof map === "string") return [];
+  const oid = map.columns.find((c) => c.editable)?.table_oid;
+  return (oid != null ? map.pk_cols[oid] : undefined) ?? Object.values(map.pk_cols)[0] ?? [];
+}
+
 export const useResults = create<ResultsState>((set, get) => ({
   ...blankTab(),
   byTab: {},
@@ -202,7 +334,12 @@ export const useResults = create<ResultsState>((set, get) => ({
       ),
     })),
 
-  run: async (sqlOverride?: string, offset = 0, opts?: { profileId?: string }) => {
+  run: async (
+    sqlOverride?: string,
+    offset = 0,
+    opts?: { profileId?: string; refresh?: boolean },
+  ) => {
+    const refresh = opts?.refresh === true;
     const conn = useConnections.getState();
     // the profile this run EXECUTES on: everything downstream (session,
     // history, executedProfileId stamp, disconnect reaping) reads this one
@@ -248,9 +385,22 @@ export const useResults = create<ResultsState>((set, get) => ({
     // staged edits die with the old result set, never silently. (Scroll-
     // triggered loadMore parks itself instead of prompting; this covers
     // explicit re-runs, filter/sort changes and refresh.)
+    // the editability maps as they stand BEFORE the run: the swap reads its
+    // PK columns out of them to find the inspected row again, and by then
+    // resetTab has thrown them away (edits.ts imports this module, so the
+    // reference is only ever the dynamic one)
+    let pkMaps: Record<number, EditMapSlot> = {};
     {
       const { useEdits } = await import("./edits");
+      if (refresh) pkMaps = useEdits.getState().byTab[tabId]?.maps ?? {};
       const pendingN = Object.keys(useEdits.getState().byTab[tabId]?.pending ?? {}).length;
+      // a refresh never prompts: R4 keeps a staged tab's rows exactly where
+      // they are and refreshActiveTab says so in the status bar, so a modal
+      // here would be a second answer to a gesture that already has one
+      if (pendingN > 0 && refresh) {
+        runInflight.delete(tabId);
+        return;
+      }
       if (pendingN > 0) {
         const { confirmDanger } = await import("./danger");
         const ok = await confirmDanger(
@@ -330,23 +480,42 @@ export const useResults = create<ResultsState>((set, get) => ({
         .catch((e) => console.error("buffer_snapshot_add failed", e));
     }
 
-    if (pendingRows) pendingRows.delete(tabId);
-    dropTabQueryScroll(tabId); // a fresh run reads from the top
-    writeTab(set, tabId, {
-      statements: [],
-      activeStatement: 0,
-      running: true,
-      cancelling: false,
-      totalMs: null,
-      executedSql: sql,
-      executedOffset: sqlOverride === undefined ? 0 : offset,
-      notices: [],
-      executedSessionId: sessionId,
-      executedProfileId: profileId,
-      globalError: null,
-    });
-    // this tab's stale editability + pending edits die with its old result set
-    void import("./edits").then(({ useEdits }) => useEdits.getState().resetTab(tabId));
+    const executedOffset = sqlOverride === undefined ? 0 : offset;
+    // a refresh keeps everything the reader owns: the rows, the scroll they
+    // are at (no dropTabQueryScroll, and the Grid stays mounted under the same
+    // key), the statement they were on. Only the busy flags and the strips
+    // the old result left behind move now; the data swaps once, at the end.
+    if (refresh) {
+      writeTab(set, tabId, {
+        running: true,
+        cancelling: false,
+        refreshing: true,
+        notices: [],
+        globalError: null,
+      });
+    } else {
+      if (pendingRows) pendingRows.delete(tabId);
+      dropTabQueryScroll(tabId); // a fresh run reads from the top
+      writeTab(set, tabId, {
+        statements: [],
+        activeStatement: 0,
+        running: true,
+        cancelling: false,
+        totalMs: null,
+        executedSql: sql,
+        executedOffset,
+        notices: [],
+        executedSessionId: sessionId,
+        executedProfileId: profileId,
+        globalError: null,
+      });
+      // this tab's stale editability + pending edits die with its old result set
+      void import("./edits").then(({ useEdits }) => useEdits.getState().resetTab(tabId));
+    }
+
+    // the refresh run's shadow: every event folds in here instead of the
+    // store, so nothing on screen moves until the whole set has landed
+    let shadow: TabResult = blankTab();
 
     // history timing/rows come from the events themselves: reading the store
     // after the invoke resolves races the rAF row flush and logged ms=0
@@ -355,85 +524,50 @@ export const useResults = create<ResultsState>((set, get) => ({
     const runStart = performance.now();
 
     const onEvent = (ev: QueryEvent) => {
-      switch (ev.type) {
-        case "statement_start":
-          writeTab(set, tabId, (t) => ({
-            statements: [...t.statements, blankStatement(ev.index, ev.sql)],
-            activeStatement: ev.index,
-          }));
-          break;
-        case "columns":
-          writeTab(set, tabId, (t) => ({
-            statements: t.statements.map((st) =>
-              st.index === ev.index ? { ...st, columns: ev.columns } : st,
-            ),
-          }));
-          break;
-        case "rows": {
-          if (ev.truncated.length > 0) {
-            writeTab(set, tabId, (t) => ({
-              statements: t.statements.map((st) => {
-                if (st.index !== ev.index) return st;
-                const truncated = new Set(st.truncated);
-                const base =
-                  st.rows.length + (pendingRows?.get(tabId)?.get(ev.index)?.length ?? 0);
-                for (const [r, c] of ev.truncated) truncated.add(`${base + r}:${c}`);
-                return { ...st, truncated };
-              }),
-            }));
+      if (ev.type === "statement_done") historyRows += ev.row_count;
+      if (ev.type === "rows") {
+        if (refresh) {
+          // the shadow is this run's alone and is never rendered, so its rows
+          // are appended IN PLACE: a 50k result arrives in a hundred batches
+          // and rebuilding the array per batch would copy millions of refs
+          // for nothing
+          const st = shadow.statements.find((s) => s.index === ev.index);
+          if (st) {
+            const base = st.rows.length;
+            for (const [r, c] of ev.truncated) st.truncated.add(`${base + r}:${c}`);
+            for (const row of ev.rows) st.rows.push(row);
           }
-          queueRows(set, tabId, ev.index, ev.rows);
-          break;
+          return;
         }
-        case "statement_done":
-          historyRows += ev.row_count;
-          writeTab(set, tabId, (t) => ({
-            statements: t.statements.map((st) =>
-              st.index === ev.index
-                ? {
-                    ...st,
-                    affected: ev.affected,
-                    ms: ev.ms,
-                    rowCount: ev.row_count,
-                    capped: ev.capped,
-                    done: true,
-                  }
-                : st,
-            ),
-          }));
-          break;
-        case "error":
-          writeTab(set, tabId, (t) => {
-            const exists = t.statements.some((st) => st.index === ev.index);
-            const err = {
-              message: ev.message,
-              position: ev.position,
-              code: ev.code,
-              detail: ev.detail,
-              hint: ev.hint,
-            };
-            return exists
-              ? {
-                  statements: t.statements.map((st) =>
-                    st.index === ev.index ? { ...st, error: err, done: true } : st,
-                  ),
-                  activeStatement: ev.index,
-                }
-              : {
-                  statements: [...t.statements, { ...blankStatement(ev.index), error: err, done: true }],
-                  activeStatement: ev.index,
-                };
-          });
-          break;
-        case "finished":
-          writeTab(set, tabId, { totalMs: ev.total_ms });
-          historyDone = true;
-          void ipc
-            .historyAdd(profileId, sql, ev.total_ms, historyRows, "ok")
-            .catch((err) => console.error("history_add failed", err));
-          break;
+        if (ev.truncated.length > 0) {
+          writeTab(set, tabId, (t) =>
+            foldTruncated(t, ev, pendingRows?.get(tabId)?.get(ev.index)?.length ?? 0),
+          );
+        }
+        queueRows(set, tabId, ev.index, ev.rows);
+        return;
+      }
+      if (ev.type === "finished") {
+        if (refresh) shadow = { ...shadow, totalMs: ev.total_ms };
+        else writeTab(set, tabId, { totalMs: ev.total_ms });
+        historyDone = true;
+        void ipc
+          .historyAdd(profileId, sql, ev.total_ms, historyRows, "ok")
+          .catch((err) => console.error("history_add failed", err));
+        return;
+      }
+      if (refresh) {
+        const p = foldEvent(shadow, ev);
+        if (p) shadow = { ...shadow, ...p };
+      } else {
+        writeTab(set, tabId, (t) => foldEvent(t, ev) ?? {});
       }
     };
+
+    // the terminal outcome, applied ONCE below: a refresh that fails must not
+    // write a strip over rows it is about to leave alone, then write again
+    let terminal: DriverError | null = null;
+    let sessionDied = false;
 
     try {
       await ipc.executeStream(sessionId, sql, onEvent);
@@ -444,7 +578,7 @@ export const useResults = create<ResultsState>((set, get) => ({
       // executed run, not a whole-buffer regex) → refresh the snapshot AND
       // every tab's cached editability maps (they carry table/column/pk
       // identity that DDL can invalidate)
-      const ranDdl = (get().byTab[tabId]?.statements ?? []).some(
+      const ranDdl = (refresh ? shadow.statements : (get().byTab[tabId]?.statements ?? [])).some(
         (st) => !st.error && DDL_HEADS.has(headToken(st.sql)),
       );
       if (ranDdl) {
@@ -474,19 +608,77 @@ export const useResults = create<ResultsState>((set, get) => ({
           )
           .catch((e2) => console.error("history_add failed", e2));
       }
-      writeTab(set, tabId, (t) => ({
-        globalError: t.statements.some((st) => st.error) ? null : humanSessionError(err),
-      }));
-      if (isSessionDeath(err?.message)) {
-        // reap the EXECUTED session only; sibling tabs on the profile keep
-        // their live sessions (flipping the whole profile contradicted the
-        // per-session reaping in markDisconnected)
-        useConnections.getState().markDisconnected(profileId, sessionId);
-      }
+      terminal = humanSessionError(err);
+      sessionDied = isSessionDeath(err?.message);
     } finally {
       terminatedSessions.delete(sessionId);
-      // a successful cancel ends the run; the flag dies with it
-      writeTab(set, tabId, { running: false, cancelling: false });
+      // ONE write ends the run, both tiers and both outcomes. A refresh that
+      // reached the end swaps its shadow in whole; one that died keeps the
+      // rows the user is reading and adds only the strip (R3: nothing stays
+      // blank), which is why the swap is decided before anything is written.
+      const swapped = refresh && terminal === null;
+      // the inspected cell, re-aimed while the OLD rows are still readable.
+      // The target is the pane's, not the tab's, so only the tab on screen
+      // may move it (LESSONS 4)
+      let target: InspectTarget | null = null;
+      if (swapped && tabId === get().active) {
+        const cur = useInspector.getState().target;
+        const from = (get().byTab[tabId]?.statements ?? []).find(
+          (st) => st.index === cur?.stmtIndex,
+        );
+        const to = cur ? shadow.statements.find((st) => st.index === cur.stmtIndex) : undefined;
+        if (cur && from && to) {
+          const row = reinspectRow(from, to, cur.row, cur.col, pkColsOf(pkMaps[cur.stmtIndex]));
+          if (row !== null) target = { ...cur, row };
+        }
+      }
+      writeTab(set, tabId, (t) => {
+        // a refresh that failed always says so; a plain run's strip yields to
+        // a statement error of its own, which is already on screen
+        const err = refresh
+          ? terminal
+          : terminal && !t.statements.some((st) => st.error)
+            ? terminal
+            : null;
+        if (!refresh) return { running: false, cancelling: false, globalError: err };
+        return {
+          running: false,
+          cancelling: false,
+          refreshing: false,
+          ...(swapped
+            ? {
+                statements: shadow.statements,
+                activeStatement: shadow.statements.some((st) => st.index === t.activeStatement)
+                  ? t.activeStatement
+                  : shadow.activeStatement,
+                totalMs: shadow.totalMs,
+                executedSql: sql,
+                executedOffset,
+                refreshedAt: Date.now(),
+              }
+            : {}),
+          executedSessionId: sessionId,
+          executedProfileId: profileId,
+          globalError: err,
+        };
+      });
+      if (swapped) {
+        // the maps describe COLUMNS, never rows: the swap hands them back to
+        // the tab (kept when the fresh result has the same ones, refetched
+        // when it does not), so the header's type glyphs, the inspector's
+        // badge and every editable cell survive a refresh (R4). The inspected
+        // cell was re-aimed above, by the PK those maps carried.
+        void import("./edits").then(({ useEdits }) => {
+          useEdits.getState().resetTab(tabId);
+          useEdits.getState().remapAfterRefresh(tabId, pkMaps);
+        });
+        if (target) useInspector.getState().setTarget(target);
+      }
+      // reap the EXECUTED session only; sibling tabs on the profile keep
+      // their live sessions (flipping the whole profile contradicted the
+      // per-session reaping in markDisconnected). After the write: the stamp
+      // this run left is the one death has to clear.
+      if (sessionDied) useConnections.getState().markDisconnected(profileId, sessionId);
       runInflight.delete(tabId);
     }
   },
