@@ -37,26 +37,9 @@ for (const k of shimmed) {
   });
 }
 
-interface Rect {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}
-const box = (r: Rect) => ({ getBoundingClientRect: () => r }) as unknown as HTMLElement;
-/** the sketch's own frame, and where the widgets under test stand in it: the
- * refresh store measures both to work out when the band's front crosses each
- * one (docs/refresh-sketch-e2.html) */
-const SHELL: Rect = { left: 0, top: 0, width: 1280, height: 640 };
-let layout: Record<string, Rect> = {};
-const docStub: Record<string, unknown> = {
-  querySelector: (sel: string) => {
-    if (sel === ".v2-shell") return box(SHELL);
-    const surface = /^\[data-refresh-surface="(.+)"\]$/.exec(sel)?.[1];
-    const r = surface ? layout[surface] : undefined;
-    return r ? box(r) : null;
-  },
-};
+/** nothing in a refresh measures an element any more (E3 rule 2 deleted the
+ * band's front), so the stub answers nothing and only has to exist */
+const docStub: Record<string, unknown> = { querySelector: () => null };
 /** `document` is REPLACED rather than filled in, refresh.test.ts's own rule: a
  * sibling suite that ran first leaves a wholly inert one behind, and this
  * suite measures elements. Everything but querySelector stays inert */
@@ -152,7 +135,6 @@ function seed(blocks: Block[]) {
   ran = [];
   answers = {};
   fails = {};
-  layout = {};
   useRefresh.setState({ tier: null, startedAt: null, cycling: {} });
   installIpc();
   useConnections.setState({
@@ -309,29 +291,31 @@ describe("refreshWidget", () => {
 // ---- the order the document is refetched in (R3, R4) ----------------------
 
 describe("refreshCanvas", () => {
-  const place = (id: string, r: Rect) => {
-    layout[`widget:${id}`] = r;
-  };
-
-  test("sends every result widget once, in the order the band's front crosses them", async () => {
-    // the document holds them in an order no eye reads them in, and one of
-    // them is a note: what decides the sending order is the window, not the
-    // array
+  test("sends every result widget once, in document order", async () => {
+    // the band no longer clocks anything, so nothing is staggered by where it
+    // stands on screen: the document's own order is the sending order, and the
+    // note in the middle of it has nothing to send at all (E3 rule 2)
     seed([
       widget("bottom", { cell: { x: 0, y: 4, w: 4, h: 4 } }),
       { id: "note", kind: "note", text: "Wednesday spike", cell: { x: 4, y: 4, w: 4, h: 4 } },
       widget("right", { cell: { x: 8, y: 0, w: 4, h: 4 } }),
       widget("left", { cell: { x: 0, y: 0, w: 4, h: 4 } }),
     ]);
-    place("left", { left: 300, top: 120, width: 200, height: 160 });
-    place("right", { left: 900, top: 120, width: 200, height: 160 });
-    place("bottom", { left: 300, top: 420, width: 200, height: 160 });
     useRefresh.setState({ tier: "hard", startedAt: Date.now() });
     await refreshCanvas(CANVAS);
-    // the band leans 24deg, so it is not reading order: it reaches the widget
-    // low on the left (222 ms) before the one high on the right (344 ms), and
-    // the refetches are sent in exactly that order
-    expect(ran.map((r) => r.sql)).toEqual(["select left", "select bottom", "select right"]);
+    expect(ran.map((r) => r.sql)).toEqual(["select bottom", "select right", "select left"]);
+  });
+
+  test("every widget it sends wears a skeleton, and the note never does", async () => {
+    seed([
+      widget("left", { cell: { x: 0, y: 0, w: 4, h: 4 } }),
+      { id: "note", kind: "note", text: "Wednesday spike", cell: { x: 4, y: 0, w: 4, h: 4 } },
+    ]);
+    const act = refreshCanvas(CANVAS);
+    // the plan's own write, before a single await (E3 rule 1)
+    expect(useRefresh.getState().cycling["widget:left"]).toBe(true);
+    expect(useRefresh.getState().cycling["widget:note"]).toBeUndefined();
+    await act;
   });
 
   test("a document of notes alone sends nothing", async () => {

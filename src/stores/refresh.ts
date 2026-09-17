@@ -1,79 +1,84 @@
-/** The two refresh tiers, and the clock they run on (E2 R1-R6).
+/** The two refresh tiers, and the frame they answer in (E2 R1-R6, amended by
+ * E3 rules 1-3).
  *
  * ⌘R reloads what you are looking at: the active tab alone. ⇧⌘R is the hard
- * tier: the connection is probed and rebuilt, the schema refetched, then every
- * surface takes its turn. One implementation each, so the header ↻ and the
- * palette cannot drift apart (DESIGN rule 15).
+ * tier: the schema and the tab both, with the connection probed and rebuilt
+ * BESIDE them. One implementation each, so the header ↻ and the palette
+ * cannot drift apart (DESIGN rule 15).
  *
- * The sweep is the ACK and the surfaces are the verdict (LESSONS 15): the band
- * plays at once on ⇧⌘R, always, even when the connection turns out dead, and
- * says only that a hard refresh started. A surface blanks to its skeleton only
- * while it is itself mid-refetch, and comes back with the old data plus a
- * strip when the refetch failed. This module owns WHEN each cycle starts; the
- * skeleton and the fades are each surface's own CSS.
+ * The app answers in the gesture's own frame (LESSONS 16). One synchronous
+ * store write decides every surface that will refetch and puts its skeleton
+ * up; the fetches go out in that same tick; the heal round trip starts next
+ * to them rather than ahead of them, so the network's honest slowness shows
+ * in how long a loader HOLDS, never in when it starts. The band is the ack
+ * laid over surfaces that are already answering, and nothing reads it
+ * (DESIGN rule 6's E3 amendment). This module owns WHEN each cycle starts;
+ * the skeleton and the fades are each surface's own CSS.
  */
 import { create } from "zustand";
-import { prefersReducedMotion } from "../design/springs";
 import { readOnlyHeads } from "../lib/sqlHeads";
 import { nextRetryAt, requestHeal } from "./heal";
 import { afterHeal } from "./liveSession";
 import { anySessionOn, useConnections } from "./connections";
+import { useBrowser } from "./browser";
+import { useEdits } from "./edits";
 import { useResults } from "./results";
 import { useSchema } from "./schema";
+import { useSidePane } from "./sidePane";
 import { useTabs } from "./tabs";
-import type { ResultBlock } from "./canvas";
 
 export type Tier = "soft" | "hard";
 export type Surface = "tree" | "main" | "inspector" | `widget:${string}`;
 
-/** DESIGN rule 6's named sweep: --dur-slow × 3 at constant speed. The band's
- * own front is the clock every surface reads, so the CSS animation and this
- * projection must name the same number (rule 14). */
-const SWEEP_MS = 720;
-/** the skeleton's grace: a refetch that lands inside it crossfades and never
- * blanks, so a warm cache reads as instant instead of as a flicker (R3) */
-const GRACE_MS = 150;
 /** --dur-slow: once a skeleton is up it stays long enough to read as a state */
 const MIN_SHOW_MS = 240;
 /** how long the status bar keeps a note about what a refresh did NOT do (R4) */
 const NOTE_MS = 2_600;
+
+interface Note {
+  tabId: string;
+  text: string;
+}
 
 interface RefreshState {
   tier: Tier | null;
   profileId: string | null;
   /** re-keys the band so consecutive hard refreshes each play their own */
   sweepSeq: number;
-  /** t0 of the current run: every surface's reach is measured from here */
+  /** t0 of the current run: the instant the gesture was answered */
   startedAt: number | null;
   cycling: Record<string, boolean>;
   /** what the active tab's status bar says about a refresh it declined (R4) */
-  note: { tabId: string; text: string } | null;
+  note: Note | null;
   /** the hard tier's heal failed: the connection strip's own countdown (R6).
    * retryAt is heal's next attempt, null once its chain gave up */
   dead: { profileId: string; retryAt: number | null } | null;
   hardRefresh: (profileId: string) => Promise<void>;
   softRefresh: () => Promise<void>;
-  /** register a refetch: its surface cycles from max(front reach, grace)
-   * until the work settles, never before the band's front arrives (R3) */
-  track: (surface: Surface, work: Promise<unknown>, el?: HTMLElement | null) => void;
-  /** ms after t0 at which the band's front crosses this element's centre */
-  frontReachMs: (el: HTMLElement | null | undefined) => number;
+  /** hold a surface's skeleton — already up, since the plan's own write —
+   * until its refetch lands, and never for less than MIN_SHOW_MS (E3 rule 2) */
+  track: (surface: Surface, work: Promise<unknown>) => void;
 }
 
 // generation guard: a new gesture orphans the previous run's timers
 let gen = 0;
 const timers = new Set<ReturnType<typeof setTimeout>>();
 let noteTimer: ReturnType<typeof setTimeout> | undefined;
+/** this run came back empty-handed somewhere: a refetch failed, or there was
+ * no address to send one on at all. A heal that holds AFTER that means the
+ * connection those surfaces wanted is here now while the reader is still
+ * looking at the old rows (LESSONS 13), so the run goes round once more. */
+let missed = false;
 
 function stopTimers() {
   for (const t of timers) clearTimeout(t);
   timers.clear();
 }
 
-const surfaceEl = (surface: Surface): HTMLElement | null =>
-  document.querySelector<HTMLElement>(`[data-refresh-surface="${surface}"]`);
+const cycleMap = (surfaces: Surface[]): Record<string, boolean> =>
+  Object.fromEntries(surfaces.map((s) => [s, true]));
 
-export const useRefresh = create<RefreshState>((set, get) => ({
+export const useRefresh = create<RefreshState>((set) => ({
   tier: null,
   profileId: null,
   sweepSeq: 0,
@@ -82,60 +87,25 @@ export const useRefresh = create<RefreshState>((set, get) => ({
   note: null,
   dead: null,
 
-  frontReachMs: (el) => {
-    // the soft tier plays no band, and reduced motion removes it: with no
-    // front to wait for, every surface starts at once
-    if (!el || get().tier !== "hard" || prefersReducedMotion()) return 0;
-    const shell = document.querySelector(".v2-shell");
-    if (!shell) return 0;
-    const f = shell.getBoundingClientRect();
-    const r = el.getBoundingClientRect();
-    if (f.width === 0 || f.height === 0 || r.width === 0) return 0;
-    const cx = (r.left + r.width / 2 - f.left) / f.width;
-    const cy = (r.top + r.height / 2 - f.top) / f.height;
-    // the band's right edge travels -0.18 → 1.98 of the window's width at
-    // constant speed, leaning 24°, so a point lower on the screen meets it
-    // later by cy · tan(24°) · (H/W)
-    const x = cx + cy * 0.445 * (f.height / f.width);
-    const p = (x + 0.18) / 2.16;
-    return Math.round(Math.min(0.95, Math.max(0.05, p)) * SWEEP_MS);
-  },
-
-  track: (surface, work, el) => {
+  track: (surface, work) => {
     const g = gen;
-    const reach = get().frontReachMs(el);
-    const startedAt = get().startedAt;
-    const since = startedAt === null ? 0 : Date.now() - startedAt;
-    // the fetch is already in flight; only the SKELETON waits for the front,
-    // and never less than the grace (R3)
-    const showIn = Math.max(reach - since, GRACE_MS);
-    let shownAt = 0;
-    let settled = false;
+    // the skeleton went up in the tick this is called from, so its floor runs
+    // from here; `startedAt` is the whole run's t0, which a second pass after
+    // a late heal does not share
+    const shownAt = Date.now();
 
     const hide = () =>
       set((s) => {
+        if (s.cycling[surface] !== true) return s;
         const { [surface]: _gone, ...rest } = s.cycling;
         return { cycling: rest };
       });
 
-    const show = setTimeout(() => {
-      timers.delete(show);
-      if (settled || gen !== g) return;
-      shownAt = Date.now();
-      set((s) => ({ cycling: { ...s.cycling, [surface]: true } }));
-    }, showIn);
-    timers.add(show);
-
     // a rejected refetch ends the cycle too: the old data comes back with its
     // own strip, and nothing stays blank (R3)
-    const done = () => {
-      settled = true;
+    const done = (landed: boolean) => {
       if (gen !== g) return;
-      if (shownAt === 0) {
-        clearTimeout(show);
-        timers.delete(show);
-        return;
-      }
+      if (!landed) missed = true;
       const held = Date.now() - shownAt;
       if (held >= MIN_SHOW_MS) {
         hide();
@@ -147,70 +117,188 @@ export const useRefresh = create<RefreshState>((set, get) => ({
       }, MIN_SHOW_MS - held);
       timers.add(wait);
     };
-    void work.then(done, done);
+    void work.then(
+      () => done(true),
+      () => done(false),
+    );
   },
 
-  softRefresh: async () => {
-    gen++;
-    stopTimers();
-    set({
-      tier: "soft",
-      profileId: useConnections.getState().activeProfileId,
-      startedAt: Date.now(),
-      cycling: {},
-      note: null,
-    });
-    await refreshActiveTab();
-  },
+  softRefresh: () => refreshActiveTab(),
 
   hardRefresh: async (profileId) => {
     const g = ++gen;
     stopTimers();
+    // the schema has nowhere to go yet; the heal beside us may be about to
+    // build it one, and then this run owes the reader a second pass
+    missed = !anySessionOn(profileId);
+    const plan = surfacePass(profileId);
     set((s) => ({
       tier: "hard",
       profileId,
       sweepSeq: s.sweepSeq + 1,
       startedAt: Date.now(),
-      cycling: {},
-      note: null,
+      cycling: cycleMap(plan.surfaces),
+      note: plan.note,
       dead: null,
     }));
-    // the band has already started: it announces the attempt, never its result
+    armNote(plan.note);
+    // the surfaces go out first and the connection is probed BESIDE them: the
+    // gesture's own frame belongs to the app (LESSONS 16)
+    const landing = plan.send();
     const ok = await requestHeal(profileId, true);
     if (gen !== g) return;
     if (!ok) {
-      // R6: no surface cycles, no row moves. heal's own backoff keeps trying
-      // and the retry that lands cycles the surfaces with no second sweep
-      set({ dead: { profileId, retryAt: nextRetryAt(profileId) } });
+      // the app tried, and the answer came back dead: every surface still
+      // cycling returns to its old rows in ONE write, and whatever is still on
+      // the wire lands or fails on its own terms (E3 rule 3). heal's backoff
+      // keeps trying, and the retry that lands cycles them again with no band
+      set({ cycling: {}, dead: { profileId, retryAt: nextRetryAt(profileId) } });
       return;
     }
     await afterHeal(profileId);
     if (gen !== g) return;
-    await surfacePass(profileId, g);
+    await landing;
+    if (gen !== g || !missed) return;
+    // a surface that cannot refetch must not blank as though it could: with
+    // no address even now, the run ends on the dead strip instead (R3, R6)
+    if (!anySessionOn(profileId)) {
+      set({ dead: { profileId, retryAt: nextRetryAt(profileId) } });
+      return;
+    }
+    await runPass(profileId, g);
   },
 }));
 
-/** the schema, then the tab you are looking at: the order the band crosses
- * them is the order they blank, and track() is what holds each one there.
- *
- * A heal that answered ok is not yet a connection to send on: what it left
- * behind is, so the session is resolved here through the one resolver every
- * other side query uses: the primary first, then any live tab session
- * (connections.anySessionOn, DESIGN rule 15). With neither there
- * is nothing on this window that CAN refetch, and a surface that cannot
- * refetch must not blank as though it were: the run ends on the dead strip
- * instead (R3, R6). */
-async function surfacePass(profileId: string, g: number): Promise<void> {
+/** what a gesture WILL do, decided from store state alone: the one write of
+ * E3 rule 1 needs the whole answer before the first await. `send` fires the
+ * refetches and never rejects — its awaits are for the data landing. */
+interface Plan {
+  /** every surface that will refetch, in the order they are sent */
+  surfaces: Surface[];
+  /** what this gesture declines to do on the active tab (R4) */
+  note: Note | null;
+  send: () => Promise<unknown>;
+}
+
+const NOTHING: Plan = { surfaces: [], note: null, send: () => Promise.resolve() };
+
+const declined = (note: Note): Plan => ({ ...NOTHING, note });
+
+const merge = (a: Plan, b: Plan): Plan => ({
+  surfaces: [...a.surfaces, ...b.surfaces],
+  note: a.note ?? b.note,
+  send: () => Promise.all([a.send(), b.send()]),
+});
+
+/** the hard tier's whole plan: the schema, and the tab you are looking at */
+function surfacePass(profileId: string): Plan {
+  return merge(planTree(profileId), planActive());
+}
+
+/** the schema. A heal that answered ok is not yet a connection to send on:
+ * what it left behind is, so the session is resolved through the one resolver
+ * every other side query uses — the primary first, then any live tab session
+ * (connections.anySessionOn, DESIGN rule 15). With neither there is nothing
+ * on this window that CAN refetch the tree, and a surface that cannot refetch
+ * must not blank as though it were (R3, R6). */
+function planTree(profileId: string): Plan {
   const sid = anySessionOn(profileId);
-  if (!sid) {
-    useRefresh.setState({ dead: { profileId, retryAt: nextRetryAt(profileId) } });
-    return;
+  if (!sid) return NOTHING;
+  return {
+    surfaces: ["tree"],
+    note: null,
+    send: () => {
+      const work = useSchema.getState().fetch(profileId, sid);
+      useRefresh.getState().track("tree", work);
+      return work.catch(() => {});
+    },
+  };
+}
+
+/** the soft act, by tab kind. Both tiers end here, because "reload the tab you
+ * are looking at" is one behaviour: the hard tier only adds the schema and a
+ * band. Everything the reader owns survives it (R4): scroll, filters, sort,
+ * the selected row, staged edits, and an open transaction, whose session the
+ * rerun reads INSIDE rather than rebuilding. */
+function planActive(): Plan {
+  const tabs = useTabs.getState();
+  const tabId = tabs.activeId;
+  if (!tabId) return NOTHING;
+  const tab = tabs.tabs.find((t) => t.id === tabId);
+  if (!tab) return NOTHING;
+  if (tab.kind === "canvas") return tab.canvas_id ? planCanvas(tab.canvas_id) : NOTHING;
+  const staged = Object.keys(useEdits.getState().byTab[tabId]?.pending ?? {}).length;
+  if (staged > 0) {
+    // the rows those edits sit on must not move under them, so this tab does
+    // not refetch at all and says so where the reader already looks
+    return declined({
+      tabId,
+      text: `${staged} staged edit${staged === 1 ? "" : "s"} kept. Commit ⌘S or discard to refresh`,
+    });
   }
-  useRefresh
-    .getState()
-    .track("tree", useSchema.getState().fetch(profileId, sid), surfaceEl("tree"));
+  let start: () => Promise<unknown>;
+  if (tab.kind === "table") {
+    // a table tab reloads the sub-tab on screen (rows, structure or DDL), and
+    // the browse store is what knows which one that is
+    start = () => useBrowser.getState().refresh();
+  } else {
+    const res = useResults.getState().byTab[tabId];
+    const sql = res?.executedSql;
+    // nothing has run on this tab yet: there is nothing to reload, and an
+    // empty gesture is not a failure to report
+    if (!sql) return NOTHING;
+    if (!readOnlyHeads(sql)) return declined({ tabId, text: "last run wrote. ⌘↩ runs again" });
+    start = () =>
+      useResults.getState().run(sql, res.executedOffset, {
+        refresh: true,
+        // the tab's own origin, never the rail selection: a refresh reads the
+        // connection the rows came from
+        ...(res.executedProfileId ? { profileId: res.executedProfileId } : null),
+      });
+  }
+  // the inspector shows a row of the result the main body is refetching, so it
+  // follows that same landing; a pane closed, or showing Ask, has nothing to
+  // refetch and never cycles
+  const pane = useSidePane.getState();
+  const surfaces: Surface[] =
+    pane.open && pane.mode === "inspector" ? ["main", "inspector"] : ["main"];
+  return {
+    surfaces,
+    note: null,
+    send: () => {
+      const work = start();
+      const r = useRefresh.getState();
+      for (const s of surfaces) r.track(s, work);
+      return work.catch(() => {});
+    },
+  };
+}
+
+/** the note's own life: its text goes up in the plan's one write, and this is
+ * only what takes it down again (R4) */
+function armNote(note: Note | null) {
+  clearTimeout(noteTimer);
+  if (!note) return;
+  noteTimer = setTimeout(() => {
+    const n = useRefresh.getState().note;
+    if (n?.tabId === note.tabId && n.text === note.text) useRefresh.setState({ note: null });
+  }, NOTE_MS);
+}
+
+/** a pass with no gesture behind it: the retry that lands, or a second try
+ * after a heal that answered too late for the first. Loaders again, and no
+ * band — a retry is not a chord (R6). */
+async function runPass(profileId: string, g: number): Promise<void> {
+  missed = false;
+  const plan = surfacePass(profileId);
   if (gen !== g) return;
-  await refreshActiveTab();
+  useRefresh.setState({
+    startedAt: Date.now(),
+    cycling: cycleMap(plan.surfaces),
+    note: plan.note,
+  });
+  armNote(plan.note);
+  await plan.send();
 }
 
 /** "lost, retrying" is ONE fact, and the dot, the sidebar glyph and the strip
@@ -232,108 +320,83 @@ export async function healSettled(profileId: string, ok: boolean): Promise<void>
     return;
   }
   const g = ++gen;
-  // backdated: the band this run would have waited for already crossed the
-  // window, so every surface starts as soon as its own fetch is in flight
-  useRefresh.setState({ dead: null, startedAt: Date.now() - SWEEP_MS });
+  stopTimers();
+  useRefresh.setState({ dead: null });
   await afterHeal(profileId);
   if (gen !== g) return;
-  await surfacePass(profileId, g);
+  await runPass(profileId, g);
 }
 
-function say(tabId: string, text: string) {
-  clearTimeout(noteTimer);
-  useRefresh.setState({ note: { tabId, text } });
-  noteTimer = setTimeout(() => {
-    const n = useRefresh.getState().note;
-    if (n?.tabId === tabId && n.text === text) useRefresh.setState({ note: null });
-  }, NOTE_MS);
-}
-
-/** the soft act, by tab kind. Both tiers end here, because "reload the tab you
- * are looking at" is one behaviour: the hard tier only arrives with a rebuilt
- * connection and a band already in flight. Everything the reader owns survives
- * it (R4): scroll, filters, sort, the selected row, staged edits, and an open
- * transaction, whose session the rerun reads INSIDE rather than rebuilding. */
+/** the soft act: ⌘R, the tab you are looking at and nothing else, answered in
+ * the same one write the hard tier answers in, minus the band and the glyph */
 export async function refreshActiveTab(): Promise<void> {
-  const tabs = useTabs.getState();
-  const tabId = tabs.activeId;
-  if (!tabId) return;
-  const tab = tabs.tabs.find((t) => t.id === tabId);
-  if (!tab) return;
-  if (tab.kind === "canvas") {
-    if (tab.canvas_id) await refreshCanvas(tab.canvas_id);
-    return;
-  }
-  const { useEdits } = await import("./edits");
-  const staged = Object.keys(useEdits.getState().byTab[tabId]?.pending ?? {}).length;
-  if (staged > 0) {
-    // the rows those edits sit on must not move under them, so this tab does
-    // not refetch at all and says so where the reader already looks
-    say(
-      tabId,
-      `${staged} staged edit${staged === 1 ? "" : "s"} kept. Commit ⌘S or discard to refresh`,
-    );
-    return;
-  }
-  let work: Promise<unknown>;
-  if (tab.kind === "table") {
-    // a table tab reloads the sub-tab on screen (rows, structure or DDL), and
-    // the browse store is what knows which one that is
-    const { useBrowser } = await import("./browser");
-    work = useBrowser.getState().refresh();
-  } else {
-    const res = useResults.getState().byTab[tabId];
-    const sql = res?.executedSql;
-    // nothing has run on this tab yet: there is nothing to reload, and an
-    // empty gesture is not a failure to report
-    if (!sql) return;
-    if (!readOnlyHeads(sql)) {
-      say(tabId, "last run wrote. ⌘↩ runs again");
-      return;
-    }
-    work = useResults.getState().run(sql, res.executedOffset, {
-      refresh: true,
-      // the tab's own origin, never the rail selection: a refresh reads the
-      // connection the rows came from
-      ...(res.executedProfileId ? { profileId: res.executedProfileId } : null),
-    });
-  }
-  const r = useRefresh.getState();
-  r.track("main", work, surfaceEl("main"));
-  // the inspector shows a row of the result the main body is refetching, so it
-  // follows that same landing on its own reach; ⌘R leaves it alone
-  if (r.tier === "hard") r.track("inspector", work, surfaceEl("inspector"));
-  await work.catch(() => {});
+  gen++;
+  stopTimers();
+  missed = false;
+  const plan = planActive();
+  useRefresh.setState({
+    tier: "soft",
+    profileId: useConnections.getState().activeProfileId,
+    startedAt: Date.now(),
+    cycling: cycleMap(plan.surfaces),
+    note: plan.note,
+  });
+  armNote(plan.note);
+  await plan.send();
 }
 
-type WidgetRefetch = (canvasId: string, blockId: string) => Promise<unknown>;
-let widgetRefetch: WidgetRefetch | null = null;
-
-/** the canvas owns what re-running a widget MEANS (its session, its row cap,
- * where the rows land); this module owns only when each one starts */
-export function setWidgetRefetch(fn: WidgetRefetch) {
-  widgetRefetch = fn;
+/** what a canvas document can refetch, and what re-running one widget MEANS
+ * (its session, its row cap, where the rows land): canvas.ts owns both, this
+ * module owns only when each one starts */
+export interface CanvasRefresh {
+  /** the result widgets that WILL refetch, in document order */
+  blocks: (canvasId: string) => string[];
+  refetch: (canvasId: string, blockId: string) => Promise<unknown>;
 }
 
-/** result widgets refetch in the order the front reaches them; notes and
- * drawings have nothing to fetch and are not touched (R4) */
+/** registered by canvas.ts as it evaluates. Null only in the frames between
+ * that module's first import and its own registration, and there the one
+ * thing a gesture must not do is nothing (LESSONS 9): that case alone pays an
+ * await, and its skeletons go up a tick late. */
+let canvasSeam: CanvasRefresh | null = null;
+
+export function setCanvasRefresh(seam: CanvasRefresh) {
+  canvasSeam = seam;
+}
+
+/** result widgets refetch in document order; notes and drawings have nothing
+ * to fetch and are not touched (R4) */
+function planCanvas(canvasId: string): Plan {
+  const seam = canvasSeam;
+  if (!seam) return { ...NOTHING, send: () => refreshCanvas(canvasId).catch(() => {}) };
+  const ids = seam.blocks(canvasId);
+  const surfaces = ids.map((id): Surface => `widget:${id}`);
+  return {
+    surfaces,
+    note: null,
+    send: () =>
+      Promise.all(
+        ids.map((id, i) => {
+          const work = seam.refetch(canvasId, id);
+          useRefresh.getState().track(surfaces[i], work);
+          return work.catch(() => {});
+        }),
+      ),
+  };
+}
+
+/** one document's widgets, cycled and sent. Every route into a canvas refresh
+ * plans it above; this is the door for the seam's own first frames. */
 export async function refreshCanvas(canvasId: string): Promise<void> {
-  // the seam first: canvas.ts registers it as it evaluates, so reading the
-  // slot before that module has settled is how a refresh refetches nothing
-  const { useCanvas, widgetSeam } = await import("./canvas");
-  await widgetSeam;
-  const refetch = widgetRefetch;
-  if (!refetch) return;
-  const r = useRefresh.getState();
-  const blocks = (useCanvas.getState().docs[canvasId]?.blocks ?? [])
-    .filter((b): b is ResultBlock => b.kind === "result" && !!b.sql)
-    .map((b) => ({ id: b.id, el: surfaceEl(`widget:${b.id}`) }))
-    .sort((a, b) => r.frontReachMs(a.el) - r.frontReachMs(b.el));
-  await Promise.all(
-    blocks.map(({ id, el }) => {
-      const work = refetch(canvasId, id);
-      r.track(`widget:${id}`, work, el);
-      return work.catch(() => {});
-    }),
-  );
+  if (!canvasSeam) {
+    const { widgetSeam } = await import("./canvas");
+    await widgetSeam;
+    if (!canvasSeam) return;
+  }
+  const plan = planCanvas(canvasId);
+  useRefresh.setState((s) => ({
+    startedAt: s.startedAt ?? Date.now(),
+    cycling: { ...s.cycling, ...cycleMap(plan.surfaces) },
+  }));
+  await plan.send();
 }

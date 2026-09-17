@@ -803,8 +803,13 @@ useResults.subscribe((s, p) => {
 });
 
 // the session that committed died → its undo offer dies with it (a revert on
-// a rebuilt session is exactly the "across reconnects" case we never allow)
+// a rebuilt session is exactly the "across reconnects" case we never allow).
+// The catch is heal.ts's, for heal.ts's reason: outside Tauri's bridge this
+// rejects, and an unhandled rejection at module scope takes down every suite
+// that reaches this store through a surface — which is now any suite that
+// touches the refresh plan, since it reads staged edits synchronously
+// (E3 rule 1). It goes to the console, rather than nowhere (LESSONS 9).
 void listen<{ session_id: string }>("session-closed", (e) => {
   const o = useEdits.getState().undoOffer;
   if (o && o.sessionId === e.payload.session_id) useEdits.getState().clearUndoOffer();
-});
+}).catch((e) => console.error("edits session-closed listener", e));

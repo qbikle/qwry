@@ -1,20 +1,21 @@
-// What a refresh promises and what it refuses (E2 R1-R6).
+// What a refresh promises and what it refuses (E2 R1-R6, amended by E3 1-3).
 //
-// The sweep is the ACK and the surfaces are the verdict, so the two things
-// worth pinning are TIME and RESTRAINT: when each surface's cycle starts
-// (the band's own front, projected exactly as the sketch projects it), and
-// which gestures decline to touch anything at all — a tab holding staged
-// edits, a query whose last run wrote, a connection that did not come back.
+// The promise is a FRAME: every surface that will refetch wears its skeleton
+// in the one synchronous write the keypress itself causes, before a single
+// await stands between the chord and the pixel (LESSONS 16). The refusals are
+// the other half — a tab holding staged edits, a query whose last run wrote, a
+// connection that did not come back — and each of them is decided in that same
+// write, so a gesture never answers twice.
 //
 // heal is stood in through its module, because what is under test is what a
-// verdict DOES here, not how connections.healProfile reaches one; everything
-// else is the real store.
+// verdict DOES here, not how connections.healProfile reaches one; it answers
+// on a delay, because a probe that answers in 0 ms is exactly the harness that
+// let E2 ship the lag (LESSONS 16). Everything else is the real store.
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 // the stores paint the theme and read localStorage as they evaluate; bun has
-// neither (the same shim as live-session.test.ts, with one addition: this
-// module measures elements, so `document` answers querySelector for real)
+// neither (the same shim as live-session.test.ts)
 const mem = new Map<string, string>();
 const storage: Storage = {
   getItem: (k) => mem.get(k) ?? null,
@@ -32,53 +33,32 @@ const inert: unknown = new Proxy(function () {}, {
   apply: () => undefined,
 });
 
-interface Rect {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}
-const box = (r: Rect) => ({ getBoundingClientRect: () => r }) as unknown as HTMLElement;
-/** the sketch's own frame: 1280 × 640 (docs/refresh-sketch-e2.html) */
-const SHELL: Rect = { left: 0, top: 0, width: 1280, height: 640 };
-const docStub: Record<string, unknown> = {
-  querySelector: (sel: string) => (sel === ".v2-shell" ? box(SHELL) : null),
-};
-const doc: unknown = new Proxy(docStub, {
-  get: (t, k) => (k in t ? t[k as string] : inert),
-});
-
-for (const k of ["window", "localStorage"].filter((n) => !(n in globalThis))) {
+for (const k of ["window", "localStorage", "document"].filter((n) => !(n in globalThis))) {
   Object.defineProperty(globalThis, k, {
-    value: k === "window" ? globalThis : storage,
+    value: k === "window" ? globalThis : k === "localStorage" ? storage : inert,
     configurable: true,
     writable: true,
   });
 }
-/** `document` is REPLACED, not filled in: a sibling suite loaded first leaves a
- * wholly inert one behind, and this suite is the one that measures elements.
- * The proxy answers querySelector and stays inert for everything else, so a
- * suite that runs after this one sees exactly what it saw before. */
-function installDocument() {
-  Object.defineProperty(globalThis, "document", {
-    value: doc,
-    configurable: true,
-    writable: true,
-  });
-}
-installDocument();
 
-let reducedMotion = false;
 mock.module("../../design/springs", () => ({
-  prefersReducedMotion: () => reducedMotion,
+  prefersReducedMotion: () => false,
 }));
 
 let healHolds = true;
+/** the bastion's own cost: nothing may wait for this, and everything that was
+ * already up has to survive whatever it answers (E3 rules 1 and 3) */
+let healDelay = 40;
 let retryAt: number | null = null;
 const healCalls: { profileId: string; manual: boolean }[] = [];
+/** the loaders as they stood when the probe was ASKED: the chord's write has
+ * to be behind it, never the other way round (E3 rule 1) */
+let cyclingAtHeal: Record<string, boolean> = {};
 mock.module("../heal", () => ({
   requestHeal: async (profileId: string, manual = false) => {
     healCalls.push({ profileId, manual });
+    cyclingAtHeal = { ...useRefresh.getState().cycling };
+    await new Promise((r) => setTimeout(r, healDelay));
     return healHolds;
   },
   nextRetryAt: () => retryAt,
@@ -96,6 +76,7 @@ const { readOnlyHeads } = await import("../../lib/sqlHeads");
 const { useConnections } = await import("../connections");
 const { useEdits } = await import("../edits");
 const { useResults } = await import("../results");
+const { useSidePane } = await import("../sidePane");
 const { useTabs } = await import("../tabs");
 
 type PendingEdit = import("../edits").PendingEdit;
@@ -105,13 +86,9 @@ type ResultsTab = (typeof useResults)["getState"] extends () => { byTab: Record<
   : never;
 
 const TAB = "t1";
+/** stores/refresh.ts's own floor: a skeleton that was shown reads as a state */
+const MIN_SHOW_MS = 240;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/** the surfaces as the sketch lays them out at 1280 × 640, measured off its
- * own frames (docs/research/e2-sketch-frames/ok-1280-dark-460.png) */
-const TREE = box({ left: 8, top: 121, width: 246, height: 510 });
-const MAIN = box({ left: 265, top: 111, width: 695, height: 498 });
-const INSPECTOR = box({ left: 972, top: 71, width: 298, height: 255 });
 
 const queryTab = (over: Partial<Tab> = {}): Tab => ({
   id: TAB,
@@ -143,17 +120,23 @@ const resultsTab = (over: Partial<ResultsTab> = {}): ResultsTab =>
     ...over,
   }) as ResultsTab;
 
-/** refreshActiveTab reads the COUNT of staged edits; their shape is edits.ts's
- * own business and nothing here depends on it */
+/** the plan reads the COUNT of staged edits; their shape is edits.ts's own
+ * business and nothing here depends on it */
 const staged = (n: number): Record<string, PendingEdit> =>
   Object.fromEntries(Array.from({ length: n }, (_, i) => [`k${i}`, {} as PendingEdit]));
 
+/** a query tab sitting on a read-only result: the window a refresh lands in */
+function onAQueryTab() {
+  useTabs.setState({ tabs: [queryTab()], activeId: TAB });
+  useResults.setState({ byTab: { [TAB]: resultsTab() } });
+}
+
 beforeEach(() => {
-  installDocument();
-  reducedMotion = false;
   healHolds = true;
+  healDelay = 40;
   retryAt = null;
   healCalls.length = 0;
+  cyclingAtHeal = {};
   useRefresh.setState({
     tier: null,
     profileId: null,
@@ -166,80 +149,103 @@ beforeEach(() => {
   useTabs.setState({ tabs: [], activeId: null });
   useResults.setState({ byTab: {}, active: TAB });
   useEdits.setState({ byTab: {} });
+  // the inspector shows a row of the result the main body refetches, so the
+  // pane has to be open on it for that surface to be in any plan
+  useSidePane.setState({ mode: "inspector", open: true, width: 300 });
   // the world a hard refresh normally lands in: a heal that held left a
   // session behind, which is what the surfaces then send on
   useConnections.setState({ sessions: { p1: "A" }, tabSessions: {} });
 });
 
-describe("frontReachMs: the band's front is the clock", () => {
-  test("a surface's start is where the diagonal crosses its centre", () => {
-    useRefresh.setState({ tier: "hard" });
-    const reach = useRefresh.getState().frontReachMs;
-    const tree = reach(TREE);
-    const main = reach(MAIN);
-    const inspector = reach(INSPECTOR);
-    // top-left to bottom-right, so the sidebar goes first and the inspector last
-    expect(tree).toBeLessThan(main);
-    expect(main).toBeLessThan(inspector);
-    // as fractions of the 720ms sweep: the sketch's own numbers
-    expect(tree).toBeGreaterThanOrEqual(0.1 * 720);
-    expect(tree).toBeLessThanOrEqual(0.2 * 720);
-    expect(main).toBeLessThanOrEqual(0.45 * 720);
-    expect(inspector).toBeGreaterThan(0.45 * 720);
-    expect(inspector).toBeLessThanOrEqual(0.7 * 720);
+describe("the gesture's own frame (E3 rule 1)", () => {
+  test("⇧⌘R shows every loader in one write, before any await", async () => {
+    onAQueryTab();
+    const act = useRefresh.getState().hardRefresh("p1");
+    // read with not one microtask run: the act's promise is still untouched
+    const s = useRefresh.getState();
+    expect(s.sweepSeq).toBe(1);
+    expect(s.tier).toBe("hard");
+    expect(s.startedAt).not.toBeNull();
+    expect(s.cycling.tree).toBe(true);
+    expect(s.cycling.main).toBe(true);
+    expect(s.cycling.inspector).toBe(true);
+    // the probe went out beside them, never ahead of them
+    expect(healCalls).toEqual([{ profileId: "p1", manual: true }]);
+    expect(cyclingAtHeal).toEqual({ tree: true, main: true, inspector: true });
+    await act;
   });
 
-  test("the soft tier has no band, so nothing waits for one", () => {
-    useRefresh.setState({ tier: "soft" });
-    const reach = useRefresh.getState().frontReachMs;
-    expect(reach(TREE)).toBe(0);
-    expect(reach(MAIN)).toBe(0);
-    expect(reach(INSPECTOR)).toBe(0);
+  test("⌘R answers in the same frame, with no band and no schema", async () => {
+    onAQueryTab();
+    const act = useRefresh.getState().softRefresh();
+    const s = useRefresh.getState();
+    expect(s.sweepSeq).toBe(0);
+    expect(s.tier).toBe("soft");
+    expect(s.cycling.main).toBe(true);
+    expect(s.cycling.inspector).toBe(true);
+    expect(s.cycling.tree).toBeUndefined();
+    expect(healCalls).toEqual([]);
+    await act;
   });
 
-  test("reduced motion removes the band, and the wait with it", () => {
-    reducedMotion = true;
-    useRefresh.setState({ tier: "hard" });
-    const reach = useRefresh.getState().frontReachMs;
-    expect(reach(TREE)).toBe(0);
-    expect(reach(INSPECTOR)).toBe(0);
+  test("a pane showing something else has nothing to refetch", async () => {
+    onAQueryTab();
+    useSidePane.setState({ mode: "ask", open: true });
+    const act = useRefresh.getState().softRefresh();
+    expect(useRefresh.getState().cycling.main).toBe(true);
+    expect(useRefresh.getState().cycling.inspector).toBeUndefined();
+    await act;
   });
 
-  test("an unmounted surface is not a position", () => {
-    useRefresh.setState({ tier: "hard" });
-    expect(useRefresh.getState().frontReachMs(null)).toBe(0);
-    expect(useRefresh.getState().frontReachMs(box({ left: 0, top: 0, width: 0, height: 0 }))).toBe(
-      0,
-    );
+  test("the staged guard writes its note in that same write, and cycles nothing", async () => {
+    useTabs.setState({ tabs: [queryTab({ kind: "table" })], activeId: TAB });
+    useResults.setState({ byTab: { [TAB]: resultsTab() } });
+    useEdits.setState({
+      byTab: {
+        [TAB]: { maps: {}, pending: staged(3), flash: new Set(), undoStack: [], redoStack: [] },
+      },
+    });
+    const act = useRefresh.getState().hardRefresh("p1");
+    const s = useRefresh.getState();
+    expect(s.note).toEqual({
+      tabId: TAB,
+      text: "3 staged edits kept. Commit ⌘S or discard to refresh",
+    });
+    expect(s.cycling.main).toBeUndefined();
+    expect(s.cycling.inspector).toBeUndefined();
+    // the schema is not the tab, and it refetches either way
+    expect(s.cycling.tree).toBe(true);
+    await act;
+    expect(useResults.getState().byTab[TAB]?.running).toBe(false);
   });
 });
 
-describe("track: a surface blanks only while it is truly refetching", () => {
-  test("a refetch that lands inside the grace never blanks", async () => {
-    useRefresh.setState({ tier: "soft", startedAt: Date.now() });
-    useRefresh.getState().track("main", sleep(100));
-    await sleep(250);
+describe("track: a skeleton that was shown reads as a state (E3 rule 2)", () => {
+  test("a refetch that lands in a blink still holds for --dur-slow", async () => {
+    const started = Date.now();
+    useRefresh.setState({ startedAt: started, cycling: { main: true } });
+    useRefresh.getState().track("main", sleep(50));
+    await sleep(120);
+    expect(useRefresh.getState().cycling.main).toBe(true);
+    while (useRefresh.getState().cycling.main) await sleep(20);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(MIN_SHOW_MS);
+  });
+
+  test("a slow refetch holds its skeleton until it lands", async () => {
+    useRefresh.setState({ startedAt: Date.now(), cycling: { main: true } });
+    useRefresh.getState().track("main", sleep(500));
+    await sleep(300);
+    expect(useRefresh.getState().cycling.main).toBe(true);
+    while (useRefresh.getState().cycling.main) await sleep(25);
     expect(useRefresh.getState().cycling.main).toBeUndefined();
   });
 
-  test("a slow refetch holds its skeleton for at least --dur-slow", async () => {
-    useRefresh.setState({ tier: "soft", startedAt: Date.now() });
-    const started = Date.now();
-    useRefresh.getState().track("main", sleep(500));
-    await sleep(250);
-    expect(useRefresh.getState().cycling.main).toBe(true);
-    await sleep(200); // 450ms in: still refetching, so still cycling
-    expect(useRefresh.getState().cycling.main).toBe(true);
-    while (useRefresh.getState().cycling.main) await sleep(25);
-    expect(Date.now() - started).toBeGreaterThanOrEqual(150 + 240);
-  });
-
   test("a failed refetch ends its cycle too: nothing stays blank", async () => {
-    useRefresh.setState({ tier: "soft", startedAt: Date.now() });
+    useRefresh.setState({ startedAt: Date.now(), cycling: { main: true } });
     const work = sleep(300).then(() => {
       throw new Error("connection closed");
     });
-    useRefresh.getState().track("main", work.catch(() => Promise.reject(new Error("again"))));
+    useRefresh.getState().track("main", work);
     await sleep(250);
     expect(useRefresh.getState().cycling.main).toBe(true);
     while (useRefresh.getState().cycling.main) await sleep(25);
@@ -285,7 +291,9 @@ describe("refreshActiveTab: what a refresh declines to do (R4)", () => {
     useTabs.setState({ tabs: [queryTab({ kind: "table" })], activeId: TAB });
     useResults.setState({ byTab: { [TAB]: resultsTab() } });
     useEdits.setState({
-      byTab: { [TAB]: { maps: {}, pending: staged(3), flash: new Set(), undoStack: [], redoStack: [] } },
+      byTab: {
+        [TAB]: { maps: {}, pending: staged(3), flash: new Set(), undoStack: [], redoStack: [] },
+      },
     });
     await refreshActiveTab();
     expect(useRefresh.getState().note).toEqual({
@@ -300,7 +308,9 @@ describe("refreshActiveTab: what a refresh declines to do (R4)", () => {
     useTabs.setState({ tabs: [queryTab({ kind: "table" })], activeId: TAB });
     useResults.setState({ byTab: { [TAB]: resultsTab() } });
     useEdits.setState({
-      byTab: { [TAB]: { maps: {}, pending: staged(1), flash: new Set(), undoStack: [], redoStack: [] } },
+      byTab: {
+        [TAB]: { maps: {}, pending: staged(1), flash: new Set(), undoStack: [], redoStack: [] },
+      },
     });
     await refreshActiveTab();
     expect(useRefresh.getState().note?.text).toBe(
@@ -318,6 +328,7 @@ describe("refreshActiveTab: what a refresh declines to do (R4)", () => {
       tabId: TAB,
       text: "last run wrote. ⌘↩ runs again",
     });
+    expect(useRefresh.getState().cycling).toEqual({});
     expect(useResults.getState().byTab[TAB]?.running).toBe(false);
   });
 
@@ -326,14 +337,21 @@ describe("refreshActiveTab: what a refresh declines to do (R4)", () => {
     useResults.setState({ byTab: { [TAB]: resultsTab({ executedSql: null }) } });
     await refreshActiveTab();
     expect(useRefresh.getState().note).toBeNull();
+    expect(useRefresh.getState().cycling).toEqual({});
   });
 });
 
-describe("the dead connection (R6)", () => {
-  test("the sweep plays once and no surface cycles", async () => {
+describe("the dead connection (R6, amended by E3 rule 3)", () => {
+  test("the loaders are up from t0, and the dead answer returns them", async () => {
     healHolds = false;
+    healDelay = 60;
     retryAt = Date.now() + 2_000;
-    await useRefresh.getState().hardRefresh("p1");
+    onAQueryTab();
+    const act = useRefresh.getState().hardRefresh("p1");
+    // the app tried: the skeletons stood while the probe was still out
+    expect(useRefresh.getState().cycling.main).toBe(true);
+    expect(useRefresh.getState().cycling.tree).toBe(true);
+    await act;
     const s = useRefresh.getState();
     expect(s.sweepSeq).toBe(1);
     expect(healCalls).toEqual([{ profileId: "p1", manual: true }]);

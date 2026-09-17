@@ -140,3 +140,27 @@ from the maintainer, say so and cite it; the pushback is wanted.
     mechanism against what this app actually holds, and play the failure
     case in the sketch, before a line of product code, so the mechanism gets
     checked against the feeling instead of standing in for it unread.
+16. **The app answers in the frame; the network answers in the hold.** E2
+    shipped correct by every gate it had: `hardRefresh` awaited `requestHeal`
+    then `afterHeal` before `surfacePass` fired a single fetch, and each
+    surface's own skeleton waited again, on `frontReachMs`, for the sweep's
+    front to reach it. On the maintainer's real bastion connection every
+    loader landed a full round trip after the sweep, later than the sweep's
+    own 720ms band, and his own words named it exactly: it feels like the
+    app lags when I press the chord. Each of those waits was individually
+    honest, a real round trip, a real front to cross, and stacked they built
+    a UI that answered nothing until the network had. This is lesson 9 read
+    from a new angle: feedback that is true but late reads as no feedback at
+    all, because a user's hand and eyes work on the gesture's own frame, not
+    on the database's. The fix is not a faster network; it is to say "the
+    app heard you" synchronously, in the one store write the keypress itself
+    causes, before any await stands between the chord and the pixel, and let
+    the network's honest slowness show only in how long an already-shown
+    loader holds, never in when it starts. The bug had a second half: the
+    harness that built and gated E2 answered its own `session_probe` in
+    0ms, so the wave that wrote `frontReachMs` and its grace period never
+    saw the lag it was building, because nothing in its own test rig ever
+    took as long as the real world does. A harness that answers faster than
+    reality is not a faithful stand-in for reality; give it the latency the
+    world has, or it will pass a wave straight into the bug the world was
+    always going to find.

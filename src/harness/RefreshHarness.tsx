@@ -277,7 +277,10 @@ interface Freezable {
  * due at 700 ms would otherwise clear a cycle during the screenshot's own
  * round trip; and every running animation is paused where it stands. An
  * animation the freeze's own commit just created has no time on it and stands
- * for a state that was already up, so it is run to its end first.
+ * for a state that was already up, so it is run to its end first — every one
+ * but the band, whose POSITION is the subject rather than a state it is on the
+ * way to. The band starts with the gesture, so at `t` it stands exactly where
+ * the act left it, and at t=0 that is its own start (E3 rule 6's first frame).
  *
  * What the freeze never does is DECIDE which surfaces are cycling. The store
  * ran the act in real time and its map at `t` is the answer; a harness that
@@ -297,6 +300,12 @@ function freezeAt(t: number): void {
   window.requestAnimationFrame = ((): number => 0) as typeof window.requestAnimationFrame;
   for (const a of document.getAnimations()) {
     const dur = Number(a.effect?.getTiming().duration ?? 0);
+    const target = (a.effect as KeyframeEffect | null)?.target ?? null;
+    if (target instanceof Element && target.classList.contains("v2-sweep-band")) {
+      if (Number.isFinite(dur)) a.currentTime = Math.min(t, dur);
+      a.pause();
+      continue;
+    }
     if (!a.currentTime && Number.isFinite(dur)) a.currentTime = dur;
     a.pause();
   }

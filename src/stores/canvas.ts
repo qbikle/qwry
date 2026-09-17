@@ -1833,11 +1833,11 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     if (!block || !meta || !refetchable(block)) return;
     const sql = block.sql;
     try {
-      // nothing to send on. A widget that cannot refetch must not blank as
-      // though it were (R3), and a silent return would have said nothing at
-      // all: this throw settles inside track's own grace, so no skeleton ever
-      // shows, and the reader is told why on the block's own strip, the slot
-      // a refetch that failed on the wire already uses (R6, LESSONS 9)
+      // nothing to send on. The seam above keeps such a widget out of the
+      // plan, so no skeleton stands over it (R3); this is the race the plan
+      // cannot see — a session lost between the write and the send — and the
+      // reader is told why on the block's own strip, the slot a refetch that
+      // failed on the wire already uses (R6, LESSONS 9)
       const session = anySessionOn(meta.profileId);
       if (!session) throw canvasLost();
       const run = runOf(await execute(session, sql));
@@ -2357,16 +2357,28 @@ setCanvasPort({
   assumeOn: (exchangeId, labels) => useCanvas.getState().assumeOn(exchangeId, labels),
 });
 
-// E2: what re-running a widget means, handed to the store that owns when each
-// one starts. Registered rather than imported, the same shape as the port
-// above: the refresh store reaches every surface in the window and a document
-// that pulled it in would carry the whole of it into the canvas chunk.
-// EXPORTED, and not fire-and-forget: refreshCanvas awaits it, because a ⇧⌘R
-// in the first frames after boot would otherwise find the seam empty and
-// silently refetch no widget at all (LESSONS 9 — a gesture that reports
-// nothing must not also do nothing)
-export const widgetSeam: Promise<void> = import("./refresh").then(({ setWidgetRefetch }) =>
-  setWidgetRefetch((canvasId, blockId) => useCanvas.getState().refreshWidget(canvasId, blockId)),
+// E2: which widgets a document can refetch and what re-running one means,
+// handed to the store that owns when each one starts. Registered rather than
+// imported, the same shape as the port above: the refresh store reaches every
+// surface in the window and a document that pulled it in would carry the whole
+// of it into the canvas chunk. EXPORTED, and not fire-and-forget: refreshCanvas
+// awaits it, because a ⇧⌘R in the first frames after boot would otherwise find
+// the seam empty and silently refetch no widget at all (LESSONS 9 — a gesture
+// that reports nothing must not also do nothing).
+//
+// `blocks` answers synchronously, because E3 rule 1 puts every skeleton up in
+// the gesture's own frame and may only cycle what is actually going out: a
+// document whose connection has no session sends nothing, so it names nothing.
+export const widgetSeam: Promise<void> = import("./refresh").then(({ setCanvasRefresh }) =>
+  setCanvasRefresh({
+    blocks: (canvasId) => {
+      const s = useCanvas.getState();
+      const meta = metaOf(s, canvasId);
+      if (!meta || !anySessionOn(meta.profileId)) return [];
+      return (s.docs[canvasId]?.blocks ?? []).filter(refetchable).map((b) => b.id);
+    },
+    refetch: (canvasId, blockId) => useCanvas.getState().refreshWidget(canvasId, blockId),
+  }),
 );
 
 window.addEventListener?.("blur", () => void flushCanvases());

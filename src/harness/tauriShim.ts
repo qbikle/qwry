@@ -100,9 +100,10 @@
 //   introspect / execute_stream /           the refresh harness's backend (E2),
 //   execute / session_probe / connect /     the only stubs here that take TIME:
 //   fetch_cell / editability /              the sketch's timeline IS round trips
-//   undo_log_latest                         landing at 700 / 900 / 500 ms, and a
-//                                           shim that answered at once would draw
-//                                           every surface's cycle in one frame.
+//   undo_log_latest                         landing at 700 / 900 / 500 ms, and the
+//                                           probe's own 400, and a shim that
+//                                           answered at once would draw every
+//                                           surface's cycle in one frame.
 //                                           `e2-dead` is the one state where the
 //                                           probe answers false and connect
 //                                           refuses, so a hard refresh sweeps and
@@ -263,9 +264,11 @@ function writePreview(sql: string): WritePreview {
 //
 // Five commands with LATENCY, because the sketch's whole timeline is round
 // trips landing at different moments: a shim that answered instantly would
-// draw every surface's cycle as one frame and prove nothing. `lat` scales all
-// three together (0 = instant, for a probe reading the guards rather than the
-// choreography); the defaults are the sketch's own 700 / 900 / 500.
+// draw every surface's cycle as one frame and prove nothing. `lat` scales them
+// all together (0 = instant, for a probe reading the guards rather than the
+// choreography); the defaults are the sketch's own 700 / 900 / 500, and the
+// probe's 400 — the number E2 did not have, and the reason its wave never saw
+// the lag it shipped (LESSONS 16).
 
 const e2Lat = (which: keyof typeof E2_LAT): number => {
   const raw = new URLSearchParams(location.search).get("lat");
@@ -445,8 +448,14 @@ export function installTauriShim(): void {
           }));
         }
         case "session_probe":
+          // the one stub whose latency is the wave: it answers after the
+          // loaders are up, never before, so the frames show the real order
+          // and `e2-dead` says dead where a bastion would (E3 rule 4)
           e2Say("session_probe");
-          return e2Alive();
+          return wait(e2Lat("probe")).then(() => {
+            e2Say("session_probe_done");
+            return e2Alive();
+          });
         case "connect":
           e2Say("connect");
           if (!e2Alive()) throw new Error("connection refused");

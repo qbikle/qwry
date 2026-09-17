@@ -123,19 +123,31 @@ unrelated while looking related.
 plays it: one transform keyframe, `translateX(-160%)` to `translateX(560%)`
 of the band's own width (`skewX(-24deg)` fixed throughout), over
 `calc(var(--dur-slow) * 3)` = 720ms at constant, linear speed, the one
-linear timing this file allows. Every other rule in this file eases; this
-one cannot, because the sweep's own front is the clock each surface reads to
-start its cycle, and a speed that sped up or slowed down mid-flight would
-make that clock lie to whichever surface it reached. `--sweep-color` is the
-sweep's own token, themed like any other: `rgba(255,255,255,.11)` in dark,
-`color-mix(in srgb, var(--accent) 13%, transparent)` in light, where plain
-white has nothing to read against. It fires from exactly one place, a manual
-`⇧⌘R`: a background heal (wake, focus, a session dying on its own) never
-plays it, because the sweep announces a hand on the chord, not a fact the
-app discovered by itself. The surfaces it starts keep the file's ordinary
-durations regardless: a cycling surface fades its content out at
-`--dur-quick` and its fresh data back in at `--dur-slow`, `--ease-std`; only
-the sweep itself runs linear.
+linear timing this file allows. `--sweep-color` is the sweep's own token,
+themed like any other: `rgba(255,255,255,.11)` in dark, `color-mix(in srgb,
+var(--accent) 13%, transparent)` in light, where plain white has nothing to
+read against. It fires from exactly one place, a manual `⇧⌘R`: a background
+heal (wake, focus, a session dying on its own) never plays it, because the
+sweep announces a hand on the chord, not a fact the app discovered by
+itself.
+
+**Amended after E2's first real use (E3): the band no longer clocks
+anything.** Every surface that will refetch already wears its skeleton in
+the gesture's own frame, set by the same synchronous store write that bumps
+the band's sequence, before either has waited on anything (ARCHITECTURE's
+"Refresh tiers" has the order of the act). The band still travels its
+720ms at the same constant, linear speed; it is now the ack laid over
+surfaces already answering, not a signal any of them wait to receive. What
+stopped being a clock is not kept as one: `GRACE_MS` and `frontReachMs`,
+which staggered each surface's skeleton to the moment the band's leading
+edge reached it, are deleted outright, not softened. A skeleton, once
+shown, still holds a floor (`MIN_SHOW_MS`, `--dur-slow`) so a fetch that
+lands in a blink never flashes, and hides the instant its own fetch lands,
+on nobody else's schedule. A cycling surface still fades its content out at
+`--dur-quick` and its fresh data back in at `--dur-slow`, `--ease-std`; the
+sweep is still this file's one linear exception, and the reason has changed
+with it: linear now reads as one steady sheet of light over a window that
+already answered, not as a clock kept honest.
 
 ## Rule 7: Shortcut glyphs
 

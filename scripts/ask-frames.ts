@@ -422,26 +422,25 @@ const TALL_CANVAS_STATES: readonly string[] = [
 const CANVAS_WIDTHS = [640, 960, 1280] as const;
 
 /** E2: the refresh harness frames the WHOLE window, and its states carry a
- * MILLISECOND, `state@at`, because a sweep is only evidence at an instant. A
- * state with no `@` is that window at rest, the sketch's `idle` still. The
- * default list is the sketch's own eight frames (docs/refresh-sketch-e2.html,
- * its stills in research/e2-sketch-frames): the tree alone, all three
- * cycling, the rows landing last, the staged tab's verdict, the query tab's
- * rerun, the write's kept rows, the canvas's widgets, and the dead
- * connection's retry window */
+ * MILLISECOND, `state@at`, because a gesture is only evidence at an instant.
+ * A state with no `@` is that window at rest.
+ *
+ * E3 re-cut the list around the one thing the wave changed: the FIRST frame.
+ * @0 is the keypress itself, every loader already up and the band at its own
+ * start; @100 is the same claim on the canvas and on the tab that refuses;
+ * e2-dead@200 is the window while the probe is still out, which is the frame
+ * E2 could not take because its shim answered in 0 ms.
+ *
+ * `e2-table@50` is the SOFT tier's frame and nothing else shoots it: pass it
+ * with `--tier soft` or the default run will put a hard frame in its slot */
 const REFRESH_STATES = [
-  "e2-table",
   "e2-table@0",
+  "e2-table@50",
   "e2-table@260",
-  "e2-table@300",
-  "e2-table@460",
   "e2-table@1000",
-  "e2-table-staged@1200",
-  "e2-query@460",
-  "e2-query@560",
-  "e2-query-wrote@600",
-  "e2-query-wrote@1200",
-  "e2-canvas@560",
+  "e2-table-staged@100",
+  "e2-canvas@100",
+  "e2-dead@200",
   "e2-dead@1500",
 ] as const;
 const REFRESH_WIDTHS = [640, 960, 1280] as const;
