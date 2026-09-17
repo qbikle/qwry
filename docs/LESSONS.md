@@ -164,3 +164,35 @@ from the maintainer, say so and cite it; the pushback is wanted.
     reality is not a faithful stand-in for reality; give it the latency the
     world has, or it will pass a wave straight into the bug the world was
     always going to find.
+17. **An answer is what the model said; evidence is what the tools
+    produced; the harness invents neither.** A canvas thread's fourth
+    question was informational, and the model said so in its own words,
+    calling no tool. The loop's post step read every exchange the same way
+    regardless of that: pull something SQL-shaped out of the model's last
+    text and run it, so it took the model's own prose explanation for a
+    statement, ran it, watched the AST gate refuse it in the words built
+    for exactly this case, fed the refusal back as if the model needed
+    correcting, and repeated until the turn cap — a dozen manufactured
+    `final-N` runs the model never asked for, ending on a canned error
+    sentence the harness itself had provoked two rounds earlier, then run
+    again, as SQL, a second time. The maintainer's own transcript is the
+    proof (the app's stored turns), and his own read on it named the class
+    directly: an agent that generates SQL on every turn regardless of what
+    was asked is not what a conversational agent should do; using a tool is
+    a judgment the harness has to make, not a reflex it applies to every
+    stop. W7's circuit breaker had
+    already drawn half of this line: it counts the model's OWN `run_sql`
+    calls and cuts a spiral of THOSE off at two, but it counts nothing when
+    the model makes no call at all, so a question that never touched a tool
+    tripped nothing and ran to the cap anyway - a breaker watching the
+    model's actions was never going to catch a bug in the harness's own.
+    The fix this bug asked for was not a wider breaker, it was to stop the
+    loop from manufacturing calls of its own: the model's last text, with
+    no tool call after it, IS the answer, whatever it says; a closing fence
+    is a statement to run, prose is not one, and a failure belongs only to
+    a statement something actually tried to run, never to a sentence the
+    harness put through a gate uninvited (AGENT-SPEC §4.6). Read a stop for
+    what it is before deciding what to do with it, the same reading LESSONS
+    13 asked of a turn count and LESSONS 16 asked of a network wait: a
+    number, or a call, that the harness itself manufactures is never the
+    fact to act on.

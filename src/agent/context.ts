@@ -322,26 +322,23 @@ export function mustIncludeFor(meta: SchemaMeta, mentions: readonly Mention[]): 
   return out;
 }
 
-/** Table names, in the order the model should see them: the tagged tables
- * first (`mustInclude`, W6), then IDF-weighted lexical match (table-name
- * tokens weigh 3x, an exact base-name hit is worth +6), LEGACY tables
- * excluded, then the top-3 inbound FK hubs, then a one-hop FK expansion of
- * the top 5 picks. Target 15-25 names; the cap is k + 8. The lexical picks
- * give way to the tags rather than adding to them: k names reach the model
- * either way, and the one-hop expansion now hops out of what the user
- * pointed at.
- *
- * The connection's synonyms (A2 item 4) join the must-includes: a word the
- * user mapped to a table puts that table in front of the lexical picks, the
- * way an `@` tag does, because a user word that means a table is the same
- * fact as a user pointing at it. Absent, the picks are the measured ones. */
-export function candidates(
+interface LexicalHit {
+  name: string;
+  score: number;
+  order: number;
+  /** the question said the TABLE's name (a token of it, or its base name);
+   * false when only a column's word matched */
+  named: boolean;
+}
+
+/** The prefilter's lexical arithmetic (4.1), one entry per non-LEGACY base
+ * table the question touched at all, best first: table-name tokens weigh 3x
+ * IDF, an exact base-name hit +6, column tokens 1x. */
+function lexicalHits(
   question: string,
   meta: SchemaMeta,
-  k = 14,
-  mustInclude: readonly string[] = [],
-  synonyms: Readonly<Record<string, string>> = {},
-): string[] {
+  synonyms: Readonly<Record<string, string>>,
+): LexicalHit[] {
   const q = questionTokens(question, synonyms);
   const base = meta.tables.filter(isBase);
 
@@ -366,20 +363,81 @@ export function candidates(
   const n = base.length;
   const idf = (w: string) => Math.log(n / (df.get(w) ?? 1)) + 0.1;
 
-  const scored: { name: string; score: number; order: number }[] = [];
+  const scored: LexicalHit[] = [];
   base.forEach((t, order) => {
     if (t.legacy) return;
     let score = 0;
-    for (const w of tableToks.get(t.display) ?? []) if (q.has(w)) score += 3 * idf(w);
+    let named = false;
+    for (const w of tableToks.get(t.display) ?? []) {
+      if (q.has(w)) {
+        score += 3 * idf(w);
+        named = true;
+      }
+    }
     for (const w of colToks.get(t.display) ?? []) if (q.has(w)) score += idf(w);
     const base = baseName(t.name).replace(/_/g, " ");
-    if (q.has(stem(base)) || q.has(base)) score += 6;
-    if (score) scored.push({ name: t.display, score, order });
+    if (q.has(stem(base)) || q.has(base)) {
+      score += 6;
+      named = true;
+    }
+    if (score) scored.push({ name: t.display, score, order, named });
   });
   scored.sort((a, b) => b.score - a.score || a.order - b.order);
-  const pinned = synonymsFired(question, synonyms)
+  return scored;
+}
+
+/** The tables the connection's own synonyms name in this question (A2 item
+ * 4), the ones `candidates` pins in front of the lexical picks. */
+const synonymPins = (
+  question: string,
+  meta: SchemaMeta,
+  synonyms: Readonly<Record<string, string>>,
+): string[] =>
+  synonymsFired(question, synonyms)
     .map((s) => synonymTable(meta, s.target))
     .filter((n): n is string => n !== null);
+
+/** The tables the question NAMES: a word of the table's own name, its base
+ * name, or a synonym the user mapped to it. A column-only hit is not one, and
+ * neither are the FK hubs and the one-hop expansion that `candidates` adds
+ * to every question, which is why the picked list can never answer "does
+ * this question want data at all" (E4 R3: the nudge's evidence; `customer`
+ * is not what "what can you create on canvas" is about because `create_date`
+ * is one of its columns). Same arithmetic as the picks, read on one axis. */
+export function tablesNamed(
+  question: string,
+  meta: SchemaMeta,
+  synonyms: Readonly<Record<string, string>> = {},
+): string[] {
+  const named = lexicalHits(question, meta, synonyms)
+    .filter((h) => h.named)
+    .map((h) => h.name);
+  return [...new Set([...synonymPins(question, meta, synonyms), ...named])];
+}
+
+/** Table names, in the order the model should see them: the tagged tables
+ * first (`mustInclude`, W6), then IDF-weighted lexical match (table-name
+ * tokens weigh 3x, an exact base-name hit is worth +6), LEGACY tables
+ * excluded, then the top-3 inbound FK hubs, then a one-hop FK expansion of
+ * the top 5 picks. Target 15-25 names; the cap is k + 8. The lexical picks
+ * give way to the tags rather than adding to them: k names reach the model
+ * either way, and the one-hop expansion now hops out of what the user
+ * pointed at.
+ *
+ * The connection's synonyms (A2 item 4) join the must-includes: a word the
+ * user mapped to a table puts that table in front of the lexical picks, the
+ * way an `@` tag does, because a user word that means a table is the same
+ * fact as a user pointing at it. Absent, the picks are the measured ones. */
+export function candidates(
+  question: string,
+  meta: SchemaMeta,
+  k = 14,
+  mustInclude: readonly string[] = [],
+  synonyms: Readonly<Record<string, string>> = {},
+): string[] {
+  const base = meta.tables.filter(isBase);
+  const scored = lexicalHits(question, meta, synonyms);
+  const pinned = synonymPins(question, meta, synonyms);
   const picked = [...new Set([...mustInclude, ...pinned])].filter((n) => meta.byDisplay.has(n));
   for (const s of scored) {
     if (picked.length >= k) break;

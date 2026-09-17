@@ -9,6 +9,13 @@
 // register and leaves the partial text in place. Errors explain and propose;
 // they do not apologise.
 //
+// E4 R4: a failure is the TOOL's. `sql` is a statement that was tried and
+// failed, or null, so Fix It always has a statement under it; a model that
+// answered in prose ends its exchange `answered` and never reaches this
+// block at all. The loop guarantees that on the way in and the store
+// guarantees it on the way back out of appdb (stores/agent `storedSql`),
+// which is why nothing here re-reads the field to ask what it is.
+//
 // `writesoff` (A4) is the model proposing a change on a connection whose
 // edits are off: the card says so, the field keeps the statement with Insert
 // on it (the manual route stays open, rule 8's inverse of a hidden way out),

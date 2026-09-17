@@ -707,9 +707,22 @@ of the connection (§1).
 
 ## 7. Failure
 
+- **A prose answer is an answer, never a failure (E4, 2026-09-17).** When the
+  model stops with nothing to run — no closing fence, no call it made — the
+  exchange ends `answered` and renders exactly like any other answer: its
+  text under Ask, no error register, no failure block, no `Fix It` (a
+  canvas thread's informational question, answered this way, used to spiral
+  into a dozen restatements before this wave; AGENT-SPEC §4.6, LESSONS.md).
+  Every bullet below this one fires only when a STATEMENT failed — a closing
+  fence the model left, or a call it actually made — never for a question
+  the model chose to answer in words.
 - SQL fails after the repair loop: show the error (error register), the last
   SQL in an editable field, and `Fix It` (runs the repair loop once more with
-  any edits) in the button row. Never a dead end (LESSONS 9).
+  any edits) in the button row. Never a dead end (LESSONS 9). The repair loop
+  is the same one either way, whether the failing statement came from a
+  mid-conversation tool call or from a closing fence run once as the model's
+  answer (AGENT-SPEC §4.6): `Fix It` never appears over prose, because prose
+  never reaches this bullet.
 - `Insert` rides the FIELD, not the button row: the statement it puts at the
   end of the active query tab (§2 item 4; replaces `Open in Tab` here as
   everywhere else in the Ask pane) is the one inside that field, edits and

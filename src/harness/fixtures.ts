@@ -127,6 +127,11 @@
 // where the seam is; `--scroll top` is the second frame, where the numerals
 // are.
 
+// E4: `e4-prose-answer` and `e4-nudged` (fixtures.e4.ts) are the wave's two
+// new shapes — an exchange answered in prose, with no strip, no result block
+// and no failure block, and the trace of a data question that took one nudge.
+// The first seeds a canvas TAB so the bubble's pill paints as one.
+
 // B3: `b3-ask-summary` (fixtures.b3ask.ts) is what a canvas-targeted answer
 // leaves in the PANE: bubble, strip, the status line `4 widgets · Canvas 4`,
 // footer, and nothing else (AGENT-UX 16k). Its thread is read whole from that
@@ -159,6 +164,7 @@ import { WRITES_CHOICE, type WritesState } from "./fixtures.writes";
 import { B1_CHOICE, type B1State } from "./fixtures.b1";
 import { D1_ASK_CHOICE, d1AskSeed, type D1AskState } from "./fixtures.d1ask";
 import { D2ANSWER_CHOICE, d2AnswerSeed, type D2AnswerState } from "./fixtures.d2answer";
+import { E4_CHOICE, e4Seed, type E4State } from "./fixtures.e4";
 
 export type HarnessState =
   | "answer"
@@ -204,7 +210,8 @@ export type HarnessState =
   | B2PillState
   | C2VisionState
   | D1AskState
-  | D2AnswerState;
+  | D2AnswerState
+  | E4State;
 export const HARNESS_STATES: readonly HarnessState[] = [
   "answer",
   "empty",
@@ -277,6 +284,8 @@ export const HARNESS_STATES: readonly HarnessState[] = [
   "d1-list-numbered",
   "d2-answer-typo",
   "d2-answer-list",
+  "e4-prose-answer",
+  "e4-nudged",
 ];
 export const HARNESS_WIDTHS = [320, 392, 560] as const;
 export type HarnessTheme = "dark" | "light";
@@ -773,6 +782,9 @@ export function exchangeFor(state: HarnessState): Exchange | null {
     case "d2-answer-typo":
     case "d2-answer-list":
       return d2AnswerSeed(state).exchange;
+    case "e4-prose-answer":
+    case "e4-nudged":
+      return e4Seed(state).exchange;
   }
 }
 
@@ -851,6 +863,11 @@ export function choiceFor(state: HarnessState): { provider: string; model: strin
     case "d2-answer-typo":
     case "d2-answer-list":
       return D2ANSWER_CHOICE;
+    // E4: the maintainer's own thread ran on Haiku 4.5, and the nudged one
+    // is the same model asked the same way
+    case "e4-prose-answer":
+    case "e4-nudged":
+      return E4_CHOICE;
     default:
       return { provider: PROVIDER, model: MODEL };
   }

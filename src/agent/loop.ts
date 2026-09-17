@@ -61,6 +61,7 @@ import {
   recallOf,
   synonymMap,
   synonymsFired,
+  tablesNamed,
 } from "./context";
 import { type Mention, mentionContext, mentionDrawings, mentionTags } from "./mentions";
 import { imageRouteFor, imageWireFor } from "./providers/presets";
@@ -75,6 +76,7 @@ import {
   canvasMessage,
   historyMessage,
   knowledgeMessage,
+  nudgeMessage,
   repairMessage,
   smallAskMessage,
   writesMessage,
@@ -364,6 +366,29 @@ const sameSql = (a: string, b: string) =>
   a.trim().replace(/;+$/, "").replace(/\s+/g, " ") ===
   b.trim().replace(/;+$/, "").replace(/\s+/g, " ");
 
+/** The rows the model's own run of this statement returned, the latest when
+ * it ran it twice, and null when it never ran it where this loop could see. */
+const heldFor = (held: readonly { sql: string; run: AgentRun }[], sql: string): AgentRun | null => {
+  for (let i = held.length - 1; i >= 0; i--) if (sameSql(held[i].sql, sql)) return held[i].run;
+  return null;
+};
+
+/** The statement a text closes with: a ```sql fence, a bare fence or a
+ * tool-call literal, and nothing else (E4 R2). extractSql's `raw` branch, the
+ * whole text read as SQL, is the small tier's tolerance (AGENT-SPEC 4.7,
+ * measured there) and on this tier it is what put the maintainer's prose
+ * answer into run_sql twelve times. */
+const fenced = (text: string): string | null => {
+  const found = extractSql(text);
+  return found.how === "raw" || found.how === "none" ? null : found.sql;
+};
+
+/** The trace id of the one run this loop makes itself (E4 R5): the closing
+ * fence's statement, when the model stated it and did not run it. The drawer
+ * reads the id to say whose run it was; every other run in a trace is a call
+ * the model made. */
+export const CLOSING_FENCE = "closing-fence";
+
 // ---- tool dispatch ---------------------------------------------------------
 
 const isName = (n: string): n is ToolName => (TOOL_NAMES as readonly string[]).includes(n);
@@ -589,14 +614,17 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
   const rows = req.knowledge ?? [];
   const synonyms = req.synonyms ?? synonymMap(rows);
   const fired = synonymsFired(req.question, synonyms);
-  const picked = candidates(
-    req.question,
-    meta,
-    undefined,
-    mustIncludeFor(meta, mentions),
-    synonyms,
-  );
+  const mustInclude = mustIncludeFor(meta, mentions);
+  const picked = candidates(req.question, meta, undefined, mustInclude, synonyms);
   const risky = isRisky(req.question);
+  // E4 R3: whether the question wants data at all, read off code facts and
+  // never guessed. A table the user tagged, a table the question names (its
+  // own name or a synonym for it; tablesNamed says why the picked list cannot
+  // stand here), or a risky shape. "what can you create on canvas", "what did
+  // you just do" and "thanks" resolve to none of these, and a model that
+  // answers them in words is answering, not failing to run
+  const wantsData =
+    mustInclude.length > 0 || risky || tablesNamed(req.question, meta, synonyms).length > 0;
   // the small tier's one call stays the minimal message it was measured as:
   // a fired synonym reaches it as a must-include candidate, the text that
   // explains one does not (AGENT-SPEC 4.2)
@@ -771,9 +799,23 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
   ];
   const peeked: { column: string; id: string }[] = [];
   const sanity: SanityFragment[] = [];
-  // a box, not a `let`: the assignment happens inside the Promise.all callback
-  // and control-flow narrowing does not follow a variable across that boundary
-  const runs: { last: { sql: string; run: AgentRun } | null } = { last: null };
+  // the statements the MODEL ran and the rows they returned, as they came
+  // back: what a closing fence is matched against (E4 R1) and what the grid
+  // shows when the fence names one of them. Only the path this loop drives
+  // can fill it: an `ownsLoop` provider's child runs its calls where the rows
+  // never reach this side (the MCP bridge answers them itself), so on that
+  // path the list stays empty and the closing fence is the one run made here
+  const held: { sql: string; run: AgentRun }[] = [];
+  const lastHeld = () => held[held.length - 1] ?? null;
+  // did the model reach for a tool that runs a statement, on any turn of
+  // this exchange: run_sql, or a canvas block, which runs its own. The nudge's
+  // first condition (E4 R3), and the only one read off the model's calls
+  let ranStatement = false;
+  // each at most once an exchange (E4 R2, R3): the nudge is one push, never
+  // a second, and a closing fence that fails gets one repair, never the
+  // twelve the maintainer watched
+  let nudged = false;
+  let repaired = false;
   let turns = 0;
   // consecutive run_sql calls the gate refused as prose (W7): the model
   // answered in words, handed the words to run_sql, and would re-explain
@@ -950,6 +992,11 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
         thinking: thinking || undefined,
         usage: { ...usage },
       });
+      // the model's own calls, on either path: an `ownsLoop` adapter reports
+      // the child's as toolCall events exactly as this loop records its own
+      if (calls.some((c) => c.name === "run_sql" || c.name === "canvas_write" || c.name === "canvas_replace")) {
+        ranStatement = true;
+      }
 
       if (failure) {
         if (failure.kind === "cancelled") throw new Cancelled();
@@ -1055,7 +1102,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
                   peeked.push({ column: args.column, id: call.id });
                 }
                 if (call.name === "run_sql" && !out.isError && out.result) {
-                  runs.last = { sql: String(args.sql), run: out.result as AgentRun };
+                  held.push({ sql: String(args.sql), run: out.result as AgentRun });
                 }
                 if (call.name === "probe" && Array.isArray(out.result)) {
                   for (const p of out.result as { fragment: SanityFragment | null }[]) {
@@ -1117,9 +1164,9 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
       // an `ownsLoop` provider that exhausted its own turn budget did not
       // finish the conversation; the model's last text is not an answer
       if (stop === "turnCap") {
-        return finish({ status: "turn_cap", sql: runs.last?.sql ?? null, turns: child.turns ?? turns }, {
-          sql: runs.last?.sql ?? null,
-          run: runs.last?.run ?? null,
+        return finish({ status: "turn_cap", sql: lastHeld()?.sql ?? null, turns: child.turns ?? turns }, {
+          sql: lastHeld()?.sql ?? null,
+          run: lastHeld()?.run ?? null,
           text: lastBlock(),
           turns,
           sanity: sanityLine(peeked, sanity),
@@ -1132,7 +1179,8 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
         stop = "stop";
       }
 
-      // 4.6 post: the model is done talking, so the answer is assembled here
+      // 4.6 post (E4): the model stopped with no call, so what it said is the
+      // answer (R1). Nothing below invents a statement on its behalf
       emit({ type: "status", phase: "post" });
       const last = lastBlock();
       // a SQL-only closing block rides behind the last prose: the display
@@ -1140,14 +1188,9 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
       const answer = answerText(last).trim() || !lastProse ? last : `${lastProse}\n\n${last}`;
       // the fence normally closes the last block; a model that stated the SQL
       // before running it and said only "done" after keeps its statement
-      let found = extractSql(answer);
-      if (found.how === "raw" || found.how === "none") {
-        const whole = extractSql(text);
-        if (whole.how !== "raw" && whole.how !== "none") found = whole;
-      }
-      const { sql } = found;
-      if (!sql) {
-        return finish({ status: "answered", sql: null, rowCount: null }, {
+      const sql = fenced(answer) ?? fenced(text);
+      const answeredInWords = () =>
+        finish({ status: "answered", sql: null, rowCount: null }, {
           sql: null,
           run: null,
           text: answer,
@@ -1155,6 +1198,33 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
           assumptions: buildAssumptions({ text: answer, sql: null, question: req.question }),
           sanity: sanityLine(peeked, sanity),
         });
+      if (sql === null) {
+        // no fence: the grid shows the run the model made last, when this
+        // loop holds one, under that run's own statement
+        const own = lastHeld();
+        if (own) {
+          return finish({ status: "answered", sql: own.sql, rowCount: own.run.rowCount }, {
+            sql: own.sql,
+            run: own.run,
+            text: answer,
+            turns,
+            assumptions: buildAssumptions({ text: answer, sql: own.sql, question: req.question }),
+            sanity: sanityLine(peeked, sanity),
+          });
+        }
+        // R3: the model never reached for a statement and the question wants
+        // data, so it is told so ONCE, as a user turn, and its next stop is
+        // the answer whatever it holds. A question no table answers gets no
+        // nudge, and a model that was nudged already is done being nudged
+        if (wantsData && !ranStatement && !nudged && turns < maxTurns) {
+          nudged = true;
+          const nudge = nudgeMessage();
+          trace.push({ step: "nudge", ms: 0, text: nudge });
+          messages.push({ role: "assistant", content: text });
+          messages.push({ role: "user", content: nudge });
+          continue;
+        }
+        return answeredInWords();
       }
 
       // A4: the statement the model settled on is a CHANGE, so it is never
@@ -1181,31 +1251,37 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
             );
       }
 
-      const prior = runs.last;
-      let run = prior && sameSql(prior.sql, sql) ? prior.run : null;
+      // R1: the fence names a run the model made, and this loop holds it
+      let run = heldFor(held, sql);
       if (!run) {
+        // R2: a statement the model stated and did not run ("state it, then
+        // say done"), or ran where this loop could not see the rows (`held`
+        // above), is run ONCE, as the loop's own step by its own name (R5)
         emit({ type: "status", phase: "running" });
         const t = now();
         const out = await raceAbort(req.tools.runSql(sql), req.signal);
         trace.push({
           step: "tool",
           ms: Math.round(now() - t),
-          id: `final-${turns}`,
+          id: CLOSING_FENCE,
           name: "run_sql",
           args: JSON.stringify({ sql }),
           result: out.textForModel,
           isError: !!out.error,
         });
         if (out.error || !out.result) {
-          if (turns < maxTurns) {
+          const error = out.error ?? out.textForModel;
+          // the gate read the fence as prose: the model answered in words and
+          // dressed them as a statement. The words are the answer, and
+          // nothing is fed back (R2, R4)
+          if (isProseRefusal(error)) return answeredInWords();
+          if (!repaired && turns < maxTurns) {
+            repaired = true;
             messages.push({ role: "assistant", content: text });
-            messages.push({ role: "user", content: repairMessage(out.error ?? out.textForModel) });
+            messages.push({ role: "user", content: repairMessage(error) });
             continue;
           }
-          return finish(
-            { status: "failed", sql, message: out.error ?? out.textForModel },
-            { sql, run: null, text: answer, turns },
-          );
+          return finish({ status: "failed", sql, message: error }, { sql, run: null, text: answer, turns });
         }
         run = out.result;
       }
@@ -1220,18 +1296,18 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
       });
     }
 
-    return finish({ status: "turn_cap", sql: runs.last?.sql ?? null, turns: child.turns ?? turns }, {
-      sql: runs.last?.sql ?? null,
-      run: runs.last?.run ?? null,
+    return finish({ status: "turn_cap", sql: lastHeld()?.sql ?? null, turns: child.turns ?? turns }, {
+      sql: lastHeld()?.sql ?? null,
+      run: lastHeld()?.run ?? null,
       text: lastBlock(),
       turns,
       sanity: sanityLine(peeked, sanity),
     });
   } catch (e) {
     if (e instanceof Cancelled) {
-      return finish({ status: "cancelled", sql: runs.last?.sql ?? null }, {
-        sql: runs.last?.sql ?? null,
-        run: runs.last?.run ?? null,
+      return finish({ status: "cancelled", sql: lastHeld()?.sql ?? null }, {
+        sql: lastHeld()?.sql ?? null,
+        run: lastHeld()?.run ?? null,
         text: lastBlock(),
         turns,
         sanity: sanityLine(peeked, sanity),

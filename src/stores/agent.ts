@@ -57,6 +57,7 @@ import { providerFor, tierOf } from "../agent/providers/index";
 import { imageRouteFor } from "../agent/providers/presets";
 import type { ImagePart, Provider, ProviderId } from "../agent/providers/types";
 import {
+  CLOSING_FENCE,
   runAsk,
   type AskAnswer,
   type AskErrorKind,
@@ -492,9 +493,53 @@ const txFromStatus = (status: string | undefined): TxOutcome | null =>
 const isWriteStatus = (status: string | undefined): boolean =>
   status === "proposed" || status === "ran" || txFromStatus(status) !== null;
 
+/** Every word a statement can open with, the gate's own list (src-tauri
+ * `agent.rs` SQL_LEADS) asked on this side of the wire. Deliberately
+ * generous: a write verb is the gate's business, not this list's. */
+const SQL_LEADS = new Set([
+  "select", "with", "explain", "values", "table", "insert", "update", "delete", "merge",
+  "create", "drop", "alter", "truncate", "grant", "revoke", "begin", "start", "commit",
+  "rollback", "savepoint", "release", "set", "reset", "show", "copy", "call", "do", "analyze",
+  "vacuum", "refresh", "comment", "prepare", "execute", "deallocate", "declare", "fetch",
+  "move", "close", "listen", "unlisten", "notify", "lock", "reindex", "cluster", "checkpoint",
+  "discard", "import", "security", "end", "abort",
+]);
+
+/** Whether the text at least OPENS like a statement (`agent.rs`
+ * `opens_like_sql`): punctuation-led text counts, anything else is judged on
+ * its first word. A live run asks the GATE this question; a row read back out
+ * of appdb has no gate to ask, so the question is asked here. */
+const opensLikeStatement = (sql: string): boolean => {
+  const text = sql.trimStart();
+  if (text.startsWith("(") || text.startsWith("--") || text.startsWith("/*")) return true;
+  return SQL_LEADS.has(headToken(text));
+};
+
+/** The SQL a stored turn carries: a statement, or nothing.
+ *
+ * E4 R2: the model's TEXT is a fallback only when it FENCED its SQL.
+ * extractSql's `raw` branch returns the whole prose, and a paragraph read
+ * back as this exchange's statement is a lie the model is told again on every
+ * replay (LESSONS 9).
+ *
+ * E4 R4: the answer row's own `sql` column is not proof either. The loop that
+ * shipped before this wave took the model's closing prose for a query, ran it
+ * itself, and persisted the paragraph here; a thread reopened on such a row
+ * came back with a sentence in the result block's SQL face and Fix It offered
+ * over it. A failure that carries no statement is the RUN's failure, which is
+ * the `provider` kind below, and it says so. */
+function storedSql(turn: AgentTurn, answer: AgentAnswer | undefined): string | null {
+  const found = extractSql(turn.content);
+  const recorded = answer?.sql ?? (found.how === "raw" ? null : found.sql);
+  return recorded !== null && opensLikeStatement(recorded) ? recorded : null;
+}
+
 /** A failed verdict reloaded from appdb, in the shape the failure block
  * reads. `agent_answers` keeps the status and the SQL but not the error text
- * or the turn count, so the messages say only what is known (LESSONS 9). */
+ * or the turn count, so the messages say only what is known (LESSONS 9).
+ * `sql` here has already been through `storedSql`, so a non-null one IS a
+ * statement: the `sql` kind, and the Fix It that rides it, appear for a
+ * statement that failed and for nothing else (E4 R4). */
 function errorFromStatus(
   status: string | undefined,
   sql: string | null,
@@ -633,9 +678,10 @@ export const useAgent = create<AgentState>((set, get) => ({
       const current = exchanges[exchanges.length - 1];
       if (!current) continue;
       const stored = byTurn.get(turn.id);
-      // the SQL the verdict recorded is the truth; the model's text is the
+      // the SQL the verdict recorded is the truth, read as the gate would
+      // read it: a statement, or nothing (storedSql). The model's text is the
       // fallback for a turn with no answer row
-      const sql = stored?.sql ?? extractSql(turn.content).sql;
+      const sql = storedSql(turn, stored);
       const error = errorFromStatus(stored?.status, sql);
       current.turnId = turn.id;
       current.text = turn.content;
@@ -1402,10 +1448,9 @@ export function replayOf(
 /** A tagged thread's exchanges, rebuilt from its appdb rows the way a
  * reloaded thread rebuilds them (openThread): each user turn with the
  * assistant turn that answered it, and the SQL out of the verdict its answer
- * row recorded. The text is the fallback only when it FENCED its SQL:
- * extractSql falls back to `how: "raw"` and returns the whole prose, and a
- * paragraph sent under `SQL:` is a lie the model reads as one (LESSONS 9).
- * An exchange with neither replays as `SQL: none`, which is the truth. */
+ * row recorded, read through the one reader both paths use (`storedSql`, and
+ * see its note on why a recorded paragraph is not a statement). An exchange
+ * with none replays as `SQL: none`, which is the truth. */
 export function replayPairs(
   turns: readonly AgentTurn[],
   answers: readonly AgentAnswer[] = [],
@@ -1420,12 +1465,8 @@ export function replayPairs(
     if (turn.role !== "assistant") continue;
     const current = out[out.length - 1];
     if (!current) continue;
-    const found = extractSql(turn.content);
     current.text = turn.content;
-    current.answer = {
-      sql: byTurn.get(turn.id)?.sql ?? (found.how === "raw" ? null : found.sql),
-      text: turn.content,
-    };
+    current.answer = { sql: storedSql(turn, byTurn.get(turn.id)), text: turn.content };
   }
   return out;
 }
@@ -2276,6 +2317,12 @@ async function persist(set: Setter, get: () => AgentState, args: RunArgs, answer
   const results: ToolResultRecord[] = [];
   for (const step of answer.trace) {
     if (step.step !== "tool") continue;
+    // E4 R5: this column is the MODEL's record of what it called. The loop's
+    // own closing-fence fetch names itself in the live trace and is still not
+    // a call the model made; on claude -p, where the child's run_sql is
+    // answered in Rust and fetched again here, keeping it would reopen the
+    // thread with two run_sql rows for the one statement the model wrote
+    if (step.id === CLOSING_FENCE) continue;
     calls.push({ id: step.id, name: step.name, args: step.args });
     results.push({ id: step.id, name: step.name, result: step.result, isError: step.isError });
   }

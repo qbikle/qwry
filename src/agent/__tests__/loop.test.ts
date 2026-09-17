@@ -5,9 +5,9 @@
 // an ownsLoop provider whose tools the loop must NOT re-execute.
 
 import { describe, expect, test } from "bun:test";
-import { runAsk, turnCapMessage, type AskEvent } from "../loop";
+import { CLOSING_FENCE, runAsk, turnCapMessage, type AskEvent } from "../loop";
 import { mentionsIn } from "../mentions";
-import { writesMessage } from "../prompt";
+import { nudgeMessage, writesMessage } from "../prompt";
 import type {
   AgentEvent,
   ChatRequest,
@@ -25,7 +25,7 @@ import {
   type CanvasTools,
   type ToolOutcome,
 } from "../tools";
-import type { AgentRun } from "../types";
+import type { AgentRun, TraceStep } from "../types";
 import type { SchemaSnapshot } from "../../stores/schema";
 import snapshotJson from "./fixtures/pagila-snapshot.json";
 
@@ -444,9 +444,15 @@ describe("providers that own their own loop", () => {
       true,
     );
     const { answer, events } = await ask(provider, tools(rec));
-    // the loop never called AgentTools for the model's own statement; the one
-    // call it did make is the post step executing the final SQL
+    // the loop never re-executed the model's own call. The one call it did
+    // make is the closing fence's run (E4 R2): the child's rows never reach
+    // this side, so the fence the model closed with is fetched once, as the
+    // loop's own step by its own name, for the grid
     expect(rec.calls).toEqual([{ name: "runSql", args: "SELECT count(*) FROM film" }]);
+    expect(answer.trace.filter((s) => s.step === "tool").map((s) => s.step === "tool" && s.id)).toEqual([
+      "a",
+      CLOSING_FENCE,
+    ]);
     const step = answer.trace.find((s) => s.step === "tool" && s.id === "a");
     expect(step && step.step === "tool" && step.result).toContain("1000");
     expect(events.some((e) => e.type === "toolEnd" && e.id === "a")).toBe(true);
@@ -1742,8 +1748,11 @@ describe("the canvas dispatch", () => {
     expect(step && step.step === "tool" && step.name).toBe("canvas_write");
     const start = events.find((e) => e.type === "toolStart");
     expect(start).toMatchObject({ name: "run_sql", label: "canvas" });
-    // and no AgentTools call was made for it
-    expect(rec.calls.filter((c) => c.name === "runSql")).toHaveLength(1);
+    // and no AgentTools call was made for it, nor for the closing prose: this
+    // assertion once read 1, the loop's own run of "Four blocks are on
+    // Canvas 4." as a statement (E4 R2 retired that run)
+    expect(rec.calls.filter((c) => c.name === "runSql")).toHaveLength(0);
+    expect(answer.verdict).toEqual({ status: "answered", sql: null, rowCount: null });
   });
 
   test("a canvas_read reports no blocks, so no write event fires", async () => {
@@ -1860,5 +1869,234 @@ describe("the canvas dispatch", () => {
       },
     });
     expect(servedAgain).toBe(0);
+  });
+});
+
+// ---- E4: the answer is what the model said ---------------------------------
+//
+// The maintainer's own exchange, replayed. A canvas thread, three answered
+// exchanges in, asked what the canvas can hold; Haiku answered in words and
+// called no tool, and the loop took the words for SQL, ran them itself twelve
+// times against the gate's "this is prose, not SQL", and ended `failed` with a
+// paragraph in the SQL field and Fix It over it. The two texts below are his
+// question and the model's recorded answer, verbatim from the app's own turn
+// log, and they appear nowhere else in the tree (AGENT-SPEC 4.6, LESSONS 17).
+describe("the answer is what the model said (E4)", () => {
+  const HIS_QUESTION = '@"Canvas" what what can you create on canvas';
+  const HIS_ANSWER =
+    'The question "what can you create on canvas" is informational and requires a text answer per your instruction to "reply in text and call no tool." No SQL applies. Canvas blocks I can create: result blocks with charts/tables from SELECT queries, and note blocks with markdown insights. That is my visible response.';
+
+  const canvas: CanvasTools = {
+    canvasId: "cv-1",
+    title: "Canvas",
+    outline: () => [],
+    async write() {
+      return { textForModel: "Wrote nothing.", result: null };
+    },
+    async replace() {
+      return { textForModel: "Replaced nothing.", result: null };
+    },
+    async read() {
+      return {
+        textForModel: 'Canvas "Canvas" is empty, 7 columns wide.',
+        result: { canvasId: "cv-1", title: "Canvas", columns: 7, blocks: [] },
+      };
+    },
+  };
+
+  const nudges = (trace: TraceStep[]) => trace.filter((s) => s.step === "nudge");
+  const toolIds = (trace: TraceStep[]) => trace.flatMap((s) => (s.step === "tool" ? [s.id] : []));
+
+  test("his question: answered with his words, nothing run, nothing repaired, no nudge", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const mentions = mentionsIn(HIS_QUESTION, {
+      snapshot,
+      saved: [],
+      threads: [],
+      canvases: [{ id: "cv-1", title: "Canvas" }],
+    });
+    expect(mentions.map((m) => m.kind)).toEqual(["canvas"]);
+    // claude -p: one invocation, prose, no tool call, the child's own count
+    const provider = scripted(
+      [[{ text: HIS_ANSWER }, { done: { stopReason: "stop" as const, turns: 1 } }]],
+      rec,
+      true,
+    );
+    const { answer, events } = await ask(provider, tools(rec), {
+      question: HIS_QUESTION,
+      mentions,
+      canvas,
+      thread: { id: "t-1", firstCall: false },
+    });
+    expect(answer.verdict).toEqual({ status: "answered", sql: null, rowCount: null });
+    expect(answer.sql).toBeNull();
+    expect(answer.run).toBeNull();
+    expect(answer.text).toBe(HIS_ANSWER);
+    expect(answer.turns).toBe(1);
+    // zero run_sql on the tools, zero repair or nudge turns, one call to the
+    // provider, and a trace with no run the model did not make
+    expect(rec.calls).toEqual([]);
+    expect(rec.requests).toHaveLength(1);
+    expect(nudges(answer.trace)).toEqual([]);
+    expect(toolIds(answer.trace)).toEqual([]);
+    expect(events.filter((e) => e.type === "error")).toEqual([]);
+  });
+
+  test("a question no table answers gets no nudge off the canvas either", async () => {
+    for (const q of ["what did you just do", "thanks"]) {
+      const rec: Recorded = { calls: [], requests: [] };
+      const { answer } = await ask(
+        scripted([[{ text: "I ran the count you asked for." }, done("stop")]], rec),
+        tools(rec),
+        { question: q },
+      );
+      expect(answer.verdict.status).toBe("answered");
+      expect(rec.requests).toHaveLength(1);
+      expect(nudges(answer.trace)).toEqual([]);
+    }
+  });
+
+  test("a data question answered in words with no run gets ONE nudge, then the run it makes is the answer", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const provider = scripted(
+      [
+        [{ text: "Films live in the film table." }, done("stop")],
+        [call("a", "run_sql", { sql: "SELECT count(*) FROM film" }), done("toolCalls")],
+        [{ text: "There are 1000 films." }, done("stop")],
+      ],
+      rec,
+    );
+    const { answer, events } = await ask(provider, tools(rec), { question: "how many films are there" });
+    // the nudge is a user turn beside the model's own text, and rides the trace as its own step
+    expect(rec.requests).toHaveLength(3);
+    const sent = rec.requests[1].messages;
+    expect(sent[sent.length - 2]).toEqual({ role: "assistant", content: "Films live in the film table." });
+    expect(sent[sent.length - 1]).toEqual({ role: "user", content: nudgeMessage() });
+    expect(nudges(answer.trace)).toEqual([{ step: "nudge", ms: 0, text: nudgeMessage() }]);
+    // the run the model made is the answer's run, under its own statement; the loop ran nothing
+    expect(answer.verdict).toEqual({ status: "answered", sql: "SELECT count(*) FROM film", rowCount: 1 });
+    expect(answer.run).not.toBeNull();
+    expect(answer.text).toBe("There are 1000 films.");
+    expect(rec.calls.filter((c) => c.name === "runSql")).toHaveLength(1);
+    expect(toolIds(answer.trace)).toEqual(["a"]);
+    expect(events.filter((e) => e.type === "error")).toEqual([]);
+  });
+
+  test("nudged and still in words: answered in words, no second nudge, no failure", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const provider = scripted(
+      [
+        [{ text: "Films live in the film table." }, done("stop")],
+        [{ text: "I would need to run a query for that. Shall I?" }, done("stop")],
+        [{ text: answerText }, done("stop")],
+      ],
+      rec,
+    );
+    const { answer, events } = await ask(provider, tools(rec), { question: "how many films are there" });
+    expect(rec.requests).toHaveLength(2);
+    expect(nudges(answer.trace)).toHaveLength(1);
+    expect(answer.verdict).toEqual({ status: "answered", sql: null, rowCount: null });
+    expect(answer.text).toBe("I would need to run a query for that. Shall I?");
+    expect(rec.calls).toEqual([]);
+    expect(events.filter((e) => e.type === "error")).toEqual([]);
+  });
+
+  test("a call the model made and lost, then words: answered in words, no nudge, no Fix It", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const t = tools(rec, {
+      async runSql(sql) {
+        rec.calls.push({ name: "runSql", args: sql });
+        return { textForModel: "ERROR: relation \"films\" does not exist", result: null, error: 'relation "films" does not exist' };
+      },
+    });
+    const provider = scripted(
+      [
+        [call("a", "run_sql", { sql: "SELECT count(*) FROM films" }), done("toolCalls")],
+        [{ text: "There is no films table on this connection." }, done("stop")],
+      ],
+      rec,
+    );
+    const { answer, events } = await ask(provider, t, { question: "how many films are there" });
+    expect(rec.requests).toHaveLength(2);
+    expect(nudges(answer.trace)).toEqual([]);
+    expect(answer.verdict).toEqual({ status: "answered", sql: null, rowCount: null });
+    expect(events.filter((e) => e.type === "error")).toEqual([]);
+  });
+
+  test("no nudge on the last turn the cap allows: the words are the answer", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const { answer } = await ask(
+      scripted([[{ text: "Films live in the film table." }, done("stop")]], rec),
+      tools(rec),
+      { question: "how many films are there", maxTurns: 1 },
+    );
+    expect(answer.verdict).toEqual({ status: "answered", sql: null, rowCount: null });
+    expect(nudges(answer.trace)).toEqual([]);
+  });
+
+  test("a closing fence the gate refuses as prose ends answered in words, no repair", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const t = tools(rec, {
+      async runSql(sql) {
+        rec.calls.push({ name: "runSql", args: sql });
+        return { textForModel: PROSE_ERROR, result: null, error: PROSE_ERROR.slice(7) };
+      },
+    });
+    const said = "No query answers that.\n\n```sql\nNo query answers that\n```";
+    const provider = scripted([[{ text: said }, done("stop")], [{ text: answerText }, done("stop")]], rec);
+    const { answer, events } = await ask(provider, t, { question: "how many films are there" });
+    expect(rec.requests).toHaveLength(1);
+    expect(answer.verdict).toEqual({ status: "answered", sql: null, rowCount: null });
+    expect(answer.text).toBe(said);
+    expect(events.filter((e) => e.type === "error")).toEqual([]);
+    // the one run the loop made is in the trace under its own name, refused
+    expect(answer.trace.filter((s) => s.step === "tool")).toMatchObject([
+      { id: CLOSING_FENCE, name: "run_sql", isError: true },
+    ]);
+  });
+
+  test("a closing fence that fails on the wire gets one repair, then ends failed WITH that sql", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const t = tools(rec, {
+      async runSql(sql) {
+        rec.calls.push({ name: "runSql", args: sql });
+        return { textForModel: "ERROR: syntax error", result: null, error: "syntax error" };
+      },
+    });
+    const provider = scripted(
+      [
+        [{ text: "```sql\nSELECT bad\n```" }, done("stop")],
+        [{ text: "```sql\nSELECT worse\n```" }, done("stop")],
+        [{ text: "```sql\nSELECT worst\n```" }, done("stop")],
+      ],
+      rec,
+    );
+    const { answer, events } = await ask(provider, t);
+    expect(rec.requests).toHaveLength(2);
+    const sent = rec.requests[1].messages;
+    expect(sent[sent.length - 1]).toMatchObject({
+      role: "user",
+      content: expect.stringContaining("That query failed"),
+    });
+    expect(answer.verdict).toEqual({ status: "failed", sql: "SELECT worse", message: "syntax error" });
+    expect(answer.sql).toBe("SELECT worse");
+    // kind sql, and only because a statement failed; never a `final-N` step
+    expect(events.filter((e) => e.type === "error")).toMatchObject([{ kind: "sql" }]);
+    expect(toolIds(answer.trace)).toEqual([CLOSING_FENCE, CLOSING_FENCE]);
+  });
+
+  test("a fence naming a run the model made is that run, and the loop runs nothing", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const provider = scripted(
+      [
+        [call("a", "run_sql", { sql: "SELECT count(*) FROM film" }), done("toolCalls")],
+        [{ text: answerText }, done("stop")],
+      ],
+      rec,
+    );
+    const { answer } = await ask(provider, tools(rec));
+    expect(answer.verdict).toEqual({ status: "answered", sql: "SELECT count(*) FROM film", rowCount: 1 });
+    expect(rec.calls.filter((c) => c.name === "runSql")).toHaveLength(1);
+    expect(toolIds(answer.trace)).toEqual(["a"]);
   });
 });

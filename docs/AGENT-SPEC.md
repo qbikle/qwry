@@ -260,10 +260,83 @@ does not move for this fix: the loop and the claude-code adapter carry the
 breaker, not the prompt. Tested on both paths (`loop.test`, the claude-code
 adapter's own test).
 
-### 4.6 Post (code + cheap model)
-- Final SQL extracted from the answer (tolerant: fenced, tool-call syntax,
-  stray special tokens; this tolerance alone was worth 22 points on a small
-  model).
+### 4.6 Post (code + cheap model): the conversational contract (E4, 2026-09-17)
+
+A canvas thread's fourth question, informational and asking for no data,
+was answered in prose with no tool call; the loop took that prose as
+`run_sql`'s own argument anyway, ran it, hit the AST gate's `this is prose,
+not SQL` refusal, fed the refusal back, and looped to the cap, because the
+only thing this step used to do was extract SQL from whatever text the
+model left behind and run it — the model's own choice not to call a tool
+was never a question the code asked (the maintainer's thread; LESSONS.md
+has the shape of it, the app's own turn log has the words). Two checks now
+run, in order, before this step will call anything an answer:
+
+**One nudge, evidence-gated.** Has this exchange, across every turn so far,
+called `run_sql` — or, on a canvas-targeted exchange, `canvas_write` /
+`canvas_replace` — even once? If not, and the question resolves to a table,
+the loop sends ONE user turn. Three code facts, never a guess, are what
+resolving to a table means: the question names a table (context.ts
+`tablesNamed`: a word of the table's own name, its base name, or a synonym
+the user mapped to it; a column-only hit, the FK hubs and the one-hop
+expansion do not count, since those put tables under every question), §4.1;
+or the question carries an `@table` / `@column` mention, §4.2; or the risk
+classifier fired, §4.4. The turn is `nudgeMessage` (`prompt.ts`, beside
+`repairMessage`, never in the cached `SYSTEM_PROMPT`): "You have run_sql.
+Answer this with the data, then say what it shows," and the loop continues
+exactly as a SQL-error repair does (§4.5), counting as a turn against that
+section's cap. A question that resolves to no table — "what can you create
+on canvas," "what did you just do," "thanks" — is conversational and gets
+none. The prefilter's PICKED list is not this test and cannot be: on any
+schema holding a foreign key it is never empty, because the top-3 FK hubs
+and the one-hop expansion (§4.1) put tables under every question, the
+maintainer's own included. At most one nudge per exchange; its text rides
+its own trace step, `nudge` (AGENT-UX §5). The model's next stop, nudged or
+not, is read by the rule below.
+
+**The answer is what the model said.** Once the model stops for real (no
+tool call, and the nudge above has already had its one chance), the exchange
+ends `answered` and its last text block is the answer — never a statement
+the loop invents on the model's behalf. `sql` is the closing ```sql fence
+when the answer has one (a tool-call literal, `extractSql`'s `tool-call`
+branch, counts as a fence too), else null: on this, the hybrid tier, plain
+unfenced text is never SQL, so `extractSql`'s `raw` branch — measured worth
+22 points on a small model — never fires here; it still fires on the small
+tier, which has no tools and no fence to ask for (§4.7). `run` is the run
+`sameSql` matches to the fence's own statement when the fence names one
+already run this exchange, the exchange's last successful run when the
+fence names none, else null. The loop never starts a run of its own to fill
+either slot: no `final-N` trace step exists any more, the id (`final-${turns}`)
+retired with it.
+
+**A fence naming an unrun statement is run once; a fence the gate calls
+prose is not run at all.** When the closing fence names a statement the
+model has not yet run, the loop runs it once — the "state it, then say
+done" pattern the tool loop already lets a model use mid-conversation — as
+a trace step `closing-fence`, and a failure there feeds exactly ONE
+`repairMessage`, the same message §4.5's mid-conversation repair loop
+sends, capped here at one round because the model already said it was
+finished: fail again and the exchange ends `failed` carrying that `sql`.
+When the AST gate instead refuses the fence as prose (`isProseRefusal`,
+`tools.ts` — the same check the W7 circuit breaker above counts refusals
+with), the loop does not retry it: the exchange ends `answered` with the
+prose text at once, `sql` and `run` both null, no repair, no failure block.
+This is the W7 breaker's own principle carried one step further. That
+breaker already refused to let the loop mistake the model's own
+prose-fed `run_sql` call for progress toward an answer; this rule refuses
+to let the loop mistake the model's prose ANSWER for a statement in the
+first place, which is the half of the same bug the breaker's counter,
+scoped to the model's own `run_sql` calls, could never see (it never ran a
+tool at all, so nothing tripped it, LESSONS.md).
+
+**Failures are the tool's.** A `failed` verdict carries `sql` only when a
+statement — a closing fence or a call the model actually made — failed on
+the wire; `errorKind: "sql"` and `Fix It` (AGENT-UX §7) appear only then. A
+prose answer can never produce a failure block, whatever it says.
+`repairMessage` is never sent for a call the loop made and the model did
+not.
+
+What §4.6 has always done next is unchanged by any of the above:
 - Result rows go to the existing grid (no second grid species).
 - **Assumption chips**: parsed from the model's mandated "Assumptions:" line
   plus code-detected filters not present in the question (`is_deleted`,
@@ -271,11 +344,24 @@ adapter's own test).
 - **Sanity line**: values peeked, min/max probed, anomalies (AGENT-UX §4).
 - **Follow-ups**: three next questions from the cheapest configured model.
 - Turn, tool log, usage, SQL persist to appdb (`agent_turns`) for trace and
-  history.
+  history. `tool_calls_json` / `tool_results_json` hold the calls the MODEL
+  made and nothing else (R5): the `nudge` is not a tool step at all, and the
+  loop's own `closing-fence` fetch, truthful as its live row is, is filtered
+  out on the way to the column (`persist`, `stores/agent.ts`), so a reopened
+  thread shows the model's own calls alone rather than a second `run_sql`
+  row beside the one the model wrote. What that reload drops is a fetch, not
+  a fact: the statement and its row count are the answer row's own columns
+  (§9). `final-N` is among none of it, and never again.
 
 ### 4.7 Small-tier path
 Steps 4.1–4.2 then ONE model call producing SQL; execute; on error feed the
 error back once or twice; no tools, no chips beyond code-detected filters.
+This tier has no tool call to distinguish an answer from a statement with,
+so it is the one place `extractSql`'s `raw` branch still runs (§4.6): the
+whole of the model's reply is read as the SQL, fenced or not, because that
+tolerance is what the 22 points were measured on and nothing here has a
+fence to require instead. No nudge, no closing-fence step, no `final-N`
+retirement: none of §4.6's contract changes this tier's one call.
 
 ### 4.8 History few-shot (A2, 2026-09-06)
 `agent_history_pairs(profile_id, limit)` (§9) returns up to `limit` rows of

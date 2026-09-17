@@ -142,6 +142,14 @@ export function repairMessage(error: string): string {
   return `That query failed with this error:\n${error}\nFix it. Output ONLY the corrected SQL in a \`\`\`sql block.`;
 }
 
+/** The ONE nudge an exchange may carry (E4 R3, AGENT-SPEC section 4.6): the
+ * model stopped without calling run_sql, and the question names a table.
+ * Loop copy like repairMessage, a user turn and never a byte of the cached
+ * system prompt, so PROMPT_VERSION does not move for it. */
+export function nudgeMessage(): string {
+  return "You have run_sql. Answer this with the data, then say what it shows.";
+}
+
 /** The follow-up suggestions call (AGENT-SPEC section 4.6): one short model
  * turn after the answer, no tools. Kept apart from SYSTEM_PROMPT so the
  * cached prefix of the main loop never changes and PROMPT_VERSION stays tied

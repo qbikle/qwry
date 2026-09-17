@@ -3,7 +3,10 @@
 // context (candidates, expandable to the exact block sent; what the user
 // tagged with @ summarised in one line over that block, W6), each model turn
 // (raw text, thinking), each tool call with its arguments and result, the
-// verdict. Timing per step in the status register; the verdict row carries
+// nudge when one was sent (E4 R3), the run the loop made from a closing fence
+// when there was one (E4 R5: named as the loop's, because every other run in
+// the list is a call the model made), the verdict. Timing per step in the
+// status register; the verdict row carries
 // none, its ms is the whole run and the header already states that (DESIGN
 // rule 14). Teaching surface: keycaps allowed. Nothing is summarised away,
 // and the drawer says nothing about that norm (rule 11): the one note strip
@@ -31,6 +34,7 @@ import {
   type ReactNode,
 } from "react";
 import { ArrowLeft } from "lucide-react";
+import { CLOSING_FENCE } from "../agent/loop";
 import type { TraceStep } from "../agent/types";
 import { secondsText } from "../lib/duration";
 import type { Exchange } from "../stores/agent";
@@ -142,6 +146,7 @@ function Sub({ label, children }: { label: string; children: ReactNode }) {
  * shows before the answer lands (same renderer, so they never drift) */
 function toolRow(step: ToolStep, ms: number | null): Row {
   const summary = toolSummary(step);
+  const fence = step.id === CLOSING_FENCE;
   return {
     key: toolKey(step.id),
     kind: "tool",
@@ -149,7 +154,8 @@ function toolRow(step: ToolStep, ms: number | null): Row {
     label: (
       <>
         <code>{step.name}</code>
-        {summary ? ` ${summary}` : ""}
+        {fence ? " closing fence" : ""}
+        {summary ? `${fence ? " · " : " "}${summary}` : ""}
         {step.isError && <span className="trace-err"> · error</span>}
       </>
     ),
@@ -217,6 +223,11 @@ function rowsFromTrace(exchange: Exchange, trace: TraceStep[], timed: boolean): 
         for (let j = i + 1; j < trace.length; j++) {
           const next = trace[j];
           if (next.step !== "tool") break;
+          // E4 R5: the loop's own run of the closing fence is not a call this
+          // turn made. Labelling the turn with it would hide the text that IS
+          // the answer behind a call the model never wrote (LESSONS 9); the
+          // run keeps its own row, which says whose it was
+          if (next.id === CLOSING_FENCE) continue;
           const summary = toolSummary(next);
           calls.push(summary ? `${next.name}(${summary})` : next.name);
         }
@@ -304,6 +315,25 @@ function rowsFromTrace(exchange: Exchange, trace: TraceStep[], timed: boolean): 
         });
         break;
       }
+      case "nudge":
+        // E4 R3: the model stopped without running anything and the question
+        // wanted data, so the loop said so once and let it answer again. The
+        // label is the FACT that earned the message (the `knowledge` and
+        // `followups` rows' own idiom: the count, never the copy) and the body
+        // is the message as sent. No time cell: a message pushed onto the
+        // stack takes no time worth a number, and `0 ms` would be a lie about
+        // work (DESIGN rule 11)
+        rows.push({
+          key: "nudge",
+          // not the model's turn and not a tool's result: context the loop
+          // added mid-run, which is what the context row is (AGENT-UX 14)
+          kind: "context",
+          kindLabel: "nudge",
+          label: "no query ran",
+          ms: null,
+          body: <Sub label="sent">{step.text}</Sub>,
+        });
+        break;
       case "followups":
         // the one model call made after the verdict (spec 4.6); shown because
         // nothing sent to a provider is hidden (spec 8.4). It is outside the

@@ -45,6 +45,17 @@
 // still announces itself here, with its canvas blocks standing as the reads
 // they were.
 //
+// E4: an exchange can end `answered` on prose alone — the model was asked
+// something no table answers ("what can you create on canvas") and said so.
+// Its verdict carries no SQL and no run and nothing was called, so the
+// skeleton omits the strip, the result block, the status line and the failure
+// block by the rules it already has, and what stands is bubble · prose ·
+// follow-ups · footer. Only the strip needed saying out loud (below): a fixed
+// 24px row is the one part that reserved its height instead of leaving. R1 is
+// what lets such an answer reach this block at all — the old loop took the
+// prose for a query, ran it, and turned a plain answer into a failure with
+// Fix It over a paragraph.
+//
 // A4: an exchange that ends `proposed` carries a change nothing has run. The
 // block wears its third face over the dry run's sampled rows, and the status
 // line ABOVE it becomes the headline (`UPDATE order_v2 · 12 rows`), because a
@@ -442,14 +453,24 @@ export const AnswerBlock = memo(function AnswerBlock({
         {!folded && !isEditSource && (
           <Body key="body">
             {/* `waiting`: no answer text yet, so the strip may end in `qwrying…`
-                while nothing runs; the word leaves the instant text streams */}
-            <ThinkingStrip
-              chips={exchange.chips}
-              streaming={exchange.streaming}
-              phase={phase}
-              waiting={exchange.text.length === 0}
-              onChipClick={(chipId) => openTrace(exchange.id, chipId)}
-            />
+                while nothing runs; the word leaves the instant text streams.
+                A LANDED exchange with no chips has no strip: the row is a
+                fixed 24px and an empty one reserves that height for work that
+                never happened (DESIGN rule 2's scope note, this file's own
+                first paragraph). E4 R1 made that shape ordinary — a question
+                no table answers runs nothing — and a reloaded thread, whose
+                chips appdb never kept, has stood over the same empty band
+                since W1. While the exchange streams the row stays: it is the
+                loading UI's own home, and `qwrying…` is what it holds */}
+            {(exchange.streaming || exchange.chips.length > 0) && (
+              <ThinkingStrip
+                chips={exchange.chips}
+                streaming={exchange.streaming}
+                phase={phase}
+                waiting={exchange.text.length === 0}
+                onChipClick={(chipId) => openTrace(exchange.id, chipId)}
+              />
+            )}
 
             {/* everything under the strip as one node: a Restart forgets the
                 answer and asks again, so what stood here parks where it stood

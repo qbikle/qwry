@@ -16,6 +16,7 @@ import {
   recallOf,
   renderDescribe,
   stem,
+  tablesNamed,
   toks,
   type ColumnValueMap,
 } from "../context";
@@ -169,6 +170,27 @@ describe("the tables an @ tag must include (W6)", () => {
     expect(candidates(question, pagila, undefined, ["nope"])).toEqual(
       candidates(question, pagila),
     );
+  });
+});
+
+// E4 R3: the nudge's evidence. The picked list cannot carry it, because the
+// hubs and the one-hop expansion put tables under every question, the
+// maintainer's included; what the question NAMES can.
+describe("the tables a question names", () => {
+  test("the maintainer's question names none, though a column of customer is called create_date", () => {
+    const q = '@"Canvas" what what can you create on canvas';
+    expect(tablesNamed(q, pagila)).toEqual([]);
+    expect(candidates(q, pagila).length).toBeGreaterThan(0);
+  });
+
+  test("a table's own word names it, a column's word alone does not", () => {
+    expect(tablesNamed("How many films are in the database?", pagila)).toContain("film");
+    expect(tablesNamed("list every email", pagila)).toEqual([]);
+  });
+
+  test("a synonym the user mapped names its table, in front", () => {
+    expect(tablesNamed("how many shops are there", pagila)).toEqual([]);
+    expect(tablesNamed("how many shops are there", pagila, { shops: "store" })[0]).toBe("store");
   });
 });
 

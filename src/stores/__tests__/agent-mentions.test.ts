@@ -330,6 +330,15 @@ describe("the replay a tagged thread sends", () => {
     expect(replayPairs(RAW_TURNS, RAW_ANSWERS)[0].answer?.sql).toBe(RAW_SQL);
   });
 
+  test("a paragraph recorded in the verdict's own SQL column replays as none", () => {
+    // E4 R4: the loop that shipped before this wave took the model's closing
+    // prose for a query and persisted the paragraph here. The column is not
+    // proof; a statement is (stores/agent `storedSql`)
+    const prose = [answer(2, "The question is informational. No SQL applies.")];
+    expect(replayPairs(TURNS, prose)[0].answer?.sql).toBe(null);
+    expect(replayOf(replayPairs(TURNS, prose), { head: "", cap: 1500 })).toContain("SQL: none");
+  });
+
   test("an unanswered question and a stray assistant turn are both survivable", () => {
     const stray = [turn(9, "assistant", "orphan"), turn(10, "user", "asked, never answered")];
     expect(replayPairs(stray)).toEqual([

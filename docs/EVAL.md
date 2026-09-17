@@ -341,6 +341,13 @@ Haiku `pagila-hard.json` **5/5**; section 4's table has every row.
   the ten rows it holds are still the v4 rows, and no v5 row was ever
   written.
 
+- **A change to how the answer is READ is measured exactly like a change to
+  what it is asked (E4, 2026-09-17)**: the post step's own contract for
+  reading a model's stop (AGENT-SPEC §4.6) moved and `SYSTEM_PROMPT` did
+  not, so this wave still runs the Pagila bench and reads its row against
+  `eval/baseline.json` precisely as D2's prompt sentence was read, never
+  waved through on the ground that no prompt byte changed.
+
 **Reference numbers, 2026-09-06** (W3b; provider `claude-code`, `--jobs 3`,
 `PROMPT_VERSION` v4, 0 turn-cap hits on every row except `pagila-insight.json`
 + claude-haiku-4-5, whose `ins-05` EXEC-FAILed twice and pushed `avg_turns` to

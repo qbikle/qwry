@@ -347,6 +347,8 @@ const ALL_STATES = [
   "d1-list-numbered",
   "d2-answer-typo",
   "d2-answer-list",
+  "e4-prose-answer",
+  "e4-nudged",
 ] as const;
 /** the second root (A2): the palette is a modal over the window, not a pane in
  * a card, so it has one width, its own (`src/harness/PaletteHarness.tsx`) */

@@ -106,6 +106,12 @@
 // among them does not stand in 760; and one pane state (fixtures.b3ask.ts:
 // `b3-ask-summary`), the record a canvas-targeted answer leaves behind.
 //
+// E4 adds two pane states (fixtures.e4.ts: `e4-prose-answer`, the exchange
+// the model answered in words on a canvas thread, and `e4-nudged`, the trace
+// of a data question that took one nudge before it ran anything). The first
+// seeds a canvas TAB, which is what its bubble's `@"Canvas"` pill resolves
+// against; the second opens the trace at its nudge step.
+//
 // C2a adds six more to the canvas route (fixtures.c2grid.ts: `c2-grid`,
 // `c2-grid-floor`, `c2-drag`, `c2-resize`, `c2-migrated`, `c2-dense`) on the
 // same 800-tall card, since a page of cells runs past any one answer. Two of
@@ -206,6 +212,7 @@ import {
   type CanvasState,
 } from "./fixtures.canvas";
 import { B3_ASK_STATES, b3AskSeed, type B3AskState } from "./fixtures.b3ask";
+import { E4_STATES, e4Seed, e4TraceFor, type E4State } from "./fixtures.e4";
 import {
   B3_CANVAS_CARD_H,
   B3_CANVAS_STATES,
@@ -431,6 +438,10 @@ function seed({ state, w, theme }: Params) {
   const d2ans = (D2ANSWER_STATES as readonly string[]).includes(state)
     ? d2AnswerSeed(state as D2AnswerState)
     : null;
+  // E4: the prose answer and the nudged trace. Their exchange comes back
+  // through `exchangeFor` like every other single-exchange state; what is read
+  // here is the canvas TAB the prose state's bubble pill resolves against
+  const e4 = (E4_STATES as readonly string[]).includes(state) ? e4Seed(state as E4State) : null;
   // the thread a state shows, oldest first: one seed wins, and the same list
   // is the active thread, the exchanges and what the follow-up row reads
   const list =
@@ -495,7 +506,7 @@ function seed({ state, w, theme }: Params) {
   // every other state clears it, so a tab persisted by an earlier page never
   // reaches a frame (the bookmarks' own rule, above)
   useTabs.setState({
-    tabs: know?.tabs ?? b2pop?.tabs ?? b3?.tabs ?? [],
+    tabs: know?.tabs ?? b2pop?.tabs ?? b3?.tabs ?? e4?.tabs ?? [],
     activeId: know?.activeTabId ?? b3?.activeTabId ?? null,
   });
 
@@ -544,7 +555,7 @@ function Harness({ state, w, scroll }: Params) {
         ? mentionsEchoTraceFor(state as MentionsEchoState)
         : (KNOWLEDGE_STATES as readonly string[]).includes(state)
           ? knowledgeTraceFor(state as KnowledgeState)
-          : null;
+          : e4TraceFor(state);
     if (t) useAsk.getState().openTrace(t.exchangeId, t.stepId);
     const interact = interactFor(state);
     const id = requestAnimationFrame(() => {

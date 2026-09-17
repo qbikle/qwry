@@ -225,6 +225,18 @@ export type TraceStep =
       ms: number;
       text: string;
       counts: KnowledgeCounts;
+    }
+  | {
+      /** E4 R3: the ONE nudge an exchange may carry. The model stopped
+       * without running anything and the question wanted data, so the loop
+       * sent this back as a user turn and let it answer again. It is here
+       * because nothing sent to a provider is hidden (spec 8.4), and because
+       * an answer that took a push is not the same answer as one that did
+       * not. At most one per exchange. */
+      step: "nudge";
+      ms: number;
+      /** the exact user message sent */
+      text: string;
     };
 
 /** What the knowledge step's label counts. A kind that contributed nothing is
