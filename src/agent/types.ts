@@ -64,6 +64,27 @@ export interface AgentRun {
   ms: number;
 }
 
+/** One statement an `ownsLoop` child ran where this loop could not see it,
+ * delivered by the bridge that answered the call (E5a R1, agent_mcp.rs
+ * `SqlRun`). `sessionId` is the database session it ran on: the bridge is one
+ * listener for the whole app, so the exchange reading it keeps only its own
+ * (E5a R2). */
+export interface BridgeRun {
+  sessionId: string;
+  sql: string;
+  run: AgentRun;
+}
+
+/** The bridge, as one exchange sees it: the session whose runs are this
+ * exchange's, and the subscription. `serve` delivers every run the app hears
+ * until the returned stop is called, which the loop does when the run ends;
+ * absent on the eval path, which drives its own tools and holds their results
+ * directly. */
+export interface RunBridge {
+  sessionId: string;
+  serve(onRun: (run: BridgeRun) => void): () => void;
+}
+
 /** Token accounting for one model turn. `cacheRead`/`cacheWrite` are absent on
  * providers that do not report caching; zero and absent mean different things
  * (a silent cache miss is a real failure mode, W0 registry facts). */

@@ -25,7 +25,7 @@ import {
   type CanvasTools,
   type ToolOutcome,
 } from "../tools";
-import type { AgentRun, TraceStep } from "../types";
+import type { AgentRun, BridgeRun, RunBridge, TraceStep } from "../types";
 import type { SchemaSnapshot } from "../../stores/schema";
 import snapshotJson from "./fixtures/pagila-snapshot.json";
 
@@ -2098,5 +2098,264 @@ describe("the answer is what the model said (E4)", () => {
     expect(answer.verdict).toEqual({ status: "answered", sql: "SELECT count(*) FROM film", rowCount: 1 });
     expect(rec.calls.filter((c) => c.name === "runSql")).toHaveLength(1);
     expect(toolIds(answer.trace)).toEqual(["a"]);
+  });
+});
+
+// ---- E5a: the rows the bridge carries -------------------------------------
+//
+// `claude -p` runs `run_sql` inside its own process: `agent_mcp.rs` answers
+// the call in Rust and only the model's TEXT comes back through the adapter.
+// The bridge now delivers the run itself (`RUN_SQL_EVENT`), the loop holds it
+// like any run it made, and E4's R1 then applies unchanged. That is what
+// ends the asymmetry where a fenced answer was fetched a second time and a
+// fence-less one showed no grid at all.
+describe("the runs a child made reach the loop (E5a)", () => {
+  const SQL = "SELECT count(*) FROM film";
+
+  const toolIdsOf = (trace: TraceStep[]) => trace.flatMap((s) => (s.step === "tool" ? [s.id] : []));
+
+  /** the `claude -p` shape: an item that is a FUNCTION is a side effect at
+   * that point in the stream, which is where the bridge answers the child's
+   * own call. */
+  function childLoop(script: (AgentEvent | (() => void))[][], rec: Recorded): Provider {
+    let turn = 0;
+    return {
+      id: "claude-code",
+      ownsLoop: true,
+      chat(req: ChatRequest): AsyncIterable<AgentEvent> {
+        rec.requests.push({ ...req, messages: req.messages.map((m) => ({ ...m }) as Msg) });
+        const items = script[Math.min(turn, script.length - 1)] ?? [];
+        turn++;
+        return (async function* () {
+          for (const item of items) {
+            if (typeof item === "function") item();
+            else yield item;
+          }
+        })();
+      },
+    };
+  }
+
+  /** the bridge, stubbed: one subscriber, and a hand on the wire */
+  function stubBridge(sessionId = "sess-a") {
+    let deliver: ((r: BridgeRun) => void) | null = null;
+    let stops = 0;
+    return {
+      bridge: {
+        sessionId,
+        serve(onRun: (r: BridgeRun) => void) {
+          deliver = onRun;
+          return () => {
+            stops += 1;
+            deliver = null;
+          };
+        },
+      } satisfies RunBridge,
+      send(r: BridgeRun) {
+        if (!deliver) throw new Error("the bridge was not served");
+        deliver(r);
+      },
+      serving: () => deliver !== null,
+      stops: () => stops,
+    };
+  }
+
+  const bridged = (sql: string, rows: number, sessionId = "sess-a"): BridgeRun => ({
+    sessionId,
+    sql,
+    run: { columns: ["count"], rows: [[String(rows)]], rowCount: rows, capped: false, ms: 41 },
+  });
+
+  const childText = "There are 1000 films.\n\n```sql\nSELECT count(*) FROM film\n```";
+
+  test("a closing fence naming a run the bridge carried adopts it, and nothing is re-run", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const wire = stubBridge();
+    const provider = childLoop(
+      [
+        [
+          call("a", "run_sql", { sql: SQL }),
+          () => wire.send(bridged(SQL, 1000)),
+          { toolResult: { id: "a", name: "run_sql", result: "count\n1000\n(1 rows)" } },
+          { text: childText },
+          done("stop"),
+        ],
+      ],
+      rec,
+    );
+    const { answer } = await ask(provider, tools(rec), { runBridge: wire.bridge });
+    expect(answer.verdict).toEqual({ status: "answered", sql: SQL, rowCount: 1000 });
+    expect(answer.run?.rows).toEqual([["1000"]]);
+    // the one honest re-run is gone from this path: E4 fetched this same
+    // fence once more to fill the grid
+    expect(rec.calls).toEqual([]);
+    expect(toolIdsOf(answer.trace)).toEqual(["a"]);
+    // and the child's own step now says what the run cost, not zero
+    const step = answer.trace.find((s) => s.step === "tool" && s.id === "a");
+    expect(step && step.step === "tool" && step.ms).toBe(41);
+    // the subscription ended with the run
+    expect([wire.serving(), wire.stops()]).toEqual([false, 1]);
+  });
+
+  test("a fence-less close after a run answers under that run", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const wire = stubBridge();
+    const provider = childLoop(
+      [
+        [
+          call("a", "run_sql", { sql: SQL }),
+          () => wire.send(bridged(SQL, 1000)),
+          { toolResult: { id: "a", name: "run_sql", result: "count\n1000\n(1 rows)" } },
+          { text: "There are 1000 films." },
+          done("stop"),
+        ],
+      ],
+      rec,
+    );
+    const { answer } = await ask(provider, tools(rec), { runBridge: wire.bridge });
+    expect(answer.verdict).toEqual({ status: "answered", sql: SQL, rowCount: 1000 });
+    expect(answer.text).toBe("There are 1000 films.");
+    expect(answer.run?.rowCount).toBe(1000);
+    expect(rec.calls).toEqual([]);
+  });
+
+  test("a fence naming a statement the child never ran is fetched once, as the closing fence", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const wire = stubBridge();
+    const provider = childLoop(
+      [
+        [
+          call("a", "run_sql", { sql: "SELECT count(*) FROM actor" }),
+          () => wire.send(bridged("SELECT count(*) FROM actor", 200)),
+          { toolResult: { id: "a", name: "run_sql", result: "count\n200\n(1 rows)" } },
+          { text: childText },
+          done("stop"),
+        ],
+      ],
+      rec,
+    );
+    const { answer } = await ask(provider, tools(rec), { runBridge: wire.bridge });
+    expect(answer.verdict).toEqual({ status: "answered", sql: SQL, rowCount: 1 });
+    expect(rec.calls).toEqual([{ name: "runSql", args: SQL }]);
+    expect(toolIdsOf(answer.trace)).toEqual(["a", CLOSING_FENCE]);
+  });
+
+  test("a run from another thread's session is dropped, never held", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const wire = stubBridge("sess-a");
+    const provider = childLoop(
+      [
+        [
+          () => wire.send(bridged(SQL, 7, "sess-b")),
+          { text: "There are 1000 films." },
+          done("stop"),
+        ],
+      ],
+      rec,
+    );
+    const { answer } = await ask(provider, tools(rec), { runBridge: wire.bridge });
+    // nothing held: the answer is the words, with no grid under someone
+    // else's rows
+    expect(answer.verdict).toEqual({ status: "answered", sql: null, rowCount: null });
+    expect(answer.run).toBeNull();
+    expect(rec.calls).toEqual([]);
+  });
+
+  test("the last run the child made is the one the grid shows", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const wire = stubBridge();
+    const provider = childLoop(
+      [
+        [
+          call("a", "run_sql", { sql: SQL }),
+          () => wire.send(bridged(SQL, 1000)),
+          { toolResult: { id: "a", name: "run_sql", result: "count\n1000\n(1 rows)" } },
+          call("b", "run_sql", { sql: "SELECT count(*) FROM actor" }),
+          () => wire.send(bridged("SELECT count(*) FROM actor", 200)),
+          { toolResult: { id: "b", name: "run_sql", result: "count\n200\n(1 rows)" } },
+          { text: "1000 films, 200 actors." },
+          done("stop"),
+        ],
+      ],
+      rec,
+    );
+    const { answer } = await ask(provider, tools(rec), { runBridge: wire.bridge });
+    expect(answer.verdict).toEqual({
+      status: "answered",
+      sql: "SELECT count(*) FROM actor",
+      rowCount: 200,
+    });
+    expect(rec.calls).toEqual([]);
+  });
+
+  test("two calls to one statement each report the run that answered THAT call", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const wire = stubBridge();
+    const runAt = (ms: number): BridgeRun => ({
+      sessionId: "sess-a",
+      sql: SQL,
+      run: { columns: ["count"], rows: [["1000"]], rowCount: 1000, capped: false, ms },
+    });
+    const provider = childLoop(
+      [
+        [
+          call("a", "run_sql", { sql: SQL }),
+          () => wire.send(runAt(41)),
+          { toolResult: { id: "a", name: "run_sql", result: "count\n1000\n(1 rows)" } },
+          call("b", "run_sql", { sql: SQL }),
+          () => wire.send(runAt(99)),
+          { toolResult: { id: "b", name: "run_sql", result: "count\n1000\n(1 rows)" } },
+          { text: "Ran it twice." },
+          done("stop"),
+        ],
+      ],
+      rec,
+    );
+    const { answer } = await ask(provider, tools(rec), { runBridge: wire.bridge });
+    const msOf = (id: string) => {
+      const step = answer.trace.find((s) => s.step === "tool" && s.id === id);
+      return step && step.step === "tool" ? step.ms : undefined;
+    };
+    // the first call's step keeps the FIRST run's cost, not whichever of the
+    // statement's two runs arrived last (S3 fix)
+    expect(msOf("a")).toBe(41);
+    expect(msOf("b")).toBe(99);
+  });
+
+  test("a provider this loop drives is handed no bridge of its own", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const wire = stubBridge();
+    await ask(scripted([[{ text: answerText }, done("stop")]], rec), tools(rec), {
+      runBridge: wire.bridge,
+    });
+    expect([wire.serving(), wire.stops()]).toEqual([false, 0]);
+    // it held its own run and ran the fence off it, exactly as E4 left it
+    expect(rec.calls).toEqual([{ name: "runSql", args: "SELECT count(*) FROM film" }]);
+  });
+
+  test("a cancelled exchange still lets go of the bridge", async () => {
+    const rec: Recorded = { calls: [], requests: [] };
+    const wire = stubBridge();
+    const controller = new AbortController();
+    const provider = childLoop(
+      [
+        [
+          call("a", "run_sql", { sql: SQL }),
+          () => wire.send(bridged(SQL, 1000)),
+          { toolResult: { id: "a", name: "run_sql", result: "count\n1000\n(1 rows)" } },
+          () => controller.abort(),
+          done("stop"),
+        ],
+      ],
+      rec,
+    );
+    const { answer } = await ask(provider, tools(rec), {
+      runBridge: wire.bridge,
+      signal: controller.signal,
+    });
+    expect(answer.verdict.status).toBe("cancelled");
+    // the run it held is the cancelled exchange's own last one (E4's shape)
+    expect(answer.sql).toBe(SQL);
+    expect([wire.serving(), wire.stops()]).toEqual([false, 1]);
   });
 });

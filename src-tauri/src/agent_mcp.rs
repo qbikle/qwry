@@ -74,7 +74,7 @@ use rmcp::transport::streamable_http_server::session::local::LocalSessionManager
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{ErrorData as McpError, RoleServer, ServerHandler};
 use serde::Serialize;
-use tauri::State;
+use tauri::{Emitter, State};
 use tokio::net::TcpListener;
 
 use crate::agent::{ColumnValues, TableValues};
@@ -103,6 +103,14 @@ pub const MCP_PATH: &str = "/mcp";
 /// save tokens: the lean variant did and looped to the turn cap re-querying
 /// what it could not see.
 pub const MODEL_ROW_CAP: usize = 50;
+
+/// The event one answered `run_sql` leaves on its way out, this file's own
+/// door beside `agent_canvas`'s `canvas-tool-call` (E5a R1). The child runs
+/// its statements in THIS process, so the rows it read reach the app here or
+/// never: before this event the loop held nothing on that path and ran the
+/// closing fence a second time to fill the grid (DECISIONS "Agent · E4").
+/// One way, and nothing is parked: the model already has its answer.
+pub const RUN_SQL_EVENT: &str = "agent-run-sql";
 
 /// `statement_timeout` for a tool-issued query when the caller states none.
 /// An MCP call arrives from the child process rather than from the loop, so it
@@ -135,6 +143,46 @@ pub struct McpCall {
     /// base64
     pub bytes: u64,
     pub is_error: bool,
+}
+
+/// One statement a child's `run_sql` ran, as the app receives it on
+/// `RUN_SQL_EVENT` (E5a R1). `token` is the caller's bearer token and
+/// `session_id` its database session, the two identities the app can key a
+/// listener on, exactly as `CanvasToolCall` carries them; `call_id` names this
+/// run so a second run of one statement is still two runs.
+///
+/// The rows are the WHOLE run, up to `agent::UI_ROW_CAP`, not the fifty
+/// `run_text` prints: the app's grid is the grid a query tab shows, and
+/// `row_count` with `capped` beside it is what lets it say how many rows ran
+/// rather than how many a model was shown (LESSONS 13). The model's own cap
+/// does not move for it.
+#[derive(Debug, Clone, Serialize)]
+pub struct SqlRun {
+    pub call_id: String,
+    pub token: String,
+    pub session_id: String,
+    pub sql: String,
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<Option<String>>>,
+    pub row_count: u64,
+    pub capped: bool,
+    pub ms: f64,
+}
+
+impl SqlRun {
+    fn of(token: &str, session_id: &str, sql: String, run: crate::agent::AgentRun) -> Self {
+        Self {
+            call_id: uuid::Uuid::new_v4().to_string(),
+            token: token.to_string(),
+            session_id: session_id.to_string(),
+            sql,
+            columns: run.columns,
+            rows: run.rows,
+            row_count: run.row_count,
+            capped: run.capped,
+            ms: run.ms,
+        }
+    }
 }
 
 type CallLog = Arc<Mutex<Vec<McpCall>>>;
@@ -717,7 +765,14 @@ impl McpToolBackend for SessionBackend {
         )
         .await
         .map_err(tool_error)?;
-        Ok(ToolReply::text(run_text(&run)))
+        // the model's answer is built first, then the same run is handed to
+        // the app: one execution, two readers, and the grid never re-runs the
+        // statement to see what the model already saw (E5a R1)
+        let text = run_text(&run);
+        let _ = self
+            .app
+            .emit(RUN_SQL_EVENT, SqlRun::of(&self.token, &self.session_id, sql, run));
+        Ok(ToolReply::text(text))
     }
 
     async fn probe(&self, sqls: Vec<String>) -> ToolAnswer {
@@ -1492,6 +1547,81 @@ mod tests {
             ms: 9.0,
         };
         assert!(run_text(&capped).ends_with("(2000 rows, capped at 2000; showing 50)"));
+    }
+
+    /// The payload is the whole contract with `src/ipc/types.ts` and with the
+    /// loop's listener: snake_case field names, both identities the app can
+    /// key on, the statement as the model wrote it, and the run itself. The
+    /// canvas call's own test next door pins its payload the same way.
+    #[test]
+    fn the_run_event_names_the_session_the_statement_and_the_run() {
+        let run = crate::agent::AgentRun {
+            columns: vec!["id".into(), "name".into()],
+            rows: vec![vec![Some("1".into()), None]],
+            row_count: 1,
+            capped: false,
+            ms: 4.5,
+        };
+        let v = serde_json::to_value(SqlRun::of("tok", "session-1", "SELECT 1".into(), run))
+            .expect("serialize");
+        let mut keys: Vec<&str> = v.as_object().expect("object").keys().map(|k| k.as_str()).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "call_id", "capped", "columns", "ms", "row_count", "rows", "session_id", "sql",
+                "token"
+            ]
+        );
+        assert_eq!(v["token"], "tok");
+        assert_eq!(v["session_id"], "session-1");
+        assert_eq!(v["sql"], "SELECT 1");
+        assert_eq!(v["columns"], serde_json::json!(["id", "name"]));
+        assert_eq!(v["rows"], serde_json::json!([["1", null]]));
+        assert_eq!(v["row_count"], 1);
+        assert_eq!(v["capped"], false);
+        assert_eq!(v["ms"], 4.5);
+        assert!(!v["call_id"].as_str().expect("call_id").is_empty());
+        assert_eq!(RUN_SQL_EVENT, "agent-run-sql");
+    }
+
+    /// Two readers of one execution, and they read different amounts: the
+    /// model gets `MODEL_ROW_CAP` rows and a truthful count, the app gets the
+    /// rows the grid shows plus `capped` and `row_count`, so it can say how
+    /// many rows RAN (LESSONS 13). A run event that carried only the fifty
+    /// would put a second, shorter grid species in the answer.
+    #[test]
+    fn the_app_gets_the_whole_run_and_the_model_the_first_fifty() {
+        let run = crate::agent::AgentRun {
+            columns: vec!["id".into()],
+            rows: (0..120).map(|i| vec![Some(i.to_string())]).collect(),
+            row_count: 5_000,
+            capped: true,
+            ms: 12.0,
+        };
+        let text = run_text(&run);
+        let sent = SqlRun::of("tok", "session-1", "SELECT id FROM film".into(), run);
+        assert_eq!(text.lines().count(), 1 + MODEL_ROW_CAP + 1);
+        assert_eq!(sent.rows.len(), 120);
+        assert_eq!(sent.row_count, 5_000);
+        assert!(sent.capped);
+    }
+
+    /// Every run is its own run: one statement asked twice is two events with
+    /// two ids, so the loop holds the LATEST rows for it rather than one entry
+    /// it cannot tell apart.
+    #[test]
+    fn two_runs_of_one_statement_are_two_calls() {
+        let run = || crate::agent::AgentRun {
+            columns: vec!["n".into()],
+            rows: vec![vec![Some("1".into())]],
+            row_count: 1,
+            capped: false,
+            ms: 1.0,
+        };
+        let a = SqlRun::of("tok", "session-1", "SELECT 1".into(), run());
+        let b = SqlRun::of("tok", "session-1", "SELECT 1".into(), run());
+        assert_ne!(a.call_id, b.call_id);
     }
 
     /// A snapshot shaped like the one `introspect` returns, small enough to

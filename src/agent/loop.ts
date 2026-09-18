@@ -41,9 +41,11 @@ import type {
 import type {
   AgentRun,
   Assumption,
+  BridgeRun,
   HistoryPair,
   KnowledgeCounts,
   KnowledgeRow,
+  RunBridge,
   SanityFragment,
   TokenUsage,
   ToolName,
@@ -219,6 +221,14 @@ export interface AskRequest {
    * cut starts from a session that remembers nothing. Never in the system
    * prompt: PROMPT_VERSION and the eval's prompt bytes must not move. */
   thread?: { id: string; session?: string; firstCall: boolean; replay?: string };
+  /** E5a R2: the bridge that answers an `ownsLoop` child's `run_sql`, and so
+   * the only place the rows that child read can reach this loop
+   * (`agent_mcp.rs` `RUN_SQL_EVENT`, `platform.tauri.ts` `serveAgentRuns`).
+   * Read on that path only: a provider this loop drives holds its own results
+   * as it gets them. Absent on the eval path, which drives its own tools, and
+   * absent on any platform whose bridge carries no rows, where the loop fills
+   * the grid the E4 way and fetches a closing fence once. */
+  runBridge?: RunBridge;
   /** what the user tagged with `@`, already resolved by the caller against
    * the connection it belongs to (W6). The tagged tables lead the candidate
    * block and every tag is spelled out under it; the question itself is sent
@@ -360,11 +370,10 @@ const taggedContext = (
     .filter(Boolean)
     .join("\n");
 
-/** Whitespace-insensitive statement identity. Case is preserved on purpose:
+/** Whitespace-insensitive statement identity, case preserved on purpose:
  * `'Paid'` and `'paid'` are different queries. */
-const sameSql = (a: string, b: string) =>
-  a.trim().replace(/;+$/, "").replace(/\s+/g, " ") ===
-  b.trim().replace(/;+$/, "").replace(/\s+/g, " ");
+const normSql = (s: string) => s.trim().replace(/;+$/, "").replace(/\s+/g, " ");
+const sameSql = (a: string, b: string) => normSql(a) === normSql(b);
 
 /** The rows the model's own run of this statement returned, the latest when
  * it ran it twice, and null when it never ran it where this loop could see. */
@@ -403,6 +412,13 @@ const strings = (v: unknown): string[] | null =>
   Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === "string" && x.trim())
     ? (v as string[])
     : null;
+
+/** The statement one run_sql call carried, as the model wrote it; "" when its
+ * arguments held none, which is a call the bridge answered no rows for. */
+const sqlOf = (args: string | undefined): string => {
+  const sql = asRecord(args ? safeParse(args) : undefined).sql;
+  return typeof sql === "string" ? sql.trim() : "";
+};
 
 /** The chip the thinking strip shows while this call runs (AGENT-UX 2):
  * status register, lowercase, the object named. */
@@ -801,12 +817,24 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
   const sanity: SanityFragment[] = [];
   // the statements the MODEL ran and the rows they returned, as they came
   // back: what a closing fence is matched against (E4 R1) and what the grid
-  // shows when the fence names one of them. Only the path this loop drives
-  // can fill it: an `ownsLoop` provider's child runs its calls where the rows
-  // never reach this side (the MCP bridge answers them itself), so on that
-  // path the list stays empty and the closing fence is the one run made here
+  // shows when the fence names one of them. Both paths fill it now: the one
+  // this loop drives from its own tool results, and an `ownsLoop` child's
+  // through the bridge that answered its calls (E5a R2), which is why a
+  // closing fence there is adopted rather than run a second time
   const held: { sql: string; run: AgentRun }[] = [];
   const lastHeld = () => held[held.length - 1] ?? null;
+  // the trace's own cursor into `held`, per statement (E5a fix, S3): a run's
+  // trace step must show the run IT caused, not whichever of that statement's
+  // runs arrived last, or two calls to one statement both report the second
+  // one's ms. Persists across turns because `held` does too.
+  const heldSeq = new Map<string, number>();
+  const nextHeldFor = (sql: string): AgentRun | null => {
+    const key = normSql(sql);
+    const matches = held.filter((h) => normSql(h.sql) === key);
+    const i = heldSeq.get(key) ?? 0;
+    heldSeq.set(key, i + 1);
+    return matches[i]?.run ?? null;
+  };
   // did the model reach for a tool that runs a statement, on any turn of
   // this exchange: run_sql, or a canvas block, which runs its own. The nudge's
   // first condition (E4 R3), and the only one read off the model's calls
@@ -873,6 +901,18 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
     : canMake && req.canvasNew?.serve
       ? req.canvasNew.serve(onBridgeWrite, retarget)
       : (req.canvas?.serve?.(onBridgeWrite) ?? null);
+  // E5a R2: and the runs that same bridge answered. The child's `run_sql` is
+  // executed in Rust, so `held` was empty on this path and every fenced
+  // answer was fetched a second time for its grid (E4's asymmetry). The
+  // subscription is up before the child exists and stopped in the finally
+  // that ends the run; the bridge is ONE listener for the whole app, so the
+  // session is the gate here and a run belonging to another thread's exchange
+  // is dropped rather than held
+  const onBridgeRun = (r: BridgeRun) => {
+    if (r.sessionId !== req.runBridge?.sessionId) return;
+    held.push({ sql: r.sql, run: r.run });
+  };
+  const runBridge = req.provider.ownsLoop ? (req.runBridge?.serve(onBridgeRun) ?? null) : null;
 
   try {
     while (turns < maxTurns) {
@@ -1015,12 +1055,22 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
       if (req.provider.ownsLoop) {
         for (const res of owned) {
           const call = calls.find((c) => c.id === res.id);
+          // what the bridge timed, where it answered this very statement
+          // (E5a R2): a child reports no duration of its own, and 0 was this
+          // side's placeholder for a run that did cost something. The row
+          // count is already in the step's `result`, in the words the model
+          // read, so it gets no second slot here (DESIGN rule 14)
+          const sql = res.name === "run_sql" ? sqlOf(call?.args) : "";
+          // this run's OWN held entry, not whichever of the statement's runs
+          // is latest (S3 fix): two calls to one statement must not both
+          // report the second call's ms
+          const ran = sql ? nextHeldFor(sql) : null;
           // the name is recorded as the provider reported it: a tool outside
           // the five must show up in the trace by its own name, never be
           // laundered into the run_sql count
           trace.push({
             step: "tool",
-            ms: 0,
+            ms: ran ? Math.round(ran.ms) : 0,
             id: res.id,
             name: res.name,
             args: call?.args ?? "",
@@ -1322,6 +1372,7 @@ export async function runAsk(req: AskRequest): Promise<AskAnswer> {
     });
   } finally {
     bridge?.();
+    runBridge?.();
   }
 }
 

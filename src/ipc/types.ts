@@ -489,6 +489,30 @@ export interface McpCall {
   is_error: boolean;
 }
 
+/** one statement a `claude -p` child's `run_sql` ran, as the app receives it
+ * on the `agent-run-sql` event (agent_mcp.rs SqlRun). That child runs its
+ * tools inside this process, so this event is the only way the rows it read
+ * reach the app at all; nothing is parked and nothing is answered, the model
+ * already has its own text. `token` is the caller's bearer token and
+ * `session_id` its database session, so a listener keeps only its own runs.
+ *
+ * The rows are the whole run the grid shows (agent.rs UI_ROW_CAP) and not the
+ * fifty `run_text` printed for the model, with `row_count` and `capped`
+ * beside them: the answer's grid is a query tab's grid, and it says how many
+ * rows ran (LESSONS 13). The field names are AgentRun's own, so the one
+ * wire-to-domain conversion reads this payload unchanged. */
+export interface SqlRun {
+  call_id: string;
+  token: string;
+  session_id: string;
+  sql: string;
+  columns: string[];
+  rows: (string | null)[][];
+  row_count: number;
+  capped: boolean;
+  ms: number;
+}
+
 /** one canvas tool call a `claude -p` child made, as the app receives it on
  * the `canvas-tool-call` event (agent_canvas.rs CanvasToolCall). The MCP
  * server holds no canvas logic: it parks the call for 20 s and the app

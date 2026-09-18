@@ -52,7 +52,7 @@ import { loadCanvasPort, useCanvasPort } from "../canvas/port";
 import { driftLabel } from "./checks";
 import { createTauriTools } from "../agent/tools.tauri";
 import { createCanvasMaker, createCanvasTools } from "../agent/canvas.tauri";
-import { tauriPlatform } from "../agent/platform.tauri";
+import { serveAgentRuns, tauriPlatform } from "../agent/platform.tauri";
 import { providerFor, tierOf } from "../agent/providers/index";
 import { imageRouteFor } from "../agent/providers/presets";
 import type { ImagePart, Provider, ProviderId } from "../agent/providers/types";
@@ -2019,6 +2019,11 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
       thread: replay
         ? { id: threadId, session: sessionKey, firstCall: !resumed.has(threadId), replay }
         : { id: threadId, session: sessionKey, firstCall: !resumed.has(threadId) },
+      // E5a R2: the rows a `claude -p` child's own run_sql read, off the
+      // bridge that answered it. The loop subscribes only where the provider
+      // owns its loop, so this is handed over for every run and read on the
+      // one path that has nowhere else to get them
+      runBridge: { sessionId, serve: serveAgentRuns },
       // A4: what this connection lets the model propose, read at the run's
       // entry rather than at its verdict minutes later, when the switch may
       // have moved (LESSONS 3)

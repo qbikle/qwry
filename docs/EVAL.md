@@ -436,5 +436,27 @@ without stats yields no `-- values:` line; the lab hit this live).
 Pagila is in every model's training data: absolute scores are inflated;
 deltas between variants are still meaningful. Staging is the honest bench and
 stays local. Tokens reported through `claude -p` include Claude Code's own
-prefix; compare turns, output tokens, and wall-clock across providers, and
-input tokens only within one provider.
+prefix, so input tokens compare only within one provider; output tokens and
+wall-clock still compare across providers. Turns join input tokens on the
+within-one-provider side, and not for the token prefix's reason: a hosted
+row's turns are this harness's own loop count (one entry per model call the
+loop made), the same fact on every hosted provider, while `claude -p` owns
+its loop and answers its own tool calls inside the child (AGENT-SPEC §7), so
+a `claude-code` row's turns were never that same fact to begin with.
+
+**`avg_turns` on a `claude-code` row, re-defined (E5a, 2026-09-18).** Before
+this wave every `claude-code` row's `avg_turns` read this harness's own loop
+count, 1 on nearly every row because `ownsLoop` means one loop turn covers
+the whole exchange whatever the child did inside it (`eval/baseline.json`'s
+own note said so). E4's Pagila artifact read 3.1 there instead, the child's
+own `num_turns` off its result line, and was flagged rather than treated as
+a regression, since nothing before that wave had asked which of the two
+numbers a `claude-code` row's `avg_turns` was supposed to be (DECISIONS,
+Agent · E4). It is settled now: from this wave every `claude-code` row's
+`avg_turns` is the child session's own `num_turns`, the number the run log
+already prints per question (`turns=2..5`) and the one LESSONS 13 already
+names as the honest count for a `claude -p` invocation; a hosted row's
+`avg_turns` is unchanged, this harness's own loop count. The two do not
+become one column meaning one thing by this — they are two axes that share
+a name, which is exactly why turns compare only within a provider, above,
+and stays true after this wave rather than because of it.

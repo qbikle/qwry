@@ -46,6 +46,7 @@ agent.rs                   Ask: gated agent session, pg_query AST gate + functio
 agent_http.rs              provider HTTP relay: Keychain key injected, SSE bytes over a Channel
 agent_claude.rs            the `claude -p` child: direct exec, stdout lines over a Channel
 agent_mcp.rs               streamable-HTTP MCP server (rmcp on hyper) for claude -p, per-thread token
+agent_canvas.rs            the canvas tool bridge: park a canvas_write/replace/read/create call, emit canvas-tool-call, complete on TypeScript's answer (AGENT-SPEC §7)
 ```
 
 ### DbDriver trait
@@ -120,6 +121,21 @@ enum QueryEvent {
 - **Statement splitter**: lexer respecting `'…'`, `"…"`, `$tag$…$tag$`, `--`, `/*…*/`.
 - **SSH tunnel** (`tunnel.rs`): one `ssh -N -L` subprocess per SPEC (forward target + ssh params); `AppState.tunnels` is keyed by spec, so profiles with identical specs (DB-switcher clones) share one process. `ensure_tunnel` rebuilds on dead socket (`is_alive`); a repointed profile computes a new spec and gets its own tunnel. `profile_specs` tracks bindings; invalidate/delete drops a tunnel only when its last profile unbinds.
 - **Connection-edit invalidation** (v0.2): editing a saved profile whose connection fields changed (`connSig`) closes its sessions + drops its tunnel via `invalidate_profile` → next connect uses the new values; cosmetic edits don't disturb the live connection.
+- **Agent bridge** (AGENT-SPEC §5, §7): `claude -p` owns its loop and
+  answers its own tool calls inside the child process, so anything the
+  app needs to see crosses back over one of two Tauri events.
+  `canvas-tool-call` (`agent_canvas.rs`) is a round trip: Rust parks the
+  call on a oneshot, under a 20s timeout, until TypeScript answers it,
+  because the canvas family's block shape, ids and document rules live
+  only in TypeScript and mirroring them in Rust too would double their
+  own debt. `agent-run-sql` (`agent_mcp.rs`) is not a round trip at
+  all: `run_sql` is one tool Rust already answers itself end to end, so
+  this event only hands the app a copy of what Rust saw, fired
+  alongside the model's own tool result rather than awaited by it — the
+  whole run up to `UI_ROW_CAP`'s 2,000 rows, `row_count`/`capped`
+  included, the same grid a driven exchange's `run_sql` already fills;
+  `MODEL_ROW_CAP` is a separate, smaller cap on the TEXT the model
+  itself reads and does not move for it.
 
 ## Frontend (`src/`)
 

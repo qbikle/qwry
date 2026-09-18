@@ -14,8 +14,10 @@ import {
   agentMcpServe,
   agentMcpStop,
 } from "../ipc/commands";
-import type { HttpChunk } from "../ipc/types";
+import type { HttpChunk, SqlRun } from "../ipc/types";
 import { useSettings } from "../stores/settings";
+import { toDomainRun } from "./tools.tauri";
+import type { BridgeRun } from "./types";
 import {
   HttpStatusError,
   HttpUnreachableError,
@@ -201,6 +203,60 @@ async function mcpServer(
     url: endpoint.url,
     token: endpoint.token,
     close: () => agentMcpStop(endpoint.token),
+  };
+}
+
+/** the exchanges reading runs right now, and the one listener they share:
+ * every reader hears every run, because nothing here answers anything and
+ * the loop keeps only its own session's (E5a R2). */
+const readers = new Set<(run: BridgeRun) => void>();
+let unlistenRuns: (() => void) | null = null;
+let listeningRuns = false;
+
+/** The runs a `claude -p` child made, delivered by the bridge that answered
+ * them (E5a R1, `agent_mcp.rs` `RUN_SQL_EVENT`). That child's `run_sql` is
+ * answered in Rust and only its TEXT reaches TypeScript, so without this the
+ * rows the model read never exist on this side and the grid has to fetch the
+ * closing fence a second time to fill itself (DECISIONS "Agent · E4"). The
+ * shape is `canvas.tauri.ts`'s call bridge next door, minus the answer: this
+ * event is one way, so a listener that cannot be made is reported rather than
+ * left to reject unhandled, and what it costs is a grid the loop fills the E4
+ * way, never the answer (LESSONS 9). Served until the returned stop is
+ * called, which the loop does in the finally that ends its run. */
+export function serveAgentRuns(onRun: (run: BridgeRun) => void): () => void {
+  readers.add(onRun);
+  if (!listeningRuns) {
+    listeningRuns = true;
+    void import("@tauri-apps/api/event")
+      .then(({ listen }) =>
+        listen<SqlRun>("agent-run-sql", (ev) => {
+          const run: BridgeRun = {
+            sessionId: ev.payload.session_id,
+            sql: ev.payload.sql,
+            run: toDomainRun(ev.payload),
+          };
+          for (const read of readers) read(run);
+        }),
+      )
+      .then((un) => {
+        // the last reader may have stopped while the import was in flight
+        if (readers.size === 0) {
+          listeningRuns = false;
+          un();
+        } else unlistenRuns = un;
+      })
+      .catch((e) => {
+        listeningRuns = false;
+        console.error("agent-run-sql listen failed", e);
+      });
+  }
+  return () => {
+    readers.delete(onRun);
+    if (readers.size === 0 && unlistenRuns) {
+      unlistenRuns();
+      unlistenRuns = null;
+      listeningRuns = false;
+    }
   };
 }
 

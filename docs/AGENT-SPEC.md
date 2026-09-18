@@ -329,6 +329,29 @@ first place, which is the half of the same bug the breaker's counter,
 scoped to the model's own `run_sql` calls, could never see (it never ran a
 tool at all, so nothing tripped it, LESSONS.md).
 
+**Held across the bridge too (E5a, 2026-09-18).** `run` above already
+reads as one rule for every provider — the fence's own match, else the
+exchange's last successful run — but `held` (this section, and the loop's
+own `heldFor`/`lastHeld`) only ever filled from the driven path: an
+`ownsLoop` provider's child answers its own `run_sql` inside its own
+process (§7), so the text-only `toolResult` this loop saw on that path
+left `held` empty whatever the child ran. A closing fence still got its
+rows, once, through `closing-fence`'s own re-run; a fence-less close did
+not, and ended `answered` with `sql` and `run` both null even after a
+real `run_sql` — the one gap this contract left standing on `claude -p`,
+the app's default provider. The row bridge (§5) closes it structurally:
+the loop subscribes to its own session's `agent-run-sql` before the
+child starts (§7) and pushes each one into `held` (sql + `AgentRun`) in
+arrival order, the identical shape `held` already took from the driven
+path's own `run_sql` calls, so `heldFor`/`lastHeld` read one list, filled
+the same way, on either path from here. Nothing above moves for it: a
+closing fence naming a run the bridge already delivered is adopted with
+no re-run; a fence-less close under a held run answers under that run's
+own statement; `closing-fence` still fires, once, for a statement the
+child stated and never ran, or a fence naming a statement neither path
+ever held — the one honest re-run this section has ever allowed, and now
+the only one left on any provider.
+
 **Failures are the tool's.** A `failed` verdict carries `sql` only when a
 statement — a closing fence or a call the model actually made — failed on
 the wire; `errorKind: "sql"` and `Fix It` (AGENT-UX §7) appear only then. A
@@ -403,6 +426,34 @@ pruning history, never by blinding tools.
 `INSERT`/`UPDATE`/`DELETE` can reach the database only through the model's
 final answer, gated by `agent_gate(sql, "write")` (§8.7), never through a
 tool call (§8.9).
+
+**The row bridge (E5a, 2026-09-18).** `claude -p` owns its loop (§7): its
+child answers its own `run_sql` calls against the MCP server inside Rust,
+and until this wave only the model's TEXT crossed back into TypeScript,
+so this loop's `held` (§4.6) stayed empty on that path whatever the child
+ran, and a closing fence had to be fetched a SECOND time, through the
+app's own driven `run_sql`, before the grid showed anything at all — the
+one path where a fence-less prose close after a real run left no grid to
+show, since nothing this loop held could fill one either. `run_sql`'s own
+Rust implementation, `SessionBackend::run_sql` in `agent_mcp.rs`, now
+fires one Tauri event alongside the model's own tool result, no oneshot
+to wait on since nothing here answers a call the model is still owed:
+`RUN_SQL_EVENT` (`"agent-run-sql"`, declared beside `MODEL_ROW_CAP` — the
+bridge's other named event is `canvas-tool-call`, §7), payload `SqlRun {
+call_id, token, session_id, sql, columns, rows, row_count, capped, ms }`,
+mirrored by hand in `src/ipc/types.ts`. `MODEL_ROW_CAP` does not move: it
+still caps `run_text`'s own count to the model at 50, and nothing about
+that changes. The event carries the WHOLE run instead, the same
+`AgentRun` `run_sql` already built to answer the model, up to
+`UI_ROW_CAP`'s 2,000 rows with its own `row_count`/`capped` — the app's
+grid is a query tab's grid, not the model's transcript, and has shown
+that many rows for a `run_sql` call on the driven path since before this
+wave; the model's cap governs what the model reads, never what the grid
+does with a statement that already ran (§4.6, LESSONS 13: the grid says
+how many rows RAN). One event per `run_sql` call the gate let run; a
+refusal is already whole in the model's own text and earns none, and
+`probe`'s rows, five at a time and built for verification rather than an
+answer, earn none either.
 
 ### 5.1 The canvas family (B3, 2026-09-09)
 
