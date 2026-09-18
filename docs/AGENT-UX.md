@@ -1792,7 +1792,7 @@ face flips exactly as W7's block flips (§10): the faces crossfade on
 `swapIn`, the block's real height springing between them on
 `spring.layout`, the status line and every block below riding the same
 spring. A removed block fades where it stands and the hole it leaves stands
-with it (amended E5b, 2026-09-18, `ca62682`, §16q: a delete is a gesture too, so D3's
+with it (amended E5b, 2026-09-18, `84d8d1a`, §16q: a delete is a gesture too, so D3's
 rule reaches it and nothing the hand did not touch moves); the fade rides
 `panelIn`'s own spring, so a block leaves the way it arrived and this wave
 still adds no preset. The gap closing on `spring.layout`, the fold's own two
@@ -1828,7 +1828,7 @@ face is its settled one at once, a removed block is simply gone.
   are W7's own faces, unchanged.
 - ~~Move Up / Move Down (§16b) carry no chord; if a later wave assigns one
   it goes through `<Kbd>` on the menu row and into the Keyboard Shortcuts
-  sheet.~~ Stale (E5b, 2026-09-18, `ca62682`): the rows themselves retired with C2a
+  sheet.~~ Stale (E5b, 2026-09-18, `84d8d1a`): the rows themselves retired with C2a
   (`blockTools.ts`, DESIGN rule 15), a place on the grid being the
   object's own act since; there is no menu row left for a chord to reach.
 - The assumed fold (§16a item 4) changes the same fact's costume between
@@ -2429,7 +2429,7 @@ hand placing something: `compact()` on a thread CUT (`removeByExchange`,
 several blocks leaving in one stroke at positions nothing on screen chose,
 AGENT-SPEC §9), and `firstFit()` under `place()` and `reflow()`.
 
-**Decided (E5b, 2026-09-18, `ca62682`, closing what D3 itself put to the
+**Decided (E5b, 2026-09-18, `84d8d1a`, closing what D3 itself put to the
 maintainer): a DELETE is a gesture too, and D3's rule reaches it the same
 way it reaches a move or a resize.** `remove()` (`src/stores/canvas.ts`)
 now pins everything it did not touch exactly where it stood, calling no

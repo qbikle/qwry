@@ -1533,7 +1533,7 @@ to remove without scanning every block of every canvas for a matching
    names exactly the blocks now standing. `PriorAnswer` is not extended for
    this: a Stop restores the pane's own answer, and a document is not
    un-written by a Stop any more than a note a person typed by hand is.
-4. **Closed (D1, 2026-09-14 → decided E5b, 2026-09-18, `ca62682`): a cut that removes
+4. **Closed (D1, 2026-09-14 → decided E5b, 2026-09-18, `84d8d1a`): a cut that removes
    the exchange whose `canvas_create` (§5.1) made a canvas checks that
    canvas too, not only the blocks a `canvasWrites` entry names.** D1 left
    this open because `canvasWrites` tracks blocks written into a canvas,
