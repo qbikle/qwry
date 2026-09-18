@@ -2,9 +2,9 @@ import { useState } from "react";
 import { motion } from "motion/react";
 import { Check, ChevronDown } from "lucide-react";
 import { menuIn } from "../design/springs";
-import { useConnections } from "../stores/connections";
+import { anySessionOn, useConnections } from "../stores/connections";
 import { useRefreshFx } from "../stores/refreshFx";
-import { useResults } from "../stores/results";
+import { useRetrying } from "../stores/refresh";
 import { useTabs } from "../stores/tabs";
 import * as ipc from "../ipc/commands";
 import { DbGlyph } from "./DbGlyph";
@@ -22,6 +22,18 @@ export function DbSwitcher({ profileId, dbname, name }: { profileId: string; dbn
   const [busy, setBusy] = useState(false);
   const fx = useRefreshFx();
   const fxHere = fx.profileId === profileId;
+  // the hard tier's verdict lands on COLOUR, never on the clap (E2 R6): the
+  // glyph wears the two states the connection rail's own dot already wears
+  // (rail.css), read off the same connState, so one connection can never read
+  // two ways in one window (DESIGN rule 14). The rail hides its dot when the
+  // profile is disconnected; a header that is only on screen BECAUSE the
+  // profile connected cannot hide, so the state it fell to is the state it
+  // shows
+  const connState = useConnections((s) => s.connState[profileId] ?? "connected");
+  // the glyph says what the crumb dot and the strip say: lost with a retry
+  // coming is amber, lost with nothing coming is red (E2 R6)
+  const retrying = useRetrying(profileId);
+  const state = connState === "connected" ? "" : ` ${connState}`;
 
   const toggle = async () => {
     if (open) {
@@ -33,15 +45,12 @@ export function DbSwitcher({ profileId, dbname, name }: { profileId: string; dbn
     setErr(null);
     // prefer the PRIMARY session: opening the switcher must not mint (or
     // consume the pre-warmed spare for) a tab session just to run one
-    // SELECT datname. Fallbacks: the last-run session (only if it belongs to
-    // THIS profile), then a tab session as the true last resort.
+    // SELECT datname. Any live tab session of the profile is the fallback,
+    // and minting one is the last resort.
     const conn = useConnections.getState();
-    const res = useResults.getState();
     const tabId = useTabs.getState().activeId;
     const sid =
-      conn.sessions[profileId] ??
-      (res.executedProfileId === profileId ? res.executedSessionId : null) ??
-      (tabId ? await conn.ensureTabSession(profileId, tabId) : null);
+      anySessionOn(profileId) ?? (tabId ? await conn.ensureTabSession(profileId, tabId) : null);
     if (!sid) {
       setErr("not connected");
       return;
@@ -90,19 +99,17 @@ export function DbSwitcher({ profileId, dbname, name }: { profileId: string; dbn
 
   return (
     <div className="dbsw">
-      <button className="sb-dbhead" onClick={() => void toggle()} title={`${name} · ${dbname}`} disabled={busy}>
+      <button
+        className={`sb-dbhead${state}${retrying ? " retrying" : ""}`}
+        onClick={() => void toggle()}
+        title={`${name} · ${dbname}`}
+        disabled={busy}
+      >
         <DbGlyph key={profileId} apart={fxHere && fx.apart} spinTurns={fxHere ? fx.spinTurns : 0} />
         <span className="sb-db-name">{dbname || name}</span>
         <ChevronDown size={12} className="sb-db-chev" />
       </button>
       <ServerInfo profileId={profileId} />
-      {/* on .dbsw (not the button) so the sweep also crosses the (i); its own
-          overflow box because .dbsw clipping would eat the switcher popover.
-          Gated on the TIMED window (fx.shining), never on shineSeq: a
-          remount after the window closed must not replay an old shine */}
-      {fxHere && fx.shining && (
-        <span key={fx.shineSeq} className="sb-shine" aria-hidden="true" />
-      )}
       {open && <div className="dbsw-backdrop" onMouseDown={() => setOpen(false)} />}
       {open && (
         <motion.div className="dbsw-pop" {...menuIn}>

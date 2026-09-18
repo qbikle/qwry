@@ -1,0 +1,258 @@
+/* The drawing unit (C2b): the canvas's third species, and the only one made
+   of ink. Nothing frames it at rest and it carries 0 always-visible controls,
+   like the two kinds beside it: the cluster at its top-right and the tool
+   island at its top-left (toolIsland.css, F3) are its whole chrome, revealed
+   the way every cluster in the app is revealed, and neither is a strip of the
+   page (a global toolbar would show six tools to a canvas that may hold no
+   drawing).
+
+   The ink ladder is defined here and nowhere else in this file's half of the
+   app: three steps of ONE hue, the chart's own accent, so a drawing beside a
+   chart is drawn in the chart's colour and a theme flip repaints both.
+   Strokes name the steps (--ink-0/1/2) and never a literal, so the SVG needs
+   no repaint of its own.
+
+   The steps are the accent at reduced ALPHA and not a mix toward the paper,
+   which is where the chart's ladder (Chart.tsx) and this one part company on
+   purpose: a bar is a FILL, and a fill tinted toward the panel still reads as
+   a bar because it is 40px wide; ink is a 1px line and 13px words, and a tint
+   toward the paper takes its hue with it and leaves grey-blue mush on a light
+   panel (the frames c2-draw-small-*-light caught exactly that). Alpha keeps
+   the hue at every step, and the two lower steps stand at 78% and 56% rather
+   than 45% and 22%: de-emphasis, never disappearance (DESIGN rule 3).
+
+   The ladder stands on the ROOT and not on `.blk-draw`, because the PNG the
+   model is sent is resolved off a live node (a custom property does not
+   resolve inside an SVG loaded as an image, strokes.ts `inkPalette`) and the
+   common case for a model asked about a canvas is a canvas whose tab nobody
+   has opened: with the ladder scoped to the element, a drawing with no
+   element on the page would have had no colours to render in. Three custom
+   properties inherited by a document that mostly ignores them cost nothing;
+   a feature that works only in the foreground tab costs the feature. */
+
+:root {
+  --ink-0: var(--accent);
+  --ink-1: color-mix(in srgb, var(--accent) 78%, transparent);
+  --ink-2: color-mix(in srgb, var(--accent) 56%, transparent);
+}
+
+/* the sheet: the cells the element was given, in element pixels at 1:1. The
+   grid gives .blk (not a note) height and a column direction, so the sheet
+   takes what is left after nothing, which is all of it */
+.dw-sheet {
+  display: block;
+  width: 100%;
+  flex: 1 1 0;
+  min-height: 0;
+  /* the WebView must not claim the gesture: a pen stroke is not a pan */
+  touch-action: none;
+  cursor: crosshair;
+  /* the hand and the words are not a pen: the select tool reads as a pointer
+     until it stands over something it can take (below), and a label's press
+     is a caret */
+  /* ink stays INSIDE the box (D1 item 6): the page has one clipping rule and
+     it is the widget's (grid.css .cvg-drag), which a sheet drawing past its
+     own frame has no standing to opt out of - strokes on the page with no
+     widget around them are what that looked like. Nothing is normally cut:
+     the element's own floor grows with the ink (the store's minSpanFor) and a
+     commit that outgrew the frame grows the frame. Where a reflow has capped
+     the width under ink already drawn, the ink is held rather than spilling,
+     and no scroller stands here either - a second scroll authority inside a
+     page that already pans is LESSONS 7's own bug */
+}
+.blk-draw > .dw-sheet {
+  margin-top: 0;
+}
+.dw-sheet[data-tool="select"] {
+  cursor: default;
+}
+.dw-sheet[data-tool="text"] {
+  cursor: text;
+}
+/* the eraser's own cursor: `cell`, the crosshair with a gap in it, which is
+   what a surface that takes ink AWAY under the point looks like (F3) */
+.dw-sheet[data-tool="eraser"] {
+  cursor: cell;
+}
+/* what a press would do, said by the cursor before the press (F3, AGENT-UX
+   16jj): the knob's grab, a corner's own diagonal, `move` over a stroke. The
+   overlay takes no pointer, so the sheet wears these from the same math that
+   answers the press (Drawing.tsx cursorAt), never from the handle elements */
+.dw-sheet[data-cursor="move"] {
+  cursor: move;
+}
+.dw-sheet[data-cursor="grab"] {
+  cursor: grab;
+}
+.dw-sheet[data-cursor="grabbing"] {
+  cursor: grabbing;
+}
+.dw-sheet[data-cursor="nwse"] {
+  cursor: nwse-resize;
+}
+.dw-sheet[data-cursor="nesw"] {
+  cursor: nesw-resize;
+}
+
+/* the drawing's cluster reveals on the register every other kind uses, and
+   this file adds nothing to it: hover, focus-within and [data-hot], written
+   once in canvas.css (AGENT-UX 16b). C2b carved a hover out here on the
+   reasoning that a pointer crossing a pen surface mid-stroke is not a request
+   to see the picker; the reasoning was right and the shape was wrong, and the
+   maintainer's recording is what it cost (F1, AGENT-UX 16x as amended). A
+   carve-out cannot tell a pointer that is DRAWING from one that is merely
+   over the paper, so it hid the cluster from both, and the seven buttons it
+   hid went on taking presses: a press meant for ink opened `More`, and a
+   press at the corner lifted the widget by a grip nothing on screen drew.
+   What the reasoning actually names is a STATE, and the state is written by
+   the hand that causes it: `data-inking` rides the block from pointerdown to
+   the up, the cancel or the Esc that ends the stroke (Drawing.tsx). Under it
+   the chrome goes, and goes disarmed: opacity without pointer-events is the
+   bug above, one layer down.
+
+   `.blk.blk-draw` and not `.blk-draw`, which is exactly the specificity
+   `.blk:focus-within` already has (canvas.css), and the sheet is focused for
+   the whole of a stroke: at equal weight the cascade falls to import order,
+   which the module graph decides (the --acts-surface rule below learned this
+   the expensive way). One class more can never lose that race */
+.blk.blk-draw[data-inking] > .acts-float {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+}
+
+/* the sheet is PAPER, with ink on it or without (D1 item 7). C2b drew it only
+   while the drawing was empty, on the reasoning that ink is its own surface;
+   it is not - a stroke and a corner glyph standing on the page with nothing
+   around them is an element a reader cannot see the edges of, and the moment
+   it is one of several on a grid, "where does this drawing end" is a question
+   the page has to answer at rest. One surface, still 0 controls and 0 strings:
+   the count AGENT-UX 16aa carries is unmoved, and the empty sheet's own frame
+   (c2-draw-empty) is unchanged, because the empty case always painted this */
+.blk-draw .dw-sheet {
+  background: var(--bg-raised);
+  border-radius: var(--radius-md);
+}
+/* On the grid the paper is the widget's PADDING BOX (D2 item 1): the sheet
+   outsets by the widget's own 12 and the clip draws its corner, so the raised
+   paper runs to the hairline and the widget shows one line, never a card
+   inside a card (grid.css owns that outset, the cells being the grid's). The
+   ink's origin moves by the border's 1px and by nothing else, so every stored
+   stroke stays where its hand put it. */
+/* and the cluster dissolves into the paper it actually stands on, never into
+   the panel behind it (ask.css: --acts-surface is whatever the buttons are
+   over). With the paper painted at rest, that surface is the sheet's.
+   Written `.blk.blk-draw` and not `.blk-draw`, which is the specificity
+   `.blk` (canvas.css) already has: at equal weight the cascade falls to
+   import order, and the order the module graph happens to produce put the
+   panel's value last — the band painted --bg-panel over --bg-raised paper and
+   notched the sheet's own top-right corner (D1 integration, caught in the
+   frame at 640). One class more can never lose that race */
+.blk.blk-draw {
+  --acts-surface: var(--bg-raised);
+}
+
+/* and the corner handle leaves with the cluster it belongs to, here as
+   everywhere (DESIGN rule 1's own row: the handle rides whatever register its
+   block's cluster does). With the carve-out gone the grid's reveal is that
+   register again, so the glyph that once stood alone in a corner with no
+   chrome near it now stands beside the cluster it belongs to; the one state
+   that takes it off the paper is the stroke in the air, the same state and
+   the same disarming. `:has()` carries its argument's own weight, so this
+   clears `.cvg-slot:hover .cvg-handle` (grid.css) whatever the import order */
+.cvg-slot:has(.blk-draw[data-inking]) .cvg-handle {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* the in-flight stroke: one path, written with setAttribute from the pointer
+   handler and never through React */
+.dw-live {
+  fill: none;
+  stroke-linejoin: round;
+}
+
+/* a text label being typed: the words stand where they will stand, in the
+   ink they will wear, with nothing around them. The caret is the whole
+   announcement (the note's own contract: a ring around nothing is a rounded
+   box with a thinner line).
+
+   A textarea and not an input, because a caption on a chart breaks a line
+   (⇧↩, F3): its rows and its line height are the label's own metric
+   (strokes.ts TEXT_LINE, written inline by the element), it never scrolls and
+   it never offers a resize corner, so what is on the page is the words and a
+   caret and nothing else */
+.dw-label {
+  position: absolute;
+  min-width: 24px;
+  padding: 0;
+  border: none;
+  outline: none;
+  overflow: hidden;
+  resize: none;
+  /* a line breaks only where a hand pressed shift-return: the editor never
+     soft-wraps a caption the document will keep on one line */
+  white-space: pre;
+  background: none;
+  font-family: var(--font-ui);
+  color: var(--ink-0);
+}
+
+/* the cap, said where it is hit. Absent until it is: the element is silent
+   while there is room, and a drawing that quietly stopped taking ink is a
+   drawing that reads as broken (LESSONS 9) */
+.dw-full {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+  pointer-events: none;
+}
+
+/* the select tool's overlay (F3, DESIGN rule 1's "Selection handle" row),
+   drawn inside the sheet's own SVG and taking no pointer at all: the press
+   lands on the sheet and select.ts decides what it hit (LESSONS 18, read the
+   other way round: chrome that cannot take a press cannot take the wrong one).
+   A single stroke's box turns with it, a group's stands upright; the corner
+   squares and the knob are the panel's fill under an accent hairline so they
+   read on the ink they stand over, in both themes. No motion: they are where
+   the strokes are */
+.dw-sel,
+.dw-hover,
+.dw-marquee {
+  pointer-events: none;
+}
+.dw-box,
+.dw-stem {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1;
+}
+.dw-handle,
+.dw-knob {
+  fill: var(--bg-panel);
+  stroke: var(--accent);
+  stroke-width: 1;
+}
+/* a hover is the SAME box a press will land, fainter: a hint that a press
+   here selects something, not a fourth contrast tier (16jj) */
+.dw-hover rect {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1;
+  opacity: 0.5; /* optical */
+}
+/* a stroke the eraser has touched and has not yet taken: dimmed, not gone,
+   so a hand can see what the lift will take and still slide off it (F3). The
+   tier is the hover box's own reasoning, one step further down */
+.dw-doomed {
+  opacity: 0.3; /* optical */
+}
+.dw-marquee {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}

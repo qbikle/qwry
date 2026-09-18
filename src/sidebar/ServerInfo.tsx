@@ -3,7 +3,7 @@ import { motion } from "motion/react";
 import { Info } from "lucide-react";
 import { popIn } from "../design/springs";
 import * as ipc from "../ipc/commands";
-import { useConnections } from "../stores/connections";
+import { anySessionOn, useConnections } from "../stores/connections";
 import { Modal } from "../app/overlay/Overlay";
 import "./sidebar.css";
 
@@ -44,12 +44,7 @@ export function ServerInfo({ profileId }: { profileId: string }) {
     setRows(null);
     setError(null);
     setTls(null);
-    // primary session preferred; any live tab session on this profile works,
-    // since the primary can be dead while tabs reconnected independently
-    const conn = useConnections.getState();
-    const sid =
-      conn.sessions[profileId] ??
-      Object.entries(conn.tabSessions).find(([k]) => k.startsWith(`${profileId}::`))?.[1];
+    const sid = anySessionOn(profileId);
     if (!sid) {
       setError("Not connected");
       return;

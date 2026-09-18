@@ -1,0 +1,278 @@
+/* The tool island (F3): DESIGN rule 1's own row, "Tool island". One raised
+   box at the drawing's top-left, the armed tool alone at rest and the roster
+   in reach. Everything that MOVES here is a motion value written by
+   ToolIsland.tsx on springs.ts presets (the fold, the arms, the body); what
+   this file owns is the box, the state matrix of the button inside it, and
+   the two clocks that belong to a stylesheet: the reveal register the block
+   already speaks, and the quick fades a hover, a hairline and a handed glyph
+   ride on `--dur-quick`.
+
+   The island stands at the block's own origin and not 12px in: the widget's
+   drag layer pads the block by 12 on the grid (grid.css .cvg-drag), so the
+   block's 0,0 IS 12 in from both lines, the same arithmetic that puts the
+   cluster's top-right 12 in from the other two. `.blk > .dw-island` and not
+   `.dw-island`, because `.blk > * + *` hands every later child an 8px top
+   margin and an absolute box still honours one; the cluster fights the same
+   rule the same way (canvas.css .blk > .acts-float). */
+
+.blk > .dw-island {
+  margin-top: 0;
+}
+.dw-island {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 32px;
+  height: 32px;
+  z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-quick) var(--ease-std);
+}
+
+/* the reveal register is the block's own, written once for the cluster
+   (canvas.css) and repeated here for the second control that rides it: a
+   pointer over the widget, focus inside it, or the harness's own stamp. Every
+   rule that takes the island off the paper takes the pointer with it
+   (LESSONS 18): the tools are buttons whether or not anyone can see them */
+.blk:hover > .dw-island,
+.blk:focus-within > .dw-island,
+.blk[data-hot] > .dw-island {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* a stroke in the air (drawing.css [data-inking], F1): the island goes the
+   way the cluster goes, hidden and disarmed, whichever of the two ways the
+   fact reaches it: the attribute the pointer handler writes on the block
+   without a render, or the prop the host renders once the stroke is known */
+.blk[data-inking] > .dw-island,
+.blk > .dw-island[data-inking] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* the body: 1px outside the padding box on every side, so its hairline eats
+   none of the 4px and the tool at rest sits in true 4s. Its height is the
+   fold's own motion value (inline); `bottom` is left unset so the inline
+   height is the one authority on where it ends.
+
+   GLASS, and a pill (the maintainer's own call, 2026-09-18): the raised
+   surface at 72% over a blur, and `--radius-pill`, which on a 34px-wide box
+   is a stadium with fully round ends. It is the app's first translucent
+   surface and it earns the exception here for one reason: this box stands ON
+   the paper it acts on, over ink a hand has already drawn, and 205px of opaque
+   box standing open down the left of a sheet is a wall across the drawing.
+   One recipe, both boxes (the arm below shares it) */
+.dw-island-body,
+.dw-arm-body {
+  position: absolute;
+  z-index: 1;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--bg-raised) 72%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.25);
+  backdrop-filter: blur(14px) saturate(1.25);
+  box-shadow: var(--shadow-sm);
+}
+.dw-island-body {
+  left: -1px;
+  right: -1px;
+  top: -1px;
+}
+/* the hairline between the tools and the two properties: its own row is
+   ToolIsland.tsx's SEP_Y (inline), the one place the separator's line is
+   arithmetic. It fades on the stylesheet's clock while the body grows on the
+   spring's, so it is never drawn across a body that has not reached it yet */
+.dw-island-sep {
+  position: absolute;
+  left: var(--sp-2);
+  right: var(--sp-2);
+  height: 1px;
+  z-index: 1;
+  background: var(--border);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-quick) var(--ease-std);
+}
+.dw-island[data-open] .dw-island-sep {
+  opacity: 1;
+}
+
+/* a slot: the motion wrapper a tool rides in. Its transform and opacity are
+   motion's (inline), never this file's, so nothing here may name either. The
+   siblings of the rest tool are invisible while the island is folded and
+   answer no press there either (LESSONS 18); the rest tool always does */
+.dw-slot {
+  position: absolute;
+  left: var(--sp-1);
+  top: 0;
+  width: 24px;
+  height: 24px;
+  z-index: 2;
+}
+.dw-island:not([data-open]) > .dw-slot:not([data-rest]) {
+  pointer-events: none;
+}
+
+/* the tool: this species' own button, the full matrix (rule 2). Rest is a
+   ghost at tier 2; hover steps the surface and the glyph up; pressed is the
+   hand's 0.97; the armed one wears the accent-soft fill every persistent
+   selection in the app wears (`.active`, rule 1's naming); disabled is the
+   one opacity app-wide. The ring is the global one (tokens.css), drawn
+   outside the 28px box, and the island's own overflow is visible so it is
+   never cut.
+
+   A CIRCLE, and not this app's usual `--radius-md`, by the maintainer's own
+   nested-corner rule (2026-09-18): an inner radius is the outer radius less
+   the inset. The pill above resolves to 17 on its 34px short side, the inset
+   is 5 (1 hairline and 4 of padding), and 17 less 5 is 12, which is half of
+   24: the tool IS a circle, concentric with the box that holds it. An 8px
+   corner inside a stadium reads as a rounded square that missed, which is
+   what the frames showed before this line (rule 15: the arithmetic beat the
+   token) */
+.dw-tool {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition:
+    background var(--dur-quick) var(--ease-std),
+    color var(--dur-quick) var(--ease-std),
+    opacity var(--dur-quick) var(--ease-std),
+    transform var(--dur-quick) var(--ease-std);
+}
+.dw-tool:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.dw-tool:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.dw-tool.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.dw-tool:disabled {
+  opacity: var(--o-disabled);
+  cursor: default;
+}
+/* the slot whose arm stands open has handed its glyph to the arm's member,
+   which begins exactly over it: the slot fades under the departing member
+   and stops taking presses, so the press lands on the member that replaced it */
+.dw-tool[data-handed] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* the chord letter, under the glyph: it teaches, so every tool that has one
+   wears it (DESIGN rule 11's teaching clause), at the glyph register's tier 2
+   and never faint (WRITING, shortcut glyph register, rule 4: faint is the
+   disabled register, and the sketch's own `--fg-faint` would say the wrong
+   thing about a live button as well as fall under legible in light theme).
+   6px is under the type scale on purpose: this is a mark riding a 12px glyph
+   inside a 24px box, the data-register 11px glyphs' own precedent (rule 5),
+   not a line of text.
+
+   BOTTOM CENTRE, and not the outer corner it first shipped in (the
+   maintainer, 2026-09-18: "icons always center, center; shrink the
+   letters"). Inside a circle the lower-left arc leaves a 3px pocket, so a
+   letter seated there touches the glyph, which the first frames showed on
+   `R` and `T`; the bottom centre of the same circle has a 6px band with room
+   under a centred glyph, so the glyph keeps the optical centre every other
+   icon in the app keeps and the letter takes the space nothing else wants.
+   Flush to the circle's foot and not the sketch's 1px in: a 12px glyph
+   centred in 24 has its box at 6 to 18, a 6px line sat 1px up has its own at
+   17 to 23, and that one pixel of overlap is what put a serif on the `Text`
+   glyph's stem in the first frames. At 0 the letter's caps clear the glyph
+   by 2 and the circle's own bottom arc by 1, which is the only seat in the
+   band where it touches neither.
+
+   One colour per button, glyph and letter alike: a sibling's letter is
+   `--fg-muted` because its glyph is, and the armed one's is the full accent
+   because ITS glyph is. The accent at three quarters, which this shipped
+   with first, measured 2.3:1 against `--accent-soft` where a sibling's
+   letter measures 5.9:1 against the pill, and a fourth contrast tier mixed
+   out of an opacity is the thing rule 3 forbids. The hierarchy between a
+   letter and the glyph over it is 6px against 12, which is hierarchy enough
+   and costs no contrast (rule 15: measured, then amended) */
+.dw-key {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  line-height: 1;
+  pointer-events: none;
+}
+.dw-key .kbd {
+  font-size: 6px; /* optical */
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--fg-muted);
+}
+.dw-tool.active .dw-key .kbd {
+  color: var(--accent);
+}
+
+/* the Ink slot's face is a dot in the ink the next stroke takes (a mark, not
+   an icon: the titlebar's 8px connection dot is the precedent, rule 5), the
+   Weight slot's a rule at the weight itself, which says the number without
+   printing it. The rule is as wide as the glyph beside it and no wider: a
+   12px mark centred in a 24px circle is the same optical weight as the
+   `Pen`'s own 12px glyph, and the six rungs (1 to 6) read as a ladder
+   because the LENGTH is constant and only the thickness climbs */
+.dw-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-pill);
+}
+.dw-rule {
+  width: 12px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+}
+/* the armed weight's own rule takes the accent with the rest of the button,
+   which `currentColor` already does; the ink dot carries its own colour and
+   answers to nothing here */
+
+/* a family's arm: the same fold turned sideways, at the slot's own row. The
+   root spans the arm's full open width and paints nothing, so a proximity
+   check can read the open footprint off the element while the body inside it
+   is still growing. It is unseen and disarmed except while SHOWN, which is
+   from the click that opens it to the instant its fold lands (ToolIsland.tsx
+   Arm): shown, it stands over everything, its rest member exactly over the
+   slot wearing the same glyph, and the member the slot handed off is revealed
+   in place before it slides. No fade either way: it appears as the slot it
+   covers and leaves as the slot it uncovers, so nothing crosses over */
+.dw-arm {
+  position: absolute;
+  left: 0;
+  height: 32px;
+  z-index: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.dw-arm[data-shown] {
+  z-index: 3;
+  opacity: 1;
+  pointer-events: auto;
+}
+.dw-arm-body {
+  left: -1px;
+  top: -1px;
+  bottom: -1px;
+}
+.dw-arm > .dw-slot {
+  left: 0;
+  top: var(--sp-1);
+}
+.dw-arm:not([data-open]) > .dw-slot {
+  pointer-events: none;
+}

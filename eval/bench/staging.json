@@ -1,0 +1,117 @@
+[
+  {
+    "id": "s1-01", "tier": 1, "tags": ["judgment"],
+    "question": "How many users are not deleted?",
+    "gold_sql": "SELECT count(*) FROM users WHERE is_deleted = false"
+  },
+  {
+    "id": "s1-02", "tier": 1, "tags": ["value", "legacy"],
+    "question": "How many orders are paid?",
+    "gold_sql": "SELECT count(*) FROM order_v2 WHERE payment_status = 'paid'"
+  },
+  {
+    "id": "s1-03", "tier": 1, "tags": ["judgment"],
+    "question": "How many users are onboarded on the app?",
+    "gold_sql": "SELECT count(*) FROM users WHERE is_onboarded_on_app = true"
+  },
+  {
+    "id": "s1-04", "tier": 1, "tags": [],
+    "question": "How many wardrobes are public?",
+    "gold_sql": "SELECT count(*) FROM socialwardrobe WHERE is_public = true"
+  },
+  {
+    "id": "s1-05", "tier": 1, "tags": ["judgment"],
+    "question": "When did the most recent user sign up? Return the timestamp.",
+    "gold_sql": "SELECT max(created_at) FROM users"
+  },
+  {
+    "id": "s2-01", "tier": 2, "tags": ["value", "legacy"],
+    "question": "How many wardrobe products come from each source type? Return the source type and the count.",
+    "gold_sql": "SELECT source_type, count(*) FROM wardrobe_products_v2 GROUP BY source_type"
+  },
+  {
+    "id": "s2-02", "tier": 2, "tags": ["legacy"],
+    "question": "How many orders exist per currency? Return the currency and the count.",
+    "gold_sql": "SELECT currency, count(*) FROM order_v2 GROUP BY currency"
+  },
+  {
+    "id": "s2-03", "tier": 2, "tags": ["value", "legacy"],
+    "question": "What is the total quantity of order items per item status? Return the status and the total quantity.",
+    "gold_sql": "SELECT status, sum(quantity) FROM order_item_v2 GROUP BY status"
+  },
+  {
+    "id": "s2-04", "tier": 2, "tags": [],
+    "question": "How many follow relationships were created in 2025?",
+    "gold_sql": "SELECT count(*) FROM follows WHERE created_at >= '2025-01-01' AND created_at < '2026-01-01'"
+  },
+  {
+    "id": "s2-05", "tier": 2, "tags": [],
+    "question": "How many distinct users have a default address?",
+    "gold_sql": "SELECT count(DISTINCT user_id) FROM address WHERE is_default_address = true"
+  },
+  {
+    "id": "s3-01", "tier": 3, "tags": ["value", "legacy"],
+    "question": "What is the average total amount of paid orders per currency, rounded to 2 decimal places? Return the currency and the average.",
+    "gold_sql": "SELECT currency, round(avg(total_amount), 2) FROM order_v2 WHERE payment_status = 'paid' GROUP BY currency"
+  },
+  {
+    "id": "s3-02", "tier": 3, "tags": ["legacy"],
+    "question": "Which 5 wardrobes contain the most wardrobe products? Return the wardrobe_id and the product count, highest first.",
+    "gold_sql": "SELECT wardrobe_id, count(*) AS n FROM wardrobe_products_v2 GROUP BY wardrobe_id ORDER BY n DESC LIMIT 5"
+  },
+  {
+    "id": "s3-03", "tier": 3, "tags": ["value"],
+    "question": "How many distinct users have an active subscription?",
+    "gold_sql": "SELECT count(DISTINCT user_id) FROM subscription WHERE status = 'active'"
+  },
+  {
+    "id": "s3-04", "tier": 3, "tags": [],
+    "question": "How many users signed up in each month of 2025? Return the month as YYYY-MM and the count.",
+    "gold_sql": "SELECT to_char(created_at, 'YYYY-MM') AS month, count(*) FROM users WHERE created_at >= '2025-01-01' AND created_at < '2026-01-01' GROUP BY 1"
+  },
+  {
+    "id": "s3-05", "tier": 3, "tags": ["legacy"],
+    "question": "Which 3 users have added the most wardrobe products? Return the user id and the count, highest first.",
+    "gold_sql": "SELECT added_by, count(*) AS n FROM wardrobe_products_v2 GROUP BY added_by ORDER BY n DESC LIMIT 3"
+  },
+  {
+    "id": "s4-01", "tier": 4, "tags": ["legacy"],
+    "question": "How many users have both placed an order and generated a virtual try-on?",
+    "gold_sql": "SELECT count(*) FROM (SELECT user_id FROM order_v2 INTERSECT SELECT user_id FROM virtual_try_on_v2) s"
+  },
+  {
+    "id": "s4-02", "tier": 4, "tags": ["value", "legacy", "judgment"],
+    "question": "Which user has spent the most across paid orders? Return the user id and their total spend.",
+    "gold_sql": "SELECT user_id, sum(total_amount) AS total FROM order_v2 WHERE payment_status = 'paid' GROUP BY user_id ORDER BY total DESC LIMIT 1"
+  },
+  {
+    "id": "s4-03", "tier": 4, "tags": ["legacy"],
+    "question": "How many users have added wardrobe products but never placed an order?",
+    "gold_sql": "SELECT count(*) FROM (SELECT added_by FROM wardrobe_products_v2 EXCEPT SELECT user_id FROM order_v2) s"
+  },
+  {
+    "id": "s4-04", "tier": 4, "tags": [],
+    "question": "Who administers the most wardrobes? Return the admin's user id and the number of wardrobes.",
+    "gold_sql": "SELECT admin_id, count(*) AS n FROM socialwardrobe GROUP BY admin_id ORDER BY n DESC LIMIT 1"
+  },
+  {
+    "id": "s4-05", "tier": 4, "tags": ["legacy"],
+    "question": "Among wardrobes that contain at least one product, what is the average number of products per wardrobe, rounded to 1 decimal place?",
+    "gold_sql": "SELECT round(avg(n), 1) FROM (SELECT count(*) AS n FROM wardrobe_products_v2 GROUP BY wardrobe_id) s"
+  },
+  {
+    "id": "s5-01", "tier": 5, "tags": [],
+    "question": "How many mutual follow pairs exist (two users who both follow each other)?",
+    "gold_sql": "SELECT count(*) / 2 FROM follows a JOIN follows b ON a.follower_id = b.following_id AND a.following_id = b.follower_id"
+  },
+  {
+    "id": "s5-02", "tier": 5, "tags": ["legacy"],
+    "question": "For each currency, return the currency and the order id of its highest-value order by total amount (include ties).",
+    "gold_sql": "SELECT currency, id FROM order_v2 o WHERE total_amount = (SELECT max(total_amount) FROM order_v2 o2 WHERE o2.currency = o.currency)"
+  },
+  {
+    "id": "s5-03", "tier": 5, "tags": [],
+    "question": "How many users have performed more than 100 searches?",
+    "gold_sql": "SELECT count(*) FROM (SELECT user_id FROM all_search_history WHERE user_id IS NOT NULL GROUP BY user_id HAVING count(*) > 100) s"
+  }
+]

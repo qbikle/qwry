@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { connSig, useConnections } from "./connections";
 
 export interface ColumnInfo {
   name: string;
@@ -114,10 +115,13 @@ interface SchemaState {
   fetch: (profileId: string, sessionId: string) => Promise<void>;
 }
 
-/** connection identity the cache is bound to; must match connections.connSig
- * (dynamic import avoids a static store cycle at module-eval time) */
-async function cacheSig(profileId: string): Promise<string | null> {
-  const { useConnections, connSig } = await import("./connections");
+/** connection identity the cache is bound to; must match connections.connSig.
+ * A STATIC import (E5b): connections.ts reaches this module only from inside
+ * its own functions, so there is no cycle to avoid here, and the dynamic one
+ * this replaces stood between a refresh gesture and its own introspect — the
+ * chord was answered in its frame and the wire left 30 ms later (LESSONS 16,
+ * E3's own open item). */
+function cacheSig(profileId: string): string | null {
   const p = useConnections.getState().profiles.find((x) => x.id === profileId);
   return p ? connSig(p) : null;
 }
@@ -132,7 +136,7 @@ export const useSchema = create<SchemaState>((set, get) => ({
     // something is already showing (from this run); never regress it to disk
     if (get().snapshots[profileId]) return;
     try {
-      const sig = await cacheSig(profileId);
+      const sig = cacheSig(profileId);
       if (!sig) return;
       const { schemaCacheGet } = await import("../ipc/commands");
       const raw = await schemaCacheGet(profileId, sig);
@@ -158,7 +162,7 @@ export const useSchema = create<SchemaState>((set, get) => ({
     try {
       // cache_key/sig make the backend persist the fresh snapshot for the
       // NEXT connect's instant hydrate
-      const sig = await cacheSig(profileId);
+      const sig = cacheSig(profileId);
       const snap = await invoke<SchemaSnapshot>("introspect", {
         sessionId,
         cacheKey: sig ? profileId : null,

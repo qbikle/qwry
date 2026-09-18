@@ -1,39 +1,29 @@
 /** Refresh feedback choreography ("the rebuild"). Manual ⇧⌘R sequence:
- * the sidebar db glyph spins one full turn (the gesture ack), the disc
- * stack splits apart while the heal runs, claps back together on the
- * verdict, and a top→bottom shine sweeps the header ONLY when the heal
- * actually succeeded: the shine is a claim, never decoration. Background
- * heals (wake/focus/session death) skip the spin and split and shine only
- * when something was actually rebuilt — a no-op probe stays invisible.
+ * the sidebar db glyph spins one full turn (the gesture ack) and the disc
+ * stack splits apart while the heal runs, then claps back together on the
+ * verdict. The gesture's own ack is the window-wide sweep (E2 R2,
+ * app/RefreshSweep.tsx), which plays whatever the verdict turns out to be;
+ * the glyph is where the verdict itself lands. Background heals (wake/focus/
+ * session death) never sweep and never spin: they clap the stack once, and
+ * only when something was actually rebuilt — a no-op probe stays invisible.
  * DbGlyph renders the discs; stores/heal.ts calls in; this store owns time. */
 import { create } from "zustand";
 
-/** trial flag: background heals gleam too; flip false for ⇧⌘R-only */
-const AUTO_HEAL_SHINE = true;
 /** the spin owns the stage before the stack opens (spring.turn settles
  * ~1s; splitting into its tail reads as one continuous move) */
 const SPIN_MS = 680;
 /** the split must READ before a fast verdict claps it shut */
 const MIN_APART_MS = 320;
-/** shine launches as the discs land, not while they travel */
-const JOIN_SHINE_LAG_MS = 180;
-/** the shine window: CSS sweep (dur-slow × 2.5 = 600ms) + a hair. The store
- * closes it itself so a header REMOUNT (profile switch and back) can never
- * replay a shine that already played */
-const SHINE_MS = 650;
 
 // generation guard: any new gesture orphans the previous timers
 let gen = 0;
 let apartAt = 0;
-/** verdict that landed while the spin still owned the stage */
-let pendingOk: boolean | null = null;
+/** a verdict landed while the spin still owned the stage */
+let pendingVerdict = false;
 /** a manual ceremony is running (begin → resolve's clap): a background
- * autoShine for the same profile must defer to it — the ceremony reports
+ * autoClap for the same profile must defer to it — the ceremony claps on
  * the same verdict, and its gen++ would orphan the ceremony's timers */
 let manualActive = false;
-/** independent of gen: a new gesture mid-shine must not orphan the close
- * (a stuck-open window replays on every remount forever) */
-let shineTimer: ReturnType<typeof setTimeout> | undefined;
 const later = (ms: number, g: number, fn: () => void) => {
   setTimeout(() => {
     if (gen === g) fn();
@@ -48,34 +38,22 @@ interface RefreshFxState {
   spinTurns: number;
   /** discs split apart = a heal is in flight */
   apart: boolean;
-  /** the shine is on stage right now (open for SHINE_MS, then the store
-   * closes it — render off this, never off shineSeq) */
-  shining: boolean;
-  /** re-keys the shine element so consecutive shines restart the sweep */
-  shineSeq: number;
   /** manual gesture: spin now, split when the spin has read */
   begin: (profileId: string) => void;
-  /** manual verdict: clap the stack home; shine only if the heal held */
-  resolve: (profileId: string, ok: boolean) => void;
-  /** background heal that really rebuilt something: shine alone */
-  autoShine: (profileId: string) => void;
+  /** manual verdict, whichever way it went: clap the stack home. The verdict
+   * itself is the rail dot's and the glyph's own color, never the clap */
+  resolve: (profileId: string) => void;
+  /** background heal that really rebuilt something: one clap, nothing else */
+  autoClap: (profileId: string) => void;
 }
-
-const shine = (set: (fn: (s: RefreshFxState) => Partial<RefreshFxState>) => void) => {
-  set((s) => ({ shining: true, shineSeq: s.shineSeq + 1 }));
-  clearTimeout(shineTimer);
-  shineTimer = setTimeout(() => set(() => ({ shining: false })), SHINE_MS);
-};
 
 export const useRefreshFx = create<RefreshFxState>((set, get) => ({
   profileId: null,
   spinTurns: 0,
   apart: false,
-  shining: false,
-  shineSeq: 0,
   begin: (profileId) => {
     const g = ++gen;
-    pendingOk = null;
+    pendingVerdict = false;
     manualActive = true;
     // the counter is only meaningful to a glyph already resting at
     // spinTurns × 360: an unmounted profile's glyph sits at 0°, so adopting
@@ -84,23 +62,21 @@ export const useRefreshFx = create<RefreshFxState>((set, get) => ({
       profileId,
       spinTurns: s.profileId === profileId ? s.spinTurns + 1 : 1,
       apart: false,
-      shining: false,
     }));
     later(SPIN_MS, g, () => {
       apartAt = Date.now();
       set({ apart: true });
-      if (pendingOk !== null) {
-        const ok = pendingOk;
-        pendingOk = null;
-        get().resolve(profileId, ok);
+      if (pendingVerdict) {
+        pendingVerdict = false;
+        get().resolve(profileId);
       }
     });
   },
-  resolve: (profileId, ok) => {
+  resolve: (profileId) => {
     if (get().profileId !== profileId) return;
     // verdict beat the spin: hold it until the split takes the stage
     if (!get().apart) {
-      pendingOk = ok;
+      pendingVerdict = true;
       return;
     }
     const g = ++gen;
@@ -108,25 +84,24 @@ export const useRefreshFx = create<RefreshFxState>((set, get) => ({
     later(wait, g, () => {
       set({ apart: false });
       manualActive = false;
-      if (ok) later(JOIN_SHINE_LAG_MS, g, () => shine(set));
     });
   },
-  autoShine: (profileId) => {
-    if (!AUTO_HEAL_SHINE) return;
+  autoClap: (profileId) => {
     // a background heal can JOIN a manual pass (connections.healInflight):
     // both continuations fire on one verdict, and the manual ceremony will
     // already report it — stomping in here would orphan its timers
     if (manualActive && get().profileId === profileId) return;
-    gen++;
-    pendingOk = null;
+    const g = ++gen;
+    pendingVerdict = false;
     manualActive = false;
     // adopting a profile whose glyph rests at 0°: spin stays untouched only
     // when the counter still matches what that glyph is displaying
     set((s) => ({
       profileId,
       spinTurns: s.profileId === profileId ? s.spinTurns : 0,
-      apart: false,
+      apart: true,
     }));
-    shine(set);
+    apartAt = Date.now();
+    later(MIN_APART_MS, g, () => set({ apart: false }));
   },
 }));

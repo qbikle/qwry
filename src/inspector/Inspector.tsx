@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { openSearchPanel } from "@codemirror/search";
 import type { EditorView } from "@codemirror/view";
 import {
@@ -15,6 +15,8 @@ import { buildEditMapHint } from "../lib/editHints";
 import { copyCue } from "../lib/copyCue";
 import { ctidGuardPairs, editKey, useEdits } from "../stores/edits";
 import { useInspector } from "../stores/inspector";
+import { useRefresh } from "../stores/refresh";
+import { humanSessionError, withLiveSession } from "../stores/liveSession";
 import { useResults } from "../stores/results";
 import { useSchema } from "../stores/schema";
 import { Kbd } from "../design/Kbd";
@@ -62,6 +64,16 @@ export function Inspector() {
   // hints yield below 280px. Boolean selector so rehydration and the resize
   // handler's threshold-cross writes re-render, everything else stays quiet
   const narrow = useInspector((s) => s.width < 280);
+  // the inspector shows a cell of the result the main body is refetching, so
+  // it follows that body's landing rather than keeping its own clock (E2 R3);
+  // the store starts it on its own reach and the value it shows is re-aimed
+  // at the same row by the swap (R4)
+  const cycling = useRefresh((s) => !!s.cycling.inspector);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // R3's same geometry, measured rather than described: the bars stand on the
+  // lines the value stood on, and the value is still on screen (fading) in
+  // the commit the cycle begins on
+  const skel = useSkeletonBox(bodyRef, cycling);
 
   const [mode, setMode] = useState<"auto" | "raw">("auto");
   const [editingText, setEditingText] = useState<string | null>(null);
@@ -150,9 +162,9 @@ export function Inspector() {
     const res = useResults.getState();
     const stmt = res.statements.find((x) => x.index === target.stmtIndex);
     if (!stmt) return;
-    const sessionId = res.executedSessionId;
+    const tabId = res.active;
     const sql = res.executedSql;
-    if (!sessionId || !sql) return;
+    if (!tabId || !sql) return;
     // server-side SQL generation (fetch_cell): real column names via the map
     // (result aliases don't leak into the WHERE), proper ident quoting,
     // dot-safe table identity; zero catalog trips with a warm mapping
@@ -171,16 +183,15 @@ export function Inspector() {
     const hint = buildEditMapHint(editMap, snap);
     let stale = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
-    ipc
-      .fetchCell(sessionId, sql, target.stmtIndex, target.col, locator, hint)
+    void withLiveSession(tabId, (sid) =>
+      ipc.fetchCell(sid, sql, target.stmtIndex, target.col, locator, hint),
+    )
       .then((v) => {
         if (!stale && k) useInspector.getState().setFullValue(k, v);
       })
       .catch((e) => {
         if (stale) return;
-        useInspector
-          .getState()
-          .setFullValueError((e as { message?: string }).message ?? String(e));
+        useInspector.getState().setFullValueError(humanSessionError(e).message);
         if (!autoRetried.current) {
           autoRetried.current = true;
           retryTimer = setTimeout(() => setRetrySeq((s) => s + 1), 1500);
@@ -252,7 +263,10 @@ export function Inspector() {
 
   if (!target || !stmtExists) {
     return (
-      <div className={`inspector${narrow ? " narrow" : ""}`}>
+      <div
+        className={`inspector${narrow ? " narrow" : ""}`}
+        data-refresh-surface="inspector"
+      >
         <div className="insp-top">
           <span className="insp-col muted">Inspector</span>
         </div>
@@ -322,7 +336,10 @@ export function Inspector() {
   };
 
   return (
-    <div className={`inspector${narrow ? " narrow" : ""}`}>
+    <div
+      className={`inspector${narrow ? " narrow" : ""}${cycling ? " cycling" : ""}`}
+      data-refresh-surface="inspector"
+    >
       <div className="insp-top">
         <div className="insp-id">
           <span className="insp-col" title={colMeta?.name ?? `col ${target.col}`}>
@@ -434,9 +451,11 @@ export function Inspector() {
       )}
 
       <div
+        ref={bodyRef}
         className={`insp-body${
           editingText === null && value != null && isStructured && mode === "raw" ? " raw-fill" : ""
         }`}
+        style={skel ?? undefined}
       >
         {editingText !== null ? (
           <div className="insp-edit scalar">
@@ -534,4 +553,43 @@ export function Inspector() {
       </div>
     </div>
   );
+}
+
+/** Where the inspector's skeleton stands: the TEXT box of the value being
+ * replaced — inside its card's border and padding — and the line rhythm that
+ * text is set on. Read in a layout effect, so the bars paint in the same frame
+ * the value starts fading, off the value itself rather than off a second
+ * description of it (E2 R3, DESIGN rule 14). One line of mono gets one bar;
+ * a seven-line JSON tree gets seven. Null when there is nothing to stand in
+ * for, and the CSS then draws nothing rather than a pane of invented rows. */
+function useSkeletonBox(
+  ref: { current: HTMLElement | null },
+  cycling: boolean,
+): CSSProperties | null {
+  const [box, setBox] = useState<CSSProperties | null>(null);
+  useLayoutEffect(() => {
+    if (!cycling) return;
+    const el = ref.current?.firstElementChild as HTMLElement | null;
+    if (!el) {
+      setBox(null);
+      return;
+    }
+    const cs = getComputedStyle(el);
+    const num = (v: string) => parseFloat(v) || 0;
+    const w = el.clientWidth - num(cs.paddingLeft) - num(cs.paddingRight);
+    const h = el.clientHeight - num(cs.paddingTop) - num(cs.paddingBottom);
+    const line = num(cs.lineHeight) || 18;
+    setBox(
+      w > 0 && h > 0
+        ? ({
+            "--insp-skel-top": `${el.offsetTop + num(cs.borderTopWidth) + num(cs.paddingTop)}px`,
+            "--insp-skel-left": `${el.offsetLeft + num(cs.borderLeftWidth) + num(cs.paddingLeft)}px`,
+            "--insp-skel-w": `${w}px`,
+            "--insp-skel-h": `${h}px`,
+            "--skel-line-gap": `${line}px`,
+          } as CSSProperties)
+        : null,
+    );
+  }, [cycling, ref]);
+  return cycling ? box : null;
 }

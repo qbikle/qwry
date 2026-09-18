@@ -154,3 +154,50 @@
 .pal [cmdk-item][data-selected="true"] .pal-tab-active {
   color: var(--accent-fg);
 }
+
+/* ---- checks and quick-asks (A2 item 6) ----------------------------------
+   A check's verdict is the connection dot's 8px mark in the success and danger
+   tiers, last in the row (DESIGN rule 5's mark-not-icon exception). A passing
+   row is its dot and nothing more; only the failed row speaks, adding the
+   drift in the status register and a visible way to ask about it (rule 11). */
+.pal-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.pal-dot.ok {
+  background: var(--ok);
+}
+.pal-dot.fail {
+  background: var(--danger);
+}
+/* one auto push per row: the first of them takes it, the rest sit 4px apart
+   (the .pal-detail ~ .pal-check precedent above) */
+.pal-askwhy {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+}
+/* written at the row's own specificity, like every other rule in this block:
+   `.linkish` (tokens.css) sets the same property at one class, and tokens.css
+   is imported AFTER this file, so a bare `.pal-askwhy` lost the auto push and
+   left the tail packed against the name. Its -4px side margins would also pull
+   the row's last three elements out of the 4px rhythm; the vertical hairline
+   stays */
+.pal [cmdk-item] .pal-askwhy {
+  margin: -1px 0 -1px auto;
+}
+.pal-askwhy ~ .pal-detail,
+.pal-askwhy ~ .pal-dot,
+.pal-detail ~ .pal-dot {
+  margin-left: var(--sp-1);
+}
+/* the hot row paints the accent: the link takes its foreground, as the
+   detail and the shortcut glyphs do */
+.pal [cmdk-item][data-selected="true"] .pal-askwhy {
+  color: var(--accent-fg);
+}
+.pal [cmdk-item][data-selected="true"] .pal-askwhy:hover {
+  background: color-mix(in srgb, var(--accent-fg) 20%, transparent);
+}

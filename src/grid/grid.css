@@ -1588,3 +1588,95 @@
   color: var(--fg-muted);
   opacity: 0.75; /* optical */ /* whole-node dim (chips too) so the differing side pops */
 }
+
+/* ---- the refresh cycle (E2 R3/R5) --------------------------------------
+   The pane that is refetching fades its grid to a skeleton of that grid's own
+   geometry and fades the fresh rows back over it: out at --dur-quick, back at
+   --dur-slow. It never goes blank in between, and it never cycles unless a
+   fetch is genuinely in flight. The bars sit ABOVE the grid (the grid's own
+   sticky ladder tops out at 10) and take no pointer events, so a scroll or a
+   click during the cycle lands on the rows that are still there. */
+.results-pane-inner .stmt-body > .vgrid {
+  transition: opacity var(--dur-slow) var(--ease-std);
+}
+.results-pane-inner.cycling .stmt-body > .vgrid {
+  opacity: 0;
+  transition-duration: var(--dur-quick);
+}
+
+.grid-skel {
+  position: absolute;
+  inset: 0;
+  z-index: 11;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--bg-panel);
+  transition: opacity var(--dur-quick) var(--ease-std);
+}
+.grid-skel.leaving {
+  opacity: 0;
+}
+.gs-header {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border-strong);
+}
+.gs-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-bottom: 1px solid var(--border);
+}
+.gs-cell {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  padding: 0 10px; /* optical */ /* the header/cell inset the bars sit in */
+  border-right: 1px solid var(--border);
+}
+.gs-bar {
+  height: 11px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-hover);
+}
+/* a slow breath, so a held skeleton reads as waiting rather than as stuck */
+.grid-skel:not(.leaving) .gs-bar {
+  animation: skel-breathe calc(var(--dur-slow) * 5) var(--ease-std) infinite alternate;
+}
+/* the skeleton stays under reduced motion, the breathing goes: the global
+   token rule collapses every animation to 0.01ms, which on an INFINITE
+   ALTERNATE is a strobe, not a stillness (the same override the tree and the
+   canvas write over their own bars) */
+@media (prefers-reduced-motion: reduce) {
+  .grid-skel .gs-bar {
+    animation: none;
+  }
+}
+
+
+/* the refresh tiers' own lines in the strip: what a soft refresh declined to
+   do (R4) at tier 1, and the hard tier's lost connection (R6) in warn. Each
+   takes the strip alone, so at 640 it ellipsizes (its title carries the rest)
+   rather than wrapping out of the fixed 24px (DESIGN rule 2). */
+.status-note,
+.status-lost {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.status-note {
+  color: var(--fg);
+}
+.status-lost {
+  color: var(--danger);
+}
+/* a retry already scheduled reads as the same warning colour as the dot and
+   the sidebar glyph (v2.css .conn-dot.retrying, .sb-dbhead.retrying): one
+   fact, one colour, in every slot that shows it (DESIGN rule 14) */
+.status-lost.retrying {
+  color: var(--warn);
+}

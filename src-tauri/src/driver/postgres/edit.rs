@@ -219,12 +219,12 @@ impl ResolvedMap {
 }
 
 /// quote an identifier for SQL
-fn qi(name: &str) -> String {
+pub(crate) fn qi(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
 /// quote a text literal
-fn ql(v: &str) -> String {
+pub(crate) fn ql(v: &str) -> String {
     format!("'{}'", v.replace('\'', "''"))
 }
 

@@ -44,7 +44,13 @@ from the maintainer, say so and cite it; the pushback is wanted.
    died at the mount boundary; an open editor teleported when its cell left
    the window. Focus/position derive from your own indices; `preventScroll`
    on every programmatic focus; one scroll authority per gesture; pending-refs
-   survive remounts.
+   survive remounts. A style a MOTION VALUE owns is the same law: the canvas
+   grid's two gesture frames wrote `transform` on the drag layer and a box on
+   the placeholder by hand, and the next React commit re-applied their resting
+   values - at one width of three, where a commit happened to follow, so it
+   read as a layout bug. Write the value where it lives (the motion value, the
+   ref, the store) or drive the handler that does; an imperative style write
+   survives only on a property neither React nor motion lists.
 8. **Sticky chrome shrinks the viewport; alpha hides from probes.** Keyboard
    nav parked the focused row under the sticky header (`scrollPaddingEnd`
    unset); the gutter bug was a 12%-alpha token over scrolling content:
@@ -75,3 +81,138 @@ from the maintainer, say so and cite it; the pushback is wanted.
     harnesses, property tests) beat reviewers that read. House style: every
     behavioral wave gets an adversarial review; big waves get two with
     different lenses.
+13. **A status reports the number the user saw work, never an internal
+    counter.** A turn-cap failure read `stopped after 1 turns`: qwry's own
+    per-invocation counter, ticked once for a single `claude -p` call that
+    itself spent its whole budget describing and peeking before its own cap
+    ended it. The user watched tools run for a while and was told it stopped
+    after one. Read the count from whatever system did the counting (the
+    child's own `num_turns` off its result line), word the copy in that
+    system's units and grammar (singular at 1: `stopped after 12 turns`),
+    and size the wrapper's own budget so a wide question does not spend it
+    before the model gets to answer. A wrapper's invocation tally is an
+    implementation detail, not a status. Then fix EVERY slot that prints the
+    number, not the one in the bug report: the same wave's first fix reworded
+    the failure heading and left the footer two lines under it reading `1
+    turn`, so one fact stood in two slots with two different numbers (DESIGN
+    rule 14), and a successful run's footer went on miscounting because no
+    one had complained about that one yet. Read the count once, at the seam
+    where it arrives, and hand that value to every slot.
+14. **A forgotten handle is a fact every store must hear, not a detail the
+    next caller re-derives.** The connection dot tracks the PRIMARY session,
+    so five separate paths could drop a TAB session's id (a lone tab death,
+    a per-profile wipe, an invalidation, a tab close, heal's own reaping)
+    while the dot stayed green and told nobody. The stamp naming that dead
+    id (`executedSessionId`) sat untouched through all five, and ten call
+    sites handed it to the backend raw. The maintainer's report was the
+    proof: browsing a table, the strip read `no such session` under a green
+    dot, and ⇧⌘R, which only re-tests connections, could not touch it,
+    because nothing about that command spoke to a tab's stamp. The id a
+    backend hands back is not yours to keep forever: it is on loan for as
+    long as that session lives, and the instant your own store learns the
+    session is gone, every place holding the id must hear it, not just the
+    one path that happened to notice first. A commit-time-only re-resolve
+    (`edits.ts`'s prior `liveSessionId`) fixed the write path and left every
+    read behind it exposed: the half-measure this wave replaces with one
+    resolver sitting on the only door a backend call goes through, so death
+    clears the handle everywhere it is held and a heal re-stamps it, rather
+    than waiting on a second reviewer to find the next site six months on.
+15. **Take the feedback, not the mechanism.** The maintainer asked for
+    `⌘R`/`⇧⌘R` to feel like a browser's reload and hard reload. Slack's own
+    `⌘R` is the literal version of that ask: it throws the renderer away and
+    rebuilds, which is cheap there because nothing on a chat screen costs
+    anything to recreate. Copied straight, the same rebuild here would have
+    cost a 40s result, staged edits, scroll position, the canvas layout, and
+    rolled back a live transaction; Slack's mechanism carries an assumption
+    (nothing on screen is expensive) that does not hold in an editor holding
+    a database session. The sketch (`docs/refresh-sketch-e2.html`) built the
+    request as two separate effects instead of one borrowed recipe: a sweep
+    that plays once and says only "a hard refresh started," and, separately,
+    each surface blanking to a same-geometry skeleton only when IT is truly
+    mid-refetch, so a tab with staged edits or an open transaction sits
+    through the whole gesture with nothing lost, because nothing on it ever
+    started a fetch. Lesson 14's own bug is the same class read from the
+    other side: `no such session` under a green dot was a mechanism (a
+    primary-session probe) standing in where the actual feedback (this tab's
+    own handle is dead) belonged, and the maintainer's strip is the evidence
+    both times. A familiar interaction is worth naming for what it FEELS
+    like, never for what it silently assumes is cheap to lose; re-derive the
+    mechanism against what this app actually holds, and play the failure
+    case in the sketch, before a line of product code, so the mechanism gets
+    checked against the feeling instead of standing in for it unread.
+16. **The app answers in the frame; the network answers in the hold.** E2
+    shipped correct by every gate it had: `hardRefresh` awaited `requestHeal`
+    then `afterHeal` before `surfacePass` fired a single fetch, and each
+    surface's own skeleton waited again, on `frontReachMs`, for the sweep's
+    front to reach it. On the maintainer's real bastion connection every
+    loader landed a full round trip after the sweep, later than the sweep's
+    own 720ms band, and his own words named it exactly: it feels like the
+    app lags when I press the chord. Each of those waits was individually
+    honest, a real round trip, a real front to cross, and stacked they built
+    a UI that answered nothing until the network had. This is lesson 9 read
+    from a new angle: feedback that is true but late reads as no feedback at
+    all, because a user's hand and eyes work on the gesture's own frame, not
+    on the database's. The fix is not a faster network; it is to say "the
+    app heard you" synchronously, in the one store write the keypress itself
+    causes, before any await stands between the chord and the pixel, and let
+    the network's honest slowness show only in how long an already-shown
+    loader holds, never in when it starts. The bug had a second half: the
+    harness that built and gated E2 answered its own `session_probe` in
+    0ms, so the wave that wrote `frontReachMs` and its grace period never
+    saw the lag it was building, because nothing in its own test rig ever
+    took as long as the real world does. A harness that answers faster than
+    reality is not a faithful stand-in for reality; give it the latency the
+    world has, or it will pass a wave straight into the bug the world was
+    always going to find.
+17. **An answer is what the model said; evidence is what the tools
+    produced; the harness invents neither.** A canvas thread's fourth
+    question was informational, and the model said so in its own words,
+    calling no tool. The loop's post step read every exchange the same way
+    regardless of that: pull something SQL-shaped out of the model's last
+    text and run it, so it took the model's own prose explanation for a
+    statement, ran it, watched the AST gate refuse it in the words built
+    for exactly this case, fed the refusal back as if the model needed
+    correcting, and repeated until the turn cap — a dozen manufactured
+    `final-N` runs the model never asked for, ending on a canned error
+    sentence the harness itself had provoked two rounds earlier, then run
+    again, as SQL, a second time. The maintainer's own transcript is the
+    proof (the app's stored turns), and his own read on it named the class
+    directly: an agent that generates SQL on every turn regardless of what
+    was asked is not what a conversational agent should do; using a tool is
+    a judgment the harness has to make, not a reflex it applies to every
+    stop. W7's circuit breaker had
+    already drawn half of this line: it counts the model's OWN `run_sql`
+    calls and cuts a spiral of THOSE off at two, but it counts nothing when
+    the model makes no call at all, so a question that never touched a tool
+    tripped nothing and ran to the cap anyway - a breaker watching the
+    model's actions was never going to catch a bug in the harness's own.
+    The fix this bug asked for was not a wider breaker, it was to stop the
+    loop from manufacturing calls of its own: the model's last text, with
+    no tool call after it, IS the answer, whatever it says; a closing fence
+    is a statement to run, prose is not one, and a failure belongs only to
+    a statement something actually tried to run, never to a sentence the
+    harness put through a gate uninvited (AGENT-SPEC §4.6). Read a stop for
+    what it is before deciding what to do with it, the same reading LESSONS
+    13 asked of a turn count and LESSONS 16 asked of a network wait: a
+    number, or a call, that the harness itself manufactures is never the
+    fact to act on.
+18. **An invisible control is still a control.** The drawing's cluster and
+    corner handle hid on a bare hover with `opacity: 0` and no
+    `pointer-events: none` (`drawing.css`); seven buttons and a 16px handle
+    kept taking presses nobody could see. The maintainer's own recording
+    (F1, 2026-09-18) is the proof: a hand reaching for the sheet's own
+    top-right lifted the invisible grip and moved the widget a row down,
+    and a hand meaning to draw opened an invisible `More`. `opacity: 0` is
+    a paint instruction, never a hit-test one; any reveal that drops a
+    control to zero opacity carries `pointer-events: none` down with it,
+    set back to `auto` the instant the reveal's own condition (`:hover`,
+    `:focus-within`, `[data-hot]`) is true again. A reveal gated on
+    `:focus-within` has a second failure mode standing right beside the
+    first: `Drawing.tsx`'s `onDown` called `preventDefault()` on
+    `pointerdown` before anything focused the sheet, and `preventDefault()`
+    there cancels the browser's OWN default, which is the focus change. A
+    control that only shows itself once its container is focused is a
+    control a pointer can never reach unless the same handler focuses the
+    container itself, ahead of or regardless of the `preventDefault()` the
+    gesture still needs; a reveal reachable only from the keyboard is not
+    reachable at all to the hand that is supposed to trigger it.

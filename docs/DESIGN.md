@@ -27,11 +27,15 @@ Every interactive control belongs to exactly one species. The species are:
 | Chip / pill toggle | recipe (no base class yet) | radius-pill, border, active = accent-soft; `.chipish` extraction ledgered |
 | Dashed ghost (add/create) | existing dashed pattern | bg none, dashed border-strong → hover accent |
 | Link button | `.linkish` | accent text + hover accent-soft fill; NEVER feedback-free |
-| Soft-danger button | recipe | danger-soft fill + danger text, for cancel/delete inside busy toolbars where filled `.danger` would shout (qb-cancel, tp-del-btn); full state matrix mandatory |
+| Soft-danger button | recipe; `.soft-danger` (threads.css) is its first class-based instance | danger-soft fill + danger text, for cancel/delete inside busy toolbars where filled `.danger` would shout (qb-cancel, tp-del-btn, `.soft-danger`); full state matrix mandatory |
 | Stepper (joined pair) | segmented-pair recipe | shared border, hairline divider, radius split, ghost-until-hover (CopySplit, rv-step) |
-| Menu row | ContextMenu / cmdk styles | highlight = accent fill, `.hot` |
-| List row / card | per-surface | hover = bg-hover minimum |
+| Menu row | ContextMenu / cmdk styles | highlight = accent fill, `.hot`; bare (label, hint, arrow) for a menu of ACTIONS on one object already chosen; a menu of KINDS, where the row hands you a shape or a widget to create, wears an optional glyph column (`MenuNode.glyph?`, the field the C2b picker already added) at `--icon-sm` instead, amended 2026-09-14 (AGENT-UX §16cc, reversing the C2b picker's own "deliberate exception" framing at AGENT-UX §16x into this rule's first instance) |
+| List row / card | per-surface (`.trow`, the Threads sheet's row) | hover = bg-hover minimum; `.hot` the transient highlight, `.active` the persistent selection |
 | Switch | `.switch` (tokens.css), rendered via `<Switch>` | macOS toggle for feature/setting rows; hidden native checkbox is the truth (role=switch, :has-derived states, spring knob). Native checkboxes remain the species for selection within content (filter rows, lists, CM search panels) |
+| Resize handle | `.cvg-handle` (grid.css) | the canvas element's ONE corner, bottom-right: a 16px hit box over an 8px L glyph at tier 2. Invisible at rest and revealed with the block's own cluster (`.acts-float`'s register, hover / focus-within / `[data-hot]`), accent while the gesture is live (`[data-gesture="resize"]`). No disabled state: it leaves with the cluster, and the keyboard route is the element's own ⇧-arrows |
+| Field picker | `.field` (opens a `.picker-pop` list; the Table row's own popover reuses that list with a search field ahead of it, the mention popover's own register, AGENT-UX §16ii) | a bordered field wearing its chosen value (mono when the value is an identifier, data's own clothes) plus one trailing chevron, never placeholder text in an empty field (rule 11: the row's own label already names what fills in); full state matrix: rest, hover (`border-strong`, `bg-hover`), `.active` while its own popover stands (`--accent` border), focus-visible, disabled (`--o-disabled`, and disabled is how a picker with nothing to pick yet is shown, never absent, rule 8). New 2026-09-18, first instance the New Chart dialog's Table, Group by and Top/Last rows (AGENT-UX §16ii) |
+| Tool island | `ToolIsland` (no base class yet) | a raised GLASS box at a widget's own top-left corner (`color-mix(in srgb, var(--bg-raised) 72%, transparent)` over `backdrop-filter: blur(14px) saturate(1.25)`, 1px `--border`, `--radius-pill`, `--shadow-sm`; the app's one translucent surface, and the argument for it is that this box stands ON the paper it acts on, AGENT-UX §16x); collapsed = the armed tool alone at 24px with its chord letter under the glyph at 6px; open = its own roster of slots at a 28px pitch, each slot a further instance of THIS species, a CIRCLE concentric with the pill (inner radius = the outer 17 less the 5 of hairline and padding = 12 = half a tool), its glyph at `--icon-sm`. A family's own arm (a slot that stands for several tools) is the same species again, growing sideways from its slot's own row on a click rather than a menu or a second box standing beside it. New 2026-09-18, the drawing's tool island (AGENT-UX §16x, replacing C2b's `Pen ▾` and its menu) |
+| Selection handle | `select.ts`'s own overlay (no base class yet) | the drawing's selection box's own 8px corner (`--bg-panel` fill, 1px `--accent` border, radius 1.5, `nwse`/`nesw` cursors by corner) and its 5px rotation knob riding a 16px stem (`grab` cursor); no disabled state and no reveal register of its own, same as the resize handle above: it leaves with the selection, exactly as that one leaves with the cluster. New 2026-09-18, the drawing's select tool (AGENT-UX §16jj) |
 
 A new control joins a species or gets a new row in this table in the same PR.
 Re-authoring a species locally (13 copies of the action button, 23 of the
@@ -92,12 +96,21 @@ a name. Allowed literals: multiples of 4, plus 1–2px for hairlines and micro
 gaps. A deliberate off-grid value carries `/* optical */` on its line; the
 annotation is a design decision, reviewable like any other.
 
+The canvas grid's cell and gutter (108 and 12, `CELL_W_BASE` / `GUTTER` in
+`src/canvas/grid.ts`) hold to this same grid though neither is a `--sp-*`
+token: computed once and written to two CSS custom properties (`--cw`,
+`--gut`) rather than retyped at each use site, an exported constant is as
+much a named token as a CSS variable, and rule 4 binds it the same way
+(AGENT-UX §16o).
+
 ## Rule 5: Icons live on the trio
 
 `--icon-sm: 12` (dense lists, tree, menus) · `--icon-md: 14` (toolbars,
 buttons) · `--icon-lg: 16` (headers, empty states). One size per surface;
 a list that mixes sizes is broken by definition. Documented exceptions:
-avatars/logos (22/40/44/64) and the grid's 11px type glyphs (data register).
+avatars/logos (22/40/44/64), the 8px connection dot (the titlebar's and the
+Ask footer's provenance mark: a mark, not an icon) and the grid's 11px type
+glyphs (data register).
 Baseline nudges (`translate: 0 1px` and friends) live INSIDE a component's
 own definition, never at use-sites; each one carries `/* optical */`.
 
@@ -108,6 +121,49 @@ panels, reveals), eased by `--ease-std`; `--ease-spring` for overshoot
 moments. JS choreography: `springs.ts` presets only. A transition literal
 that bypasses the tokens is a dialect; dialects are the reason surfaces feel
 unrelated while looking related.
+
+`spring.rail` (2026-09-18, the tool island's own slide, AGENT-UX §16x) is
+not a new preset but the RAIL constant `springs.ts` already held for the
+connection rail's own pop-in, now exposed as a named getter, and the
+island's out/home asymmetry, `spring.rail` sliding a tool out, `spring.snappy`
+sliding it home, is this rule's own "one spring, one curve" applied as two
+EXISTING presets for the two directions of one gesture, never a third
+invented to sit between them. `spring.quick` (same wave) is `--dur-quick` on
+`--ease-std` restated as a motion transition, 0.12s on (0.2, 0, 0, 1), for a
+motion value that has to fade in step with a CSS transition beside it (the
+island's siblings leaving while its hairline fades on the stylesheet's
+clock): the token's own numbers, held in `springs.ts` because that is the one
+file allowed to hold them, and 0 new spring numbers with it.
+
+**The hard-refresh sweep is a named motion, not a dialect.** `⇧⌘R` alone
+plays it: one transform keyframe, `translateX(-160%)` to `translateX(560%)`
+of the band's own width (`skewX(-24deg)` fixed throughout), over
+`calc(var(--dur-slow) * 3)` = 720ms at constant, linear speed, the one
+linear timing this file allows. `--sweep-color` is the sweep's own token,
+themed like any other: `rgba(255,255,255,.11)` in dark, `color-mix(in srgb,
+var(--accent) 13%, transparent)` in light, where plain white has nothing to
+read against. It fires from exactly one place, a manual `⇧⌘R`: a background
+heal (wake, focus, a session dying on its own) never plays it, because the
+sweep announces a hand on the chord, not a fact the app discovered by
+itself.
+
+**Amended after E2's first real use (E3): the band no longer clocks
+anything.** Every surface that will refetch already wears its skeleton in
+the gesture's own frame, set by the same synchronous store write that bumps
+the band's sequence, before either has waited on anything (ARCHITECTURE's
+"Refresh tiers" has the order of the act). The band still travels its
+720ms at the same constant, linear speed; it is now the ack laid over
+surfaces already answering, not a signal any of them wait to receive. What
+stopped being a clock is not kept as one: `GRACE_MS` and `frontReachMs`,
+which staggered each surface's skeleton to the moment the band's leading
+edge reached it, are deleted outright, not softened. A skeleton, once
+shown, still holds a floor (`MIN_SHOW_MS`, `--dur-slow`) so a fetch that
+lands in a blink never flashes, and hides the instant its own fetch lands,
+on nobody else's schedule. A cycling surface still fades its content out at
+`--dur-quick` and its fresh data back in at `--dur-slow`, `--ease-std`; the
+sweep is still this file's one linear exception, and the reason has changed
+with it: linear now reads as one steady sheet of light over a window that
+already answered, not as a clock kept honest.
 
 ## Rule 7: Shortcut glyphs
 
@@ -129,7 +185,10 @@ Any wave touching visible chrome ships screenshot evidence from the running
 app (or the WKWebView harness): geometry and beauty are verified in pixels,
 not inferred from CSS. This extends LESSONS #8 from bugs to aesthetics:
 consolidating or renaming chrome IS a visual change and ships under the same
-rule.
+rule. For a resizable pane the evidence is frames at its floor, default and
+max width of a LIVE state (a real answer with real long content, never a
+placeholder or a failure block standing in for one), in both themes; one
+width or one theme is not evidence (rule 13).
 
 ## Rule 10: The lint gate
 
@@ -139,3 +198,121 @@ modifier order, wrong-codepoint glyphs (↵ ⏎), and em dashes in UI strings
 (WRITING.md). `/* optical */` (CSS) and `// em-ok` / config allowlists are
 the only escape hatches. Warning mode during migration; `--enforce` after.
 Then it gates every wave like tsc does.
+
+## Rule 11: Every string earns its pixels
+
+The test is deletion: read the surface with the string gone, and if nothing
+is lost, the string was dead. Chrome never explains a standard interaction
+(↩ sends, ⇧↩ newlines, ⌘. cancels, Esc closes, click opens) and never states
+what is always true (read-only, "every answer shows its SQL", "answers come
+with the SQL"). The norm is silent; only the exception speaks (`small` on a
+model pill, `PROD` on the titlebar, `· not running` on a provider). Teaching
+lives where teaching is asked for: tooltips, menus, the Keyboard Shortcuts
+sheet, a first-run setup card. Precedent: the W2 Ask hint line, `↩ ask · ⇧↩
+newline · read-only · every answer shows its SQL`, one full row of the pane
+at every width, satisfying every rule the reviewers had; and the empty-state
+slogan ("Answers come with the SQL…"), the same defect in prose costume. A
+string that survives only because a rule permits it has not passed this one.
+
+## Rule 12: A strip states one thing
+
+A header answers "where am I": a title, at most one qualifier, and the zone's
+own actions as at most two icon buttons. Controls that configure an action
+sit beside that action (the model picker beside Send, never in the header); a
+status that belongs to the window stays in the window's chrome (PROD is the
+titlebar chip); provenance appears once per zone (the answer footer's connection dot,
+not the header AND the footer). The two refresh tiers add no header control
+of their own: the table header's `↻` is the soft tier. A strip holding two ideas is two strips, or
+one idea too many, and the strip's fixed height (rule 2) is not a licence to
+fill it. Precedent: the W2 Ask header, `icon · Ask · avatar · name · db ·
+READ-ONLY · model pill · tier · Threads · New`: ten things in 40px, and the
+badge clipped to `READ-ONL` at the floor because the strip had nothing left
+to give. The Inspector's header, a text title and two icon buttons, was the
+pattern in the same window all along. Second instance, 2026-09-14: the
+canvas gained its own 40px header line under this rule (AGENT-UX §16cc),
+the canvas's own name at the left, one icon button (`+`) at the right,
+nothing else, reversing AGENT-UX §16f's earlier "zero strips of its own"
+count by the maintainer's own call rather than by a drift the rule would
+have refused.
+
+The composer's control row is one strip holding what travels with the
+question and nothing else: the `+` context pill, the model pill and Send,
+three controls in 149 of 272px at the 320 floor (`Haiku 4.5` on the pill;
+246 at its 180px cap). A control that edits the question or configures its
+answer sits there; anything else does not, and a fourth control rewrites
+this sentence with its count. Precedent: B2's `+` pill, the mouse route to
+the `@` completion, seated leftmost beside the model pill rather than on
+the text's first line, where it would have cost the textarea, the backdrop
+and the lift ghost an indent.
+
+## Rule 13: Floor first
+
+Chrome is designed at the floor width and then given room, never the reverse.
+The sketch shows floor, default and max side by side with real long content
+(a nine-row grid, a sixty-character question, wrapping chips); the chrome is
+identical across the three; nothing clips, wraps or ellipsizes at the floor
+except content that owns its own overflow (grid cells, the collapsed SQL
+preview, the thinking strip's left fade); growth feeds content (grid, text,
+chips), never new chrome. A control the max width can show and the floor
+cannot is a control that does not exist. Frames at the three widths of a live
+state are the evidence (rule 9). Precedent: the W2 sketch, drawn once at 392:
+at 320 the header badge clipped and the grid header cut a column name, under
+380 the footer wrapped to two lines. Every one of those was visible the
+moment a second width was drawn.
+
+## Rule 14: Data once
+
+A fact renders in exactly one slot. Results on the result block's table face,
+the query on its SQL face, interpretations in the assumption chips, timing in
+the status line,
+provenance in the footer's connection dot; prose never repeats any of them. Answer prose
+is interpretation in the shape the question asks for, a direct question one
+sentence, an insight question an optional one-line lead-in and two to four
+bullets of one finding each (AGENT-UX §2 item 3), what the numbers mean, not
+what they are; the model's text is chrome here, because the anatomy already
+carries the data. The rule binds chrome to chrome too: a name in the header
+and again in the footer, a row count above the grid and again below it, are
+two slots for one fact and one of them goes. Precedent: the W2 answer prose,
+which restated the grid as a markdown table, the SQL in a fence and the
+assumptions as a bullet list, rendered raw under a grid, a SQL row and chips
+that already showed all three. The anatomy was right; the prose was the
+duplicate, and the display strip that removes it is the fix.
+
+## Rule 15: Consolidate before you add
+
+Before any new control, strip or row: three questions, asked in this order.
+Can it live on the object it acts on, rather than on a strip that names the
+object from outside? Can it become a second face of a block that already
+exists, rather than a second block standing beside it? Is the always-visible
+chrome count, counted the way rule 13 counts it, lower after the change than
+before? A "no" to all three is the only licence to add; a "yes" to any one
+means the answer is a face on something that already stands, not a new
+fixture. State the test as a number, chrome strips for one live answer,
+before and after: a design that cannot say the number has not made its case.
+
+Exemplar: VS Code's floating editor toolbar. Its actions sit at the code
+block's own top-right corner, hidden until the pointer or the keyboard
+reaches the block, and act on that block alone; the file carries no
+permanent bar above every block to hold them, and no block explains what its
+own buttons do. The actions live on the object they act on, not beside it.
+
+Rules are floors, taste is the ceiling: a rule states the least a design
+must clear, not the one shape that clears it. When a design beats a rule as
+written, the fix is not a quiet exception: cite the rule, say in the same
+breath why the new shape serves the rule's own goal better than the rule's
+own words do, and amend the rule in the same PR. A rule its own author would
+rewrite on sight is not yet the rule.
+
+Precedent: W7 folded the results grid's header and the collapsed SQL row
+into one block wearing two faces, reached by three actions in a hover
+cluster at the block's own top-right corner (the VS Code exemplar, not a
+toolbar bolted above it): one live answer's always-visible chrome went from
+2 strips to 0.
+
+Precedent: the same wave added `Continue` to the failure block's button row
+without asking the three questions, and four buttons wrapped to two lines at
+320 while standing on one at 392, chrome that changes shape with the width
+(rule 13). Question one answered it: `Insert` acts on the statement in the
+field above the row, so it moved onto the field as that field's own hover
+cluster and the row went back to one line at the floor. A row that wraps at
+320 is the symptom; the missing first question is the cause.

@@ -6,14 +6,17 @@ Fast, beautiful, local macOS PostgreSQL client. Tauri 2 (Rust) + React 19 + Type
 
 This repo is built across many Claude Code sessions by different agents.
 
-1. Read `docs/ROADMAP.md`: find the current phase and next unchecked item.
+1. Read `docs/ROADMAP.md`: find the next open item (Agent work: the current wave under Next: Agent).
 2. Read `docs/ARCHITECTURE.md` for the design you must fit into. Don't invent parallel structures.
    `docs/WRITING.md` (text registers), `docs/LESSONS.md` (bug-class law), and `docs/DESIGN.md`
    (pixel law: control taxonomy, states, contrast tiers, grid, icons, motion) bind every change;
+   agent work is additionally bound by `docs/AGENT-SPEC.md`, `docs/AGENT-UX.md` and gated by `docs/EVAL.md`;
    when a request violates one, even one from the maintainer, say so and cite it: the pushback is wanted.
+   Rules are floors, taste is the ceiling: when a design beats a rule as written, cite the rule, say why
+   the new shape serves it better, and amend the rule in the same PR (DESIGN.md rule 15).
    Chrome-touching waves run `bun scripts/design-lint.ts` and ship pixel evidence (DESIGN.md rules 9–10).
 3. Build the item. Verify it per the phase's verification gate.
-4. Tick the checkbox, append a dated session note at the bottom of ROADMAP.md (what was done, what's half-done, gotchas).
+4. Tick the item, append a dated session note at the TOP of `docs/ROADMAP_log.md` (what was done, what's half-done, gotchas).
 5. Record any new design decision as one line in `docs/DECISIONS.md`.
 6. Commit with a conventional message (`feat:`, `fix:`, `chore:`). Never commit broken builds.
 
@@ -31,9 +34,9 @@ bunx tsc --noEmit                # TS typecheck
 
 ## Layout
 
-- `src/`: React frontend. Subdirs: `app/` shell, `stores/` zustand, `ipc/` typed Tauri bridge, `editor/` CodeMirror + completion engine, `grid/` virtualized results grid, `inspector/`, `sidebar/`, `browser/`, `palette/`, `explain/`, `design/` tokens+springs.
+- `src/`: React frontend. Subdirs: `app/` shell, `stores/` zustand, `ipc/` typed Tauri bridge, `editor/` CodeMirror + completion engine, `grid/` virtualized results grid, `inspector/`, `sidebar/`, `browser/`, `palette/`, `explain/`, `design/` tokens+springs, `agent/` agent core, `ask/` Ask panel UI, `harness/` design-lint pixel harness.
 - `src-tauri/src/`: Rust core. `driver/` DbDriver trait + `driver/postgres/`, `tunnel.rs` ssh, `secrets.rs` keychain, `appdb.rs` rusqlite app-state, `commands.rs` IPC handlers.
-- `docs/`: ARCHITECTURE.md (design truth), ROADMAP.md (phases + session log), DECISIONS.md (ADR-lite).
+- `docs/`: ARCHITECTURE.md (design truth), ROADMAP.md (shipped + open key points), ROADMAP_log.md (dated session log), DECISIONS.md (ADR-lite), AGENT-SPEC.md / AGENT-UX.md / EVAL.md (agent law + gates).
 
 ## Conventions
 

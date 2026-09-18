@@ -6,14 +6,19 @@ use std::borrow::Cow;
 use std::path::Path;
 use std::sync::Mutex;
 
-use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
-use rusqlite::Connection;
+use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, Value, ValueRef};
+use rusqlite::{params_from_iter, Connection};
 use serde::{Deserialize, Serialize};
 
 use crate::driver::{DriverError, Profile, Result};
 
 /// bump when appending a migration in `migrate`
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 9;
+/// The version the two newest arms land on. Named, not inline, because each
+/// one's test rolls a db back to just before its OWN migration, and a merge
+/// that renumbers an arm must move exactly one number to keep both true.
+const V_KNOWLEDGE: i64 = 8;
+const V_CANVASES: i64 = 9;
 /// per-row stored SQL cap (bytes, cut at a char boundary): a pasted multi-MB
 /// INSERT must not bloat the appdb forever
 const HISTORY_SQL_CAP: usize = 20_000;
@@ -35,6 +40,11 @@ const UNDO_KEEP_PER_PROFILE: i64 = 20;
 const SNAPSHOT_KEEP_PER_TAB: i64 = 50;
 /// per-snapshot stored SQL cap (bytes, cut at a char boundary)
 const SNAPSHOT_SQL_CAP: usize = 200_000;
+/// per-turn stored message cap (bytes, cut at a char boundary). Applies to the
+/// turn's TEXT only: the `*_json` columns are parsed back by the trace panel,
+/// so truncating them would produce unparseable JSON, and they are bounded by
+/// the tool row caps (AGENT-SPEC §5) instead.
+const AGENT_CONTENT_CAP: usize = 200_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TabRow {
@@ -48,6 +58,11 @@ pub struct TabRow {
     /// first edit under a profile)
     #[serde(default)]
     pub profile_id: Option<String>,
+    /// the canvas this tab shows (A3). Non-NULL IS the tab's kind: a row with
+    /// a canvas id is a canvas tab, every other persisted row a query tab, so
+    /// the kind needs no column of its own.
+    #[serde(default)]
+    pub canvas_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +76,18 @@ pub struct SavedQuery {
     /// next saved under a connection: adopt-on-touch, mirrors tabs)
     #[serde(default)]
     pub profile_id: Option<String>,
+    /// the question a `Save Query` on an answer kept: a quick-ask is a saved
+    /// query that remembers what was asked, not a second kind of row (A2)
+    #[serde(default)]
+    pub question: Option<String>,
+    /// what a check asserts about this query's shape, JSON (`CheckExpect` in
+    /// src/stores/checks.ts); NULL = an ordinary saved query, not a check
+    #[serde(default)]
+    pub expect_json: Option<String>,
+    /// what the last `Run Checks` found here, JSON (`CheckResult`); NULL until
+    /// the check has run once
+    #[serde(default)]
+    pub last_check_json: Option<String>,
 }
 
 /// mirrored in src/ipc/types.ts
@@ -220,6 +247,10 @@ fn migrate(conn: &mut Connection) -> Result<()> {
             3 => pg_catalog_cache_v3(&tx)?,
             4 => undo_log_v4(&tx)?,
             5 => buffer_snapshots_v5(&tx)?,
+            6 => agent_threads_v6(&tx)?,
+            7 => agent_thread_session_v7(&tx)?,
+            V_KNOWLEDGE => knowledge_v8(&tx)?,
+            V_CANVASES => canvases_v9(&tx)?,
             n => return Err(DriverError::Internal(format!("appdb: no migration to v{n}"))),
         }
         tx.pragma_update(None, "user_version", next).map_err(internal)?;
@@ -322,6 +353,110 @@ fn buffer_snapshots_v5(conn: &Connection) -> Result<()> {
          CREATE INDEX IF NOT EXISTS buffer_snapshots_tab ON buffer_snapshots (tab_id, id DESC);",
     )
     .map_err(internal)
+}
+
+/// Agent threads, turns and answers (AGENT-SPEC §9). Turns carry the model's
+/// text plus the tool call/result/usage blobs as JSON, so the trace panel can
+/// replay a thread with nothing summarised away (AGENT-UX §5). Answers are
+/// 1:1 with the turn that produced them, hence `turn_id` as the primary key.
+fn agent_threads_v6(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS agent_threads (
+             id         TEXT PRIMARY KEY,
+             profile_id TEXT NOT NULL,
+             title      TEXT NOT NULL,
+             created_at TEXT NOT NULL DEFAULT (datetime('now'))
+         );
+         CREATE INDEX IF NOT EXISTS agent_threads_profile
+             ON agent_threads (profile_id, created_at DESC);
+         CREATE TABLE IF NOT EXISTS agent_turns (
+             id                INTEGER PRIMARY KEY AUTOINCREMENT,
+             thread_id         TEXT NOT NULL,
+             idx               INTEGER NOT NULL,
+             role              TEXT NOT NULL,
+             content           TEXT NOT NULL,
+             tool_calls_json   TEXT,
+             tool_results_json TEXT,
+             usage_json        TEXT,
+             model             TEXT NOT NULL,
+             provider          TEXT NOT NULL,
+             prompt_version    TEXT NOT NULL,
+             ms                REAL NOT NULL,
+             created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+         );
+         CREATE INDEX IF NOT EXISTS agent_turns_thread ON agent_turns (thread_id, idx);
+         CREATE TABLE IF NOT EXISTS agent_answers (
+             turn_id          INTEGER PRIMARY KEY,
+             sql              TEXT,
+             row_count        INTEGER,
+             assumptions_json TEXT,
+             sanity_json      TEXT,
+             status           TEXT NOT NULL
+         );",
+    )
+    .map_err(internal)
+}
+
+/// The provider session a thread resumes. A cut thread (W4 jump back) cannot
+/// ask `claude -p` to forget the turns it deleted, so the cut mints a fresh
+/// key and the adapter resumes THAT: the thread id stays the row's identity.
+/// NULL reads as the thread id, so no backfill runs over existing threads.
+fn agent_thread_session_v7(conn: &Connection) -> Result<()> {
+    add_column_if_missing(conn, "agent_threads", "session_key", "TEXT")
+}
+
+/// What the user knows and the catalog does not (A2): a table's or column's
+/// hint, the names its people call it by, and the terms this database uses.
+/// `target` names the object a hint or a synonym hangs on (`table` or
+/// `table.column`); a definition has no object to hang on, so its target is
+/// NULL and its `term = meaning` line is the row's own text.
+///
+/// Saved queries gain the three columns a quick-ask and a check need: the
+/// question a `Save Query` on an answer kept, the expectation a check asserts,
+/// and what its last run found.
+fn knowledge_v8(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS agent_knowledge (
+             id         TEXT PRIMARY KEY,
+             profile_id TEXT NOT NULL,
+             kind       TEXT NOT NULL CHECK (kind IN ('hint', 'definition', 'synonym')),
+             target     TEXT,
+             text       TEXT NOT NULL,
+             created_at TEXT NOT NULL DEFAULT (datetime('now')),
+             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+         );
+         CREATE INDEX IF NOT EXISTS agent_knowledge_profile
+             ON agent_knowledge (profile_id, kind, target);",
+    )
+    .map_err(internal)?;
+    add_column_if_missing(conn, "saved_queries", "question", "TEXT")?;
+    add_column_if_missing(conn, "saved_queries", "expect_json", "TEXT")?;
+    add_column_if_missing(conn, "saved_queries", "last_check_json", "TEXT")?;
+    Ok(())
+}
+
+/// Canvases (A3): one document per row, its ordered block list stored as the
+/// JSON the frontend wrote. appdb never parses `doc_json` — the block shape is
+/// the canvas store's, and a schema that had to follow it would migrate on
+/// every block field. `tabs.canvas_id` is how a canvas tab survives a restart:
+/// the tabs table holds query tabs today, and one nullable column carries the
+/// new kind without a second table or a kind column that every existing row
+/// would have to be backfilled with.
+fn canvases_v9(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS canvases (
+             id         TEXT PRIMARY KEY,
+             profile_id TEXT NOT NULL,
+             title      TEXT NOT NULL,
+             doc_json   TEXT NOT NULL,
+             created_at TEXT NOT NULL DEFAULT (datetime('now')),
+             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+         );
+         CREATE INDEX IF NOT EXISTS canvases_profile
+             ON canvases (profile_id, updated_at DESC);",
+    )
+    .map_err(internal)?;
+    add_column_if_missing(conn, "tabs", "canvas_id", "TEXT")
 }
 
 fn has_column(conn: &Connection, table: &str, col: &str) -> Result<bool> {
@@ -464,7 +599,10 @@ impl AppDb {
     pub fn tabs_list(&self) -> Result<Vec<TabRow>> {
         let conn = self.0.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, name, sql, position, saved_id, profile_id FROM tabs ORDER BY position")
+            .prepare(
+                "SELECT id, name, sql, position, saved_id, profile_id, canvas_id
+                 FROM tabs ORDER BY position",
+            )
             .map_err(internal)?;
         let rows = stmt
             .query_map([], |r| {
@@ -475,6 +613,7 @@ impl AppDb {
                     position: r.get(3)?,
                     saved_id: r.get(4)?,
                     profile_id: r.get(5)?,
+                    canvas_id: r.get(6)?,
                 })
             })
             .map_err(internal)?;
@@ -492,8 +631,17 @@ impl AppDb {
         tx.execute("DELETE FROM tabs", []).map_err(internal)?;
         for t in tabs {
             tx.execute(
-                "INSERT INTO tabs (id, name, sql, position, saved_id, profile_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                rusqlite::params![t.id, t.name, t.sql, t.position, t.saved_id, t.profile_id],
+                "INSERT INTO tabs (id, name, sql, position, saved_id, profile_id, canvas_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    t.id,
+                    t.name,
+                    t.sql,
+                    t.position,
+                    t.saved_id,
+                    t.profile_id,
+                    t.canvas_id
+                ],
             )
             .map_err(internal)?;
         }
@@ -595,7 +743,11 @@ impl AppDb {
     pub fn saved_list(&self) -> Result<(Vec<SavedQuery>, usize)> {
         let conn = self.0.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, name, sql, created_at, profile_id FROM saved_queries ORDER BY name")
+            .prepare(
+                "SELECT id, name, sql, created_at, profile_id, question, expect_json,
+                        last_check_json
+                 FROM saved_queries ORDER BY name",
+            )
             .map_err(internal)?;
         let rows = stmt
             .query_map([], |r| {
@@ -605,6 +757,9 @@ impl AppDb {
                     sql: r.get(2)?,
                     created_at: r.get(3)?,
                     profile_id: r.get(4)?,
+                    question: r.get(5)?,
+                    expect_json: r.get(6)?,
+                    last_check_json: r.get(7)?,
                 })
             })
             .map_err(internal)?;
@@ -616,10 +771,26 @@ impl AppDb {
             .lock()
             .unwrap()
             .execute(
-                "INSERT INTO saved_queries (id, name, sql, profile_id) VALUES (?1, ?2, ?3, ?4)
+                // the caller sends the whole row: src/stores/saved.ts merges an
+                // upsert over the row it already holds, so a rename cannot drop
+                // the question a quick-ask kept or the check on it
+                "INSERT INTO saved_queries
+                     (id, name, sql, profile_id, question, expect_json, last_check_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(id) DO UPDATE SET name = excluded.name, sql = excluded.sql,
-                                               profile_id = excluded.profile_id",
-                rusqlite::params![q.id, q.name, q.sql, q.profile_id],
+                                               profile_id = excluded.profile_id,
+                                               question = excluded.question,
+                                               expect_json = excluded.expect_json,
+                                               last_check_json = excluded.last_check_json",
+                rusqlite::params![
+                    q.id,
+                    q.name,
+                    q.sql,
+                    q.profile_id,
+                    q.question,
+                    q.expect_json,
+                    q.last_check_json,
+                ],
             )
             .map_err(internal)?;
         Ok(())
@@ -840,6 +1011,603 @@ impl AppDb {
             .unwrap()
             .execute("DELETE FROM buffer_snapshots WHERE tab_id = ?1", [tab_id])
             .map_err(internal)?;
+        Ok(())
+    }
+}
+
+/// One Ask thread (AGENT-SPEC §9). `id` is the row's identity and the MCP
+/// session's name; `session_key` is what the `claude -p` provider passes as
+/// `--session-id` / `--resume`. They are the same uuid until a cut re-mints
+/// the key, which is how a truncated thread gets a provider that never saw
+/// the deleted turns. The column is NULL until then and reads as `id`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentThread {
+    pub id: String,
+    pub profile_id: String,
+    pub title: String,
+    pub created_at: String,
+    pub session_key: String,
+}
+
+/// One recorded turn. The `*_json` columns hold the loop's own structures
+/// verbatim (tool calls, tool results, token usage) so the trace can replay
+/// them; nothing here is summarised.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTurn {
+    pub id: i64,
+    pub thread_id: String,
+    pub idx: i64,
+    pub role: String,
+    pub content: String,
+    pub tool_calls_json: Option<String>,
+    pub tool_results_json: Option<String>,
+    pub usage_json: Option<String>,
+    pub model: String,
+    pub provider: String,
+    pub prompt_version: String,
+    pub ms: f64,
+    pub created_at: String,
+}
+
+/// `AgentTurn` minus the columns the store assigns (`id`, `created_at`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTurnInput {
+    pub thread_id: String,
+    pub idx: i64,
+    pub role: String,
+    pub content: String,
+    #[serde(default)]
+    pub tool_calls_json: Option<String>,
+    #[serde(default)]
+    pub tool_results_json: Option<String>,
+    #[serde(default)]
+    pub usage_json: Option<String>,
+    pub model: String,
+    pub provider: String,
+    pub prompt_version: String,
+    pub ms: f64,
+}
+
+/// What a re-run rewrites on an assistant turn already on record (W4 Restart,
+/// Fix It, a chip toggle). Thread, index and role never move: the exchange
+/// answers the same question in the same place, so only what the model said
+/// this time is written again.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTurnPatch {
+    pub id: i64,
+    pub content: String,
+    #[serde(default)]
+    pub tool_calls_json: Option<String>,
+    #[serde(default)]
+    pub tool_results_json: Option<String>,
+    #[serde(default)]
+    pub usage_json: Option<String>,
+    pub model: String,
+    pub provider: String,
+    pub prompt_version: String,
+    pub ms: f64,
+}
+
+/// The answer a turn produced: its SQL, how many rows it returned, the
+/// assumption chips and sanity fragments shown with it, and the verdict
+/// status ("answered" | "failed" | "turn_cap" | "cancelled").
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentAnswer {
+    pub turn_id: i64,
+    pub sql: Option<String>,
+    pub row_count: Option<i64>,
+    #[serde(default)]
+    pub assumptions_json: Option<String>,
+    #[serde(default)]
+    pub sanity_json: Option<String>,
+    pub status: String,
+}
+
+/// Agent history (AGENT-SPEC §9). Local only: no telemetry leaves the machine
+/// (ARCHITECTURE ideology 7). Deleting a thread deletes its turns and answers
+/// in the same transaction, so a dropped thread leaves no orphan trace rows.
+impl AppDb {
+    pub fn agent_thread_create(
+        &self,
+        id: &str,
+        profile_id: &str,
+        title: &str,
+    ) -> Result<AgentThread> {
+        let conn = self.0.lock().unwrap();
+        conn.execute(
+            "INSERT INTO agent_threads (id, profile_id, title) VALUES (?1, ?2, ?3)",
+            rusqlite::params![id, profile_id, title],
+        )
+        .map_err(internal)?;
+        conn.query_row(
+            "SELECT id, profile_id, title, created_at, COALESCE(session_key, id)
+             FROM agent_threads WHERE id = ?1",
+            [id],
+            |r| {
+                Ok(AgentThread {
+                    id: r.get(0)?,
+                    profile_id: r.get(1)?,
+                    title: r.get(2)?,
+                    created_at: r.get(3)?,
+                    session_key: r.get(4)?,
+                })
+            },
+        )
+        .map_err(internal)
+    }
+
+    /// newest first; corrupt rows are skipped, never fatal to the list
+    pub fn agent_threads_list(&self, profile_id: &str) -> Result<Vec<AgentThread>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, profile_id, title, created_at, COALESCE(session_key, id)
+                 FROM agent_threads
+                 WHERE profile_id = ?1 ORDER BY created_at DESC, rowid DESC",
+            )
+            .map_err(internal)?;
+        let rows = stmt
+            .query_map([profile_id], |r| {
+                Ok(AgentThread {
+                    id: r.get(0)?,
+                    profile_id: r.get(1)?,
+                    title: r.get(2)?,
+                    created_at: r.get(3)?,
+                    session_key: r.get(4)?,
+                })
+            })
+            .map_err(internal)?;
+        Ok(collect_ok(rows, "agent thread").0)
+    }
+
+    pub fn agent_thread_delete(&self, id: &str) -> Result<()> {
+        let mut conn = self.0.lock().unwrap();
+        let tx = conn.transaction().map_err(internal)?;
+        tx.execute(
+            "DELETE FROM agent_answers WHERE turn_id IN
+                 (SELECT id FROM agent_turns WHERE thread_id = ?1)",
+            [id],
+        )
+        .map_err(internal)?;
+        tx.execute("DELETE FROM agent_turns WHERE thread_id = ?1", [id])
+            .map_err(internal)?;
+        tx.execute("DELETE FROM agent_threads WHERE id = ?1", [id])
+            .map_err(internal)?;
+        tx.commit().map_err(internal)?;
+        Ok(())
+    }
+
+    /// Delete the named turns and their answers, in ONE transaction, so a
+    /// failure never leaves answer rows pointing at turns that are gone.
+    ///
+    /// The cut names ROW IDS, never a boundary. Neither `id` nor `idx` orders
+    /// a thread well enough to cut it at a position: a Retry on an older
+    /// exchange that failed before the store persisted it writes its rows
+    /// LAST, so the newest ids can belong to the oldest exchange on screen.
+    /// The store holds each exchange's ids and says exactly which go.
+    /// `thread_id` scopes it, so an id from anywhere else deletes nothing.
+    pub fn agent_thread_truncate(&self, thread_id: &str, turn_ids: &[i64]) -> Result<()> {
+        if turn_ids.is_empty() {
+            return Ok(());
+        }
+        let holes = vec!["?"; turn_ids.len()].join(",");
+        let mut args: Vec<Value> = Vec::with_capacity(turn_ids.len() + 1);
+        args.push(Value::Text(thread_id.to_owned()));
+        args.extend(turn_ids.iter().copied().map(Value::Integer));
+        let mut conn = self.0.lock().unwrap();
+        let tx = conn.transaction().map_err(internal)?;
+        // the answers first: they key on the turns, which are still there
+        tx.execute(
+            &format!(
+                "DELETE FROM agent_answers WHERE turn_id IN
+                 (SELECT id FROM agent_turns WHERE thread_id = ? AND id IN ({holes}))"
+            ),
+            params_from_iter(args.iter()),
+        )
+        .map_err(internal)?;
+        tx.execute(
+            &format!("DELETE FROM agent_turns WHERE thread_id = ? AND id IN ({holes})"),
+            params_from_iter(args.iter()),
+        )
+        .map_err(internal)?;
+        tx.commit().map_err(internal)?;
+        Ok(())
+    }
+
+    /// Point the thread at a fresh provider session. A cut writes a new uuid
+    /// here because a resumed `claude -p` session remembers the cut turns and
+    /// cannot be rewound.
+    pub fn agent_thread_session_set(&self, thread_id: &str, session_key: &str) -> Result<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE agent_threads SET session_key = ?2 WHERE id = ?1",
+                rusqlite::params![thread_id, session_key],
+            )
+            .map_err(internal)?;
+        Ok(())
+    }
+
+    /// Move a thread's tail up the index, so a pair can be inserted between
+    /// two exchanges that left it no room. The store allocates `idx` between
+    /// NEIGHBOURS (a Retry on an exchange whose run failed before it persisted
+    /// writes its rows after its own successors'), and when the next exchange
+    /// already sits on the slots the new pair needs, this frees them first.
+    ///
+    /// Shift, then insert: the two are separate calls, so a failure between
+    /// them leaves a gap in the thread's indices, which costs nothing, and
+    /// never a collision, which costs an answer its question.
+    pub fn agent_turns_shift(&self, thread_id: &str, from_idx: i64, by: i64) -> Result<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE agent_turns SET idx = idx + ?3 WHERE thread_id = ?1 AND idx >= ?2",
+                rusqlite::params![thread_id, from_idx, by],
+            )
+            .map_err(internal)?;
+        Ok(())
+    }
+
+    /// returns the new row id, which `agent_answer_put` keys on
+    pub fn agent_turn_add(&self, turn: &AgentTurnInput) -> Result<i64> {
+        let content = cap_text(&turn.content, AGENT_CONTENT_CAP);
+        let conn = self.0.lock().unwrap();
+        conn.execute(
+            "INSERT INTO agent_turns
+                 (thread_id, idx, role, content, tool_calls_json, tool_results_json,
+                  usage_json, model, provider, prompt_version, ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            rusqlite::params![
+                turn.thread_id,
+                turn.idx,
+                turn.role,
+                content.as_ref(),
+                turn.tool_calls_json,
+                turn.tool_results_json,
+                turn.usage_json,
+                turn.model,
+                turn.provider,
+                turn.prompt_version,
+                turn.ms,
+            ],
+        )
+        .map_err(internal)?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Rewrite a recorded assistant turn in place. A re-run that skipped this
+    /// left the old prose beside the new answer row, and a reload showed an
+    /// answer nobody was ever given.
+    pub fn agent_turn_update(&self, turn: &AgentTurnPatch) -> Result<()> {
+        let content = cap_text(&turn.content, AGENT_CONTENT_CAP);
+        self.0
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE agent_turns SET
+                     content = ?2, tool_calls_json = ?3, tool_results_json = ?4,
+                     usage_json = ?5, model = ?6, provider = ?7,
+                     prompt_version = ?8, ms = ?9
+                 WHERE id = ?1",
+                rusqlite::params![
+                    turn.id,
+                    content.as_ref(),
+                    turn.tool_calls_json,
+                    turn.tool_results_json,
+                    turn.usage_json,
+                    turn.model,
+                    turn.provider,
+                    turn.prompt_version,
+                    turn.ms,
+                ],
+            )
+            .map_err(internal)?;
+        Ok(())
+    }
+
+    /// A thread's turns in thread order, which is `idx`: the question's slot
+    /// and its answer's one above it, allocated between the pair's neighbours
+    /// (`agent_turns_shift`) and never from a position on screen. Write order
+    /// (`id`) is not thread order — a Retry on an older exchange appends its
+    /// rows after its own successors' — so a list read by `id` would show the
+    /// retried question last and pair it with somebody else's answer.
+    pub fn agent_turns_list(&self, thread_id: &str) -> Result<Vec<AgentTurn>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, thread_id, idx, role, content, tool_calls_json,
+                        tool_results_json, usage_json, model, provider,
+                        prompt_version, ms, created_at
+                 FROM agent_turns WHERE thread_id = ?1 ORDER BY idx, id",
+            )
+            .map_err(internal)?;
+        let rows = stmt
+            .query_map([thread_id], |r| {
+                Ok(AgentTurn {
+                    id: r.get(0)?,
+                    thread_id: r.get(1)?,
+                    idx: r.get(2)?,
+                    role: r.get(3)?,
+                    content: r.get(4)?,
+                    tool_calls_json: r.get(5)?,
+                    tool_results_json: r.get(6)?,
+                    usage_json: r.get(7)?,
+                    model: r.get(8)?,
+                    provider: r.get(9)?,
+                    prompt_version: r.get(10)?,
+                    ms: r.get(11)?,
+                    created_at: r.get(12)?,
+                })
+            })
+            .map_err(internal)?;
+        Ok(collect_ok(rows, "agent turn").0)
+    }
+
+    /// upsert: re-running a question's post step (a toggled assumption chip)
+    /// replaces the answer rather than stacking a second row on the turn
+    pub fn agent_answer_put(&self, answer: &AgentAnswer) -> Result<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO agent_answers
+                     (turn_id, sql, row_count, assumptions_json, sanity_json, status)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(turn_id) DO UPDATE SET
+                     sql = excluded.sql,
+                     row_count = excluded.row_count,
+                     assumptions_json = excluded.assumptions_json,
+                     sanity_json = excluded.sanity_json,
+                     status = excluded.status",
+                rusqlite::params![
+                    answer.turn_id,
+                    answer.sql,
+                    answer.row_count,
+                    answer.assumptions_json,
+                    answer.sanity_json,
+                    answer.status,
+                ],
+            )
+            .map_err(internal)?;
+        Ok(())
+    }
+
+    /// Every answer recorded under a thread, in the turn order the trace reads.
+    /// Without this the assumption chips, sanity line and row count a reopened
+    /// thread once showed would be unrecoverable: `agent_turns` carries the
+    /// conversation, not the verdict.
+    pub fn agent_answers_list(&self, thread_id: &str) -> Result<Vec<AgentAnswer>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT a.turn_id, a.sql, a.row_count, a.assumptions_json,
+                        a.sanity_json, a.status
+                 FROM agent_answers a
+                 JOIN agent_turns t ON t.id = a.turn_id
+                 WHERE t.thread_id = ?1
+                 ORDER BY t.idx, t.id",
+            )
+            .map_err(internal)?;
+        let rows = stmt
+            .query_map([thread_id], |r| {
+                Ok(AgentAnswer {
+                    turn_id: r.get(0)?,
+                    sql: r.get(1)?,
+                    row_count: r.get(2)?,
+                    assumptions_json: r.get(3)?,
+                    sanity_json: r.get(4)?,
+                    status: r.get(5)?,
+                })
+            })
+            .map_err(internal)?;
+        Ok(collect_ok(rows, "agent answer").0)
+    }
+}
+
+/// One thing the user told Ask about this database (A2). `kind` is checked in
+/// SQL, so an unknown kind is a write error and never a row anyone reads.
+/// `target` is the object a hint or a synonym hangs on (`table` or
+/// `table.column`) and NULL for a definition, whose term lives in its own
+/// `term = meaning` text: a definition has no object to hang on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgeRow {
+    pub id: String,
+    pub profile_id: String,
+    pub kind: String,
+    #[serde(default)]
+    pub target: Option<String>,
+    pub text: String,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
+}
+
+/// One question this connection already answered and the SQL that answered it,
+/// for the `EARLIER ANSWERS ON THIS DATABASE:` block (A2 item 4).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentHistoryPair {
+    pub question: String,
+    pub sql: String,
+    pub created_at: String,
+}
+
+/// User knowledge, per connection. Local only, like every other appdb table:
+/// nothing here leaves the machine except into the model's own user message.
+impl AppDb {
+    /// Every row for a connection, oldest first: the prompt's KNOWLEDGE block
+    /// is capped and drops the oldest first, so age is the order it wants.
+    pub fn agent_knowledge_list(&self, profile_id: &str) -> Result<Vec<KnowledgeRow>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, profile_id, kind, target, text, created_at, updated_at
+                 FROM agent_knowledge WHERE profile_id = ?1
+                 ORDER BY created_at, rowid",
+            )
+            .map_err(internal)?;
+        let rows = stmt
+            .query_map([profile_id], |r| {
+                Ok(KnowledgeRow {
+                    id: r.get(0)?,
+                    profile_id: r.get(1)?,
+                    kind: r.get(2)?,
+                    target: r.get(3)?,
+                    text: r.get(4)?,
+                    created_at: r.get(5)?,
+                    updated_at: r.get(6)?,
+                })
+            })
+            .map_err(internal)?;
+        Ok(collect_ok(rows, "knowledge row").0)
+    }
+
+    /// Upsert by id. `created_at` stays what the row was born with; editing a
+    /// hint in place is an edit, not a new fact.
+    pub fn agent_knowledge_upsert(&self, row: &KnowledgeRow) -> Result<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO agent_knowledge (id, profile_id, kind, target, text)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(id) DO UPDATE SET kind = excluded.kind,
+                                               target = excluded.target,
+                                               text = excluded.text,
+                                               updated_at = datetime('now')",
+                rusqlite::params![row.id, row.profile_id, row.kind, row.target, row.text],
+            )
+            .map_err(internal)?;
+        Ok(())
+    }
+
+    pub fn agent_knowledge_delete(&self, id: &str) -> Result<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM agent_knowledge WHERE id = ?1", [id])
+            .map_err(internal)?;
+        Ok(())
+    }
+
+    /// The connection's answered questions and their SQL, newest first. An
+    /// exchange is a pair of turns, the question at `idx` and its answer one
+    /// above it (see `agent_turns_list`), so the question is joined by that
+    /// neighbour and not by write order, which a retry does not follow. Only
+    /// answered turns that landed SQL qualify: a failed run has nothing to
+    /// show a later question.
+    pub fn agent_history_pairs(
+        &self,
+        profile_id: &str,
+        limit: i64,
+    ) -> Result<Vec<AgentHistoryPair>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT q.content, a.sql, t.created_at
+                 FROM agent_answers a
+                 JOIN agent_turns t ON t.id = a.turn_id
+                 JOIN agent_threads th ON th.id = t.thread_id
+                 JOIN agent_turns q ON q.thread_id = t.thread_id
+                                   AND q.idx = t.idx - 1
+                                   AND q.role = 'user'
+                 WHERE th.profile_id = ?1 AND a.status = 'answered' AND a.sql IS NOT NULL
+                 ORDER BY t.created_at DESC, t.id DESC
+                 LIMIT ?2",
+            )
+            .map_err(internal)?;
+        let rows = stmt
+            .query_map(rusqlite::params![profile_id, limit], |r| {
+                Ok(AgentHistoryPair {
+                    question: r.get(0)?,
+                    sql: r.get(1)?,
+                    created_at: r.get(2)?,
+                })
+            })
+            .map_err(internal)?;
+        Ok(collect_ok(rows, "agent history pair").0)
+    }
+}
+
+/// One canvas (A3). `doc_json` is the ordered block list the canvas store
+/// wrote, handed back verbatim: appdb stores the document, the frontend owns
+/// its shape. The timestamps are SQLite's on every write, so an upsert may
+/// send them empty (`serde(default)`) and never backdate a row.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CanvasRow {
+    pub id: String,
+    pub profile_id: String,
+    pub title: String,
+    pub doc_json: String,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
+}
+
+/// Canvases (A3). Local only, like every other agent artifact. A canvas
+/// outlives its tab: closing the tab is not deleting the document, so
+/// `canvas_delete` is the only thing that drops one.
+impl AppDb {
+    /// this connection's canvases, most recently written first; a corrupt row
+    /// costs one canvas, never the list
+    pub fn canvas_list(&self, profile_id: &str) -> Result<Vec<CanvasRow>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, profile_id, title, doc_json, created_at, updated_at
+                 FROM canvases
+                 WHERE profile_id = ?1 ORDER BY updated_at DESC, rowid DESC",
+            )
+            .map_err(internal)?;
+        let rows = stmt
+            .query_map([profile_id], |r| {
+                Ok(CanvasRow {
+                    id: r.get(0)?,
+                    profile_id: r.get(1)?,
+                    title: r.get(2)?,
+                    doc_json: r.get(3)?,
+                    created_at: r.get(4)?,
+                    updated_at: r.get(5)?,
+                })
+            })
+            .map_err(internal)?;
+        Ok(collect_ok(rows, "canvas").0)
+    }
+
+    /// insert or replace one canvas. `created_at` survives an update (the
+    /// document is edited, not re-made) and `updated_at` is stamped here, so
+    /// the list's own order can never be written by a caller.
+    pub fn canvas_upsert(&self, c: &CanvasRow) -> Result<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO canvases (id, profile_id, title, doc_json)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(id) DO UPDATE SET
+                     profile_id = excluded.profile_id,
+                     title      = excluded.title,
+                     doc_json   = excluded.doc_json,
+                     updated_at = datetime('now')",
+                rusqlite::params![c.id, c.profile_id, c.title, c.doc_json],
+            )
+            .map_err(internal)?;
+        Ok(())
+    }
+
+    /// drop the document and unbind any tab row still pointing at it, so a
+    /// restart never restores a tab whose canvas is gone
+    pub fn canvas_delete(&self, id: &str) -> Result<()> {
+        let mut conn = self.0.lock().unwrap();
+        let tx = conn.transaction().map_err(internal)?;
+        tx.execute("DELETE FROM tabs WHERE canvas_id = ?1", [id])
+            .map_err(internal)?;
+        tx.execute("DELETE FROM canvases WHERE id = ?1", [id])
+            .map_err(internal)?;
+        tx.commit().map_err(internal)?;
         Ok(())
     }
 }
@@ -1070,6 +1838,7 @@ mod tests {
             position: 0,
             saved_id: None,
             profile_id: None,
+            canvas_id: None,
         }])
         .unwrap();
         db.history_add("p", "select 1", 1.0, 1, HistoryStatus::Ok).unwrap();
@@ -1301,6 +2070,603 @@ mod tests {
         db.buffer_snapshots_clear("t1").unwrap();
         assert!(db.buffer_snapshots_list("t1").unwrap().0.is_empty());
         assert_eq!(db.buffer_snapshots_list("t2").unwrap().0.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn agent_thread_turns_answers_roundtrip_and_cascade() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+
+        let thread = db.agent_thread_create("th-1", "p1", "Top films").unwrap();
+        assert_eq!(thread.profile_id, "p1");
+        db.agent_thread_create("th-2", "p2", "Other connection").unwrap();
+        let mine = db.agent_threads_list("p1").unwrap();
+        assert_eq!(mine.len(), 1, "threads are scoped to their connection");
+
+        let turn = AgentTurnInput {
+            thread_id: "th-1".into(),
+            idx: 0,
+            role: "assistant".into(),
+            content: "SELECT 1".into(),
+            tool_calls_json: Some("[]".into()),
+            tool_results_json: None,
+            usage_json: Some(r#"{"input":10,"output":2}"#.into()),
+            model: "claude-haiku-4-5".into(),
+            provider: "claude-code".into(),
+            prompt_version: "v1".into(),
+            ms: 12.5,
+        };
+        let turn_id = db.agent_turn_add(&turn).unwrap();
+        let turns = db.agent_turns_list("th-1").unwrap();
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].usage_json.as_deref(), Some(r#"{"input":10,"output":2}"#));
+
+        let answer = AgentAnswer {
+            turn_id,
+            sql: Some("SELECT 1".into()),
+            row_count: Some(1),
+            assumptions_json: Some("[]".into()),
+            sanity_json: None,
+            status: "answered".into(),
+        };
+        db.agent_answer_put(&answer).unwrap();
+        // second put replaces, never stacks (a toggled assumption chip re-runs)
+        db.agent_answer_put(&AgentAnswer { row_count: Some(2), ..answer }).unwrap();
+        let n: i64 = {
+            let conn = db.0.lock().unwrap();
+            conn.query_row("SELECT COUNT(*) FROM agent_answers", [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(n, 1);
+
+        // a reopened thread reads its verdict back, scoped to that thread
+        let read_back = db.agent_answers_list("th-1").unwrap();
+        assert_eq!(read_back.len(), 1);
+        assert_eq!(read_back[0].turn_id, turn_id);
+        assert_eq!(read_back[0].row_count, Some(2));
+        assert!(db.agent_answers_list("th-2").unwrap().is_empty());
+
+        db.agent_thread_delete("th-1").unwrap();
+        assert!(db.agent_threads_list("p1").unwrap().is_empty());
+        assert!(db.agent_turns_list("th-1").unwrap().is_empty());
+        let orphans: i64 = {
+            let conn = db.0.lock().unwrap();
+            conn.query_row("SELECT COUNT(*) FROM agent_answers", [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(orphans, 0, "deleting a thread leaves no orphan answer rows");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn agent_thread_truncate_cuts_turns_answers_and_remints_the_session() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+
+        let thread = db.agent_thread_create("th-1", "p1", "Jump back").unwrap();
+        // NULL reads as the thread id: no backfill runs over existing threads
+        assert_eq!(thread.session_key, "th-1");
+        db.agent_thread_create("th-2", "p1", "Untouched").unwrap();
+
+        let ids: Vec<i64> = (0..6).map(|idx| answered(&db, "th-1", idx)).collect();
+        let other = answered(&db, "th-2", 0);
+
+        // the cut names the four rows the last two exchanges own, and one row
+        // of another thread, which it must not touch
+        let mut cut = ids[2..].to_vec();
+        cut.push(other);
+        db.agent_thread_truncate("th-1", &cut).unwrap();
+        let kept = db.agent_turns_list("th-1").unwrap();
+        assert_eq!(kept.len(), 2, "the named turns are gone");
+        assert_eq!(kept.iter().map(|t| t.idx).collect::<Vec<_>>(), vec![0, 1]);
+        let answers = db.agent_answers_list("th-1").unwrap();
+        assert_eq!(answers.len(), 2, "the kept turns keep their answers");
+        // the cut is scoped to its thread, answer rows included
+        assert_eq!(db.agent_turns_list("th-2").unwrap().len(), 1);
+        assert_eq!(db.agent_answers_list("th-2").unwrap().len(), 1);
+        let orphans: i64 = {
+            let conn = db.0.lock().unwrap();
+            conn.query_row(
+                "SELECT COUNT(*) FROM agent_answers a
+                 LEFT JOIN agent_turns t ON t.id = a.turn_id WHERE t.id IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(orphans, 0, "a cut leaves no orphan answer rows");
+
+        db.agent_thread_session_set("th-1", "fresh-uuid").unwrap();
+        let listed = db.agent_threads_list("p1").unwrap();
+        let mine = listed.iter().find(|t| t.id == "th-1").unwrap();
+        assert_eq!(mine.session_key, "fresh-uuid");
+        // the re-mint is per thread; the other thread still resumes its own id
+        let other = listed.iter().find(|t| t.id == "th-2").unwrap();
+        assert_eq!(other.session_key, "th-2");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Write order is not thread order: a Retry on an older exchange that had
+    /// failed before the store persisted it writes its rows LAST, so the
+    /// newest ids belong to the second question of three. A cut that read a
+    /// boundary out of `id` (or a row count) would keep the exchange it was
+    /// asked to delete and delete the one before it.
+    #[test]
+    fn agent_thread_truncate_and_list_survive_rows_written_out_of_order() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+        db.agent_thread_create("th-late", "p1", "A late retry").unwrap();
+
+        let q1 = [answered(&db, "th-late", 0), answered(&db, "th-late", 1)];
+        // the second question's provider failed: no rows at all
+        let q3 = [answered(&db, "th-late", 4), answered(&db, "th-late", 5)];
+        // …then the user retried it, and it landed after its own successor
+        let q2 = [answered(&db, "th-late", 2), answered(&db, "th-late", 3)];
+        assert!(q2[0] > q3[1], "the retry owns the newest ids");
+
+        // a reload reads the three exchanges in the order they are on screen
+        let listed = db.agent_turns_list("th-late").unwrap();
+        assert_eq!(
+            listed.iter().map(|t| t.id).collect::<Vec<_>>(),
+            vec![q1[0], q1[1], q2[0], q2[1], q3[0], q3[1]],
+        );
+
+        // jumping back to the third question cuts THAT exchange, not the last
+        // two rows written
+        db.agent_thread_truncate("th-late", &q3).unwrap();
+
+        let kept = db.agent_turns_list("th-late").unwrap();
+        assert_eq!(
+            kept.iter().map(|t| t.id).collect::<Vec<_>>(),
+            vec![q1[0], q1[1], q2[0], q2[1]],
+            "the retried exchange survives its successor's cut"
+        );
+        assert_eq!(db.agent_answers_list("th-late").unwrap().len(), 4);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A pair is placed between its neighbours, so an exchange whose retry
+    /// lands between two that left it no room shifts the tail up first. The
+    /// rows keep their ids and their answers: only the slot moves.
+    #[test]
+    fn agent_turns_shift_frees_a_slot_and_leaves_other_threads_alone() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+        db.agent_thread_create("th-shift", "p1", "A retry").unwrap();
+        db.agent_thread_create("th-other", "p1", "Untouched").unwrap();
+
+        // the first exchange at 0,1 and the third at 4,5: the second failed
+        // before it persisted, and its Retry needs 4,5 for itself
+        let ids: Vec<i64> = [0i64, 1, 4, 5]
+            .into_iter()
+            .map(|idx| answered(&db, "th-shift", idx))
+            .collect();
+        let other = answered(&db, "th-other", 4);
+
+        db.agent_turns_shift("th-shift", 4, 2).unwrap();
+
+        let rows = db.agent_turns_list("th-shift").unwrap();
+        assert_eq!(
+            rows.iter().map(|t| t.idx).collect::<Vec<_>>(),
+            vec![0, 1, 6, 7],
+            "the tail moves up, the rows below it stand"
+        );
+        assert_eq!(
+            rows.iter().map(|t| t.id).collect::<Vec<_>>(),
+            ids,
+            "the same rows in the same order: a shift is not a rewrite"
+        );
+        assert_eq!(db.agent_answers_list("th-shift").unwrap().len(), 4);
+        // scoped to its thread, like every other write here
+        let untouched = db.agent_turns_list("th-other").unwrap();
+        assert_eq!(untouched.len(), 1);
+        assert_eq!(untouched[0].id, other);
+        assert_eq!(untouched[0].idx, 4);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// one turn with a verdict on it; returns the turn's row id
+    fn answered(db: &AppDb, thread_id: &str, idx: i64) -> i64 {
+        let id = db.agent_turn_add(&turn(thread_id, idx)).unwrap();
+        db.agent_answer_put(&AgentAnswer {
+            turn_id: id,
+            sql: Some("SELECT 1".into()),
+            row_count: Some(1),
+            assumptions_json: None,
+            sanity_json: None,
+            status: "answered".into(),
+        })
+        .unwrap();
+        id
+    }
+
+    #[test]
+    fn agent_turn_update_rewrites_what_the_rerun_said() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+        db.agent_thread_create("th-up", "p1", "Restart").unwrap();
+        let id = db.agent_turn_add(&turn("th-up", 1)).unwrap();
+
+        db.agent_turn_update(&AgentTurnPatch {
+            id,
+            content: "the second answer".into(),
+            tool_calls_json: Some("[]".into()),
+            tool_results_json: Some("[]".into()),
+            usage_json: Some("{\"input\":9}".into()),
+            model: "claude-sonnet-5".into(),
+            provider: "claude-code".into(),
+            prompt_version: "v2".into(),
+            ms: 42.0,
+        })
+        .unwrap();
+
+        let rows = db.agent_turns_list("th-up").unwrap();
+        assert_eq!(rows.len(), 1, "a rewrite is not a second turn");
+        assert_eq!(rows[0].content, "the second answer");
+        assert_eq!(rows[0].usage_json.as_deref(), Some("{\"input\":9}"));
+        assert_eq!(rows[0].model, "claude-sonnet-5");
+        assert_eq!(rows[0].prompt_version, "v2");
+        assert_eq!(rows[0].ms, 42.0);
+        // the row keeps its place in the thread
+        assert_eq!(rows[0].idx, 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn turn(thread_id: &str, idx: i64) -> AgentTurnInput {
+        AgentTurnInput {
+            thread_id: thread_id.into(),
+            idx,
+            role: if idx % 2 == 0 { "user" } else { "assistant" }.into(),
+            content: format!("turn {idx}"),
+            tool_calls_json: None,
+            tool_results_json: None,
+            usage_json: None,
+            model: "claude-haiku-4-5".into(),
+            provider: "claude-code".into(),
+            prompt_version: "v1".into(),
+            ms: 1.0,
+        }
+    }
+
+    fn knowledge(
+        id: &str,
+        profile_id: &str,
+        kind: &str,
+        target: Option<&str>,
+        text: &str,
+    ) -> KnowledgeRow {
+        KnowledgeRow {
+            id: id.into(),
+            profile_id: profile_id.into(),
+            kind: kind.into(),
+            target: target.map(str::to_string),
+            text: text.into(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn knowledge_rows_are_scoped_upserted_in_place_and_deleted() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+
+        db.agent_knowledge_upsert(&knowledge("k1", "p1", "hint", Some("order_v2"), "Checkout attempts"))
+            .unwrap();
+        db.agent_knowledge_upsert(&knowledge("k2", "p1", "synonym", Some("order_v2"), "purchases"))
+            .unwrap();
+        db.agent_knowledge_upsert(&knowledge("k3", "p1", "definition", None, "AOV = revenue over orders"))
+            .unwrap();
+        db.agent_knowledge_upsert(&knowledge("k4", "p2", "hint", Some("order_v2"), "Another connection"))
+            .unwrap();
+
+        let rows = db.agent_knowledge_list("p1").unwrap();
+        assert_eq!(rows.len(), 3, "knowledge belongs to its connection");
+        assert_eq!(
+            rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            vec!["k1", "k2", "k3"],
+            "oldest first: the prompt's block drops the oldest first"
+        );
+        assert_eq!(rows[2].target, None, "a definition hangs on no object");
+
+        // editing a hint in place is an edit, not a second fact
+        let born = rows[0].created_at.clone();
+        db.agent_knowledge_upsert(&knowledge("k1", "p1", "hint", Some("order_v2"), "Failed ones stay"))
+            .unwrap();
+        let rows = db.agent_knowledge_list("p1").unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].text, "Failed ones stay");
+        assert_eq!(rows[0].created_at, born, "an edit keeps the row's age, and its place");
+
+        db.agent_knowledge_delete("k2").unwrap();
+        let rows = db.agent_knowledge_list("p1").unwrap();
+        assert_eq!(rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), vec!["k1", "k3"]);
+        assert_eq!(db.agent_knowledge_list("p2").unwrap().len(), 1, "a delete is scoped to its row");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn knowledge_kind_is_checked_in_sql() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+        assert!(
+            db.agent_knowledge_upsert(&knowledge("k1", "p1", "note", None, "x")).is_err(),
+            "an unknown kind is a write error, never a row someone reads"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The db this migration meets in the wild: everything the previous
+    /// version wrote, none of what this one adds. Built by taking a current db
+    /// back one version rather than by hand, so the test says nothing about
+    /// which number this migration lands on (the merge renumbers it).
+    #[test]
+    fn migration_adds_the_knowledge_table_and_the_saved_columns() {
+        let dir = tmp_dir();
+        {
+            let db = AppDb::open(&dir).unwrap();
+            db.saved_upsert(&SavedQuery {
+                id: "s1".into(),
+                name: "Unpaid orders".into(),
+                sql: "SELECT 1".into(),
+                created_at: String::new(),
+                profile_id: Some("p1".into()),
+                question: Some("which orders are unpaid?".into()),
+                expect_json: Some("{\"kind\":\"nonempty\"}".into()),
+                last_check_json: None,
+            })
+            .unwrap();
+        }
+        {
+            let conn = Connection::open(dir.join("qwry.sqlite")).unwrap();
+            conn.execute_batch(
+                "DROP TABLE agent_knowledge;
+                 ALTER TABLE saved_queries DROP COLUMN question;
+                 ALTER TABLE saved_queries DROP COLUMN expect_json;
+                 ALTER TABLE saved_queries DROP COLUMN last_check_json;",
+            )
+            .unwrap();
+            conn.pragma_update(None, "user_version", V_KNOWLEDGE - 1).unwrap();
+        }
+
+        let db = AppDb::open(&dir).unwrap();
+        assert_eq!(user_version(&db), SCHEMA_VERSION);
+
+        let (saved, skipped) = db.saved_list().unwrap();
+        assert_eq!(skipped, 0);
+        assert_eq!(saved.len(), 1, "the bookmark survives the columns it never had");
+        assert_eq!(saved[0].name, "Unpaid orders");
+        assert_eq!(saved[0].question, None, "a bookmark from before is no quick-ask");
+        assert_eq!(saved[0].expect_json, None);
+
+        db.agent_knowledge_upsert(&knowledge("k1", "p1", "hint", Some("order_v2"), "Attempts"))
+            .unwrap();
+        assert_eq!(db.agent_knowledge_list("p1").unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn saved_query_keeps_its_question_and_check_across_a_reload() {
+        let dir = tmp_dir();
+        {
+            let db = AppDb::open(&dir).unwrap();
+            db.saved_upsert(&SavedQuery {
+                id: "s1".into(),
+                name: "Unpaid orders older than a week".into(),
+                sql: "SELECT 1".into(),
+                created_at: String::new(),
+                profile_id: Some("p1".into()),
+                question: Some("which orders are still unpaid after a week?".into()),
+                expect_json: Some("{\"kind\":\"rows\",\"op\":\"eq\",\"n\":0}".into()),
+                last_check_json: Some("{\"ok\":false,\"rows\":12,\"scalar\":null,\"at\":\"t\"}".into()),
+            })
+            .unwrap();
+        }
+        let db = AppDb::open(&dir).unwrap();
+        let (saved, _) = db.saved_list().unwrap();
+        assert_eq!(saved[0].question.as_deref(), Some("which orders are still unpaid after a week?"));
+        assert_eq!(saved[0].expect_json.as_deref(), Some("{\"kind\":\"rows\",\"op\":\"eq\",\"n\":0}"));
+        assert!(saved[0].last_check_json.is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// One exchange: the question at `idx` and its answer one above it, which
+    /// is the pairing `agent_history_pairs` joins on.
+    fn exchange(
+        db: &AppDb,
+        thread_id: &str,
+        idx: i64,
+        question: &str,
+        sql: Option<&str>,
+        status: &str,
+    ) {
+        db.agent_turn_add(&AgentTurnInput { content: question.into(), ..turn(thread_id, idx) })
+            .unwrap();
+        let id = db.agent_turn_add(&turn(thread_id, idx + 1)).unwrap();
+        db.agent_answer_put(&AgentAnswer {
+            turn_id: id,
+            sql: sql.map(str::to_string),
+            row_count: Some(1),
+            assumptions_json: None,
+            sanity_json: None,
+            status: status.into(),
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn agent_history_pairs_newest_first_limited_and_scoped() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+        db.agent_thread_create("th-1", "p1", "Revenue").unwrap();
+        db.agent_thread_create("th-2", "p1", "More revenue").unwrap();
+        db.agent_thread_create("th-3", "p2", "Another connection").unwrap();
+
+        exchange(&db, "th-1", 0, "how many orders last month?", Some("SELECT 1"), "answered");
+        exchange(&db, "th-1", 2, "and the failed ones?", None, "failed");
+        exchange(&db, "th-1", 4, "what did they spend?", Some("SELECT 2"), "answered");
+        // a turn cap left SQL on record but never answered with it
+        exchange(&db, "th-2", 0, "who bought twice?", Some("SELECT 3"), "turn_cap");
+        exchange(&db, "th-2", 2, "how many signed up?", Some("SELECT 4"), "answered");
+        exchange(&db, "th-3", 0, "not this connection", Some("SELECT 5"), "answered");
+
+        let pairs = db.agent_history_pairs("p1", 10).unwrap();
+        assert_eq!(
+            pairs.iter().map(|p| p.question.as_str()).collect::<Vec<_>>(),
+            vec!["how many signed up?", "what did they spend?", "how many orders last month?"],
+            "newest first; a failed run and a capped one have nothing to show"
+        );
+        assert_eq!(pairs[0].sql, "SELECT 4", "the SQL is the answer's, not the question's");
+        assert!(!pairs[0].created_at.is_empty());
+
+        let three = db.agent_history_pairs("p1", 1).unwrap();
+        assert_eq!(three.len(), 1, "the limit is the caller's");
+        assert_eq!(three[0].question, "how many signed up?");
+
+        let other = db.agent_history_pairs("p2", 10).unwrap();
+        assert_eq!(other.len(), 1, "history belongs to its connection");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- canvases (A3) ----------------------------------------------------
+
+    fn canvas(id: &str, profile: &str, doc: &str) -> CanvasRow {
+        CanvasRow {
+            id: id.into(),
+            profile_id: profile.into(),
+            title: "Canvas".into(),
+            doc_json: doc.into(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn fresh_db_holds_canvases_and_canvas_tabs() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+        db.canvas_upsert(&canvas("c1", "p1", r#"{"blocks":[]}"#)).unwrap();
+        db.canvas_upsert(&canvas("c2", "p2", r#"{"blocks":[]}"#)).unwrap();
+
+        let mine = db.canvas_list("p1").unwrap();
+        assert_eq!(mine.len(), 1, "canvases are scoped to their connection");
+        assert_eq!(mine[0].id, "c1");
+        assert!(!mine[0].created_at.is_empty(), "SQLite stamps the timestamps");
+
+        // a canvas tab persists through the tabs table's one new column
+        db.tabs_save(&[TabRow {
+            id: "t-canvas".into(),
+            name: "Canvas".into(),
+            sql: String::new(),
+            position: 0,
+            saved_id: None,
+            profile_id: Some("p1".into()),
+            canvas_id: Some("c1".into()),
+        }])
+        .unwrap();
+        let tabs = db.tabs_list().unwrap();
+        assert_eq!(tabs[0].canvas_id.as_deref(), Some("c1"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn canvas_upsert_replaces_the_document_and_keeps_created_at() {
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+        db.canvas_upsert(&canvas("c1", "p1", r#"{"blocks":[1]}"#)).unwrap();
+        let first = db.canvas_list("p1").unwrap().remove(0);
+
+        let mut edited = canvas("c1", "p1", r#"{"blocks":[1,2]}"#);
+        edited.title = "Finance".into();
+        // a caller's timestamps are never written: the row's own are the truth
+        edited.created_at = "1999-01-01".into();
+        edited.updated_at = "1999-01-01".into();
+        db.canvas_upsert(&edited).unwrap();
+
+        let rows = db.canvas_list("p1").unwrap();
+        assert_eq!(rows.len(), 1, "an upsert is not a second canvas");
+        assert_eq!(rows[0].doc_json, r#"{"blocks":[1,2]}"#);
+        assert_eq!(rows[0].title, "Finance");
+        assert_eq!(rows[0].created_at, first.created_at, "the document is edited, not re-made");
+        assert_ne!(rows[0].created_at, "1999-01-01");
+
+        db.canvas_delete("c1").unwrap();
+        assert!(db.canvas_list("p1").unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn deleting_a_canvas_unbinds_its_tab() {
+        // otherwise a restart restores a tab whose document is gone
+        let dir = tmp_dir();
+        let db = AppDb::open(&dir).unwrap();
+        db.canvas_upsert(&canvas("c1", "p1", "{}")).unwrap();
+        db.tabs_save(&[
+            TabRow {
+                id: "t-q".into(),
+                name: "q".into(),
+                sql: "select 1".into(),
+                position: 0,
+                saved_id: None,
+                profile_id: Some("p1".into()),
+                canvas_id: None,
+            },
+            TabRow {
+                id: "t-c".into(),
+                name: "Canvas".into(),
+                sql: String::new(),
+                position: 1,
+                saved_id: None,
+                profile_id: Some("p1".into()),
+                canvas_id: Some("c1".into()),
+            },
+        ])
+        .unwrap();
+
+        db.canvas_delete("c1").unwrap();
+        let tabs = db.tabs_list().unwrap();
+        assert_eq!(tabs.len(), 1, "the canvas tab goes with its document");
+        assert_eq!(tabs[0].id, "t-q", "the query tab is untouched");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn upgrade_from_the_previous_version_adds_canvases_and_keeps_tabs() {
+        // the db as the last shipped build left it: every earlier migration
+        // applied, the canvas one not. Written by rolling a real appdb back
+        // one version rather than by hand, so the arms stay the source of
+        // truth and no test carries the version number as a literal.
+        let dir = tmp_dir();
+        {
+            let db = AppDb::open(&dir).unwrap();
+            db.tabs_save(&[TabRow {
+                id: "t1".into(),
+                name: "orders".into(),
+                sql: "select 1".into(),
+                position: 0,
+                saved_id: None,
+                profile_id: Some("p1".into()),
+                canvas_id: None,
+            }])
+            .unwrap();
+            let conn = db.0.lock().unwrap();
+            conn.execute_batch("DROP TABLE canvases; ALTER TABLE tabs DROP COLUMN canvas_id;")
+                .unwrap();
+            conn.pragma_update(None, "user_version", V_CANVASES - 1).unwrap();
+        }
+
+        let db = AppDb::open(&dir).unwrap();
+        assert_eq!(user_version(&db), SCHEMA_VERSION);
+        let tabs = db.tabs_list().unwrap();
+        assert_eq!(tabs.len(), 1, "the upgrade keeps every tab");
+        assert_eq!(tabs[0].sql, "select 1");
+        assert_eq!(tabs[0].canvas_id, None, "an existing tab is a query tab");
+
+        db.canvas_upsert(&canvas("c1", "p1", "{}")).unwrap();
+        assert_eq!(db.canvas_list("p1").unwrap().len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

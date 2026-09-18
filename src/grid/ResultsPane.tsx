@@ -3,20 +3,25 @@ import { overlayOpen } from "../app/overlay/escStack";
 import { useGridStats } from "../stores/gridStats";
 import { useGridFilter } from "../stores/gridFilter";
 import { RotateCw } from "lucide-react";
-import { skey, useConnections } from "../stores/connections";
+import { endTabTx, skey, useConnections } from "../stores/connections";
 import { useTabs } from "../stores/tabs";
-import * as ipc from "../ipc/commands";
 import { ListFilter, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useEdits } from "../stores/edits";
 import { useFind } from "../stores/find";
+import { useRefresh } from "../stores/refresh";
 import { useResults } from "../stores/results";
 import { EditPreview } from "./EditPreview";
 import { FindBar } from "./FindBar";
 import { lastErrorKind } from "./flashReason";
 import { Grid } from "./Grid";
+import { GridSkeleton } from "./GridSkeleton";
 import { Kbd } from "../design/Kbd";
+import { msText } from "../lib/duration";
 import "./grid.css";
+
+/** how long a freshly refreshed timing says so before it is just a number */
+const JUST_NOW_MS = 2_000;
 
 export function ResultsPane({ browser = false }: { browser?: boolean }) {
   const statements = useResults((s) => s.statements);
@@ -26,16 +31,33 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
   const running = useResults((s) => s.running);
   const cancelling = useResults((s) => s.cancelling);
   const connecting = useResults((s) => s.connecting);
+  const refreshing = useResults((s) => s.refreshing);
   const totalMs = useResults((s) => s.totalMs);
   const globalError = useResults((s) => s.globalError);
   const notices = useResults((s) => s.notices);
   const findOpen = useFind((s) => s.open);
+  // the main body's cycle: the store says WHEN (the sweep's front reached us),
+  // this pane owns the skeleton and the fades (E2 R3)
+  const cycling = useRefresh((s) => !!s.cycling.main);
+  const skel = useSkeleton(cycling);
+  // the strip follows the PANE, not the fetch. A refetch can land while the
+  // skeleton is still serving its minimum (R3), and a landing time printed
+  // under bars reports a result nobody has seen yet (LESSONS 13).
+  const busy = running || cycling;
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // the hard tier's dead connection belongs to a PROFILE: a tab reading
+  // another one still has a live database under it and says nothing
+  const originPid = useResults((s) => s.executedProfileId);
+  const lost = useRefresh((s) => !!s.dead && s.dead.profileId === originPid);
+  // what a refresh declined to do on THIS tab (R4). Read here rather than in a
+  // child: it decides what the whole strip says, not one slot in it.
+  const note = useRefresh((s) => (s.note?.tabId === activeTab ? s.note.text : null));
 
   // a late error (mid-stream connection drop) must NOT wipe already-streamed
   // rows off the screen: full error pane only when there's nothing to show
   if (globalError && statements.length === 0)
     return (
-      <div className="grid-error">
+      <div className="grid-error" data-refresh-surface="main">
         <div className="ge-title">
           {globalError.code ? `Error ${globalError.code}` : "Error"}
         </div>
@@ -45,7 +67,7 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
 
   if (statements.length === 0)
     return (
-      <div className="grid-msg">
+      <div className="grid-msg" data-refresh-surface="main">
         {running ? (
           "Running…"
         ) : connecting ? (
@@ -64,7 +86,10 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
   const stmt = statements.find((s) => s.index === active) ?? statements[0];
 
   return (
-    <div className="results-pane-inner">
+    <div
+      className={`results-pane-inner${cycling ? " cycling" : ""}`}
+      data-refresh-surface="main"
+    >
       <OriginBanner />
       {globalError && (
         <div className="ge-banner" title={globalError.message}>
@@ -90,7 +115,7 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
 
       {findOpen && stmt.columns.length > 0 && !stmt.error && <FindBar stmt={stmt} />}
 
-      <div className="stmt-body">
+      <div className="stmt-body" ref={bodyRef}>
         {stmt.error ? (
           <div className="grid-error">
             <div className="ge-title">
@@ -112,8 +137,16 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
           </>
         ) : (
           <div className="grid-msg">
-            {stmt.done ? `OK · ${stmt.affected ?? 0} rows affected` : "Running…"}
+            {stmt.done
+              ? `OK · ${stmt.affected ?? 0} row${stmt.affected === 1 ? "" : "s"} affected`
+              : "Running…"}
           </div>
+        )}
+        {/* only a GRID has rows to stand in for. An error pane, or an
+            `OK · rows affected` line, has no geometry to hold, and a panel
+            laid over it would be the blank R3 forbids rather than a skeleton */}
+        {skel && !stmt.error && stmt.columns.length > 0 && (
+          <GridSkeleton host={bodyRef} leaving={!cycling} />
         )}
       </div>
 
@@ -129,34 +162,132 @@ export function ResultsPane({ browser = false }: { browser?: boolean }) {
           )}
         </div>
       )}
+      {/* one strip, one idea (DESIGN rule 12), and its height is fixed at 24px
+          so a state SWAPS the content rather than adding a second line. With
+          the connection down what the strip has to say is the connection, not
+          the row count of a page still on screen and still true; with a note
+          up it is the note, which already names the count and the chords the
+          chip beside it would then say twice (rule 14). */}
       <div className="status-bar">
-        {!running && !connecting && <RerunBtn />}
-        {running && (
-          <span className="status-running">{cancelling ? "⏳ cancelling" : "⏳ running"}</span>
+        {lost ? (
+          <LostLine />
+        ) : note ? (
+          <span className="status-note" title={note}>
+            {note}
+          </span>
+        ) : (
+          <>
+            {!busy && !connecting && <RerunBtn />}
+            {busy && (
+              <span className="status-running">
+                {cancelling
+                  ? "⏳ cancelling"
+                  : (refreshing || cycling) && browser
+                    ? "⏳ refreshing"
+                    : "⏳ running"}
+              </span>
+            )}
+            {running && browser && (
+              // browse tabs have no QueryBox: this is their only cancel affordance
+              <button
+                className="status-link linkish"
+                disabled={cancelling}
+                onClick={() => void useResults.getState().cancel()}
+              >
+                Cancel <Kbd chord="cmd+period" />
+              </button>
+            )}
+            {connecting && !running && <span className="status-running">🔌 connecting…</span>}
+            {!browser && stmt.columns.length > 0 && !stmt.error && <QuickFilter />}
+            {stmt.columns.length > 0 && <RowCount stmt={stmt} browser={browser} />}
+            <SelectionStatsChip />
+            <TxChip />
+            {/* the timing belongs to the result on screen: until the fresh rows
+                are actually under the reader's eye the number would be measuring
+                something else, so the slot waits (LESSONS 13) */}
+            {!busy && stmt.ms != null && <Timing ms={stmt.ms} />}
+            {!busy && totalMs != null && statements.length > 1 && (
+              <span>total {msText(totalMs)}</span>
+            )}
+            <PendingEditsStatus />
+          </>
         )}
-        {running && browser && (
-          // browse tabs have no QueryBox: this is their only cancel affordance
-          <button
-            className="status-link linkish"
-            disabled={cancelling}
-            onClick={() => void useResults.getState().cancel()}
-          >
-            Cancel <Kbd chord="cmd+period" />
-          </button>
-        )}
-        {connecting && !running && <span className="status-running">🔌 connecting…</span>}
-        {!browser && stmt.columns.length > 0 && !stmt.error && <QuickFilter />}
-        {stmt.columns.length > 0 && <RowCount stmt={stmt} browser={browser} />}
-        <SelectionStatsChip />
-        <TxChip />
-        {stmt.ms != null && <span>{stmt.ms.toFixed(1)} ms</span>}
-        {totalMs != null && statements.length > 1 && (
-          <span>total {totalMs.toFixed(1)} ms</span>
-        )}
-        <PendingEditsStatus />
       </div>
       <EditPreview />
     </div>
+  );
+}
+
+/** --dur-quick in ms. Read, never restated: the skeleton's exit and the CSS
+ * that draws it have to end together (DESIGN rule 6) */
+const quickMs = () =>
+  parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dur-quick")) ||
+  120;
+
+/** the skeleton outlives `cycling` by its own fade: the fresh rows come back
+ * over --dur-slow and the bars have to still be under them, or the pane goes
+ * blank in between, which is the one thing R3 forbids. */
+function useSkeleton(cycling: boolean): boolean {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (cycling) {
+      setShown(true);
+      return;
+    }
+    if (!shown) return;
+    const t = window.setTimeout(() => setShown(false), quickMs());
+    return () => window.clearTimeout(t);
+  }, [cycling, shown]);
+  return shown;
+}
+
+/** the statement's own ms, saying "just now" for two seconds after a refresh
+ * swapped its result in: the same number reads differently when the reader
+ * asked for it a moment ago (E2 R5) */
+function Timing({ ms }: { ms: number }) {
+  const at = useResults((s) => s.refreshedAt);
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (at === null) return;
+    const left = JUST_NOW_MS - (Date.now() - at);
+    if (left <= 0) return;
+    const t = window.setTimeout(() => tick((n) => n + 1), left);
+    return () => window.clearTimeout(t);
+  }, [at]);
+  const fresh = at !== null && Date.now() - at < JUST_NOW_MS;
+  return (
+    <span>
+      {msText(ms)}
+      {fresh && " · just now"}
+    </span>
+  );
+}
+
+/** heal's next attempt, in whole seconds; null once its chain gave up */
+function useCountdown(at: number | null): number | null {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (at === null) return;
+    const t = window.setInterval(() => tick((n) => n + 1), 1_000);
+    return () => window.clearInterval(t);
+  }, [at]);
+  return at === null ? null : Math.max(1, Math.ceil((at - Date.now()) / 1_000));
+}
+
+/** the hard tier's heal failed: the rows stay exactly where they are and this
+ * strip is the only thing that changes, because the countdown is the one fact
+ * the amber glyph and the rail dot cannot carry (E2 R6). retrying comes off
+ * the same retryAt this strip already counts down (DESIGN rule 14), so the
+ * strip wears the same danger/warn split the dot and glyph read off
+ * useRetrying instead of a second, independent read of the fact. */
+function LostLine() {
+  const at = useRefresh((s) => s.dead?.retryAt ?? null);
+  const left = useCountdown(at);
+  const retrying = left !== null;
+  return (
+    <span className={`status-lost${retrying ? " retrying" : ""}`}>
+      {left === null ? "connection lost" : `connection lost. Retrying in ${left} s`}
+    </span>
   );
 }
 
@@ -264,7 +395,7 @@ function ZeroRows({
     <div className="grid-zero">
       <div className="grid-zero-title">0 rows</div>
       <div className="grid-zero-sub">
-        {stmt.ms != null && `completed in ${stmt.ms.toFixed(1)} ms`}
+        {stmt.ms != null && `completed in ${msText(stmt.ms)}`}
         {browser && (
           <>
             {stmt.ms != null && " · "}
@@ -332,6 +463,11 @@ function SelectionStatsChip() {
 }
 
 /** re-run the exact SQL this result came from (staged-edit guard rides run()) */
+/** the strip's ↻ IS the soft tier (E2 R1): one act, one implementation, so
+ * this button and the table header's ↻ and ⌘R cannot drift apart (DESIGN rule
+ * 15). Going through the store is also what applies R4's guards here — a tab
+ * holding staged edits, or one whose last run wrote, gets the strip's sentence
+ * instead of a silent second execution of a statement that changed data. */
 function RerunBtn() {
   const executedSql = useResults((s) => s.executedSql);
   if (!executedSql) return null;
@@ -339,11 +475,7 @@ function RerunBtn() {
     <button
       className="status-rerun"
       title="Refresh this query"
-      onClick={() => {
-        const st = useResults.getState();
-        // keep the original buffer offset: the error squiggle stays honest
-        void st.run(executedSql, st.executedOffset);
-      }}
+      onClick={() => void useRefresh.getState().softRefresh()}
     >
       <RotateCw size={12} />
     </button>
@@ -368,21 +500,11 @@ function TxChip() {
     return hit ? hit[0].split("::")[0] : null;
   });
   if (!txPid) return null;
+  // the tab's ONE way to end a transaction (stores/connections `endTabTx`),
+  // which Ask's own band presses too: one act, one implementation
   const rollback = async () => {
-    const { tabSessions, setTxTab } = useConnections.getState();
     const tabId = useTabs.getState().activeId;
-    if (!tabId) return;
-    const key = skey(txPid, tabId);
-    const sid = tabSessions[key];
-    if (!sid) return;
-    try {
-      // straight on the session: running it through run() would wipe the
-      // result grid the user is probably inspecting mid-transaction
-      await ipc.execute(sid, "ROLLBACK");
-      setTxTab(key, false);
-    } catch {
-      /* session died: the closed event resets tx state */
-    }
+    if (tabId) await endTabTx(skey(txPid, tabId), "rollback");
   };
   return (
     <span className="status-tx">

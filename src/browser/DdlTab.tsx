@@ -1,14 +1,12 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import * as ipc from "../ipc/commands";
 import type { TableInfo } from "../stores/schema";
+import { subTabRefresh } from "../stores/browser";
 import { useConnections } from "../stores/connections";
+import { useRefresh } from "../stores/refresh";
 import "./browser.css";
-
-/** TableBrowser's header Refresh routes here while DDL is active, same
- * pattern as StructureTab's structureRefresh */
-export const ddlRefresh = { current: null as null | (() => void) };
 
 /** server-deparsed CREATE TABLE + constraints + indexes (read-only view) */
 export function DdlTab({ table }: { table: TableInfo }) {
@@ -18,34 +16,51 @@ export function DdlTab({ table }: { table: TableInfo }) {
   );
   const [ddl, setDdl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [bump, setBump] = useState(0);
   const [copied, setCopied] = useState(false);
+  // this pane IS the table tab's main body while it shows, so it cycles with
+  // the refresh that fetched it (E2 R3)
+  const cycling = useRefresh((s) => !!s.cycling.main);
+  // only the newest load may land: a refresh while the first fetch is in
+  // flight would otherwise paint whichever answer arrives last
+  const epoch = useRef(0);
+
+  // a refresh does NOT clear: the DDL on screen stays readable until the
+  // fresh text lands, and a refetch that failed leaves it there with the
+  // strip above it (R3). Only a different table or session blanks the pane.
+  const load = useCallback((): Promise<void> => {
+    const mine = ++epoch.current;
+    if (!sessionId) return Promise.resolve();
+    return ipc.tableDdl(sessionId, table.schema, table.name).then(
+      (d) => {
+        if (epoch.current !== mine) return;
+        setDdl(d);
+        setError(null);
+      },
+      (e: { message?: string }) => {
+        if (epoch.current === mine) setError(e.message ?? String(e));
+      },
+    );
+    // refetch when the table or the (re)connected session changes
+  }, [sessionId, table.schema, table.name, activeProfileId]);
 
   useEffect(() => {
     setDdl(null);
     setError(null);
-    if (!sessionId) return;
-    let stale = false;
-    ipc
-      .tableDdl(sessionId, table.schema, table.name)
-      .then((d) => !stale && setDdl(d))
-      .catch((e) => !stale && setError((e as { message?: string }).message ?? String(e)));
-    return () => {
-      stale = true;
-    };
-    // refetch when the table or the (re)connected session changes;
-    // bump = header Refresh clicks while this tab is showing
-  }, [sessionId, table.schema, table.name, activeProfileId, bump]);
+    void load();
+  }, [load]);
 
   useEffect(() => {
-    ddlRefresh.current = () => setBump((n) => n + 1);
+    subTabRefresh.ddl = load;
     return () => {
-      ddlRefresh.current = null;
+      if (subTabRefresh.ddl === load) subTabRefresh.ddl = null;
     };
-  }, []);
+  }, [load]);
 
   return (
-    <div className="ddl-tab">
+    <div
+      className={`ddl-tab${cycling ? " cycling" : ""}`}
+      data-refresh-surface="main"
+    >
       <div className="ddl-toolbar">
         <span className="ddl-title">
           {table.schema}.{table.name}
@@ -65,12 +80,11 @@ export function DdlTab({ table }: { table: TableInfo }) {
           {copied ? <Check size={14} /> : <Copy size={14} />}
         </button>
       </div>
-      {error ? (
-        <div className="ddl-error">{error}</div>
-      ) : ddl === null ? (
-        <div className="ddl-loading">Loading…</div>
-      ) : (
+      {error && <div className="ddl-error">{error}</div>}
+      {ddl !== null ? (
         <pre className="ddl-body">{ddl}</pre>
+      ) : (
+        !error && <div className="ddl-loading">Loading…</div>
       )}
     </div>
   );

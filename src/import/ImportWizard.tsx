@@ -21,6 +21,7 @@ import type {
 import type { TableInfo } from "../stores/schema";
 import { useBrowser } from "../stores/browser";
 import { useConnections } from "../stores/connections";
+import { withLiveSession } from "../stores/liveSession";
 import { useResults } from "../stores/results";
 import { useTabs } from "../stores/tabs";
 import "./import.css";
@@ -40,22 +41,16 @@ const NULL_SENTENCE: Record<ImportNullMode, string> = {
   none: "nothing becomes NULL. Empty fields import as ''",
 };
 
-/** the import binds to the BROWSE TAB's own session and the profile its rows
- * came from, NEVER the rail-active profile or any fallback session: a rail
- * click mid-wizard must not redirect the import to a different database.
- * Absent or dead session → the caller refuses honestly. */
-function browseSession(): { tabId: string; sessionId: string; profileId: string } | null {
+/** the import binds to the BROWSE TAB and the profile its rows came from,
+ * NEVER the rail-active profile: a rail click mid-wizard must not redirect
+ * the import to a different database. The session itself is resolved at send
+ * time (stores/liveSession), so a tab whose session died since the wizard
+ * opened imports on the rebuilt one instead of refusing. */
+function browseTarget(): { tabId: string; profileId: string } | null {
   const tabId = useTabs.getState().activeId;
   if (!tabId) return null;
   const rt = useResults.getState().byTab[tabId];
-  if (!rt?.executedSessionId || !rt.executedProfileId) return null;
-  // the session must still be live; a reaped session id would just error late
-  const alive = Object.values(useConnections.getState().tabSessions).includes(
-    rt.executedSessionId,
-  );
-  return alive
-    ? { tabId, sessionId: rt.executedSessionId, profileId: rt.executedProfileId }
-    : null;
+  return rt?.executedProfileId ? { tabId, profileId: rt.executedProfileId } : null;
 }
 
 /** the commit-phase refusal when the file's stat no longer matches the
@@ -229,17 +224,22 @@ export function ImportWizard({ table, onClose }: { table: TableInfo; onClose: ()
   });
 
   const runPhase = async (mode: "validate" | "commit") => {
-    const ctx = browseSession();
+    const ctx = browseTarget();
     if (!ctx) {
       setRunError("browse session unavailable. Refresh the table first");
       return;
     }
-    sessionRef.current = ctx.sessionId;
     setPhase(mode === "validate" ? "validating" : "committing");
     setProgress(null);
     setRunError(null);
     try {
-      const rep = await ipc.csvImport(ctx.sessionId, buildSpec(mode), setProgress);
+      const spec = buildSpec(mode);
+      // the Cancel button sends on whichever session the run is actually on,
+      // including the rebuilt one a retry lands on
+      const rep = await withLiveSession(ctx.tabId, (sid) => {
+        sessionRef.current = sid;
+        return ipc.csvImport(sid, spec, setProgress);
+      });
       if (mode === "validate") {
         setReport(rep);
       } else {

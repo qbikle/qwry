@@ -10,7 +10,7 @@ import { menuIn } from "../design/springs";
 import { AnchoredOverlay } from "../app/overlay/Overlay";
 import * as ipc from "../ipc/commands";
 import { useResults } from "../stores/results";
-import { useConnections } from "../stores/connections";
+import { anySessionOn, useConnections } from "../stores/connections";
 import { fkPickerSql, type FkPickTarget } from "./spelunkLogic";
 import { Kbd } from "../design/Kbd";
 import "./grid.css";
@@ -20,17 +20,12 @@ const DEBOUNCE_MS = 200;
 /** session for grid side-queries (FK picker, histogram): the result's
  * profile, PRIMARY session preferred: the tab session is what ⌘. cancels,
  * and a side-query there would die with (or delay) the tab's own work, with
- * any live tab session of that profile as fallback. Same rule as
- * runExactCount's count probe. */
+ * any live tab session of that profile as fallback (connections.anySessionOn,
+ * the one implementation the count probe and the estimates share). */
 export function preferredSessionId(): string | undefined {
   const res = useResults.getState();
   const conn = useConnections.getState();
-  const pid = res.executedProfileId ?? conn.activeProfileId;
-  if (!pid) return res.executedSessionId ?? undefined;
-  return (
-    conn.sessions[pid] ??
-    Object.entries(conn.tabSessions).find(([k]) => k.startsWith(`${pid}::`))?.[1]
-  );
+  return anySessionOn(res.executedProfileId ?? conn.activeProfileId);
 }
 
 export function FkPicker({

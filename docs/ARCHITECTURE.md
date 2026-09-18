@@ -39,8 +39,14 @@ driver/postgres/introspect.rs  pg_catalog → SchemaSnapshot
 driver/postgres/edit.rs    table_oid/attnum → editability map, UPDATE gen
 tunnel.rs                  ssh -L subprocess lifecycle
 secrets.rs                 keyring per-profile
-appdb.rs                   rusqlite: history, tabs, profiles
-commands.rs                #[tauri::command] handlers (thin)
+appdb.rs                   rusqlite: history, tabs, profiles, agent threads/turns/answers, canvases
+commands.rs                #[tauri::command] handlers (thin); open_session(force_read_only)
+agent.rs                   Ask: gated agent session, pg_query AST gate + function deny-list,
+                           describe/peek/run_readonly/probe, Keychain keys (AGENT-SPEC)
+agent_http.rs              provider HTTP relay: Keychain key injected, SSE bytes over a Channel
+agent_claude.rs            the `claude -p` child: direct exec, stdout lines over a Channel
+agent_mcp.rs               streamable-HTTP MCP server (rmcp on hyper) for claude -p, per-thread token
+agent_canvas.rs            the canvas tool bridge: park a canvas_write/replace/read/create call, emit canvas-tool-call, complete on TypeScript's answer (AGENT-SPEC §7)
 ```
 
 ### DbDriver trait
@@ -74,17 +80,69 @@ enum QueryEvent {
 - **Statement-at-a-time execution (v0.35)**: `execute_stream` splits the buffer and runs each statement as its own `simple_query`: psql autocommit semantics. Committed means committed (no whole-buffer implicit tx silently rolling back reported work); errors stop the run at the failing statement with the position rebased to whole-buffer chars (`StmtSpan.char_offset`); explicit BEGIN/COMMIT still span statements on the same session; VACUUM etc. work mid-buffer.
 - **Editable results**: column editable iff `table_oid != 0` AND full PK of that table present in result columns (ctid fallback = editable-with-warning). `apply_edits` → ONE batched `BEGIN;U₁;…;Uₙ` simple-query message, per-statement RETURNING counts verified from the result stream (matched≠1 or any error → ROLLBACK ALL), then COMMIT/ROLLBACK; 2 round trips for any N. Planning runs on a frontend-fed cached mapping (EditabilityMap + snapshot names → zero catalog trips; trusted-but-verified, silent server-side fallback when absent/incomplete). Joined/computed columns read-only with reason.
 - **Sessions**: one dedicated PG connection per query tab (transactions coherent). CancelToken per session. `connect` takes an `on_close` callback the driver fires on socket death → `session-closed` event → frontend flips the dot + auto-reconnects (`ensureTabSession`).
+- **Session identity (frontend)**: `executedSessionId` on a tab is a handle the store may lose, not a fact it owns. `AppState::session` (`state.rs:47`) returns `None` for an id no longer in `AppState.sessions`, which every command maps to `DriverError::NoSession`; only `disconnect` (`commands.rs:432`) removes an id, so a NoSession always means the frontend forgot first and then sent the stale id anyway. Several store paths can forget a TAB session while the connection dot, which tracks the PRIMARY session, stays green: a lone tab-session death, a per-profile wipe, a profile invalidation, a tab close, and heal's own reaping. `liveSessionFor(tabId)` (`src/stores/liveSession.ts`) is the one resolver: it re-derives a tab's live session and re-stamps `executedSessionId` when it has changed. `withLiveSession(tabId, fn)` is the one door any backend call goes through: it resolves first, and on a NoSession race (resolve, then the id dies before the call lands) it forgets the stale id, re-resolves once, and retries before surfacing a human error. Session death, however the store learns of it, clears that session's stamp on every tab holding it, so the next write goes to a live id, never a dead one; a heal re-stamps the active tab when that tab's own result came from the healed profile (resolving a tab that ran elsewhere would reconnect that other profile) and clears the strips a dead session wrote, matched on the death sentences themselves rather than on the words they share with a constraint named `connections_pkey`. That is why refreshing the connection can fix a stamp a plain reconnect never touched.
+- **Refresh tiers**: `⌘R` (soft) and `⇧⌘R` (hard) are one implementation
+  each, not a header glyph and a palette item that quietly diverge (DESIGN
+  rule 15). `hardRefresh(profileId)` (`src/stores/refresh.ts`) answers in
+  the gesture's own frame: ONE synchronous store write, before any await,
+  sets `tier`, bumps `sweepSeq` (the band), stamps `startedAt`, and flips
+  `cycling` true for every surface that WILL refetch, decided from store
+  state alone (the tree whenever a primary or any live tab session exists;
+  the active tab's main body unless a staged edit or an after-a-write guard
+  says no, in which case its `note` is set in that same write instead of
+  `cycling`; the inspector whenever the main body cycles and the pane is
+  showing; every refetchable canvas widget, in document order rather than
+  staggered by the band). The fetches fire in that same tick: `surfacePass`,
+  `refreshActiveTab` and `refreshCanvas` start synchronously, and their
+  `await`s are for the data landing, never for starting it; the heal round
+  trip (`requestHeal`, then `afterHeal` on success) starts beside them,
+  never ahead of them, so the connection's own probe and rebuild no longer
+  stand between the keypress and the first skeleton. Soft is the same act
+  minus the band and the glyph: `refreshActiveTab()` alone, no sweep, no
+  glyph ceremony, the active tab's own kind deciding what reruns (a table's
+  rows, a read-only query's statements, nothing on a write or an open
+  transaction, which the run works around rather than through). Surfaces
+  are held through `track(surface, work)` against a fixed taxonomy
+  (`tree`, `main`, `inspector`, `widget:<id>`), marking their own DOM root
+  `data-refresh-surface` and reading `cycling[surface]` off the store, but
+  `track` no longer stages a surface's skeleton against the
+  band's front: `GRACE_MS` and `frontReachMs` are gone, a shown skeleton
+  holds only its own floor (`MIN_SHOW_MS`) and hides the instant its own
+  fetch lands, and the ask pane, which has nothing to refetch, never
+  cycles. When the heal probe answers dead, every surface still cycling
+  returns to its old rows in that same one-write shape, the dead strip and
+  the amber dot/glyph appear, and a fetch still in flight does on landing
+  or failing whatever it would always have done (real rows are kept, a
+  failure writes that surface's own strip); the retry that lands cycles the
+  surfaces again with no second band. Kept across either tier: scroll
+  offset, filters, sort, the selected row (by PK where the result has one,
+  by index otherwise), and canvas layout.
 - **Introspection**: pg_catalog queries (tables, columns+types+nullability+defaults, PKs, FKs both directions, indexes, functions+signatures, enums) → `SchemaSnapshot { version }`, pushed via event. Refresh on connect / DDL detection / manual. The last snapshot persists per profile (appdb `schema_cache`, keyed by `connSig`) and hydrates INSTANTLY at connect start (stale-while-revalidate); a hydrate never overwrites, the server fetch always wins.
 - **Statement splitter**: lexer respecting `'…'`, `"…"`, `$tag$…$tag$`, `--`, `/*…*/`.
 - **SSH tunnel** (`tunnel.rs`): one `ssh -N -L` subprocess per SPEC (forward target + ssh params); `AppState.tunnels` is keyed by spec, so profiles with identical specs (DB-switcher clones) share one process. `ensure_tunnel` rebuilds on dead socket (`is_alive`); a repointed profile computes a new spec and gets its own tunnel. `profile_specs` tracks bindings; invalidate/delete drops a tunnel only when its last profile unbinds.
 - **Connection-edit invalidation** (v0.2): editing a saved profile whose connection fields changed (`connSig`) closes its sessions + drops its tunnel via `invalidate_profile` → next connect uses the new values; cosmetic edits don't disturb the live connection.
+- **Agent bridge** (AGENT-SPEC §5, §7): `claude -p` owns its loop and
+  answers its own tool calls inside the child process, so anything the
+  app needs to see crosses back over one of two Tauri events.
+  `canvas-tool-call` (`agent_canvas.rs`) is a round trip: Rust parks the
+  call on a oneshot, under a 20s timeout, until TypeScript answers it,
+  because the canvas family's block shape, ids and document rules live
+  only in TypeScript and mirroring them in Rust too would double their
+  own debt. `agent-run-sql` (`agent_mcp.rs`) is not a round trip at
+  all: `run_sql` is one tool Rust already answers itself end to end, so
+  this event only hands the app a copy of what Rust saw, fired
+  alongside the model's own tool result rather than awaited by it — the
+  whole run up to `UI_ROW_CAP`'s 2,000 rows, `row_count`/`capped`
+  included, the same grid a driven exchange's `run_sql` already fills;
+  `MODEL_ROW_CAP` is a separate, smaller cap on the TEXT the model
+  itself reads and does not move for it.
 
 ## Frontend (`src/`)
 
 ```
 app/         floating-card shell (v2.css), breadcrumb, menu wiring
 home/        Dashboard (connection grid + recent activity) + ConnectionEditor
-stores/      zustand: connections, tabs, results, schema, edits, settings, inspector
+stores/      zustand: connections, tabs, results, schema, edits, settings, inspector, agent, ask, sidePane, starters
 ipc/         typed invoke/Channel wrappers; types.ts mirrors Rust types
 editor/      SqlEditor.tsx; completion/{context,engine,joins}.ts; lint.ts
 grid/        Grid/Cell/Header; selection.ts; clipboard.ts; editing.ts
@@ -94,12 +152,16 @@ browser/     table data browser + structure tab
 palette/     cmdk ⌘K
 explain/     plan tree visualizer
 design/      tokens.css, theme.ts (palette engine), springs.ts, icons (lucide)
+agent/       agent core: prompt/tools/providers, mention+context resolution — no UI (AGENT-SPEC)
+ask/         AskPanel + parts (composer, thread, trace drawer, model picker), ask.css (AGENT-UX)
+harness/     AskHarness.tsx + fixtures: named states for design-lint pixel evidence
+canvas/      canvas tab: CanvasTab (dispatches the doc's blocks) + CanvasResult wrapping ResultBlock (reused from ask/) + NoteBlock, stores/canvas.ts the store (AGENT-SPEC §2, AGENT-UX §16)
 ```
 
 ### v0.2 frontend designs
 
 - **Theme engine** (`design/theme.ts`): a palette is *seeds*, expanded to the full CSS-var token set as inline vars at startup (no flash). Two kinds: **hue** (curated 8 Pokémon palettes: accent+hue+tint → tinted neutral ramp) and **anchors** (custom: bg/fg/primary/secondary → surfaces by sRGB mix). `--accent-fg` is auto-contrast; custom themes synthesise their opposite light/dark variant so the mode toggle flips them too.
-- **Floating-card shell** (`app/v2.css`): transparent window, `window-vibrancy` material showing through `--gutter` between `.card` panels; inspector animates its *width* so the main card reflows in lockstep (no transform desync).
+- **Floating-card shell** (`app/v2.css`): transparent window, `window-vibrancy` material showing through `--gutter` between `.card` panels; the right pane (one pane, two modes — Inspector and Ask, AGENT-UX §1) animates its *width* so the main card reflows in lockstep (no transform desync).
 - **Per-tab results/edits**: `useResults`/`useEdits` keyed `byTab` with the active tab mirrored to top-level store fields; every consumer reads unchanged and a background tab's stream can't corrupt the visible tab. `committing`/`preview` stay global.
 
 ### v0.2.5 frontend designs
@@ -144,7 +206,7 @@ Custom DOM grid, TanStack Virtual on both axes. Pending-edit overlay model in `e
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-Left **connection rail** = circular avatars (colour + glyph), drag-reorder, 🏠 → home (dashboard / connection editor). Floating **sidebar card** (Databases switcher / Tables / Saved), **main card** (tabs / editor / results), **inspector card** slides in by animating its width so the main card reflows in lockstep. `--gutter` between cards shows the window vibrancy, tinted to the active theme.
+Left **connection rail** = circular avatars (colour + glyph), drag-reorder, 🏠 → home (dashboard / connection editor). Floating **sidebar card** (Databases switcher / Tables / Saved), **main card** (tabs / editor / results), **right pane** (one pane, two modes — Inspector shown here, or Ask, AGENT-UX §1) slides in by animating its width so the main card reflows in lockstep. `--gutter` between cards shows the window vibrancy, tinted to the active theme.
 
 ## Keyboard map (core)
 

@@ -261,3 +261,56 @@
   font-size: var(--text-sm);
   word-break: break-word;
 }
+
+/* ---- the refresh cycle (E2 R3) ---------------------------------------------
+   The tree blanks only while the schema is actually being refetched, and what
+   it blanks to is THIS tree: one bar per visible row, wearing that row's own
+   class, so every indent and height in the ladder above answers for the
+   skeleton too. The rows fade out in --dur-quick and the fresh ones back in
+   --dur-slow (E2 R3); the bars pulse slowly under them so a refetch that takes
+   a while reads as waiting rather than as broken. */
+.tree-vrow {
+  transition: opacity var(--dur-slow) var(--ease-std);
+}
+.schema-tree.cycling .tree-vrow {
+  opacity: 0;
+  transition-duration: var(--dur-quick);
+}
+.tree-skel {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* the bars arrive over --dur-quick, as the rows leave over the same
+     --dur-quick: one crossfade rather than a snap to a second tree */
+  animation: tree-skel-in var(--dur-quick) var(--ease-std);
+}
+.tree-srow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+.tree-bar {
+  height: 11px; /* optical */ /* the bar sits inside the 12px icon box the row's glyph fills */
+  border-radius: var(--radius-xs);
+  /* the ACTIVE tier, not the hover tier every other skeleton in this window
+     uses: on the light theme the sidebar's own ground IS --bg-hover, and a
+     bar the colour of the surface it stands on is not a skeleton (DESIGN
+     rule 3). The tree's hover state already answers the same way, with the
+     tier above the one the panel would use */
+  background: var(--bg-active);
+  animation: skel-breathe calc(var(--dur-slow) * 5) var(--ease-std) infinite alternate;
+}
+@keyframes tree-skel-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* the pulse is what a waiting surface looks like, not what it says; reduced
+   motion keeps the skeleton and drops the breathing (the grid's flash rule) */
+@media (prefers-reduced-motion: reduce) {
+  .tree-bar {
+    animation: none;
+  }
+}

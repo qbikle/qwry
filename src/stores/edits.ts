@@ -1,10 +1,18 @@
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import * as ipc from "../ipc/commands";
-import type { EditabilityMap, EditMapHint, EditOutcome, RowEdit } from "../ipc/types";
+import type { ColumnMeta, EditabilityMap, EditMapHint, EditOutcome, RowEdit } from "../ipc/types";
 import { buildEditMapHint, tableIdentityHints } from "../lib/editHints";
 import { useResults } from "./results";
-import { sessionDiedWithTx, skey, useConnections } from "./connections";
+import { setEditsGate } from "./editsGate";
+import { skey, useConnections } from "./connections";
+import {
+  humanSessionError,
+  isDeathStrip,
+  liveSessionFor,
+  withLiveSession,
+  type RebuiltKind,
+} from "./liveSession";
 import { useSchema, type SchemaSnapshot } from "./schema";
 
 export interface PendingEdit {
@@ -28,9 +36,12 @@ const pushUndo = (t: { pending: Record<string, PendingEdit>; undoStack: Record<s
   redoStack: [] as Record<string, PendingEdit>[],
 });
 
+/** one statement's slot in a tab's map cache: the map, or why it is not there */
+export type EditMapSlot = EditabilityMap | "loading" | "unavailable";
+
 /** one tab's edit state */
 interface TabEdits {
-  maps: Record<number, EditabilityMap | "loading" | "unavailable">;
+  maps: Record<number, EditMapSlot>;
   pending: Record<string, PendingEdit>;
   flash: Set<string>;
   /** snapshots of `pending` for ⌘Z/⇧⌘Z over STAGED edits (not DB state) */
@@ -84,6 +95,11 @@ interface EditsState extends TabEdits {
   syncActive: (tabId: string) => void;
   resetTab: (tabId: string) => void;
   ensureMap: (stmtIndex: number) => void;
+  /** a refresh swapped this tab's result in: hand its editability maps back
+   * (E2 R4). One that still describes the fresh columns is kept, so the type
+   * glyphs, the inspector's badge and every editable cell survive the swap;
+   * the rest refetch. `prev` is the cache as it stood before resetTab. */
+  remapAfterRefresh: (tabId: string, prev: Record<number, EditMapSlot>) => void;
   /** DDL ran on this connection: background-refresh every tab's cached
    * editability maps (stale-while-revalidate; failures keep the old map) */
   refreshMapsAfterDdl: () => void;
@@ -100,63 +116,6 @@ interface EditsState extends TabEdits {
   /** apply the offered revert through the verified pipeline (⇧⌘Z / click) */
   undoLastCommit: () => Promise<void>;
   clearUndoOffer: () => void;
-}
-
-function sessionAndSql(): { sessionId: string; sql: string } | null {
-  const res = useResults.getState();
-  const sessionId = res.executedSessionId;
-  if (!sessionId || !res.executedSql) return null;
-  return { sessionId, sql: res.executedSql };
-}
-
-/** how a resolved session relates to the one the result ran on: null = same
- * session; "info" = rebuilt (autocommit result, the verified pipeline is the
- * real safety); "tx" = rebuilt AND the dead session held an open transaction
- * (its staged reality is gone — this deserves a real warning) */
-export type RebuiltKind = "info" | "tx" | null;
-
-/** resolve a LIVE session for commit/preview. The result's executedSessionId
- * may be dead (network drop, dev rebuild): re-resolve a session ON THE
- * PROFILE THE RESULT CAME FROM. Never the active rail selection: clicking
- * another connected profile (staging→prod!) must not redirect a ⌘S commit
- * to a different database.
- * Consent for a rebuilt session is the PREVIEW SURFACE's concern now: this
- * returns what happened and the modal says it inline. The old confirmDanger
- * here stacked on the open preview (read as buggy, and its Enter=Cancel ate
- * the commit the user was mid-keystroke on). */
-async function liveSessionId(tabId: string): Promise<{ sid: string; rebuilt: RebuiltKind } | null> {
-  const conn = useConnections.getState();
-  const res = useResults.getState();
-  const tab = res.byTab[tabId];
-  const profileId = tab?.executedProfileId ?? null;
-  if (profileId && tabId) {
-    const sid = await conn.ensureTabSession(profileId, tabId);
-    if (sid) {
-      let rebuilt: RebuiltKind = null;
-      // a REBUILT session gets stamped back: pg-notice routing keys on
-      // executedSessionId, so trigger NOTICEs raised during a commit on the
-      // new session would otherwise match no tab and vanish
-      if (tab && tab.executedSessionId !== sid) {
-        rebuilt =
-          tab.executedSessionId && sessionDiedWithTx(tab.executedSessionId) ? "tx" : "info";
-        useResults.setState((st) => {
-          const cur = st.byTab[tabId];
-          if (!cur) return st;
-          const next = { ...cur, executedSessionId: sid };
-          return {
-            byTab: { ...st.byTab, [tabId]: next },
-            ...(st.active === tabId ? { executedSessionId: sid } : {}),
-          };
-        });
-      }
-      return { sid, rebuilt };
-    }
-  }
-  // no session could be resolved. The old fallback handed back the DEAD
-  // executedSessionId, and the backend's NoSession error surfaced as a
-  // baffling red strip under a green dot; an honest null reads as
-  // "no live connection" instead.
-  return null;
 }
 
 /** ctid row-movement guard: rows move under UPDATE/VACUUM FULL, so a ctid
@@ -254,7 +213,7 @@ const isSchemaErr = (e: unknown): boolean => {
   return typeof code === "string" && code.startsWith("42");
 };
 
-const errMsg = (e: unknown) => (e as { message?: string }).message ?? String(e);
+const errMsg = (e: unknown) => humanSessionError(e).message;
 
 /** schema snapshot of the profile a tab's result came from (hint source) */
 function snapshotFor(tabId: string): SchemaSnapshot | undefined {
@@ -269,15 +228,42 @@ async function refetchMap(
   stmtIndex: number,
 ): Promise<EditabilityMap | null> {
   const rt = useResults.getState().byTab[tabId];
-  if (!rt?.executedSessionId || !rt.executedSql) return null;
+  const sql = rt?.executedSql;
+  if (!sql) return null;
   try {
-    const map = await ipc.editability(rt.executedSessionId, rt.executedSql, stmtIndex, null);
+    const map = await withLiveSession(tabId, (sid) =>
+      ipc.editability(sid, sql, stmtIndex, null),
+    );
     writeEdits(set, tabId, (t) => ({ maps: { ...t.maps, [stmtIndex]: map } }));
     return map;
   } catch {
     return null; // keep the old map; commit-time verification still guards
   }
 }
+
+/** hinted fetch of one statement's map into a NAMED tab. The active tab is
+ * only the common case: a refresh re-arms the tab its own run belongs to. */
+function fetchMap(set: SetFn, tabId: string, stmtIndex: number) {
+  const sql = useResults.getState().byTab[tabId]?.executedSql;
+  if (!sql) return;
+  writeEdits(set, tabId, (t) => ({ maps: { ...t.maps, [stmtIndex]: "loading" } }));
+  // snapshot identity hints let the backend skip its pg_class trip; the
+  // map lands after ONE round trip (the prepare)
+  const snap = snapshotFor(tabId);
+  const hints = snap ? tableIdentityHints(snap) : null;
+  void withLiveSession(tabId, (sid) => ipc.editability(sid, sql, stmtIndex, hints))
+    .then((map) => writeEdits(set, tabId, (t) => ({ maps: { ...t.maps, [stmtIndex]: map } })))
+    .catch(() =>
+      writeEdits(set, tabId, (t) => ({ maps: { ...t.maps, [stmtIndex]: "unavailable" } })),
+    );
+}
+
+/** does this map still describe these result columns? A map carries column
+ * identity (which table, which attnum) and never rows, so the same columns in
+ * the same order are the same map. */
+const describes = (map: EditabilityMap, cols: ColumnMeta[]) =>
+  map.columns.length === cols.length &&
+  map.columns.every((c, i) => c.table_oid === cols[i].table_oid && c.attnum === cols[i].attnum);
 
 interface PreviewEntry {
   stmtIndex: number;
@@ -397,19 +383,19 @@ export const useEdits = create<EditsState>((set, get) => ({
   ensureMap: (stmtIndex) => {
     const tabId = get().active;
     if ((get().byTab[tabId] ?? blankEdits()).maps[stmtIndex]) return;
-    const ctx = sessionAndSql();
-    if (!ctx) return;
-    writeEdits(set, tabId, (t) => ({ maps: { ...t.maps, [stmtIndex]: "loading" } }));
-    // snapshot identity hints let the backend skip its pg_class trip; the
-    // map lands after ONE round trip (the prepare)
-    const snap = snapshotFor(tabId);
-    const hints = snap ? tableIdentityHints(snap) : null;
-    ipc
-      .editability(ctx.sessionId, ctx.sql, stmtIndex, hints)
-      .then((map) => writeEdits(set, tabId, (t) => ({ maps: { ...t.maps, [stmtIndex]: map } })))
-      .catch(() =>
-        writeEdits(set, tabId, (t) => ({ maps: { ...t.maps, [stmtIndex]: "unavailable" } })),
-      );
+    fetchMap(set, tabId, stmtIndex);
+  },
+
+  remapAfterRefresh: (tabId, prev) => {
+    for (const st of useResults.getState().byTab[tabId]?.statements ?? []) {
+      if (!st.done || st.error) continue;
+      const old = prev[st.index];
+      if (old && old !== "loading" && old !== "unavailable" && describes(old, st.columns)) {
+        writeEdits(set, tabId, (t) => ({ maps: { ...t.maps, [st.index]: old } }));
+        continue;
+      }
+      fetchMap(set, tabId, st.index);
+    }
   },
 
   refreshMapsAfterDdl: () => {
@@ -422,7 +408,9 @@ export const useEdits = create<EditsState>((set, get) => ({
       for (const k of Object.keys(t.maps)) {
         const idx = Number(k);
         if (t.maps[idx] === "loading") continue;
-        if (!res.byTab[tabId]?.executedSessionId) continue;
+        // the SQL is what a refetch needs; the session it runs on is
+        // resolved live inside refetchMap
+        if (!res.byTab[tabId]?.executedSql) continue;
         void refetchMap(set, tabId, idx);
       }
     }
@@ -511,7 +499,7 @@ export const useEdits = create<EditsState>((set, get) => ({
     // "the app is sluggish". With a warm mapping the preview itself is
     // generated with ZERO server round trips.
     set({ preview: { statements: [], error: null, loading: true } });
-    const live = await liveSessionId(tabId);
+    const live = await liveSessionFor(tabId);
     if (!live) {
       set({ preview: { statements: [], error: "no live connection" } });
       return;
@@ -577,7 +565,7 @@ export const useEdits = create<EditsState>((set, get) => ({
     // a rebuild detected HERE (between preview and Enter) restamps silently:
     // the consent surface is the preview chip, and the verified pipeline
     // refuses any row that moved regardless of which session carries it
-    const live = await liveSessionId(tabId);
+    const live = await liveSessionFor(tabId);
     if (!live) {
       set({ committing: false, lastError: "no live connection" });
       return;
@@ -796,6 +784,17 @@ export const useEdits = create<EditsState>((set, get) => ({
   clearUndoOffer: () => setUndoOffer(null),
 }));
 
+/** heal reached these tabs: a lastError a dead session wrote is stale. It is
+ * global (one commit at a time), so it counts only while the tab that wrote
+ * it is the one on screen; a constraint failure or a rolled-back batch is
+ * still true and stays (liveSession.afterHeal). */
+export function clearDeathStrip(tabIds: string[]) {
+  const s = useEdits.getState();
+  if (s.lastError && tabIds.includes(s.active) && isDeathStrip(s.lastError)) {
+    useEdits.setState({ lastError: null });
+  }
+}
+
 export const editKey = keyOf;
 
 // follow the active tab (results owns the canonical active tab id)
@@ -805,8 +804,22 @@ useResults.subscribe((s, p) => {
 });
 
 // the session that committed died → its undo offer dies with it (a revert on
-// a rebuilt session is exactly the "across reconnects" case we never allow)
+// a rebuilt session is exactly the "across reconnects" case we never allow).
+// The catch is heal.ts's, for heal.ts's reason: outside Tauri's bridge this
+// rejects, and an unhandled rejection at module scope takes down every suite
+// that reaches this store through a surface — which is now any suite that
+// touches the refresh plan, since it reads staged edits synchronously
+// (E3 rule 1). It goes to the console, rather than nowhere (LESSONS 9).
 void listen<{ session_id: string }>("session-closed", (e) => {
   const o = useEdits.getState().undoOffer;
   if (o && o.sessionId === e.payload.session_id) useEdits.getState().clearUndoOffer();
+}).catch((e) => console.error("edits session-closed listener", e));
+
+// what a run must know before it replaces a result set, answered
+// synchronously for a module that cannot import this one (editsGate.ts has
+// the direction and the reason)
+setEditsGate({
+  committing: () => useEdits.getState().committing,
+  staged: (tabId) => Object.keys(useEdits.getState().byTab[tabId]?.pending ?? {}).length,
+  maps: (tabId) => useEdits.getState().byTab[tabId]?.maps ?? {},
 });

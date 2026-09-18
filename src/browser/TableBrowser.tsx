@@ -13,7 +13,8 @@ import {
   useBrowser,
   type Filter,
 } from "../stores/browser";
-import { useConnections } from "../stores/connections";
+import { anySessionOn, useConnections } from "../stores/connections";
+import { useRefresh } from "../stores/refresh";
 import { useSchema, type EnumInfo, type TableInfo } from "../stores/schema";
 import * as ipc from "../ipc/commands";
 import { useResults } from "../stores/results";
@@ -22,8 +23,8 @@ import { useCloseGuard } from "../stores/closeGuard";
 import { nearEndHook } from "../grid/Grid";
 import { ResultsPane } from "../grid/ResultsPane";
 import { ImportWizard } from "../import/ImportWizard";
-import { StructureTab, structureRefresh } from "./StructureTab";
-import { DdlTab, ddlRefresh } from "./DdlTab";
+import { StructureTab } from "./StructureTab";
+import { DdlTab } from "./DdlTab";
 import "./browser.css";
 import "./browseControls.css";
 
@@ -41,8 +42,10 @@ export function TableBrowser() {
   const setTab = useBrowser((s) => s.setTab);
   const requestClose = useCloseGuard((s) => s.request);
   const activeId = useTabs((s) => s.activeId);
-  const refresh = useBrowser((s) => s.refresh);
   const running = useResults((s) => s.running);
+  // R1: this button IS the soft tier. One act, one implementation, so ⌘R and
+  // the header ↻ cannot drift apart (DESIGN rule 15)
+  const cycling = useRefresh((s) => !!s.cycling.main);
   const [estBump, setEstBump] = useState(0);
   const [jumpOpen, setJumpOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -100,23 +103,14 @@ export function TableBrowser() {
           className="iconbtn"
           title="Refresh"
           onClick={() => {
-            // Structure shows table_stats, not the data query: refresh THAT
-            if (tab === "structure") {
-              structureRefresh.current?.();
-              return;
-            }
-            // DDL shows the deparsed DDL: refetch it, never the invisible
-            // data query behind the pane
-            if (tab === "ddl") {
-              ddlRefresh.current?.();
-              return;
-            }
-            refresh();
+            // which pane refetches is the browse store's call (it knows which
+            // sub-tab is showing); the estimate rides along either way
+            void useRefresh.getState().softRefresh();
             setEstBump((n) => n + 1);
           }}
           disabled={running}
         >
-          <RefreshCw size={14} className={running ? "spin" : ""} />
+          <RefreshCw size={14} className={running || cycling ? "spin" : ""} />
         </button>
         <button
           className="iconbtn"
@@ -623,13 +617,7 @@ function BrowseFooter({
   const [est, setEst] = useState<string | null>(null);
   useEffect(() => {
     setEst(null);
-    const conn = useConnections.getState();
-    const pid = conn.activeProfileId;
-    // primary preferred; any live tab session works (primary can be dead)
-    const sid = pid
-      ? (conn.sessions[pid] ??
-        Object.entries(conn.tabSessions).find(([k]) => k.startsWith(`${pid}::`))?.[1])
-      : undefined;
+    const sid = anySessionOn(activeProfileId);
     if (!sid) return;
     let stale = false;
     const lit = (v: string) => `'${v.replace(/'/g, "''")}'`;

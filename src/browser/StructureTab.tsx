@@ -1,15 +1,23 @@
-import { useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type KeyboardEvent as ReactKeyEvent,
+} from "react";
 import { Check, Copy } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import * as ipc from "../ipc/commands";
 import type { TableStats } from "../ipc/types";
-import { useConnections } from "../stores/connections";
+import { subTabRefresh } from "../stores/browser";
+import { anySessionOn, useConnections } from "../stores/connections";
+import { useRefresh } from "../stores/refresh";
+import { copyCueError } from "../lib/copyCue";
+import { hintLineFor, knowledgeTarget, parseHintLine, saveHintLine, useKnowledge } from "../stores/knowledge";
 import type { TableInfo } from "../stores/schema";
 import "./browser.css";
-
-/** TableBrowser's header Refresh routes here while Structure is active; it
- * used to rerun the DATA query, which does nothing for this surface */
-export const structureRefresh = { current: null as null | (() => void) };
 
 const CONSTRAINT_KIND: Record<string, string> = {
   p: "PRIMARY KEY",
@@ -21,15 +29,148 @@ const CONSTRAINT_KIND: Record<string, string> = {
   n: "NOT NULL",
 };
 
-/** any live session on the active profile (primary preferred; it can be
- * dead while tab sessions live on) */
-function pickSession(): string | undefined {
-  const conn = useConnections.getState();
-  const pid = conn.activeProfileId;
-  if (!pid) return undefined;
+/** the way in, and the one place this feature says its name (DESIGN rule 11) */
+const PLACEHOLDER = "Hint for Ask…";
+
+
+/** The hint line (A2 item 2): the slot where this view already printed the
+ * live COMMENT, made editable. Three faces in one text and the tier says whose
+ * it is: a hint the user wrote in tier 1, the database's own comment in tier 2,
+ * `Hint for Ask…` in the placeholder register when neither stands. A click, or
+ * ↩ on the focused line, swaps the words for a field in place, no travel and
+ * no size change (VS Code's rename box; the app's own inline editors are the
+ * grammar: ↩ saves, Esc cancels, blur saves). An emptied line deletes the hint
+ * and the comment reads again; when both stand the hint wins and the comment
+ * is the line's tooltip AND the field's placeholder, so clearing the field
+ * previews what will stand. No pencil, no label, no second line.
+ *
+ * Synonyms ride the same line as a trailing `aka orders, purchases` clause,
+ * because a field of their own is one more line per table and per column
+ * (DESIGN rule 15); the store parses and writes that clause as a pair.
+ *
+ * A column's cell is the same line at one row's height, ellipsized at rest and
+ * printing nothing when it is empty: it shows the placeholder on its row's
+ * hover and on focus (DESIGN rule 8's two routes), so a sixty-column table
+ * prints no sixty lines of chrome and the table's own line is the one place
+ * the feature says its name. */
+function HintLine({
+  target,
+  comment,
+  cell = false,
+}: {
+  target: string;
+  comment: string | null;
+  cell?: boolean;
+}) {
+  const profileId = useConnections((s) => s.activeProfileId);
+  const rows = useKnowledge((s) => (profileId ? s.rows[profileId] : undefined));
+  const line = hintLineFor(rows, target);
+  const [draft, setDraft] = useState<string | null>(null);
+  const editing = draft !== null;
+  // an Esc that closed the field must not be committed by the blur behind it
+  const done = useRef(false);
+  const fieldRef = useRef<HTMLTextAreaElement & HTMLInputElement>(null);
+
+  // the field is the line: it grows with the text it holds instead of
+  // scrolling inside a fixed box (the table's line wraps, which is content)
+  useLayoutEffect(() => {
+    const el = fieldRef.current;
+    if (!el || !editing || el.tagName !== "TEXTAREA") return;
+    el.style.height = "0px";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [draft, editing]);
+
+  // focus is the state's, never the DOM's autoFocus, and it never scrolls the
+  // table under the pointer (LESSONS 7); the caret parks after the last word
+  useEffect(() => {
+    const el = fieldRef.current;
+    if (!el || !editing) return;
+    el.focus({ preventScroll: true });
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [editing]);
+
+  const open = () => {
+    done.current = false;
+    setDraft(line);
+  };
+  const commit = (text: string) => {
+    if (done.current) return;
+    done.current = true;
+    setDraft(null);
+    // the line has already snapped back to what stands: a refused write has to
+    // say why, or the hint just disappeared (LESSONS 9)
+    if (profileId && text.trim() !== line.trim()) {
+      saveHintLine(profileId, target, text).catch(copyCueError);
+    }
+  };
+  const cancel = () => {
+    done.current = true;
+    setDraft(null);
+  };
+
+  const keys = (e: ReactKeyEvent<HTMLElement>) => {
+    // typing keys are the field's; ⌘/⌃ chords belong to the window (LESSONS 10)
+    if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
+    if (e.key === "Enter" && !e.shiftKey && !e.altKey) {
+      e.preventDefault();
+      commit(draft ?? "");
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      cancel();
+    }
+  };
+
+  if (draft !== null) {
+    // one line, two element kinds: a column's cell stays on its row and holds
+    // its text on one line, the table's own line wraps with the view
+    const props = {
+      ref: fieldRef,
+      className: "st-hint editing",
+      value: draft,
+      // the comment a hint stands over is the field's placeholder, so clearing
+      // the field previews what will read again
+      placeholder: comment ?? PLACEHOLDER,
+      spellCheck: false,
+      onKeyDown: keys,
+      onChange: (e: ChangeEvent<HTMLTextAreaElement | HTMLInputElement>) => setDraft(e.target.value),
+      onBlur: () => commit(draft),
+    };
+    return cell ? <input {...props} /> : <textarea {...props} rows={1} />;
+  }
+
+  const { hint, synonyms } = parseHintLine(line);
   return (
-    conn.sessions[pid] ??
-    Object.entries(conn.tabSessions).find(([k]) => k.startsWith(`${pid}::`))?.[1]
+    <div
+      className={`st-hint${line ? " hinted" : ""}${cell && !line && !comment ? " empty" : ""}`}
+      role="button"
+      tabIndex={0}
+      // the comment the hint stands over stays reachable, and the line says
+      // nothing when it is showing the comment itself (DESIGN rule 14)
+      title={line && comment ? comment : undefined}
+      onClick={open}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          open();
+        }
+      }}
+    >
+      {line ? (
+        <>
+          {hint}
+          {synonyms.length > 0 && (
+            <>
+              {hint ? " " : ""}
+              <span className="st-aka">aka</span> <span className="st-syn">{synonyms.join(", ")}</span>
+            </>
+          )}
+        </>
+      ) : comment ? (
+        comment
+      ) : (
+        <span className="st-ph">{PLACEHOLDER}</span>
+      )}
+    </div>
   );
 }
 
@@ -59,42 +200,56 @@ export function StructureTab({ table }: { table: TableInfo }) {
   const activeProfileId = useConnections((s) => s.activeProfileId);
   const [stats, setStats] = useState<TableStats | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [bump, setBump] = useState(0);
   const [copied, setCopied] = useState<string | null>(null);
+  // this pane IS the table tab's main body while it shows, so it cycles with
+  // the refresh that fetched it (E2 R3)
+  const cycling = useRefresh((s) => !!s.cycling.main);
+  // only the newest load may land: a refresh fired while the first read is in
+  // flight would otherwise paint whichever answer arrives last
+  const epoch = useRef(0);
+
+  // a refresh does NOT clear: the stats on screen stay readable until the
+  // fresh ones land, and a read that failed leaves them there with the strip
+  // above them (R3). Only a different table or connection blanks the pane.
+  const load = useCallback((): Promise<void> => {
+    const mine = ++epoch.current;
+    const sid = anySessionOn(activeProfileId);
+    if (!sid) {
+      setError("not connected");
+      return Promise.resolve();
+    }
+    return ipc.tableStats(sid, table.schema, table.name).then(
+      (s) => {
+        if (epoch.current !== mine) return;
+        setStats(s);
+        setError(null);
+      },
+      (e: { message?: string }) => {
+        if (epoch.current === mine) setError(e.message ?? String(e));
+      },
+    );
+  }, [table.schema, table.name, activeProfileId]);
 
   useEffect(() => {
     setStats(null);
     setError(null);
-    const sid = pickSession();
-    if (!sid) {
-      setError("not connected");
-      return;
-    }
-    let stale = false;
-    ipc
-      .tableStats(sid, table.schema, table.name)
-      .then((s) => !stale && setStats(s))
-      .catch((e) => !stale && setError((e as { message?: string }).message ?? String(e)));
-    return () => {
-      stale = true;
-    };
-    // bump = header Refresh clicks while this tab is showing
-  }, [table.schema, table.name, activeProfileId, bump]);
+    void load();
+  }, [load]);
 
   useEffect(() => {
-    structureRefresh.current = () => setBump((n) => n + 1);
+    subTabRefresh.structure = load;
     return () => {
-      structureRefresh.current = null;
+      if (subTabRefresh.structure === load) subTabRefresh.structure = null;
     };
-  }, []);
+  }, [load]);
 
   // fresh comments win over the (possibly stale) snapshot the tab carries
   const colComment = (name: string): string | null => {
     if (stats) return stats.column_comments.find((c) => c.column === name)?.comment ?? null;
     return table.columns.find((c) => c.name === name)?.comment ?? null;
   };
-  const anyColComment =
-    stats?.column_comments.length ?? table.columns.filter((c) => c.comment).length;
+  const tableComment = stats ? stats.comment : (table.comment ?? null);
+  const tableTarget = knowledgeTarget(table.schema, table.name);
 
   // "never scanned" is a neutral fact; "candidate for dropping" is advice:
   // enforcement-only unique indexes (CREATE UNIQUE INDEX, no pg_constraint
@@ -129,7 +284,11 @@ export function StructureTab({ table }: { table: TableInfo }) {
       }));
 
   return (
-    <div className="tb-structure">
+    <div
+      className={`tb-structure${cycling ? " cycling" : ""}`}
+      data-refresh-surface="main"
+    >
+      <HintLine target={tableTarget} comment={tableComment} />
       <h3>Columns</h3>
       <table className="st-table">
         <thead>
@@ -139,7 +298,7 @@ export function StructureTab({ table }: { table: TableInfo }) {
             <th>Type</th>
             <th>Nullable</th>
             <th>Default</th>
-            {anyColComment ? <th>Comment</th> : null}
+            <th>Comment</th>
           </tr>
         </thead>
         <tbody>
@@ -166,22 +325,29 @@ export function StructureTab({ table }: { table: TableInfo }) {
               <td className="st-type">{c.type}</td>
               <td>{c.not_null ? "not null" : "null"}</td>
               <td className="st-default">{c.default ?? ""}</td>
-              {anyColComment ? <td className="st-comment">{colComment(c.name) ?? ""}</td> : null}
+              <td className="st-comment">
+                <HintLine
+                  target={knowledgeTarget(table.schema, table.name, c.name)}
+                  comment={colComment(c.name)}
+                  cell
+                />
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
 
-      {error ? (
+      {/* a failed read keeps the stats it had and adds the strip (R3) */}
+      {error && (
         <div className="st-error">
           <span>Table stats failed: {error}</span>
-          <button className="btnish" onClick={() => setBump((n) => n + 1)}>
+          <button className="btnish" onClick={() => void load()}>
             Retry
           </button>
         </div>
-      ) : !stats ? (
-        <div className="st-loading">Loading table stats…</div>
-      ) : (
+      )}
+      {!stats && !error && <div className="st-loading">Loading table stats…</div>}
+      {stats && (
         <>
           <h3>Constraints</h3>
           {stats.constraints.length === 0 ? (
@@ -338,27 +504,6 @@ export function StructureTab({ table }: { table: TableInfo }) {
               {stats.sizes.total_pretty}
             </span>
           </div>
-
-          <h3>Comments</h3>
-          {!stats.comment && stats.column_comments.length === 0 ? (
-            <div className="st-none">No comments</div>
-          ) : (
-            <>
-              {stats.comment && <div className="st-tablecomment">{stats.comment}</div>}
-              {stats.column_comments.length > 0 && (
-                <table className="st-table">
-                  <tbody>
-                    {stats.column_comments.map((c) => (
-                      <tr key={c.column}>
-                        <td className="st-name">{c.column}</td>
-                        <td className="st-comment">{c.comment}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </>
-          )}
         </>
       )}
     </div>
