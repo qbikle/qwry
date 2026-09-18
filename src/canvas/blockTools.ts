@@ -16,10 +16,13 @@
 //
 // The drawing's picker is IN this table rather than beside it (C2b call 2):
 // its tools stand in the cluster the other two kinds already have, so the
-// canvas gains 0 strips and 0 controls at rest for a kind that draws. Its
-// REVEAL is the one thing that differs: focus-within and [data-hot] only,
-// never a bare hover, because a pointer crossing a sheet mid-stroke is not a
-// request to see the picker (AGENT-UX 16x, drawing.css). `Pen ▾` is ONE slot and not six: the tool and its ink
+// canvas gains 0 strips and 0 controls at rest for a kind that draws. Nothing
+// about its reveal differs either (F1, AGENT-UX 16x as amended): hover,
+// focus-within and [data-hot], the one register in canvas.css, on all three
+// kinds. C2b read "a pointer over a sheet is not asking for the picker" as a
+// reason to answer no hover here; what it names is a stroke in flight, which
+// is a state the block wears (drawing.css [data-inking]) and not a kind it
+// belongs to. `Pen ▾` is ONE slot and not six: the tool and its ink
 // are its menu (DESIGN rule 15, consolidate before you add), which is what
 // holds the drawing's cluster to seven slots and its floor to two cells.
 

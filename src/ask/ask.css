@@ -1072,7 +1072,16 @@
    Rest is opacity 0 and a 4px slide out of the top edge on the bubble
    cluster's register, never visibility: the buttons keep their place in the
    tab order, which is the cluster's keyboard route (DESIGN rule 8, section
-   12). `--acts-surface` is the container's to declare */
+   12). `--acts-surface` is the container's to declare.
+
+   Rest also takes the POINTER away, and every reveal below hands it back
+   (F1): an invisible button is still a button, and a hand that pressed one
+   moved a widget it could not see (the maintainer's recording, 2026-09-18).
+   Tab reaches them anyway, since focus is not a hit test, and `:focus-within`
+   re-arms the cluster the instant it lands, so the keyboard route above is
+   unchanged. This is the species' own rule and not one kind's, because a
+   host whose hidden cluster is never under a pointer today is one reveal
+   selector away from being one tomorrow */
 .acts-float {
   position: absolute;
   top: 0;
@@ -1084,6 +1093,7 @@
   padding: 0 var(--sp-1) 0 var(--sp-4);
   background: linear-gradient(to right, transparent, var(--acts-surface) var(--sp-4));
   opacity: 0;
+  pointer-events: none;
   transform: translateY(-4px);
   transition:
     opacity var(--dur-quick) var(--ease-std),
@@ -1101,6 +1111,7 @@
 .rb[data-hot] > .acts-float,
 .acts-float:focus-within {
   opacity: 1;
+  pointer-events: auto;
   transform: none;
 }
 
@@ -1131,6 +1142,7 @@
 .ans-prose:hover > .acts-float,
 .ans-prose[data-hot] > .acts-float {
   opacity: 1;
+  pointer-events: auto;
   transform: none;
 }
 /* the prose and the result block stand 16px apart, not the column's 8 (D1
@@ -1341,6 +1353,7 @@
 .ans-fix:focus-within > .acts-float,
 .ans-fix[data-hot] > .acts-float {
   opacity: 1;
+  pointer-events: auto;
   transform: none;
 }
 .ans-acts {

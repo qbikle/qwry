@@ -2939,26 +2939,44 @@ because the two halves of one gesture belong in one place and a row you
 have to go and find is not that place. `⇧⌘Z` still redoes while the drawing
 has focus, the chord riding the button rather than replacing it.
 
-**The reveal is `:focus-within` only, never bare `:hover`**, the one
-carve-out from §16b's general rule that every cluster reveals on hover,
-focus-within and `[data-hot]` alike: a pointer crossing a pen surface
-mid-stroke is not a request to see the toolbar, and a cluster that flashed
-on every incidental pass over a drawing a person is actively inking would
-teach the wrong lesson about what a hover means here. Focus-within and
-`[data-hot]` still reveal it (the harness route, and the keyboard route
-that stands in for a hover a person never made, DESIGN rule 8's reveal
-clause), so the surface still works with no mouse at all. **The resize
-handle rides the SAME register as the cluster it stands beside (D1,
-2026-09-14, closing the drawing-ghost finding's third clause): §16s's own
-"revealed with the cluster" already subordinates the handle to whatever
-register its OWN block's cluster reveals on, so on a drawing that register
-is this carve-out too, `:focus-within` and `[data-hot]` only, never bare
-`:hover`** — stated outright here because a shipped build read the
-handle's own DESIGN rule 1 row as a fixed hover/focus-within/`[data-hot]`
-list rather than as "whichever register this block's cluster uses," and a
-handle that showed on a bare hover while the drawing's own frame did not
-(paper painting only while empty, above) is exactly what stood alone on
-the page with no widget around it.
+**Reversed (F1, 2026-09-18, reversing C2b's carve-out): the cluster
+reveals on §16b's standard register, hover, focus-within and `[data-hot]`
+alike, the same register every other kind already answers.** The carve-out
+this paragraph used to state, that the reveal is `:focus-within` only and
+never bare `:hover`, is what the maintainer's own recording of that date
+(`qwry-agent-lab/docs/research/f1-recording`) caught failing: a hand
+reaching for the sheet's own top-right lifted an invisible grip and moved
+the widget a row down, and a hand meaning to draw opened an invisible
+`More`, both presses landing on a cluster nothing on screen showed. The
+carve-out's own reasoning, that a pointer crossing a pen surface mid-stroke
+is not a request to see the toolbar, still holds, but it is answered by a
+STATE now rather than by hiding the surface from every pointer that ever
+crosses it: while a stroke is in flight, pointerdown to pointerup,
+pointercancel or Esc, the block carries `data-inking`, and only under that
+attribute are the cluster and the resize handle both hidden AND
+`pointer-events: none` (DESIGN rule 8's reveal clause: a reveal-on-hover
+control is legal only where the surface still works without it, and a
+hidden one must not go on taking the presses meant for what replaced it).
+The sheet already captures the pointer for the length of a stroke, so
+nothing is lost by leaving the cluster reachable outside one; `data-inking`
+is what a frame or a test can read, the capture is not. A press on the
+sheet focuses it (`sheet.current.focus({ preventScroll: true })` in
+`onDown`, ahead of or regardless of the `preventDefault()` the stroke still
+needs), so the chords (`p r o l a t`, `⌘Z`, `⇧⌘Z`) work after a pointer
+stroke exactly as they already did after a keyboard one, and focus-within
+keeps the cluster up for as long as the drawing stays armed, the same
+contract a note's own caret already keeps. **The resize handle needs no
+carve-out of its own.** §16s's own "revealed with the cluster" already
+subordinates the handle to whatever register its OWN block's cluster
+reveals on; with the cluster's carve-out reversed above, that register is
+hover, focus-within and `[data-hot]` again, and `data-inking` hides the
+handle together with the cluster for the length of a stroke, no second rule
+required. The D1 sentence this replaces (2026-09-14, closing the
+drawing-ghost finding's third clause) existed only because a drawing's
+cluster once answered a narrower register than every other kind; once the
+drawing rejoins §16b's standard register, the handle rejoins it by the same
+subordination rule that carried the carve-out before, and nothing further
+needs to be said about it here.
 
 `Ask` is the common set's own button (§16b unchanged in name and position),
 gated on the vision flag (§16y): present when the chosen model's `vision`
@@ -3110,7 +3128,13 @@ only and never on a bare hover; `Ask`'s vision gate, both halves of it
 install-level override, and the ROUTE the picture actually takes per
 question (AGENT-SPEC §7's `imageRouteFor`, and §16l's fifth route built to
 serve it); the empty grid's caret moving from a fixed corner to the clicked
-cell.
+cell. **Reversed by F1, 2026-09-18: the clause above, "revealed on
+focus-within and `[data-hot]` only and never on a bare hover," was C2b's
+own carve-out; the cluster and the corner handle answer hover again, alongside
+focus-within and `[data-hot]`, hidden only while `data-inking` marks a
+stroke in flight. This paragraph stands as the record of what C2b shipped
+and why; it is not restated as current fact where §16x now speaks for the
+page.**
 
 Does not settle, carried forward as this wave's own open list (AGENT-SPEC
 §11, ROADMAP): **a select tool inside the drawing** (moving or deleting one

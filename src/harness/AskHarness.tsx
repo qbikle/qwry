@@ -149,9 +149,13 @@
 // `d3-drop-settled`, on their own pair of cards (d3CanvasCardH). D4 adds two
 // more (fixtures.d4.ts): `d4-derived` and `d4-derived-drop`, the page at a
 // column count below the one its layout was authored at and the drop that
-// lands there. The canvas route also takes a width the frames never ask for,
-// anything between the floor and the widest card, so a probe can drive the
-// product at the width a bug was filmed at (the maintainer's 660).
+// lands there. F1 adds one (fixtures.f1.ts): `f1-draw-inking`, a drawing with
+// the pen down and moving, where the cluster and the corner handle are off the
+// paper because the stroke is in the air and not because the kind carves a
+// hover out (read beside `c2-draw`, whose seven stand). The canvas route also
+// takes a width the frames never ask for, anything between the floor and the
+// widest card, so a probe can drive the product at the width a bug was filmed
+// at (the maintainer's 660).
 //
 // scripts/ask-frames.ts drives headless Chrome over this route and writes
 // one PNG per state × width × theme. The dev build remains the final eyeball;
@@ -305,6 +309,13 @@ import {
   d4CanvasSeed,
   type D4CanvasState,
 } from "./fixtures.d4";
+import {
+  F1_CANVAS_CARD_H,
+  F1_CANVAS_STATES,
+  f1CanvasAfterMount,
+  f1CanvasSeed,
+  type F1CanvasState,
+} from "./fixtures.f1";
 import "../app/v2.css";
 import "./harness.css";
 
@@ -666,7 +677,8 @@ type AnyCanvasState =
   | D1CanvasState
   | D2CanvasState
   | D3CanvasState
-  | D4CanvasState;
+  | D4CanvasState
+  | F1CanvasState;
 
 interface CanvasParams {
   state: AnyCanvasState;
@@ -698,6 +710,9 @@ const isD3Canvas = (state: string): state is D3CanvasState =>
 const isD4Canvas = (state: string): state is D4CanvasState =>
   (D4_CANVAS_STATES as readonly string[]).includes(state);
 
+const isF1Canvas = (state: string): state is F1CanvasState =>
+  (F1_CANVAS_STATES as readonly string[]).includes(state);
+
 /** the card each wave is read on: A3's three blocks stand in 760, B3's four
  * with a chart among them need 800, and C2's page of cells is read from its
  * top at the same 800 except where the LAYOUT is the subject, where the card
@@ -712,23 +727,25 @@ const isD4Canvas = (state: string): state is D4CanvasState =>
  * (d3CanvasCardH): the drop state is the drag state with its push taken, which
  * is two rows more of page */
 const canvasCardH = (state: string): number =>
-  isD4Canvas(state)
-    ? d4CanvasCardH(state)
-    : isD3Canvas(state)
-      ? d3CanvasCardH(state)
-      : isC2Draw(state)
-        ? c2DrawCardH(state)
-        : isC2Empty(state)
-          ? C2_EMPTY_CARD_H
-          : isD2Canvas(state)
-            ? d2CanvasCardH(state)
-            : isD1Canvas(state)
-              ? d1CanvasCardH(state)
-              : isC2Grid(state)
-                ? c2GridCardH(state)
-                : isB3Canvas(state)
-                  ? B3_CANVAS_CARD_H
-                  : CANVAS_CARD_H;
+  isF1Canvas(state)
+    ? F1_CANVAS_CARD_H
+    : isD4Canvas(state)
+      ? d4CanvasCardH(state)
+      : isD3Canvas(state)
+        ? d3CanvasCardH(state)
+        : isC2Draw(state)
+          ? c2DrawCardH(state)
+          : isC2Empty(state)
+            ? C2_EMPTY_CARD_H
+            : isD2Canvas(state)
+              ? d2CanvasCardH(state)
+              : isD1Canvas(state)
+                ? d1CanvasCardH(state)
+                : isC2Grid(state)
+                  ? c2GridCardH(state)
+                  : isB3Canvas(state)
+                    ? B3_CANVAS_CARD_H
+                    : CANVAS_CARD_H;
 
 function canvasParamsFrom(search: string): CanvasParams {
   const q = new URLSearchParams(search);
@@ -743,7 +760,8 @@ function canvasParamsFrom(search: string): CanvasParams {
     isD1Canvas(raw) ||
     isD2Canvas(raw) ||
     isD3Canvas(raw) ||
-    isD4Canvas(raw);
+    isD4Canvas(raw) ||
+    isF1Canvas(raw);
   // the frames ask for the card's own three widths; a PROBE asks for whatever
   // width it is reproducing, and the maintainer's window was 660. So the route
   // takes the number it is given between the floor and the widest card the
@@ -763,23 +781,25 @@ function canvasParamsFrom(search: string): CanvasParams {
 function seedCanvas({ state, theme }: CanvasParams) {
   // every wave's seed has the A3 seed's shape, whole: one branch on the state
   // name is the difference between the three waves' documents
-  const seed = isD4Canvas(state)
-    ? d4CanvasSeed(state)
-    : isD3Canvas(state)
-      ? d3CanvasSeed(state)
-      : isC2Draw(state)
-        ? c2DrawSeed(state)
-        : isC2Empty(state)
-          ? c2EmptySeed()
-          : isD2Canvas(state)
-            ? d2CanvasSeed(state)
-            : isD1Canvas(state)
-              ? d1CanvasSeed(state)
-              : isC2Grid(state)
-                ? c2GridSeed(state)
-                : isB3Canvas(state)
-                  ? b3CanvasSeed(state)
-                  : canvasSeed(state);
+  const seed = isF1Canvas(state)
+    ? f1CanvasSeed()
+    : isD4Canvas(state)
+      ? d4CanvasSeed(state)
+      : isD3Canvas(state)
+        ? d3CanvasSeed(state)
+        : isC2Draw(state)
+          ? c2DrawSeed(state)
+          : isC2Empty(state)
+            ? c2EmptySeed()
+            : isD2Canvas(state)
+              ? d2CanvasSeed(state)
+              : isD1Canvas(state)
+                ? d1CanvasSeed(state)
+                : isC2Grid(state)
+                  ? c2GridSeed(state)
+                  : isB3Canvas(state)
+                    ? b3CanvasSeed(state)
+                    : canvasSeed(state);
   // the model is the harness's own everywhere but one state: C2b's
   // `c2-draw-novision` runs on a row the registry documents WITHOUT vision,
   // because the frame's whole subject is the `Ask` that is then not in the
@@ -812,23 +832,25 @@ function CanvasHarness({ state, w, canvasId }: CanvasParams & { canvasId: string
       // poses a pointer mid-gesture, C2b's presses the drawing's own picker
       // open and leaves a finger on the empty page — the things a still
       // cannot hold
-      const hook = isD4Canvas(state)
-        ? d4CanvasAfterMount(state)
-        : isD3Canvas(state)
-          ? d3CanvasAfterMount(state)
-          : isC2Draw(state)
-            ? c2DrawAfterMount(state)
-            : isC2Empty(state)
-              ? c2EmptyAfterMount(state)
-              : isD2Canvas(state)
-                ? d2CanvasAfterMount(state)
-                : isD1Canvas(state)
-                  ? d1CanvasAfterMount(state)
-                  : isC2Grid(state)
-                    ? c2GridAfterMount(state)
-                    : isB3Canvas(state)
-                      ? b3CanvasAfterMount(state)
-                      : canvasAfterMount(state);
+      const hook = isF1Canvas(state)
+        ? f1CanvasAfterMount(state)
+        : isD4Canvas(state)
+          ? d4CanvasAfterMount(state)
+          : isD3Canvas(state)
+            ? d3CanvasAfterMount(state)
+            : isC2Draw(state)
+              ? c2DrawAfterMount(state)
+              : isC2Empty(state)
+                ? c2EmptyAfterMount(state)
+                : isD2Canvas(state)
+                  ? d2CanvasAfterMount(state)
+                  : isD1Canvas(state)
+                    ? d1CanvasAfterMount(state)
+                    : isC2Grid(state)
+                      ? c2GridAfterMount(state)
+                      : isB3Canvas(state)
+                        ? b3CanvasAfterMount(state)
+                        : canvasAfterMount(state);
       void hook.then(() => {
         if (live) document.documentElement.dataset.harnessReady = "1";
       });

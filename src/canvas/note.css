@@ -26,6 +26,7 @@
 .blk-note:hover > .acts-float,
 .blk-note[data-hot] > .acts-float {
   opacity: 1;
+  pointer-events: auto;
   transform: none;
 }
 

@@ -196,3 +196,23 @@ from the maintainer, say so and cite it; the pushback is wanted.
     13 asked of a turn count and LESSONS 16 asked of a network wait: a
     number, or a call, that the harness itself manufactures is never the
     fact to act on.
+18. **An invisible control is still a control.** The drawing's cluster and
+    corner handle hid on a bare hover with `opacity: 0` and no
+    `pointer-events: none` (`drawing.css`); seven buttons and a 16px handle
+    kept taking presses nobody could see. The maintainer's own recording
+    (F1, 2026-09-18) is the proof: a hand reaching for the sheet's own
+    top-right lifted the invisible grip and moved the widget a row down,
+    and a hand meaning to draw opened an invisible `More`. `opacity: 0` is
+    a paint instruction, never a hit-test one; any reveal that drops a
+    control to zero opacity carries `pointer-events: none` down with it,
+    set back to `auto` the instant the reveal's own condition (`:hover`,
+    `:focus-within`, `[data-hot]`) is true again. A reveal gated on
+    `:focus-within` has a second failure mode standing right beside the
+    first: `Drawing.tsx`'s `onDown` called `preventDefault()` on
+    `pointerdown` before anything focused the sheet, and `preventDefault()`
+    there cancels the browser's OWN default, which is the focus change. A
+    control that only shows itself once its container is focused is a
+    control a pointer can never reach unless the same handler focuses the
+    container itself, ahead of or regardless of the `preventDefault()` the
+    gesture still needs; a reveal reachable only from the keyboard is not
+    reachable at all to the hand that is supposed to trigger it.

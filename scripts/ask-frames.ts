@@ -261,6 +261,12 @@
 // moment after a drop at that count, which the next measure can no longer take
 // back (one layout, D4).
 //
+// F1 (the maintainer's drawing recording of 2026-09-18): f1-draw-inking = the
+// same page as c2-draw with the pen DOWN and moving, the live stroke under the
+// hand and the cluster and corner handle off the paper, because the block is
+// wearing the stroke and not because the kind refuses a hover. Read beside
+// c2-draw, whose seven stand hot, it is the whole of what F1 changed.
+//
 // B4 (the sketch's "B4 · qbot" rows): b4-empty = the empty state with the
 // composer focused, qbot's two eye marks 2px lower than at rest; `empty` is
 // the same state at rest and now shows qbot, so the two are the gaze's pair,
@@ -409,6 +415,7 @@ const CANVAS_STATES = [
   "d4-derived-drop",
   "e5b-delete",
   "e5b-sql-face",
+  "f1-draw-inking",
 ] as const;
 /** the B3 four and the C2a six stand on a taller card: neither a four-block
  * answer with a chart among them nor a page of cells fits A3's 760
@@ -526,6 +533,11 @@ const D3_CANVAS_STATES: readonly string[] = ["d3-drag-nonintersecting", "d3-drop
 const D4_REST_CARD_H = 738;
 const D4_DROP_CARD_H = 978;
 const D4_CANVAS_STATES: readonly string[] = ["d4-derived", "d4-derived-drop"];
+/** and F1's one (fixtures.f1.ts F1_CANVAS_CARD_H): C2b's own drawing card,
+ * because the state is C2b's page with a pen down on it and the two are read
+ * side by side */
+const F1_CANVAS_CARD_H = 860;
+const F1_CANVAS_STATES: readonly string[] = ["f1-draw-inking"];
 const D2_CANVAS_STATES: readonly string[] = [
   "d2-widgets",
   "d2-add-menu",
@@ -534,33 +546,35 @@ const D2_CANVAS_STATES: readonly string[] = [
   "d2-note-grown",
 ];
 const canvasCardH = (state: string): number =>
-  D4_CANVAS_STATES.includes(state)
-    ? state === "d4-derived-drop"
-      ? D4_DROP_CARD_H
-      : D4_REST_CARD_H
-    : D3_CANVAS_STATES.includes(state)
-      ? state === "d3-drop-settled"
-        ? D3_DROP_CARD_H
-        : D3_DRAG_CARD_H
-      : state === "c2-draw-small"
-        ? SMALL_CANVAS_CARD_H
-        : state === "c2-draw-empty"
-          ? FRESH_CANVAS_CARD_H
-          : state === "c2-draw" || state === "c2-draw-tools" || state === "c2-draw-novision"
-            ? DRAW_CANVAS_CARD_H
-            : state === "c2-empty" || state === "c2-empty-place"
-              ? EMPTY_CANVAS_CARD_H
-              : D2_TALL_CANVAS_STATES.includes(state)
-                ? D2_TALL_CANVAS_CARD_H
-                : D2_CANVAS_STATES.includes(state)
-                  ? D2_CANVAS_CARD_H
-                  : D1_TALL_CANVAS_STATES.includes(state)
-                    ? D1_TALL_CANVAS_CARD_H
-                    : DOC_CANVAS_STATES.includes(state)
-                      ? DOC_CANVAS_CARD_H
-                      : TALL_CANVAS_STATES.includes(state)
-                        ? TALL_CANVAS_CARD_H
-                        : CANVAS_CARD_H;
+  F1_CANVAS_STATES.includes(state)
+    ? F1_CANVAS_CARD_H
+    : D4_CANVAS_STATES.includes(state)
+      ? state === "d4-derived-drop"
+        ? D4_DROP_CARD_H
+        : D4_REST_CARD_H
+      : D3_CANVAS_STATES.includes(state)
+        ? state === "d3-drop-settled"
+          ? D3_DROP_CARD_H
+          : D3_DRAG_CARD_H
+        : state === "c2-draw-small"
+          ? SMALL_CANVAS_CARD_H
+          : state === "c2-draw-empty"
+            ? FRESH_CANVAS_CARD_H
+            : state === "c2-draw" || state === "c2-draw-tools" || state === "c2-draw-novision"
+              ? DRAW_CANVAS_CARD_H
+              : state === "c2-empty" || state === "c2-empty-place"
+                ? EMPTY_CANVAS_CARD_H
+                : D2_TALL_CANVAS_STATES.includes(state)
+                  ? D2_TALL_CANVAS_CARD_H
+                  : D2_CANVAS_STATES.includes(state)
+                    ? D2_CANVAS_CARD_H
+                    : D1_TALL_CANVAS_STATES.includes(state)
+                      ? D1_TALL_CANVAS_CARD_H
+                      : DOC_CANVAS_STATES.includes(state)
+                        ? DOC_CANVAS_CARD_H
+                        : TALL_CANVAS_STATES.includes(state)
+                          ? TALL_CANVAS_CARD_H
+                          : CANVAS_CARD_H;
 const MARGIN = 24;
 
 // ---- args -------------------------------------------------------------------

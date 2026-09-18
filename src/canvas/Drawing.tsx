@@ -42,6 +42,19 @@
 // a history that rode `doc_json` would be persisted for ever and would be the
 // largest thing in the blob, so the stack dies with the unmount, which is
 // stated here rather than discovered.
+//
+// A press ARMS the sheet (F1). `preventDefault` on pointerdown is what keeps a
+// stroke from selecting the page, and it cancels the focus change with it, so
+// the focus is taken by hand: without it the chords were dead after every
+// stroke a pointer made, and the cluster, whose reveal C2b had carved down to
+// `:focus-within`, was reachable only by pressing a button nothing had drawn.
+// The two halves of that are one line each here and one rule each in
+// drawing.css. While the stroke is in the air the block wears `data-inking`,
+// written straight onto the node like the live path's own `d`: it is the
+// element's only state between the down and the up, a render here would be the
+// one thing this file promises not to do, and an attribute is what a
+// stylesheet, a fixture and a probe can all read. Counts are unmoved: 7 hot,
+// 0 at rest.
 
 import {
   Fragment,
@@ -122,6 +135,32 @@ const GLYPH: Record<DrawTool, typeof Pen> = {
 
 const labelOf = (tool: DrawTool): string => DRAW_TOOLS.find((t) => t.tool === tool)?.label ?? "Pen";
 
+/** the block wears this for exactly as long as a stroke is in the air, and
+ * drawing.css reads it to take the cluster and the corner handle off the paper
+ * (F1). Named here because the handler that writes it and the test that proves
+ * it must not spell it twice */
+export const INKING = "data-inking";
+
+/** what a press on the paper does before any ink: the sheet takes focus, so
+ * the tool chords and ⌘Z answer a hand's stroke and not only a `↩` from the
+ * keyboard, and the block goes into the stroke. `preventScroll` because this
+ * page is a scroller and a programmatic focus that scrolls it moves the paper
+ * out from under the pen (LESSONS 7) */
+export function armSheet(
+  sheet: { focus: (options?: { preventScroll?: boolean }) => void } | null,
+  block: { toggleAttribute: (name: string, force?: boolean) => unknown } | null,
+): void {
+  sheet?.focus({ preventScroll: true });
+  block?.toggleAttribute(INKING, true);
+}
+
+/** and the lift, the cancel and the Esc, which are one thing to the page: the
+ * stroke is no longer in the air. Focus stays where it is, because the hand
+ * that drew is the hand that will press `r` next */
+export function restSheet(block: { toggleAttribute: (name: string, force?: boolean) => unknown } | null): void {
+  block?.toggleAttribute(INKING, false);
+}
+
 /** what a screen reader hears on the sheet: a drawing is a graphic, and the
  * one honest thing to say about it is how much ink is on it */
 export const inkSaid = (strokes: readonly Stroke[]): string =>
@@ -189,6 +228,7 @@ export interface DrawingProps {
 }
 
 export function Drawing({ block, canvasId, cell, lead, ask, onDelete }: DrawingProps) {
+  const root = useRef<HTMLDivElement>(null);
   const sheet = useRef<SVGSVGElement>(null);
   const live = useRef<SVGPathElement>(null);
   const held = useRef<Live | null>(null);
@@ -277,10 +317,14 @@ export function Drawing({ block, canvasId, cell, lead, ask, onDelete }: DrawingP
     }
     if (full) {
       copyCueShow(fullSaid());
+      // no stroke to hold, and the press still arms the sheet: what a hand
+      // does next on paper that is full is ⌘Z, and that chord lives here
+      armSheet(e.currentTarget, null);
       return;
     }
     const node = e.currentTarget;
     e.preventDefault();
+    armSheet(node, root.current);
     node.setPointerCapture(e.pointerId);
     held.current = { tool, x0: at.x, y0: at.y, p: [at.x, at.y], d: penHead(at.x, at.y), moved: false, sealed: false };
     // the in-flight stroke is the stroke it will become: an arrow grows its
@@ -326,6 +370,7 @@ export function Drawing({ block, canvasId, cell, lead, ask, onDelete }: DrawingP
       const g = held.current;
       held.current = null;
       paint("");
+      restSheet(root.current);
       if (cancel || !g) return;
       seal(g);
     };
@@ -553,6 +598,7 @@ export function Drawing({ block, canvasId, cell, lead, ask, onDelete }: DrawingP
 
   return (
     <div
+      ref={root}
       className="blk blk-draw noq"
       data-block={block.id}
       tabIndex={0}

@@ -60,15 +60,31 @@
   margin-top: 0;
 }
 
-/* the drawing is the ONE kind whose cluster does not answer a bare hover
-   (AGENT-UX 16x): a pointer crossing a sheet mid-stroke is not a request to
-   see the picker, and a cluster that flashed on every incidental pass over
-   ink a person is actively drawing would teach the wrong lesson about what a
-   hover means here. Focus-within and [data-hot] still reveal it (canvas.css),
-   so the keyboard route and the harness both stand */
-.blk-draw:hover:not(:focus-within):not([data-hot]) > .acts-float {
+/* the drawing's cluster reveals on the register every other kind uses, and
+   this file adds nothing to it: hover, focus-within and [data-hot], written
+   once in canvas.css (AGENT-UX 16b). C2b carved a hover out here on the
+   reasoning that a pointer crossing a pen surface mid-stroke is not a request
+   to see the picker; the reasoning was right and the shape was wrong, and the
+   maintainer's recording is what it cost (F1, AGENT-UX 16x as amended). A
+   carve-out cannot tell a pointer that is DRAWING from one that is merely
+   over the paper, so it hid the cluster from both, and the seven buttons it
+   hid went on taking presses: a press meant for ink opened `More`, and a
+   press at the corner lifted the widget by a grip nothing on screen drew.
+   What the reasoning actually names is a STATE, and the state is written by
+   the hand that causes it: `data-inking` rides the block from pointerdown to
+   the up, the cancel or the Esc that ends the stroke (Drawing.tsx). Under it
+   the chrome goes, and goes disarmed: opacity without pointer-events is the
+   bug above, one layer down.
+
+   `.blk.blk-draw` and not `.blk-draw`, which is exactly the specificity
+   `.blk:focus-within` already has (canvas.css), and the sheet is focused for
+   the whole of a stroke: at equal weight the cascade falls to import order,
+   which the module graph decides (the --acts-surface rule below learned this
+   the expensive way). One class more can never lose that race */
+.blk.blk-draw[data-inking] > .acts-float {
   opacity: 0;
-  transform: translateY(4px);
+  pointer-events: none;
+  transform: translateY(-4px);
 }
 
 /* the sheet is PAPER, with ink on it or without (D1 item 7). C2b drew it only
@@ -102,14 +118,17 @@
   --acts-surface: var(--bg-raised);
 }
 
-/* and the corner handle leaves with the cluster it belongs to. The drawing is
-   the one kind whose cluster does not answer a bare hover (above), so on this
-   one kind the grid's own reveal (grid.css .cvg-slot:hover) was showing a
-   resize glyph in a corner with no other chrome anywhere near it: one glyph
-   alone in the air, which is neither the cluster nor a control anybody went
-   looking for. Focus-within and [data-hot] reveal both, as they always did */
-.cvg-slot:hover:not(:focus-within):has(.blk-draw:not([data-hot])) .cvg-handle {
+/* and the corner handle leaves with the cluster it belongs to, here as
+   everywhere (DESIGN rule 1's own row: the handle rides whatever register its
+   block's cluster does). With the carve-out gone the grid's reveal is that
+   register again, so the glyph that once stood alone in a corner with no
+   chrome near it now stands beside the cluster it belongs to; the one state
+   that takes it off the paper is the stroke in the air, the same state and
+   the same disarming. `:has()` carries its argument's own weight, so this
+   clears `.cvg-slot:hover .cvg-handle` (grid.css) whatever the import order */
+.cvg-slot:has(.blk-draw[data-inking]) .cvg-handle {
   opacity: 0;
+  pointer-events: none;
 }
 
 /* the in-flight stroke: one path, written with setAttribute from the pointer

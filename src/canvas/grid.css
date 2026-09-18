@@ -393,7 +393,9 @@
 /* one corner handle, bottom-right: a 16px hit box over an 8px L at tier 2.
    Eight handles were counted and refused (one corner moves both axes and a
    drag along one snaps the other), and it is revealed with the cluster, never
-   drawn at rest */
+   drawn at rest. While it is not drawn it answers nothing either, the
+   cluster's own rule (F1, ask.css .acts-float): the hand that resized a
+   widget it could not see is the same hand that moved one */
 .cvg-handle {
   position: absolute;
   right: 0;
@@ -406,6 +408,7 @@
   cursor: nwse-resize;
   touch-action: none;
   opacity: 0;
+  pointer-events: none;
   transition: opacity var(--dur-quick) var(--ease-std);
 }
 .cvg-handle::after {
@@ -423,9 +426,11 @@
 .cvg-slot:focus-within .cvg-handle,
 .cvg-slot:has([data-hot]) .cvg-handle {
   opacity: 1;
+  pointer-events: auto;
 }
 .cvg-slot[data-gesture="resize"] .cvg-handle {
   opacity: 1;
+  pointer-events: auto;
 }
 .cvg-slot[data-gesture="resize"] .cvg-handle::after {
   border-color: var(--accent);

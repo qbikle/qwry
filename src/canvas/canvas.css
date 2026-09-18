@@ -153,6 +153,7 @@ input.cv-title {
 .blk:focus-within > .acts-float,
 .blk[data-hot] > .acts-float {
   opacity: 1;
+  pointer-events: auto;
   transform: none;
 }
 /* the question line: the trace-kind face (.ans-lead's register), one line,
