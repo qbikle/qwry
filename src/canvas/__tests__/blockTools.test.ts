@@ -11,7 +11,7 @@ import { INK_VAR, WEIGHTS } from "../strokes";
 test("each kind's cluster, in the one order they stand in", () => {
   expect(kindTools("result")).toEqual(["grip", "copy", "flip", "insert", "ask", "more"]);
   expect(kindTools("note")).toEqual(["grip", "copy", "ask", "more"]);
-  expect(kindTools("drawing")).toEqual(["grip", "pen", "undo", "redo", "copy", "ask", "more"]);
+  expect(kindTools("drawing")).toEqual(["grip", "undo", "redo", "copy", "ask", "more"]);
 });
 
 test("the grip is every cluster's first action, and `more` its last", () => {
@@ -24,11 +24,12 @@ test("the grip is every cluster's first action, and `more` its last", () => {
   }
 });
 
-test("the drawing's seven fit its floor of two cells at the 640 floor", () => {
+test("the drawing's six fit its floor of two cells at the 640 floor", () => {
   // the cluster's own numbers (ask.css .acts-float): 16 of left padding under
   // the fade, 18px buttons 4 apart, 4 of right padding. The FRAME is the real
-  // evidence (c2-draw-small at 640); this is the arithmetic that predicts it,
-  // and it is what holds the roster at seven (DESIGN rule 13)
+  // evidence (c2-draw-small at 640); this is the arithmetic that predicts it
+  // (DESIGN rule 13). F3 took `Pen ▾` out of the roster: the tools stand in
+  // the island now (toolIsland.test.tsx has the island's own floor test)
   const px = (n: number) => 16 + n * 18 + (n - 1) * 4 + 4;
   // the card's floor is 640 (DESIGN rule 13's own width) and the grid gets it
   // less the page inset either side and the card's own hairline. Five cells
@@ -53,14 +54,25 @@ test("one key arms one tool, and every other key bubbles", () => {
   for (const key of ["z", "Escape", "ArrowLeft", "1", " "]) expect(toolForKey(key)).toBeNull();
 });
 
-test("the six tools are the six a stroke can be, each with its own chord", () => {
-  expect(DRAW_TOOLS.map((t) => t.tool)).toEqual(["pen", "rect", "ellipse", "line", "arrow", "text"]);
+test("the eight tools are the hand, the eraser and the six a stroke can be, each with its own chord", () => {
+  expect(DRAW_TOOLS.map((t) => t.tool)).toEqual([
+    "select",
+    "pen",
+    "rect",
+    "ellipse",
+    "line",
+    "arrow",
+    "text",
+    "eraser",
+  ]);
+  expect(toolForKey("v")).toBe("select");
+  expect(toolForKey("e")).toBe("eraser");
   expect(new Set(DRAW_TOOLS.map((t) => t.chord)).size).toBe(DRAW_TOOLS.length);
   // a chord is a SPEC for <Kbd> and never a glyph: one character, lower case
   for (const row of DRAW_TOOLS) expect(row.chord).toMatch(/^[a-z]$/);
 });
 
-test("the picker's ladders and the drawing's own are the same length", () => {
+test("the island's ladders and the drawing's own are the same length", () => {
   expect(INK_STEPS.length).toBe(INK_VAR.length);
   expect(WEIGHT_STEPS.length).toBe(WEIGHTS.length);
 });

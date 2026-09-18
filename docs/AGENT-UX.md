@@ -2789,25 +2789,44 @@ geometry, the same reasoning that already put the chart in SVG (§16a). Kinds
 of stroke, six, the minimum that covers "mark up a chart and stop": **pen**
 (freehand, Ramer-Douglas-Peucker simplified and smoothed on commit, epsilon
 0.6px, below a CSS pixel), **rectangle**, **ellipse**, **line**, **arrow** (a
-filled head, four times its own stroke width long), **text label**. A `⇧`
+filled head, four times its own stroke width long), **text label** (MANY
+LINES since F3: the editor is a `<textarea>` where `↩` commits and `⇧↩`
+breaks a line, the document keeps the break as `\n` inside `v`, and both
+renderers draw one `<tspan>` per line at 1.2 × the label's own size. That
+1.2 is ONE number, `strokes.ts` `TEXT_LINE`, read by `textBox`, by the
+tspans and by the editor's own line height, so the words, the box a
+selection draws round them and the caret that typed them cannot disagree
+about where the second line sits; `textBox` grows with the line count, so
+`bboxOf`, the element's own floor and `select.ts`'s `localBox` follow for
+free). A `⇧`
 modifier that constrains a rectangle to a square, an ellipse to a circle or
 the pen/line to an exact straight line is NOT built this wave (§16aa, open):
 the six tools stand on their own, unconstrained. Colour is one of the accent ladder's three steps,
 the same ladder the chart already draws in (`Chart.tsx`), never a literal: a
 drawing beside a chart is the same palette, and a theme flip repaints both
-from one set of tokens. Stroke width is its own three-step ladder (1 · 2 ·
-4px, DESIGN rule 4's hairline allowance).
+from one set of tokens. Stroke width is its own ladder,
+six rungs since F3 (1 · 1.5 · 2 · 3 · 4 · 6px: Hairline · Fine · Line · Bold
+· Marker · Brush). C2b's three (1 · 2 · 4) were a ladder with no middle, and
+the middle is where a hand marking up a chart lives; the three still stand
+at their own widths, so no drawing anyone has already made is repainted by
+the change, and a hand-edited width still lands on the nearest rung
+(`strokes.ts` `rung`). Ink is not spacing, so the ladder is not the 4px
+grid's: rule 4 governs the gaps between things, not how wide a line is
+drawn.
 
 **Coordinates are absolute CSS pixels from the element's own top-left, never
 normalized, ever** (maintainer call 1): a normalized circle becomes an
 ellipse the instant its box stretches (§16o's own cell stretch, up to 1.25x),
 so a drawing keeps one scale, 1:1, for its whole life. A resize reveals or
 hides paper, it never stretches the ink, which is what a page of ink should
-do. One rule keeps that honest: on commit, the strokes' own bounding box is
-measured against `minSpanFor`, and if it exceeds the element's frame the
-span grows through the SAME `resizeTo(…, { auto: true })` a hand resize
-uses (no second name for this path; it is the note's own `autoH` route,
-§16p), so the ordinary case never needs the rule below at all. **Reversed
+do. One rule keeps that honest: on commit, the strokes' own bounding box, a
+rotated rect, ellipse or text measured by its WORLD box (`select.ts`'s own
+`worldBox`, the diagonal reach a spin actually occupies rather than its
+unrotated width and height, §16jj), is measured against `minSpanFor`, and if
+it exceeds the element's frame the span grows through the SAME
+`resizeTo(…, { auto: true })` a hand resize uses (no second name for this
+path; it is the note's own `autoH` route, §16p), so the ordinary case never
+needs the rule below at all. **Reversed
 (D1, 2026-09-14, closing the drawing-ghost finding): where a reflow, a hand
 shrink, or a `canvas_write` `span` (§5.2) caps the frame below ink already
 drawn, the sheet CLIPS.** The page carries ONE clip, on the drag layer
@@ -2843,6 +2862,23 @@ rounded to 0.1px on commit (LESSONS 2: know the platform's lossy conversions
 and state the one this format accepts on purpose, since these magnitudes
 round-trip float64 exactly and the loss is invisible at this resolution).
 
+**Amended (F3, 2026-09-18, the select tool's own document change): rect,
+ellipse and text gain an OPTIONAL `r`**, radians about the stroke's own
+centre, rounded to 4 places on commit and ABSENT whenever it is 0, so a
+stroke that has never been rotated stays byte-identical to what this
+section shipped, the round-trip test's own guarantee extended rather than
+broken. Pen, line and arrow carry no `r`: a free path or a two-point line
+has no separate shape to hold steady under a spin, so a rotation on one of
+these BAKES straight into its own points instead (`select.ts`'s
+`rotateAbout`), the same reasoning §16aa already gave for why none of the
+six takes a `⇧`-square constraint either. `marksOf` and `svgOf` emit a
+carrying stroke's `r` as `transform="rotate(<deg> <cx> <cy>)"`, nothing when
+it carries none; `parseStrokes`/`writeStrokes` round-trip it under the same
+property test as every other field. The math that reads and writes `r`,
+`localBox`, `worldBox`, and the translate, rotate and scale a gesture
+applies, lives in ONE place, `src/canvas/select.ts`, never re-derived at a
+call site; §16jj is its law.
+
 **The cap holds, and it says so where it is hit.** Two ceilings, both
 measured against the serialized form (the whole canvas document is one
 debounced blob, AGENT-SPEC §9): 4,000 points on one pen stroke (about 40KB
@@ -2870,10 +2906,19 @@ stacks, `past` and `future`, of at most 100 whole stroke-array snapshots each
 live in the component, never in `doc_json`: a history that rode the document
 would be persisted per element forever and would be the single largest
 thing in the blob. It dies with the element's unmount, stated here rather
-than discovered later. `⌘Z` undoes while the drawing has focus; there is no
-select tool this wave to give `⌫` a second meaning inside a focused drawing
-(§16aa, open), so `⌫` on a focused drawing still deletes the ELEMENT, the
-same key every other kind already binds (§16b, §16s).
+than discovered later. `⌘Z` undoes while the drawing has focus. **Amended
+(F3, 2026-09-18): the select tool (`V`, §16jj) gives `⌫` the second meaning
+§16aa left open.** With a selection standing, `⌫` deletes the SELECTED
+STROKES as one further step on these same two stacks; with the SHEET
+focused and none standing, `⌫` does nothing (`onSheetKey` already swallows
+no key it arms no tool for, LESSONS 10, true before the select tool existed
+and true again now that it does); with the WIDGET focused rather than the
+sheet inside it, `⌫` still deletes the ELEMENT, the same key every other
+kind already binds (§16b, §16s). Esc follows the same split: with a
+selection standing it clears the selection first and stays on the sheet;
+with none, it leaves the sheet exactly as it already does today, moving
+focus to the widget (§16jj is the select tool's own law, the full order
+included).
 
 **`Clear…` and `Delete…`** are the drawing's `More` menu, mirroring a
 result's `Compare With ▸` then `Delete` (§16b): `Clear…` opens the app's own
@@ -2914,86 +2959,210 @@ stroke. `c2-draw-empty` still stands for the empty case; `c2-draw` (D1)
 draws a shrunk, inked sheet beside it so the frame stands whether the sheet
 holds one stroke or none.
 
-### 16x. The drawing's cluster and picker (C2b, 2026-09-11)
+### 16x. The tool island (F3, 2026-09-18, replacing C2b's Pen ▾ and its menu)
 
-The picker is not a second strip: it lives INSIDE the same `.acts-float`
-cluster every other kind already carries at its own top-right corner (§16b,
-§16s), never a global toolbar shown at rest (a toolbar drawn for five tools
-on a page that may hold no drawing is exactly what rule 15 refuses). A
-drawing's cluster, seven hot and zero at rest: **Grip · Pen ▾ · Undo ·
-Redo · Copy · Ask · More**. `Grip` is the drag surface every kind now
-carries first (§16s, unchanged); `Pen ▾` is ONE control standing in for the
-whole toolset, a menu of the six stroke kinds (§16w), each row its own
-glyph, its label, and a one-key chord shown as `<Kbd>` (`P` pen, `R`
-rectangle, `O` ellipse, `L` line, `A` arrow, `T` text; the chords fire only
-while the drawing has focus). Menu rows elsewhere in this app carry a
-label, a hint and an arrow, never an icon (§16b); `Pen ▾`'s own rows are the
-deliberate exception, because the glyph is not decoration on an action's
-name, it is the SHAPE the row hands you. **Amended from the plan
-(maintainer call 2, shipped):** the plan folded `Redo` into `More` as a
-`⇧⌘Z` row and held the cluster at six to match a result's own count; the
-tree gives `Redo` its own button beside `Undo` instead, both standing
-disabled rather than vanishing when their own stack is empty (rule 13: a
-cluster that changes shape as a stack fills is one nobody can design for),
-because the two halves of one gesture belong in one place and a row you
-have to go and find is not that place. `⇧⌘Z` still redoes while the drawing
-has focus, the chord riding the button rather than replacing it.
+**The ask.** The maintainer, 2026-09-18: "i want it to look more like
+excalidraw and feel too many (making it feel might be a bit too much)";
+"the tools thing can go on top left other thing stay on right." Excalidraw's
+register is a raised island standing where the tools are USED, expanding to
+show its own set rather than hiding it behind a click; C2b's `Pen ▾`, one
+button whose whole toolset lived a click away in a menu, was never that
+register, so this section replaces it rather than growing it. The island
+joins DESIGN rule 1 as a species of its own (below), never folded into
+`.acts-float`, which keeps the top-right unchanged in position and shrinks
+to six (below).
 
-**Reversed (F1, 2026-09-18, reversing C2b's carve-out): the cluster
-reveals on §16b's standard register, hover, focus-within and `[data-hot]`
-alike, the same register every other kind already answers.** The carve-out
-this paragraph used to state, that the reveal is `:focus-within` only and
-never bare `:hover`, is what the maintainer's own recording of that date
-(`qwry-agent-lab/docs/research/f1-recording`) caught failing: a hand
-reaching for the sheet's own top-right lifted an invisible grip and moved
-the widget a row down, and a hand meaning to draw opened an invisible
-`More`, both presses landing on a cluster nothing on screen showed. The
-carve-out's own reasoning, that a pointer crossing a pen surface mid-stroke
-is not a request to see the toolbar, still holds, but it is answered by a
-STATE now rather than by hiding the surface from every pointer that ever
-crosses it: while a stroke is in flight, pointerdown to pointerup,
-pointercancel or Esc, the block carries `data-inking`, and only under that
-attribute are the cluster and the resize handle both hidden AND
-`pointer-events: none` (DESIGN rule 8's reveal clause: a reveal-on-hover
-control is legal only where the surface still works without it, and a
-hidden one must not go on taking the presses meant for what replaced it).
-The sheet already captures the pointer for the length of a stroke, so
-nothing is lost by leaving the cluster reachable outside one; `data-inking`
-is what a frame or a test can read, the capture is not. A press on the
-sheet focuses it (`sheet.current.focus({ preventScroll: true })` in
-`onDown`, ahead of or regardless of the `preventDefault()` the stroke still
-needs), so the chords (`p r o l a t`, `⌘Z`, `⇧⌘Z`) work after a pointer
-stroke exactly as they already did after a keyboard one, and focus-within
-keeps the cluster up for as long as the drawing stays armed, the same
-contract a note's own caret already keeps. **The resize handle needs no
-carve-out of its own.** §16s's own "revealed with the cluster" already
-subordinates the handle to whatever register its OWN block's cluster
-reveals on; with the cluster's carve-out reversed above, that register is
-hover, focus-within and `[data-hot]` again, and `data-inking` hides the
-handle together with the cluster for the length of a stroke, no second rule
-required. The D1 sentence this replaces (2026-09-14, closing the
-drawing-ghost finding's third clause) existed only because a drawing's
-cluster once answered a narrower register than every other kind; once the
-drawing rejoins §16b's standard register, the handle rejoins it by the same
-subordination rule that carried the carve-out before, and nothing further
-needs to be said about it here.
+**One raised island, top-left, 12px in from both the widget's own edges**,
+stacked above the sheet so an armed shape's own ink never draws over it. It
+is GLASS and a PILL (the maintainer's own call, 2026-09-18, on the sketch):
+`color-mix(in srgb, var(--bg-raised) 72%, transparent)` over
+`backdrop-filter: blur(14px) saturate(1.25)`, a 1px `--border`,
+`--shadow-sm` and `--radius-pill`, which on a 34px-wide box is a stadium
+with fully round ends ("not curvy enough" at `--radius-lg`). The tools
+inside it are CIRCLES, by the maintainer's own nested-corner rule of the
+same day: an inner radius is the outer radius less the inset, the pill
+resolves to 17 on its 34px short side, the inset is 5 (1 hairline and 4 of
+padding), and 17 less 5 is 12, which is half of a 24px tool. `--radius-md`
+inside a stadium reads as a rounded square that missed the shape holding
+it, which is what the first frames of this island showed (rule 15: the
+arithmetic beat the token, and the token stays what it is everywhere else).
+One recipe, both boxes: an arm (below) is the same surface. This is the app's FIRST translucent surface and it earns the
+exception on one argument, written here so the next raised box does not
+inherit it by accident: the island stands ON the paper it acts on, over ink
+a hand has already drawn, and 205px of opaque box down the left of a sheet
+is a wall across the drawing.
 
-`Ask` is the common set's own button (§16b unchanged in name and position),
-gated on the vision flag (§16y): present when the chosen model's `vision`
-is `true`, absent otherwise (never disabled, the matrix read the way §16i
-already reads it, "enforced by absence": a capability that does not exist
-has no button to grey out). `More` opens on `Clear…`, a hairline separator,
-`Delete…` (§16w) — `Redo` stands as its own button in the cluster (above),
-not a row here.
+At rest it is ONE 24px button, the armed tool alone, its glyph at
+`--icon-sm` dead centre and its chord letter directly UNDER that glyph, at
+the circle's bottom centre, 6px in tier-2 `--fg-muted`, or the full
+`--accent` the instant that tool is armed, which is its own glyph's colour:
+one colour per button, glyph and letter alike, the hierarchy between them
+bought with 6px against 12 rather than with a tier. **Not the accent at
+.75** this section first shipped: measured off the frames, a letter mixed
+to three quarters reads 2.3:1 against `--accent-soft` where a sibling's
+letter reads 5.9:1 against the pill, and a fourth contrast tier mixed out
+of an opacity is exactly what rule 3 forbids (rule 15: measured, then
+amended): the island teaches its own shortcuts on every frame it
+stands in, never only on a cheatsheet a person has to go and open (DESIGN
+rule 11's teaching clause, answered by the control itself). **Under the glyph and not in the corner**
+(the maintainer, 2026-09-18: "icons always center, center; shrink the
+letters"): inside a circle the lower-left arc leaves a 3px pocket, so a
+letter seated there touches the glyph, which the first frames showed on `R`
+and `T`, while the bottom centre of the same circle has a 6px band with
+room under a centred glyph. The glyph keeps the optical centre every other
+icon in the app keeps and the letter takes the space nothing else wants.
+**Tier 2 and not tier 3**: an earlier draft of this section, and the
+sketch's own stylesheet, said `--fg-faint`, and that is wrong twice over.
+Faint is this app's DISABLED register (rule 4), so a faint letter on a live
+button says the wrong thing about the button; and at 6px over a translucent
+surface it is under legible in light theme. The frames are the evidence
+(`f3-island-open`, both themes): `V P R T E` read at the muted tier and
+would not at the faint one.
 
-**Rule 13's own arithmetic.** At the 640 floor a two-cell drawing renders
-2 × 111.6 + 12 = 235px (§16o's own raw-cell number). The seven-icon cluster
-(`.iconbtn-sm` 18px each, 4px gaps, a 16px lead, §16b's own math for a
-result's cluster: 16 + 7×18 + 6×4 + 4 = 170px) must clear that width for 2×2
-to stand as a real floor and not a number that reads well until a frame is
-drawn (rule 13: "a control the max width can show and the floor cannot is a
-control that does not exist"); the frame `c2-draw-small` is the evidence,
-not this sentence.
+**Seven slots when open**: `Select` (`V`) · `Pen` (`P`) · `Shapes` (the
+armed shape's own glyph, or Rectangle's when none is; the member's own
+chord, `R O L A`) · `Text` (`T`) · `Eraser` (`E`, §16kk) · a hairline
+separator · `Ink` (a 10px dot in the current ink, the same three-step accent
+ladder §16w already draws in) · `Weight` (a 12px rule at the current
+weight, six rungs now, §16w as amended; as wide as the glyph beside it and
+no wider, so the ladder reads by thickness alone). 24px tools on a 28px pitch, 4px
+padding on every side, a 9px separator row between the five tools and the
+two properties, the body 205px tall fully open (rule 13's own arithmetic,
+below). **24 and not 28**: seven slots at the wider pitch would not stand
+inside the 2×2 floor, and a control the floor cannot show is a control that
+does not exist (rule 13), so the pitch gave way rather than the roster. The
+roster and its order are ONE table, `ToolIsland`'s own, read the same way
+`blockTools.ts`'s `kindTools` is already read for the cluster: a slot
+re-authored per call site is how this drifts from the cluster's own six a
+session later.
+
+**Opens when the pointer comes within 40px of its own open footprint, or
+when focus lands inside it** (a tabbed-to tool opens the island exactly as a
+hand reaching for it does, so the register never asks a keyboard hand to also
+own a mouse; `V`/`P`/`R` typed on the sheet arm their tool and the rest
+button changes face, which is that chord's whole feedback, the island staying
+folded because the maintainer's own words tie the fold to the hand's reach
+and not to a key, F3 integration); an open
+family's own arm keeps it open too, judged against the arm's own box with a
+tighter 24px margin (`ARM_REACH`, one number in one place beside `REACH`),
+since the arm reaches further right than the island's own 40px zone would
+otherwise cover. The two halos differ on purpose: the island's 40 is a hand
+ARRIVING, which has to be met before it gets there, and the arm's 24 is a
+hand already inside an answer to its own click, where a halo as wide as the
+island's would hold the island open from most of the paper beside it. It folds 160ms after the pointer
+leaves that whole footprint, UNLESS focus still stands inside it (a tool
+holding keyboard focus keeps the island open with no timer running at all,
+closing only on blur or on a tool being armed); it folds at once, no grace,
+the instant a stroke starts on the sheet, the same `data-inking` moment
+that already hides the cluster (F1's own reveal register, carried forward
+below).
+
+**A click on a tool arms it and leaves the island open.** `Select`, `Pen`,
+`Text` and `Eraser` are simple this way, one press and done, exactly as the
+ask's own "simple tools like move tool can be just simple click and thats
+it" describes. **A mark that LANDS re-arms `Select`** (the maintainer,
+2026-09-18, and Excalidraw's own rule): a rectangle, a line, an arrow or a
+label is one thing a hand places and then wants to move, so the commit that
+seals it carries `tool: "select"` on the SAME `updateDrawing` write (a
+gesture is one `setDoc`, §16w). The pen is the exception and stays armed,
+because a sketch is many strokes, and so is the eraser, for the same
+reason. Undo takes the strokes back and not the arming: a history that
+restored which tool was armed would be a history of the chrome. **Families open on a CLICK only, never on proximity**: clicking
+`Shapes`, `Ink` or `Weight` grows an ARM rightward from that slot's own row,
+the same species growing sideways rather than a second one (DESIGN rule 1,
+below); the slot's own glyph vanishes the instant its arm opens and returns
+the instant it closes, since the arm now shows it, at its ordinal position,
+in the slot's own place. The arm's width grows on `spring.snappy` into the
+room its own members need; the currently active member slides from the
+island's own edge to its ordinal on `spring.rail`, the rest dropping the 6px
+into theirs on `spring.snappy` as the arm's own body grows past them, never
+travelling the row (the motion table, below, is one table for both). Picking a member arms it, or, with a selection standing on
+the sheet, restyles the selection instead (Ink and Weight only; Shapes has
+no such case, §16jj), and folds the arm back on the same asymmetric pair,
+out on `spring.rail`, home on `spring.snappy`, never an overshoot past the
+island's own edge either way. Clicking the `Shapes` slot itself while its
+own arm stands closes the arm and arms whichever member is already showing
+(a click on the slot and a click on its own visible member do the same
+thing); `Ink` and `Weight` carry no such shortcut, since closing without
+picking a member changes nothing for either.
+
+**Reveal register, carried from F1: the widget's own hover, focus-within
+and `[data-hot]`, the island answering it exactly as the cluster already
+does**, hidden AND disarmed together under `[data-inking]` (opacity and
+`pointer-events` dropped in the same breath, never one without the other,
+LESSONS 18's own rule read fresh for a second species rather than assumed
+safe because the first one already learned it).
+
+**The cluster keeps the top-right, six now and not seven.** `Pen ▾` leaves
+`kindTools("drawing")` for good: `Grip · Undo · Redo · Copy · Ask · More`,
+gated on vision exactly as before (`Ask` absent, never disabled, where the
+chosen model cannot read an image, §16y). `Pen ▾`'s own menu, six rows
+wearing a glyph column, the app's one deliberate exception to the bare-menu
+rule (§16b), retires with it: the exception was never a menu's own right,
+it was six tools with nowhere else to stand before the island gave them
+one. DESIGN rule 1's Menu row entry keeps its own citation of `Pen ▾` as the
+FIRST instance a glyph column stood in a kind-menu (§16cc later generalized
+it for the `+` menu); that is a fact about lineage, and it outlives the row
+it describes.
+
+**State stays exactly where it already lives.** The island is a new FACE on
+the same state `Drawing.tsx` already threads through `updateDrawing`,
+`block.tool` / `block.ink` / `block.weight`, never a store of its own;
+`select` simply joins `DrawTool`'s six members as a seventh, and
+`toolForKey("v")` arms it exactly as `p r o l a t` already arm the rest
+(LESSONS 10's swallow-only-what-you-own rule unchanged, one more letter on
+the same list).
+
+**Motion (DESIGN rule 6, `springs.ts` presets only).**
+
+| what moves | on |
+|---|---|
+| the armed tool slides down to its own slot; a family member slides out to its own ordinal | `spring.rail` (the RAIL constant, 600/24/0.6, ζ ≈ .63, a whisper of overshoot, always into room the body has already grown) |
+| the armed tool slides home; a member slides back | `spring.snappy`, asymmetric with the row above on purpose: the way out has life, the way back is calm, and nothing ever overshoots past the island's own edge |
+| siblings drop into their slots; family members drop into an open arm | `spring.snappy` (700/38/0.6), the 6px from just above their OWN slot at scale .9, the moment the body grows past it |
+| the island's body grows and shrinks; an arm widens and folds | `spring.snappy`, ζ ≈ .93: a body that overshot would clip the tool standing inside it |
+| siblings leaving, chord letters, hover fills | `--dur-quick` on `--ease-std`, a sibling fading where it stands and travelling nothing |
+| reduced motion | every getter above collapses to the instant variant; nothing travels, everything stands where it was going |
+
+**ONLY THE ARMED TOOL TRAVELS, and the body is the clock.** Two rules, both
+bought with a recording. The maintainer filmed the sketch mid-build and
+named what he saw "double sliding": the armed tool riding down its column
+while the others rode down BEHIND it at a different speed reads as a list
+being shuffled, not as a box opening. So a sibling never enters the column
+at all. It waits 6px above its own slot at scale .9 and opacity 0, drops
+that 6px in, and on the way home fades where it stands; the armed tool is
+the one item with a journey, and its own rendered coordinate is clamped
+against the body's (`max(PAD, min(own, body - LEAD_INSET))`), which is how
+"never clipped" is arithmetic here rather than a hope about two curves.
+
+And a sibling's moment is not a stagger anybody typed, it is the frame the
+BODY's own spring grows past its slot (`ToolIsland.tsx` `coversSlot`); the
+same gate multiplies its opacity, so a sibling the shrinking body has
+passed is gone whether or not its fade has finished, and the box is never
+drawn empty nor anything drawn outside it (the maintainer's second
+recording). A spring decelerates, so the slots light up top to bottom on
+their own, widening as they go: the stagger is the spring's own shape
+instead of a second number to keep in step with it (DESIGN rule 14; the
+earlier draft of this table said "a 16ms stagger top to bottom", and that
+second number is gone). `f3-probe` is the enforcement: every sibling stands
+within 6px of its OWN slot at every sample, opening and folding, which is
+the one thing a sample of opacities alone cannot see, since a sibling riding
+the body's edge is fully opaque the whole way down.
+
+**Rule 13's own arithmetic, on both axes now.** The shrunk cluster still
+clears the same width it always has: six icons at `.iconbtn-sm`'s 18px, 4px
+gaps, a 16px lead, reads 16 + 6×18 + 5×4 + 4 = 148px, well inside the 235px
+a two-cell drawing stands on at the 640 floor (2 × 111.6 + 12, §16o's own
+raw-cell number, unmoved since C2b). The island answers the same question
+on its own axis: fully open it is 205px tall against the 211px a 2×2
+drawing's own frame stands on at that same floor, 6px to spare, so the
+smallest drawing this app allows can still open the island all the way with
+nothing clipped, and rule 13's own question, "a control the max width can
+show and the floor cannot is a control that does not exist," is answered
+before a frame is ever drawn. That margin is what the 24px tool bought:
+seven slots on the old 32px pitch would have stood 233 tall and the floor's
+own paper would have cut the last two off. `f3-island-floor` is the
+evidence, not this sentence.
 
 ### 16y. Ask on a drawing and the vision gate (C2b, 2026-09-11)
 
@@ -3107,7 +3276,7 @@ click.
 |---|---|---|
 | block species with a real component | 2 (`drawing` type-only) | 3 |
 | hot on a drawing's cluster, at rest | (none) | 0 |
-| hot on a drawing's cluster, focused | (none) | 7 (`Grip · Pen ▾ · Undo · Redo · Copy · Ask · More`), 6 where the chosen model has no vision |
+| hot on a drawing's cluster, focused | (none) | 7 (`Grip · Pen ▾ · Undo · Redo · Copy · Ask · More`), 6 without vision, down to 6 (`Grip · Undo · Redo · Copy · Ask · More`), 5 without vision, at F3 when `Pen ▾` moves into the tool island (§16x) |
 | `More` rows on a drawing | (none) | 2 visible (`Clear…` · `Delete…`) |
 | surfaces on a drawing at rest | (none) | 0 with ink, 1 without it (the paper, §16w) |
 | always-visible chrome per element, at rest | 0 | 0 |
@@ -3248,8 +3417,9 @@ Open below), Esc cancels, an emptied name keeps the old one, capped at
 however it is set, hand-typed here or handed to `canvas_create`. The `+`:
 `.iconbtn` at `--icon-md`, lucide `Plus`, tooltip `Add Widget` (no
 ellipsis: it places a widget at once, the house form for a menu button
-that acts without asking anything first, §16x's own `Pen ▾` and `More`
-citation). Pressed state `bg-active` while its own menu stands. DESIGN
+that acts without asking anything first, §16x's own `More` citation
+(`Pen ▾`, retired into the tool island at F3, was the first). Pressed
+state `bg-active` while its own menu stands. DESIGN
 rule 12: a title and one icon button, nothing else.
 
 **The menu.** `ContextMenu`, on `MenuNode`'s own `glyph?: ReactNode` — the
@@ -3272,11 +3442,11 @@ box actually hangs from. Rows: **Note** (`Type`), **Drawing** (`PenLine`),
 ("the app's own menu rows carry a label, a hint and an arrow, never an
 icon"), becomes: a menu of ACTIONS on one widget already chosen is bare
 (`More`, `Compare With ▸`); a menu of KINDS, where the row hands you a
-shape or a widget to CREATE, wears its own glyph. `Pen ▾` (§16x) and this
-`+` menu are both kind menus, the amendment also re-reads §16x's own
-"deliberate exception" language: `Pen ▾`'s glyph column was never an
-exception carved out of the bare-menu rule, it was the first instance of
-this one, stated fully only now.
+shape or a widget to CREATE, wears its own glyph. `Pen ▾` (§16x, since
+retired into the tool island) and this `+` menu were both kind menus, the
+amendment also re-reads §16x's own "deliberate exception" language: `Pen
+▾`'s glyph column was never an exception carved out of the bare-menu rule,
+it was the first instance of this one, stated fully only now.
 
 **Naming the rows.** The brief's own wording is `Text · Drawing · Graph`;
 this section spells the first and third `Note` and `Chart…` instead, per
@@ -3310,7 +3480,8 @@ below.
 
 **Counts.** Canvas strips: 0 → 1 (title + `+`). Always-visible controls
 per page: 0 → 1 (the `+`). Strings at rest per page: 0 → 1 (the canvas's
-own name). Menus with a glyph column: 1 (`Pen ▾`) → 2. Fixture:
+own name). Menus with a glyph column: 1 (`Pen ▾`) → 2, back to 1 at F3 when
+`Pen ▾`'s own menu folds into the tool island (§16x). Fixture:
 `d2-add-menu`.
 
 **Open.** The tab's own label and the header's own title are one fact in
@@ -3521,7 +3692,7 @@ Restart confirm now counts "N canvas widgets" (`Restart from Here?` · `… and
 | always-visible controls per page | 0 | 1 (the `+`, §16cc) |
 | always-visible controls per widget | 0 | 0 |
 | strings at rest per page | 0 | 1 (the canvas's own name, §16cc) |
-| menus with a glyph column | 1 (`Pen ▾`) | 2 (+ the `+` menu, §16cc) |
+| menus with a glyph column | 1 (`Pen ▾`) | 2 (+ the `+` menu, §16cc), back to 1 at F3 when `Pen ▾`'s own menu retires into the tool island (§16x) |
 | lines a squeezed chart's status carries | 1 (`8 of 12 bars · ms`, D1) | 0 (retired, §16ee) |
 | lines a squeezed chart's own face carries | 0 | 1 (`+ N more`, §16ee) |
 | rows inside the diff face | 1 (the A · B · Δ grid) | 2 (+ the chips row, §16ff) |
@@ -3765,3 +3936,152 @@ since teaching the face a bare year is a change to §16a's own rule, not
 to this dialog. No sort control: value desc for a text group, label asc
 for a date, both fixed, per rule 15's own restraint (a control the
 picks do not need is a control this dialog does not grow).
+
+### 16jj. The select tool (F3, 2026-09-18)
+
+**What selects.** `V` arms `select`, joining `DrawTool`'s six as a seventh
+(§16x). A click hits a stroke by the same test every gesture in this file
+already uses to find one under a pointer: pen, line and arrow by distance
+to their own segments (a `6 + t/2` tolerance, half the stroke's own weight
+added to a steady 6px, so a hairline and a 4px marker are equally easy to
+catch); rect and text by their own box inflated 4px, ellipse by its own
+radii each grown 4px the same way. Rotation is honoured the same way for
+every kind that can carry an `r` (§16w): the point is inverse-rotated about
+the stroke's own centre before either test runs, so a hit on a spun
+rectangle is a hit on the rectangle, never on the axis-aligned box it would
+occupy at zero degrees. `⇧`-click adds a stroke to the standing selection
+rather than replacing it. A press on empty paper drags a MARQUEE
+(`--accent-soft` fill, a 1px `--accent` border dashed `3 3`), selecting
+every stroke whose WORLD box intersects the marquee's own box, live, as the
+drag continues, never only on release. A click that lands on nothing and
+never moves clears the selection: the press itself already cleared it
+(unless `⇧` was held), and nothing further has to happen for that to read
+as cleared.
+
+**The overlay's anatomy**, drawn INSIDE the sheet's own SVG (a drawing is an
+SVG surface end to end, §16w, never a second DOM layer stacked over it): a
+single selected stroke's own box, `localBox` before rotation, 4px outside
+its bounds, rotated WITH the stroke (the same `transform="rotate(...)"` a
+carrying stroke's own mark already wears, §16w); a GROUP's box is the
+axis-aligned `unionBox` of every member, never rotated, since a rectangle
+drawn around several differently-angled shapes has no single angle of its
+own to wear. Four 8px corner handles (`--bg-panel` fill, 1px `--accent`
+border, radius 1.5, `nwse`/`nesw` cursors by corner) sit on that box's own
+corners; a 16px stem rises from its top-centre to a 5px knob 22px above it
+(`grab` cursor), the rotation handle. A HOVER over a selectable stroke
+(`select` armed, no gesture standing, the stroke not already selected)
+shows a fainter version of the same box (`opacity .5`, `/* optical */`: a
+hint that a press here selects something, not a fourth contrast tier,
+DESIGN rule 3) and swaps the sheet's own cursor to `move`; the selection's
+OWN box, once a stroke stands selected, carries no such fade and no hover
+state of its own, because it is not a control revealed by proximity, it is
+a fact about where the strokes are, and it travels with the selection
+rather than answering the widget's own hover register the island and the
+cluster do (the motion table at §16x: "no motion, they are where the
+strokes are"). **Selection handle joins DESIGN rule 1 as its own species
+for exactly this reason** (below): no disabled state, no rest/hover/focus
+matrix of its own, it simply leaves the instant the selection does.
+
+**Move, resize and rotate**, each committing exactly ONCE, on release, as
+one further step on the element's own two undo stacks (§16w), the SAME rule
+a drag or a keyboard resize already answers on the grid itself (§16s, C2b).
+A press inside the box, on a stroke already selected (or one a plain click
+just added), drags every selected stroke by the pointer's own delta,
+un-sprung, the same "a transform written per frame, no spring between a
+finger and the thing it holds" rule the grid's own drag already keeps
+(§16s); a marquee never commits anything on its own, only the selection Set
+changes, so drawing one and letting go with nothing caught writes no
+history at all. A corner handle resizes about the OPPOSITE corner, held
+fixed in WORLD space for the length of the gesture (**the fixed-corner
+invariant**: whatever the shape's own rotation, the corner the hand is not
+touching does not move, in the same pixels it started in, until the
+pointer is released); `⇧` held keeps width and height in the SAME ratio
+(the larger of the two axis factors signed onto both). A SINGLE rotated
+shape resizes IN ITS OWN FRAME: the drag point and the gesture's own start
+point are both inverse-rotated into the shape's local space first, the
+scale factor is computed there, and the fixed corner is held still in world
+space by translating the shape back, after rotating it, by exactly what its
+own centre moved (`select.ts`'s `resizeOne`, the two-step "scale locally,
+then re-anchor globally" `draw-tools-sketch-f3.html`'s own script already
+carries out; port it, do not re-derive it). A GROUP resize scales every
+member's position AND size about the shared fixed corner, axis-aligned
+only, since a group has no single rotation of its own to resize inside of.
+TEXT scales its own font size by the GEOMETRIC MEAN of the two axis factors
+(`√|sx·sy|`, floored at 8px) rather than stretching glyphs, since a font has
+one size and not a width and a height. The knob rotates every selected
+stroke about the selection's own centre; `⇧` snaps the angle to the nearest
+15°.
+
+**Keyboard.** `⌫`/`Delete` with a selection standing deletes the selected
+strokes, one commit; with none, on the focused SHEET, nothing; on the
+focused WIDGET (no sheet gesture armed to answer it), the widget, unchanged
+(§16w, amended). `Esc` clears a standing selection first and stops there;
+pressed again, or pressed with nothing selected, it leaves the sheet
+exactly as every other focused element already answers Esc (§16w). Arrow
+keys nudge the selection 1px, `⇧` 10px, ONE commit per press (never per
+pixel: a held arrow key is many presses and many commits, not one drag's
+worth of intermediate states worth keeping, the same distinction a drag's
+single release-time commit already draws against the un-sprung preview it
+follows). `⌘A` selects every stroke on the sheet. A double-click on a TEXT
+stroke opens it for editing in place through the same `openLabel` route a
+fresh text already uses, `existing` set to its own index rather than `-1`.
+
+**Ink and Weight restyle a standing selection** rather than arming the next
+stroke, the instant a member is picked from either arm (§16x): every
+selected stroke whose kind carries the picked field takes it (weight skips
+text, which has no stroke width to carry), one commit, the SAME undo stacks
+as a move or a resize.
+
+**Open, deliberately, named rather than silently missing:** edge
+(non-corner) handles; snapping beyond the two `⇧` behaviours above (no grid
+snap, no shape-to-shape alignment guides); `⌘D` duplicate; z-order
+(bring-to-front, send-to-back, no control for either); a persistent GROUP
+(multi-select is a transient `Set`, gone the instant the selection changes,
+never a saved entity two strokes can be re-selected as later); and rotating
+a MULTI-stroke selection is an APPROXIMATION, not a full answer: each
+member rotates about the shared centre correctly on its own (`rotateAbout`,
+the same function a single stroke's own rotation calls), but the
+selection's own overlay box stays axis-aligned throughout (above), so a
+rotated group's outline stops hugging its members the moment the angle
+leaves zero, correct data under a box that no longer describes it tightly.
+None of these five block the tool from doing what this wave asks of it,
+marking up a chart and moving what is already there; they are the next
+wave's own list, not a gap in this one's.
+
+**Deferred to F4 by design, not by omission** (both change the document
+model, so neither is a polish item): a colour WHEEL for `Ink`, where today
+three steps of the chart's own accent keep a drawing and the chart beside it
+in one palette (§16w) and a wheel would make `c` a colour instead of a rung;
+and CURVABLE lines and arrows (a midpoint bend handle, a quadratic control
+point on the stroke), which adds a third coordinate pair to two kinds that
+today are exactly two points. Both were named by the maintainer on the
+sketch and both are held for the wave that can afford the format change.
+
+### 16kk. The eraser (F3, 2026-09-18)
+
+**Its own slot, last among the island's tools, `E`.** The maintainer's own
+call, from the same message that asked for the hand: "selection tool should
+never be branched, it should be 1 click", and an eraser branched off the
+hand would be exactly that branch. What it does that nothing else could:
+Undo takes the LAST stroke and `Clear…` takes them all (§16w), and neither
+can take the third stroke of five without taking the two after it, which is
+what a hand marking up a chart asks for most.
+
+**A press and a drag, one undo step.** Every stroke the pointer touches
+dims to .3 as it is touched (`/* optical */`, the hover box's own reasoning
+one step further down, §16jj) and is taken on the LIFT, in one commit: a
+hand can slide off a stroke it touched by mistake, because nothing is gone
+until the finger is. `hitAt` decides what is touched, the same test a click
+with the hand armed uses (§16jj), so what the eraser takes is exactly what a
+click would have selected. `Esc` mid-drag cancels the whole gesture and
+takes nothing. The block wears `data-inking` for the length of it, so the
+cluster and the island leave the way they leave for a pen (F1's own reveal
+register, §16x), and the sheet's own cursor is `cell`, a crosshair with a
+gap in it. The eraser STAYS armed after a lift, like the pen and unlike a
+shape (§16x): erasing, like sketching, is many gestures.
+
+**What it is not.** Not a pixel eraser (a drawing is strokes, never a
+bitmap, §16w), not a partial one (half a pen path is two paths, which is a
+document change this wave does not make), and not a second `⌫`: `⌫` takes a
+standing SELECTION (§16jj) and needs one, where the eraser needs nothing but
+a hand.

@@ -119,12 +119,12 @@
 // `c2-migrated` seeds a pre-C2 document so the upgrade's picture is evidence.
 //
 // C2b adds the third species and the page with nothing on it: three drawing
-// states (fixtures.c2draw.ts: `c2-draw`, `c2-draw-small`, `c2-draw-tools`) on
-// cards of their own, since the floor state is two rows and the other two are
-// six; and two empty ones (fixtures.c2empty.ts: `c2-empty`, `c2-empty-place`)
-// on A3's own 560, because what an empty page is evidence of is how little is
-// on it. `c2-draw-tools` and `c2-empty-place` are POSED, one pressing the
-// product's own picker open and the other leaving a finger on the page.
+// states (fixtures.c2draw.ts: `c2-draw`, `c2-draw-small`, and `c2-draw-tools`,
+// retired at F3 with the `Pen ▾` menu it pressed open) on cards of their own,
+// since the floor state is two rows and the other two are six; and two empty
+// ones (fixtures.c2empty.ts: `c2-empty`, `c2-empty-place`) on A3's own 560,
+// because what an empty page is evidence of is how little is on it.
+// `c2-empty-place` is POSED, leaving a finger on the page.
 //
 // D1 adds one pane state and three canvas ones, all of them bugs the
 // maintainer's screenshots caught. On the ASK route: `d1-list-numbered`
@@ -157,7 +157,10 @@
 // lands there. F1 adds one (fixtures.f1.ts): `f1-draw-inking`, a drawing with
 // the pen down and moving, where the cluster and the corner handle are off the
 // paper because the stroke is in the air and not because the kind carves a
-// hover out (read beside `c2-draw`, whose seven stand). The canvas route also
+// hover out (read beside `c2-draw`, whose six stand). F3 adds eight
+// (fixtures.f3.ts): the tool island at rest, open, with its Shapes arm open,
+// and open at the 2x2 floor; and the select tool holding one stroke, a turned
+// one, two, and a marquee mid-drag. The canvas route also
 // takes a width the frames never ask for, anything between the floor and the
 // widest card, so a probe can drive the product at the width a bug was filmed
 // at (the maintainer's 660).
@@ -329,6 +332,7 @@ import {
   f1CanvasSeed,
   type F1CanvasState,
 } from "./fixtures.f1";
+import { f3CanvasCardH, F3_CANVAS_STATES, f3AfterMount, f3Seed, type F3CanvasState } from "./fixtures.f3";
 import "../app/v2.css";
 import "./harness.css";
 
@@ -692,7 +696,8 @@ type AnyCanvasState =
   | D3CanvasState
   | D4CanvasState
   | F1CanvasState
-  | F2CanvasState;
+  | F2CanvasState
+  | F3CanvasState;
 
 interface CanvasParams {
   state: AnyCanvasState;
@@ -728,6 +733,8 @@ const isF1Canvas = (state: string): state is F1CanvasState =>
   (F1_CANVAS_STATES as readonly string[]).includes(state);
 const isF2Canvas = (state: string): state is F2CanvasState =>
   (F2_CANVAS_STATES as readonly string[]).includes(state);
+const isF3Canvas = (state: string): state is F3CanvasState =>
+  (F3_CANVAS_STATES as readonly string[]).includes(state);
 
 /** the card each wave is read on: A3's three blocks stand in 760, B3's four
  * with a chart among them need 800, and C2's page of cells is read from its
@@ -743,7 +750,9 @@ const isF2Canvas = (state: string): state is F2CanvasState =>
  * (d3CanvasCardH): the drop state is the drag state with its push taken, which
  * is two rows more of page */
 const canvasCardH = (state: string): number =>
-  isF1Canvas(state)
+  isF3Canvas(state)
+    ? f3CanvasCardH(state)
+    : isF1Canvas(state)
     ? F1_CANVAS_CARD_H
     : isF2Canvas(state)
       ? F2_CANVAS_CARD_H
@@ -780,7 +789,8 @@ function canvasParamsFrom(search: string): CanvasParams {
     isD3Canvas(raw) ||
     isD4Canvas(raw) ||
     isF1Canvas(raw) ||
-    isF2Canvas(raw);
+    isF2Canvas(raw) ||
+    isF3Canvas(raw);
   // the frames ask for the card's own three widths; a PROBE asks for whatever
   // width it is reproducing, and the maintainer's window was 660. So the route
   // takes the number it is given between the floor and the widest card the
@@ -800,7 +810,9 @@ function canvasParamsFrom(search: string): CanvasParams {
 function seedCanvas({ state, theme }: CanvasParams) {
   // every wave's seed has the A3 seed's shape, whole: one branch on the state
   // name is the difference between the three waves' documents
-  const seed = isF1Canvas(state)
+  const seed = isF3Canvas(state)
+    ? f3Seed(state)
+    : isF1Canvas(state)
     ? f1CanvasSeed()
     : isF2Canvas(state)
       ? f2Seed()
@@ -853,7 +865,9 @@ function CanvasHarness({ state, w, canvasId }: CanvasParams & { canvasId: string
       // poses a pointer mid-gesture, C2b's presses the drawing's own picker
       // open and leaves a finger on the empty page — the things a still
       // cannot hold
-      const hook = isF1Canvas(state)
+      const hook = isF3Canvas(state)
+        ? f3AfterMount(state)
+        : isF1Canvas(state)
         ? f1CanvasAfterMount(state)
         : isF2Canvas(state)
           ? f2AfterMount(state)

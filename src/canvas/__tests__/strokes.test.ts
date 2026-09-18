@@ -1,9 +1,10 @@
-// The drawing's ink (C2b, strokes.ts). Five things are under test and only
-// five: the serialize/deserialize PAIR (LESSONS 1, property-tested both ways),
-// the caps and what they refuse, the simplification's own contract, the
-// geometry the live element and the export share, and the two budgets the law
-// names by number (the pointer path under 4 ms an event, the PNG's long edge
-// clamped to 1568).
+// The drawing's ink (C2b, strokes.ts). Six things are under test and only six:
+// the serialize/deserialize PAIR (LESSONS 1, property-tested both ways), the
+// caps and what they refuse, the simplification's own contract, the geometry
+// the live element and the export share, the ANGLE a stroke may carry (F3:
+// its canonical form, its one rotate string, and the box a turned stroke
+// stands in), and the two budgets the law names by number (the pointer path
+// under 4 ms an event, the PNG's long edge clamped to 1568).
 //
 // A deterministic PRNG, so a property failure reproduces: the precedent is
 // src/ask/__tests__/fuzzy.test.ts, copied in shape. No fast-check (not a
@@ -13,6 +14,7 @@ import { describe, expect, test } from "bun:test";
 import {
   ELEMENT_BYTES_MAX,
   PEN_POINTS_MAX,
+  TEXT_LINE,
   PNG_LONG_EDGE,
   PNG_SCALE,
   RDP_EPS,
@@ -30,7 +32,11 @@ import {
   simplify,
   strokeBytes,
   svgOf,
+  textBox,
+  textLines,
+  textRows,
   writeStrokes,
+  type Box4,
   type Stroke,
 } from "../strokes";
 import { CELL_W_BASE, GUTTER, cellsForPx } from "../grid";
@@ -44,6 +50,11 @@ const coord = () => Math.round((rnd() * 900 - 100) * 10) / 10;
 
 const KINDS = ["pen", "rect", "ellipse", "line", "arrow", "text"] as const;
 
+/** and sometimes a turn (F3), often enough to reach the wrap: past a whole
+ * revolution in either direction, which is where the canonical form has work
+ * to do rather than a number to copy */
+const spin = () => (rnd() < 0.4 ? rnd() * 16 - 8 : 0);
+
 function stroke(): Stroke {
   const k = pick(KINDS);
   const c = Math.floor(rnd() * 3);
@@ -54,8 +65,18 @@ function stroke(): Stroke {
     for (let i = 0; i < n; i++) p.push(coord(), coord());
     return { k, c, t, p };
   }
-  if (k === "text") return { k, c, s: TEXT_SIZE, at: [coord(), coord()], v: `label ${Math.floor(rnd() * 999)}` };
-  return { k, c, t, b: [coord(), coord(), coord(), coord()] };
+  if (k === "text") {
+    const at: [number, number] = [coord(), coord()];
+    const v = `label ${Math.floor(rnd() * 999)}`;
+    const r = spin();
+    return r === 0 ? { k, c, s: TEXT_SIZE, at, v } : { k, c, s: TEXT_SIZE, at, v, r };
+  }
+  const b: Box4 = [coord(), coord(), coord(), coord()];
+  if (k === "rect" || k === "ellipse") {
+    const r = spin();
+    return r === 0 ? { k, c, t, b } : { k, c, t, b, r };
+  }
+  return { k, c, t, b };
 }
 
 const drawing = (n = Math.floor(rnd() * 12)): Stroke[] => Array.from({ length: n }, stroke);
@@ -320,6 +341,153 @@ describe("what the ink covers", () => {
     }
   });
 });
+
+// ---- the angle (F3) ---------------------------------------------------------
+//
+// The one part of a stroke that is not where the hand put it. It joins the
+// pair above (the random documents up there carry turns too), and what is
+// asserted here is the three things a turn changes: the canonical form, the
+// one rotate string every renderer reads, and the box the ink now stands in.
+
+describe("the angle", () => {
+  const box: Box4 = [0, 0, 40, 20];
+  const turn = (r: number): Stroke => ({ k: "rect", c: 0, t: 2, b: box, r });
+
+  test("a drawing nobody turned is byte-identical to the one C2b wrote", () => {
+    const flat = writeStrokes([
+      { k: "rect", c: 0, t: 2, b: box },
+      { k: "text", c: 0, s: 13, at: [0, 0], v: "x" },
+      { k: "ellipse", c: 0, t: 2, b: box, r: 0 },
+    ]);
+    expect(JSON.stringify(flat)).not.toContain('"r":');
+    // a full revolution is no turn at all, and the field goes with it
+    expect(JSON.stringify(writeStrokes([turn(Math.PI * 2)]))).not.toContain('"r":');
+  });
+
+  test("it round-trips, wrapped and rounded to a thousandth of a degree", () => {
+    const out = writeStrokes([turn(Math.PI * 2 + 0.25), turn(1.23456789)]);
+    expect((out[0] as { r: number }).r).toBeCloseTo(0.25, 4);
+    expect((out[1] as { r: number }).r).toBe(1.2346);
+    expect(parseStrokes(out)).toEqual(out);
+  });
+
+  test("the wrap holds still at its own edge, both halves, twice over", () => {
+    // rounding a value AT pi pushes it a hair past pi: wrapped hard, the next
+    // read would flip the shape, and the read after that would flip it back
+    for (const r of [Math.PI, -Math.PI, Math.PI - 1e-9, 3.1416, -3.1416, 7.5, -7.5]) {
+      const once = writeStrokes([turn(r)]);
+      expect(writeStrokes(once)).toEqual(once);
+      expect(parseStrokes(once)).toEqual(once);
+    }
+  });
+
+  test("a line, an arrow and a pen path have nothing for an angle to mean", () => {
+    const out = parseStrokes([
+      { k: "line", c: 0, t: 2, b: [0, 0, 10, 10], r: 1 },
+      { k: "arrow", c: 0, t: 2, b: [0, 0, 10, 10], r: 1 },
+      { k: "pen", c: 0, t: 2, p: [0, 0, 5, 5], r: 1 },
+    ]);
+    expect(out.length).toBe(3);
+    expect(JSON.stringify(out)).not.toContain('"r":');
+  });
+
+  test("an unreadable angle is no angle, never a NaN in the document", () => {
+    const out = parseStrokes([
+      { k: "rect", c: 0, t: 2, b: box, r: Number.NaN },
+      { k: "ellipse", c: 0, t: 2, b: box, r: Number.POSITIVE_INFINITY },
+      { k: "text", c: 0, s: 13, at: [0, 0], v: "x", r: "45deg" },
+    ]);
+    expect(out.length).toBe(3);
+    expect(JSON.stringify(out)).not.toContain('"r":');
+  });
+
+  test("one rotate, one string: the mark carries it and the export writes THAT", () => {
+    const strokes: Stroke[] = [
+      turn(Math.PI / 4),
+      { k: "text", c: 0, s: 13, at: [10, 20], v: "hi", r: -0.5 },
+      { k: "line", c: 0, t: 2, b: box },
+    ];
+    const marks = marksOf(strokes);
+    expect(marks[0].rot).toBe("rotate(45 20 10)");
+    expect(marks[1].rot?.startsWith("rotate(-28.65 ")).toBe(true);
+    expect(marks[2].rot).toBeUndefined();
+    const svg = svgOf(strokes, { w: 100, h: 100 }, ["#112233"]);
+    expect(svg).toContain('transform="rotate(45 20 10)"');
+    expect(svg).toContain("rotate(-28.65 ");
+    // and a drawing with no turn in it carries no transform at all
+    expect(svgOf([{ k: "line", c: 0, t: 2, b: box }], { w: 100, h: 100 }, ["#112233"])).not.toContain("transform");
+  });
+
+  test("the ink's box is the box a TURNED stroke stands in", () => {
+    const flat = bboxOf([{ k: "rect", c: 0, t: 2, b: [0, 0, 40, 40] }]) as { x: number; y: number; w: number; h: number };
+    const tilted = bboxOf([turnedSquare]) as { x: number; y: number; w: number; h: number };
+    expect(flat.w).toBe(42);
+    // 40 root 2 across, plus the corner join's own reach on both axes
+    expect(tilted.w).toBeCloseTo(59.4, 1);
+    expect(tilted.w).toBeGreaterThan(flat.w);
+    // every corner of the shape stands INSIDE the box the element grows to
+    const c = Math.cos(Math.PI / 4) * 20;
+    for (const [x, y] of [[20 + c, 20], [20 - c, 20], [20, 20 + c], [20, 20 - c]]) {
+      expect(x).toBeGreaterThanOrEqual(tilted.x);
+      expect(x).toBeLessThanOrEqual(tilted.x + tilted.w);
+      expect(y).toBeGreaterThanOrEqual(tilted.y);
+      expect(y).toBeLessThanOrEqual(tilted.y + tilted.h);
+    }
+  });
+
+  test("a label's box grows with its LINES, by one metric three renderers read", () => {
+    const one = { k: "text", c: 0, s: TEXT_SIZE, at: [0, 20], v: "second line" } satisfies Stroke;
+    const two = { k: "text", c: 0, s: TEXT_SIZE, at: [0, 20], v: "first\nsecond line" } satisfies Stroke;
+    const a = textBox(one);
+    const b = textBox(two);
+    // the same words are the same width; the box is one line-height deeper
+    expect(b[2] - b[0]).toBe(a[2] - a[0]);
+    expect(b[3] - b[1]).toBeCloseTo(a[3] - a[1] + TEXT_SIZE * TEXT_LINE, 6);
+    expect(textLines(two.v)).toEqual(["first", "second line"]);
+    // and the element's own floor follows it, so a caption is never clipped
+    const flat = bboxOf([one]) as { h: number };
+    const deep = bboxOf([two]) as { h: number };
+    expect(deep.h).toBeCloseTo(flat.h + TEXT_SIZE * TEXT_LINE, 1);
+    // the rows the renderers draw are the rows the box was measured by
+    const rows = textRows({ x: 0, y: 20, s: TEXT_SIZE, v: two.v });
+    expect(rows.map((r) => r.v)).toEqual(["first", "second line"]);
+    expect(rows[1].y - rows[0].y).toBeCloseTo(TEXT_SIZE * TEXT_LINE, 6);
+  });
+
+  test("a line break rides the document as `\\n` in `v`, and one <tspan> per line renders it", () => {
+    const many: Stroke = { k: "text", c: 0, s: TEXT_SIZE, at: [10, 30], v: "This might need\nsome work" };
+    const written = writeStrokes([many]);
+    expect(written).toEqual([many]);
+    expect(parseStrokes(JSON.parse(JSON.stringify(written)))).toEqual(written);
+    const svg = svgOf(written, { w: 200, h: 100 }, ["#112233"]);
+    expect(svg).toContain('<tspan x="10" y="30">This might need</tspan>');
+    expect(svg).toContain(`<tspan x="10" y="${30 + TEXT_SIZE * TEXT_LINE}">some work</tspan>`);
+    // a label with no break is still one row, at the baseline it was typed on
+    const plain = svgOf([{ k: "text", c: 0, s: TEXT_SIZE, at: [10, 30], v: "one" }], { w: 200, h: 100 }, ["#112233"]);
+    expect(plain).toContain('<tspan x="10" y="30">one</tspan>');
+    expect(plain.match(/<tspan/g)?.length).toBe(1);
+  });
+
+  test("the weight ladder is six rungs, and C2b's three still stand at their own widths", () => {
+    expect(WEIGHTS).toEqual([1, 1.5, 2, 3, 4, 6]);
+    // every rung is its own value after a round trip: no old drawing is repainted
+    for (const t of WEIGHTS) {
+      const out = writeStrokes([{ k: "line", c: 0, t, b: [0, 0, 10, 10] }]);
+      expect((out[0] as { t: number }).t).toBe(t);
+    }
+    // and a width nobody can draw lands on the nearest rung
+    const off = parseStrokes([{ k: "line", c: 0, t: 5.2, b: [0, 0, 1, 1] }]);
+    expect((off[0] as { t: number }).t).toBe(6);
+  });
+
+  test("a turned label stands where it is, not where it was typed", () => {
+    const upright = bboxOf([{ k: "text", c: 0, s: 13, at: [40, 80], v: "a label" }]) as { h: number };
+    const turned = bboxOf([{ k: "text", c: 0, s: 13, at: [40, 80], v: "a label", r: Math.PI / 2 }]) as { h: number };
+    expect(turned.h).toBeGreaterThan(upright.h);
+  });
+});
+
+const turnedSquare: Stroke = { k: "rect", c: 0, t: 2, b: [0, 0, 40, 40], r: Math.PI / 4 };
 
 describe("the export", () => {
   test("2x, and the long edge clamped where the vision tier stops paying", () => {

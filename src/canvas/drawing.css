@@ -1,9 +1,10 @@
 /* The drawing unit (C2b): the canvas's third species, and the only one made
    of ink. Nothing frames it at rest and it carries 0 always-visible controls,
-   like the two kinds beside it: the cluster is its whole chrome, revealed the
-   way every cluster in the app is revealed, and the picker lives INSIDE that
-   cluster rather than on a strip of the page (a global toolbar would show six
-   tools to a canvas that may hold no drawing).
+   like the two kinds beside it: the cluster at its top-right and the tool
+   island at its top-left (toolIsland.css, F3) are its whole chrome, revealed
+   the way every cluster in the app is revealed, and neither is a strip of the
+   page (a global toolbar would show six tools to a canvas that may hold no
+   drawing).
 
    The ink ladder is defined here and nowhere else in this file's half of the
    app: three steps of ONE hue, the chart's own accent, so a drawing beside a
@@ -46,6 +47,9 @@
   /* the WebView must not claim the gesture: a pen stroke is not a pan */
   touch-action: none;
   cursor: crosshair;
+  /* the hand and the words are not a pen: the select tool reads as a pointer
+     until it stands over something it can take (below), and a label's press
+     is a caret */
   /* ink stays INSIDE the box (D1 item 6): the page has one clipping rule and
      it is the widget's (grid.css .cvg-drag), which a sheet drawing past its
      own frame has no standing to opt out of - strokes on the page with no
@@ -58,6 +62,36 @@
 }
 .blk-draw > .dw-sheet {
   margin-top: 0;
+}
+.dw-sheet[data-tool="select"] {
+  cursor: default;
+}
+.dw-sheet[data-tool="text"] {
+  cursor: text;
+}
+/* the eraser's own cursor: `cell`, the crosshair with a gap in it, which is
+   what a surface that takes ink AWAY under the point looks like (F3) */
+.dw-sheet[data-tool="eraser"] {
+  cursor: cell;
+}
+/* what a press would do, said by the cursor before the press (F3, AGENT-UX
+   16jj): the knob's grab, a corner's own diagonal, `move` over a stroke. The
+   overlay takes no pointer, so the sheet wears these from the same math that
+   answers the press (Drawing.tsx cursorAt), never from the handle elements */
+.dw-sheet[data-cursor="move"] {
+  cursor: move;
+}
+.dw-sheet[data-cursor="grab"] {
+  cursor: grab;
+}
+.dw-sheet[data-cursor="grabbing"] {
+  cursor: grabbing;
+}
+.dw-sheet[data-cursor="nwse"] {
+  cursor: nwse-resize;
+}
+.dw-sheet[data-cursor="nesw"] {
+  cursor: nesw-resize;
 }
 
 /* the drawing's cluster reveals on the register every other kind uses, and
@@ -141,13 +175,24 @@
 /* a text label being typed: the words stand where they will stand, in the
    ink they will wear, with nothing around them. The caret is the whole
    announcement (the note's own contract: a ring around nothing is a rounded
-   box with a thinner line) */
+   box with a thinner line).
+
+   A textarea and not an input, because a caption on a chart breaks a line
+   (⇧↩, F3): its rows and its line height are the label's own metric
+   (strokes.ts TEXT_LINE, written inline by the element), it never scrolls and
+   it never offers a resize corner, so what is on the page is the words and a
+   caret and nothing else */
 .dw-label {
   position: absolute;
   min-width: 24px;
   padding: 0;
   border: none;
   outline: none;
+  overflow: hidden;
+  resize: none;
+  /* a line breaks only where a hand pressed shift-return: the editor never
+     soft-wraps a caption the document will keep on one line */
+  white-space: pre;
   background: none;
   font-family: var(--font-ui);
   color: var(--ink-0);
@@ -166,21 +211,48 @@
   pointer-events: none;
 }
 
-/* the ink swatch a menu row carries in its hint slot: the mark idiom the
-   compare picker already uses, wearing a colour instead of a check because
-   the thing being chosen IS the colour */
-.dw-swatch {
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  border-radius: var(--radius-pill);
+/* the select tool's overlay (F3, DESIGN rule 1's "Selection handle" row),
+   drawn inside the sheet's own SVG and taking no pointer at all: the press
+   lands on the sheet and select.ts decides what it hit (LESSONS 18, read the
+   other way round: chrome that cannot take a press cannot take the wrong one).
+   A single stroke's box turns with it, a group's stands upright; the corner
+   squares and the knob are the panel's fill under an accent hairline so they
+   read on the ink they stand over, in both themes. No motion: they are where
+   the strokes are */
+.dw-sel,
+.dw-hover,
+.dw-marquee {
+  pointer-events: none;
 }
-
-/* and the weight, at its own thickness: a rule at 1, 2 or 4, which says the
-   number without printing it */
-.dw-rule {
-  display: inline-block;
-  width: 16px;
-  border-radius: var(--radius-pill);
-  background: var(--fg);
+.dw-box,
+.dw-stem {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1;
+}
+.dw-handle,
+.dw-knob {
+  fill: var(--bg-panel);
+  stroke: var(--accent);
+  stroke-width: 1;
+}
+/* a hover is the SAME box a press will land, fainter: a hint that a press
+   here selects something, not a fourth contrast tier (16jj) */
+.dw-hover rect {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1;
+  opacity: 0.5; /* optical */
+}
+/* a stroke the eraser has touched and has not yet taken: dimmed, not gone,
+   so a hand can see what the lift will take and still slide off it (F3). The
+   tier is the hover box's own reasoning, one step further down */
+.dw-doomed {
+  opacity: 0.3; /* optical */
+}
+.dw-marquee {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
 }

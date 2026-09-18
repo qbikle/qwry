@@ -50,8 +50,9 @@
 // lowercase `assumed`, and the cluster is Grip · Copy · Flip · Insert · Ask ·
 // More (6 hot, 0 at rest). The note is NoteBlock's, the same picture with
 // Grip · Copy · Ask · More. The drawing is Drawing's, which draws its own
-// sheet and its own cluster (Grip · Pen ▾ · Undo · Redo · Copy · Ask · More,
-// 7 hot and 0 at rest) and is handed the two things only the page knows: the
+// sheet, its own tool island at the top-left (F3) and its own cluster (Grip ·
+// Undo · Redo · Copy · Ask · More, 6 hot and 0 at rest; `Pen ▾` moved into
+// the island) and is handed the two things only the page knows: the
 // grip, and whether an `Ask` EXISTS at all. It does not where the chosen
 // model cannot read an image (C2b call 4): the button is absent, never
 // disabled and never explained, because a capability that does not exist has

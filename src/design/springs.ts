@@ -34,6 +34,11 @@ const SWAP = { type: "spring", stiffness: 700, damping: 40, mass: 0.5 } as const
 // critically damped: no overshoot by construction; 90% of the travel in
 // ~200 ms, settled by ~300 ms
 const SLIDE = { type: "spring", stiffness: 400, damping: 40, mass: 1 } as const;
+// the stylesheet's own `--dur-quick` on `--ease-std`, for a motion value that
+// has to move in step with a CSS transition standing beside it. The token's
+// numbers, restated in seconds because this is the one file allowed to hold
+// them (DESIGN rule 6): a component that typed 0.12 would be a dialect
+const QUICK = { duration: 0.12, ease: [0.2, 0, 0, 1] as const } as const;
 
 export const spring = {
   /** palette / fn-search / modals entering */
@@ -58,6 +63,20 @@ export const spring = {
    * drops the travel and the swap is a crossfade at the instant variant */
   get slide() {
     return reduced ? INSTANT : SLIDE;
+  },
+  /** the way OUT of a fold: the drawing's armed tool leaving its rest slot,
+   * a family member leaving the slot it was folded under (canvas/ToolIsland).
+   * ζ = 24 / (2·√360) = .63, so the travel carries a whisper of overshoot,
+   * always into room the body has already made; the way home rides `snappy`
+   * and never crosses the island's own edge. The rail avatars' own spring,
+   * exposed by name so the island types no number of its own */
+  get rail() {
+    return reduced ? INSTANT : RAIL;
+  },
+  /** `--dur-quick` / `--ease-std` as a motion transition: siblings fading in a
+   * fold while a hairline beside them fades on the stylesheet's clock */
+  get quick() {
+    return reduced ? INSTANT : QUICK;
   },
 };
 

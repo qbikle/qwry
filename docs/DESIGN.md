@@ -34,6 +34,8 @@ Every interactive control belongs to exactly one species. The species are:
 | Switch | `.switch` (tokens.css), rendered via `<Switch>` | macOS toggle for feature/setting rows; hidden native checkbox is the truth (role=switch, :has-derived states, spring knob). Native checkboxes remain the species for selection within content (filter rows, lists, CM search panels) |
 | Resize handle | `.cvg-handle` (grid.css) | the canvas element's ONE corner, bottom-right: a 16px hit box over an 8px L glyph at tier 2. Invisible at rest and revealed with the block's own cluster (`.acts-float`'s register, hover / focus-within / `[data-hot]`), accent while the gesture is live (`[data-gesture="resize"]`). No disabled state: it leaves with the cluster, and the keyboard route is the element's own ⇧-arrows |
 | Field picker | `.field` (opens a `.picker-pop` list; the Table row's own popover reuses that list with a search field ahead of it, the mention popover's own register, AGENT-UX §16ii) | a bordered field wearing its chosen value (mono when the value is an identifier, data's own clothes) plus one trailing chevron, never placeholder text in an empty field (rule 11: the row's own label already names what fills in); full state matrix: rest, hover (`border-strong`, `bg-hover`), `.active` while its own popover stands (`--accent` border), focus-visible, disabled (`--o-disabled`, and disabled is how a picker with nothing to pick yet is shown, never absent, rule 8). New 2026-09-18, first instance the New Chart dialog's Table, Group by and Top/Last rows (AGENT-UX §16ii) |
+| Tool island | `ToolIsland` (no base class yet) | a raised GLASS box at a widget's own top-left corner (`color-mix(in srgb, var(--bg-raised) 72%, transparent)` over `backdrop-filter: blur(14px) saturate(1.25)`, 1px `--border`, `--radius-pill`, `--shadow-sm`; the app's one translucent surface, and the argument for it is that this box stands ON the paper it acts on, AGENT-UX §16x); collapsed = the armed tool alone at 24px with its chord letter under the glyph at 6px; open = its own roster of slots at a 28px pitch, each slot a further instance of THIS species, a CIRCLE concentric with the pill (inner radius = the outer 17 less the 5 of hairline and padding = 12 = half a tool), its glyph at `--icon-sm`. A family's own arm (a slot that stands for several tools) is the same species again, growing sideways from its slot's own row on a click rather than a menu or a second box standing beside it. New 2026-09-18, the drawing's tool island (AGENT-UX §16x, replacing C2b's `Pen ▾` and its menu) |
+| Selection handle | `select.ts`'s own overlay (no base class yet) | the drawing's selection box's own 8px corner (`--bg-panel` fill, 1px `--accent` border, radius 1.5, `nwse`/`nesw` cursors by corner) and its 5px rotation knob riding a 16px stem (`grab` cursor); no disabled state and no reveal register of its own, same as the resize handle above: it leaves with the selection, exactly as that one leaves with the cluster. New 2026-09-18, the drawing's select tool (AGENT-UX §16jj) |
 
 A new control joins a species or gets a new row in this table in the same PR.
 Re-authoring a species locally (13 copies of the action button, 23 of the
@@ -119,6 +121,19 @@ panels, reveals), eased by `--ease-std`; `--ease-spring` for overshoot
 moments. JS choreography: `springs.ts` presets only. A transition literal
 that bypasses the tokens is a dialect; dialects are the reason surfaces feel
 unrelated while looking related.
+
+`spring.rail` (2026-09-18, the tool island's own slide, AGENT-UX §16x) is
+not a new preset but the RAIL constant `springs.ts` already held for the
+connection rail's own pop-in, now exposed as a named getter, and the
+island's out/home asymmetry, `spring.rail` sliding a tool out, `spring.snappy`
+sliding it home, is this rule's own "one spring, one curve" applied as two
+EXISTING presets for the two directions of one gesture, never a third
+invented to sit between them. `spring.quick` (same wave) is `--dur-quick` on
+`--ease-std` restated as a motion transition, 0.12s on (0.2, 0, 0, 1), for a
+motion value that has to fade in step with a CSS transition beside it (the
+island's siblings leaving while its hairline fades on the stylesheet's
+clock): the token's own numbers, held in `springs.ts` because that is the one
+file allowed to hold them, and 0 new spring numbers with it.
 
 **The hard-refresh sweep is a named motion, not a dialect.** `⇧⌘R` alone
 plays it: one transform keyframe, `translateX(-160%)` to `translateX(560%)`

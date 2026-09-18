@@ -9,8 +9,9 @@
 //                  the words themselves and a freehand underline under them,
 //                  every stroke in the accent ladder the chart is drawn in.
 //                  The drawing is hot, so its cluster stands: the grip, then
-//                  `Pen ▾` wearing the armed tool's own glyph, then Undo ·
-//                  Redo, then Copy · Ask · More. Undo and Redo both stand
+//                  Undo · Redo, then Copy · Ask · More (F3 moved `Pen ▾` into
+//                  the island at the top-left, which stands at rest as the
+//                  armed tool alone). Undo and Redo both stand
 //                  DISABLED here, which is the truthful picture of a page just
 //                  opened: the history is the element's and dies with its
 //                  unmount, so a drawing read back from appdb has none. They
@@ -25,27 +26,19 @@
 //                  stretches a circle into an ellipse
 //   c2-draw-small  the floor test (DESIGN rule 13): a 2x2 drawing, the kind's
 //                  own minimum, at 640 with its cluster hot. Two cells are
-//                  235px (2 x 111.6 + 12) and seven slots measure 170px, so
+//                  235px (2 x 111.6 + 12) and six slots measure 148px, so
 //                  the evidence that the cluster fits its smallest element is
 //                  this frame and not a sentence
-//   c2-draw-tools  the picker OPEN on the same document: the six tools, each
-//                  wearing its own mark and its one-key chord, then the ink
-//                  and the weight the next stroke takes. Pressed, not drawn
-//                  (the A3 rule for transient chrome): the fixture clicks the
-//                  product's own `Pen ▾` and the menu that opens is the
-//                  product's. The press waits for the page to SETTLE first:
-//                  at the floor the stored 7 columns reflow to 5 a frame or
-//                  two after mount, and a menu anchored to the button's
-//                  pre-reflow rect was clamped to the card's right edge,
-//                  400px from the button it belongs to (the frame then being
-//                  evidence of the race and not of the picker)
+//   (c2-draw-tools, the `Pen ▾` menu pressed open, retired with the menu at
+//                  F3: the tools stand in the island now, and fixtures.f3.ts
+//                  frames it open, armed and at the floor)
 //   c2-draw-empty  a sheet from `New Drawing` with nothing on it, at REST: 0
 //                  controls, 0 strings and one surface, the paper the caret's
 //                  own empty note does not need because words arrive where
 //                  they are typed and ink does not (AGENT-UX 16w)
 //   c2-draw-novision  the same document as c2-draw with a model the registry
-//                  documents WITHOUT vision. The cluster is six and not
-//                  seven: `Ask` on a drawing is ABSENT where the chosen model
+//                  documents WITHOUT vision. The cluster is five and not
+//                  six: `Ask` on a drawing is ABSENT where the chosen model
 //                  cannot read a picture, never disabled and never explained
 //                  (C2b call 4, DESIGN rule 2's matrix). The two frames read
 //                  side by side are the whole of that enforcement
@@ -72,13 +65,7 @@ import { cellMetrics } from "../canvas/grid";
 import { writeStrokes, type Stroke } from "../canvas/strokes";
 import { useCanvas, type Block, type CanvasDoc, type CanvasMeta } from "../stores/canvas";
 
-export const C2_DRAW_STATES = [
-  "c2-draw",
-  "c2-draw-small",
-  "c2-draw-tools",
-  "c2-draw-empty",
-  "c2-draw-novision",
-] as const;
+export const C2_DRAW_STATES = ["c2-draw", "c2-draw-small", "c2-draw-empty", "c2-draw-novision"] as const;
 export type C2DrawState = (typeof C2_DRAW_STATES)[number];
 
 /** the card's own three widths, A3's (the canvas is not the pane) */
@@ -271,17 +258,6 @@ const hotBlock = (state: C2DrawState): string | null =>
   // answering its own question
   state === "c2-draw-empty" ? null : state === "c2-draw-small" ? small.id : sheet.id;
 
-/** wait for a node to appear, a frame at a time, so a pose never races the
- * commit that renders what it is posing (the canvas states' own shape) */
-async function settled(selector: string, tries = 12): Promise<HTMLElement | null> {
-  for (let i = 0; i < tries; i++) {
-    const el = document.querySelector<HTMLElement>(selector);
-    if (el) return el;
-    await frame();
-  }
-  return null;
-}
-
 /** the page as it FINALLY stands, not as it first mounted. The document is
  * stored at 7 columns and the 640 floor affords 5, so the surface measures,
  * tells the store, and the store hands back a derived layout a frame or two
@@ -310,27 +286,8 @@ async function laidOut(blockId: string, tries = 60): Promise<void> {
   throw new Error(`c2-draw: the page never settled around ${blockId}`);
 }
 
-/** the picker, opened by pressing the button that opens it. A menu is
- * transient chrome with no store door, and a fixture that drew its rows itself
- * would be evidence for a menu the product never builds */
-async function openPicker(blockId: string): Promise<void> {
-  // the press is worth nothing until the page has stopped moving under it:
-  // the menu anchors to the button's rect at the instant of the click
-  await laidOut(blockId);
-  // `.dw-pick` and not "the first button with a menu": `More` opens one too,
-  // and a pose that counted buttons would shoot the wrong menu the day the
-  // roster changes
-  const button = await settled(`[data-block="${blockId}"] .dw-pick`);
-  if (!button) throw new Error("c2-draw-tools: the picker's button is not on the page");
-  button.click();
-  const menu = await settled(".ov-anchor-layer .ctx-menu");
-  if (!menu) throw new Error("c2-draw-tools: the picker did not open");
-  await frame();
-}
-
 /** the post-mount hook. A hover cannot be held in a still, so the block the
- * sketch shows hot is stamped on the element the cluster floats over, and the
- * one state whose subject is a menu presses it open */
+ * sketch shows hot is stamped on the element the cluster floats over */
 export async function c2DrawAfterMount(state: string): Promise<void> {
   if (!(C2_DRAW_STATES as readonly string[]).includes(state)) return;
   const s = state as C2DrawState;
@@ -345,5 +302,4 @@ export async function c2DrawAfterMount(state: string): Promise<void> {
   } else {
     await laidOut(fresh.id);
   }
-  if (s === "c2-draw-tools") await openPicker(sheet.id);
 }

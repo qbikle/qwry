@@ -269,7 +269,18 @@
 // same page as c2-draw with the pen DOWN and moving, the live stroke under the
 // hand and the cluster and corner handle off the paper, because the block is
 // wearing the stroke and not because the kind refuses a hover. Read beside
-// c2-draw, whose seven stand hot, it is the whole of what F1 changed.
+// c2-draw, whose six stand hot, it is the whole of what F1 changed.
+//
+// F3 (the tool island and the select tool, 2026-09-18): f3-island-rest = a
+// hot drawing, the island ONE button at the top-left and the cluster six at
+// the top-right; f3-island-open = the product's own pointermove within reach,
+// the seven slots and their letters; f3-island-arm = the Shapes arm open with
+// Ellipse armed at its ordinal; f3-island-floor = a 2x2 sheet at 640 with the
+// island open, nothing clipped; f3-select-one / -rotated / -multi = one
+// stroke, a turned one and a group held by the select tool; f3-select-marquee
+// = a marquee mid-drag, PRESSED not drawn; f3-erase-doomed = the eraser
+// dragged across two strokes and still down, both dimmed for the lift.
+// `c2-draw-tools` retired with the `Pen ▾` menu it pressed open.
 //
 // B4 (the sketch's "B4 · qbot" rows): b4-empty = the empty state with the
 // composer focused, qbot's two eye marks 2px lower than at rest; `empty` is
@@ -400,7 +411,6 @@ const CANVAS_STATES = [
   "c2-dense",
   "c2-draw",
   "c2-draw-small",
-  "c2-draw-tools",
   "c2-draw-empty",
   "c2-draw-novision",
   "c2-empty",
@@ -426,6 +436,15 @@ const CANVAS_STATES = [
   "f2-chart-running",
   "f2-chart-error",
   "f2-chart-added",
+  "f3-island-rest",
+  "f3-island-open",
+  "f3-island-arm",
+  "f3-island-floor",
+  "f3-select-one",
+  "f3-select-rotated",
+  "f3-select-multi",
+  "f3-select-marquee",
+  "f3-erase-doomed",
 ] as const;
 /** the B3 four and the C2a six stand on a taller card: neither a four-block
  * answer with a chart among them nor a page of cells fits A3's 760
@@ -568,8 +587,28 @@ const D2_CANVAS_STATES: readonly string[] = [
   "d2-chart-fit",
   "d2-note-grown",
 ];
+/** and F3's nine (fixtures.f3.ts f3CanvasCardH): one sheet of three rows on
+ * C2b's empty-sheet card, and the 2x2 floor state on C2b's small one, since
+ * each is that page and nothing else */
+const F3_SHEET_CARD_H = 500;
+const F3_FLOOR_CARD_H = 420;
+const F3_CANVAS_STATES: readonly string[] = [
+  "f3-island-rest",
+  "f3-island-open",
+  "f3-island-arm",
+  "f3-island-floor",
+  "f3-select-one",
+  "f3-select-rotated",
+  "f3-select-multi",
+  "f3-select-marquee",
+  "f3-erase-doomed",
+];
 const canvasCardH = (state: string): number =>
-  F1_CANVAS_STATES.includes(state)
+  F3_CANVAS_STATES.includes(state)
+    ? state === "f3-island-floor"
+      ? F3_FLOOR_CARD_H
+      : F3_SHEET_CARD_H
+    : F1_CANVAS_STATES.includes(state)
     ? F1_CANVAS_CARD_H
     : F2_CANVAS_STATES.includes(state)
       ? F2_CANVAS_CARD_H
@@ -585,7 +624,7 @@ const canvasCardH = (state: string): number =>
             ? SMALL_CANVAS_CARD_H
             : state === "c2-draw-empty"
               ? FRESH_CANVAS_CARD_H
-              : state === "c2-draw" || state === "c2-draw-tools" || state === "c2-draw-novision"
+              : state === "c2-draw" || state === "c2-draw-novision"
                 ? DRAW_CANVAS_CARD_H
                 : state === "c2-empty" || state === "c2-empty-place"
                   ? EMPTY_CANVAS_CARD_H

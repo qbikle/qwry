@@ -29,27 +29,44 @@
 // One geometry, one slot (DESIGN rule 14): `marksOf` turns strokes into SVG
 // primitives, and the live element and the exported PNG both render THOSE.
 // Everything but a text label is a path, so a rectangle, an ellipse and an
-// arrow cannot drift into three renderers with three roundings.
+// arrow cannot drift into three renderers with three roundings. An ANGLE
+// (F3) is the one part of a stroke that is not where the hand put it, so it
+// goes through the same door: `marksOf` hands every renderer one `rotate()`
+// string, and `bboxOf` measures the box a TURNED stroke actually stands in,
+// so the element's own floor still holds every mark on it.
 
 /** a rect in the element's own pixels: [x1, y1, x2, y2], either corner first */
 export type Box4 = [number, number, number, number];
 
 /** one stroke. `c` is an index into the accent ladder and never a colour
  * literal, so a theme flip repaints a drawing and the chart beside it at once;
- * `t` is a step of the weight ladder */
+ * `t` is a step of the weight ladder.
+ *
+ * `r` is radians about the stroke's OWN centre (F3), and three kinds carry it:
+ * a rectangle, an ellipse and a label have a frame an angle can turn. A pen
+ * path, a line and an arrow are coordinates and nothing else, so a rotation
+ * BAKES into their points and an angle would have nothing left to mean, which
+ * is why the union splits here rather than carrying a field two kinds must
+ * remember to ignore. Absent is zero: a drawing nobody turned serializes to
+ * the same bytes C2b wrote. */
 export type Stroke =
   | { k: "pen"; c: number; t: number; p: number[] }
-  | { k: "rect" | "ellipse" | "line" | "arrow"; c: number; t: number; b: Box4 }
-  | { k: "text"; c: number; s: number; at: [number, number]; v: string };
+  | { k: "rect" | "ellipse"; c: number; t: number; b: Box4; r?: number }
+  | { k: "line" | "arrow"; c: number; t: number; b: Box4 }
+  | { k: "text"; c: number; s: number; at: [number, number]; v: string; r?: number };
 
 /** the accent ladder, by name: three steps of one hue over the panel, defined
  * once in drawing.css so the values live in CSS and the export resolves them
  * off the live element rather than carrying a second copy of the numbers */
 export const INK_VAR: readonly string[] = ["var(--ink-0)", "var(--ink-1)", "var(--ink-2)"];
 
-/** stroke width: a hairline, a line and a marker. On the 4px grid's own
- * hairline allowance (DESIGN rule 4) */
-export const WEIGHTS: readonly number[] = [1, 2, 4];
+/** stroke width, six rungs: Hairline, Fine, Line, Bold, Marker, Brush. Ink
+ * is not spacing, so the ladder is not the 4px grid's (DESIGN rule 4 governs
+ * the gaps between things, not how wide a line is drawn); what it is, is a
+ * ladder a hand can climb without hunting, roughly doubling to the top, with
+ * C2b's own three (1, 2, 4) still standing at their own widths so no drawing
+ * anyone has already made is repainted by this wave */
+export const WEIGHTS: readonly number[] = [1, 1.5, 2, 3, 4, 6];
 
 /** a text label's size: the body register, so a label reads as the app's own
  * words and not as a second typeface */
@@ -85,10 +102,121 @@ export interface Box {
   h: number;
 }
 
-// ---- the format on the wire (LESSONS 1: one pair, one test) ----------------
+// ---- the geometry every other file reads -----------------------------------
+//
+// Four primitives and a label's own extent. They live HERE, under the format
+// they describe, because the select engine (`select.ts`) reads them and this
+// file cannot read it back: an angle that means one thing to the renderer and
+// another to the hand dragging a corner is two facts in one slot (rule 14).
 
 const r1 = (n: number): number => Math.round(n * 10) / 10;
+const r2 = (n: number): number => Math.round(n * 100) / 100;
 const finite = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
+
+/** a point turned about a centre */
+export function rotatePt(x: number, y: number, cx: number, cy: number, r: number): [number, number] {
+  if (r === 0) return [x, y];
+  const cos = Math.cos(r);
+  const sin = Math.sin(r);
+  const dx = x - cx;
+  const dy = y - cy;
+  return [cx + dx * cos - dy * sin, cy + dx * sin + dy * cos];
+}
+
+/** either corner first, smallest first: the one place a drag's own direction
+ * is forgotten, so every reader below sees one shape of box */
+export const normBox = (b: Box4): Box4 => [
+  Math.min(b[0], b[2]),
+  Math.min(b[1], b[3]),
+  Math.max(b[0], b[2]),
+  Math.max(b[1], b[3]),
+];
+
+export const centreOf = (b: Box4): [number, number] => [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
+
+/** the axis-aligned box a TURNED box stands in: its four corners, spun about
+ * its own centre, hulled */
+export function hullOf(b: Box4, r: number): Box4 {
+  const n = normBox(b);
+  if (r === 0) return n;
+  const [cx, cy] = centreOf(n);
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const [x, y] of [
+    [n[0], n[1]],
+    [n[2], n[1]],
+    [n[2], n[3]],
+    [n[0], n[3]],
+  ]) {
+    const [px, py] = rotatePt(x, y, cx, cy, r);
+    x0 = Math.min(x0, px);
+    y0 = Math.min(y0, py);
+    x1 = Math.max(x1, px);
+    y1 = Math.max(y1, py);
+  }
+  return [x0, y0, x1, y1];
+}
+
+/** how far a point stands off a segment. The pen's own simplification measures
+ * the same distance squared in its inner loop (`simplify`), and a hand aiming
+ * at a line measures it here */
+export const segDist = (px: number, py: number, ax: number, ay: number, bx: number, by: number): number =>
+  Math.sqrt(distSq(px, py, ax, ay, bx, by));
+
+/** a label's own extent, estimated from its glyph count: the store has no DOM
+ * and a measured string would re-measure on every width for a two-pixel gain
+ * (the chart's own rule for its labels). ONE estimate, read by the ink's
+ * bounds and by the box a selection draws, so the two cannot disagree */
+const TEXT_ADV = 0.55;
+const TEXT_ASCENT = 0.8;
+const TEXT_DESCENT = 0.25;
+
+/** the step from one line of a label to the next, as a multiple of its own
+ * size. ONE number for the box below, the tspans two renderers draw and the
+ * editor's own textarea, so a two-line label is the same three rectangles
+ * everywhere (rule 14) */
+export const TEXT_LINE = 1.2;
+
+/** a label's lines: the document holds the breaks as `\n` inside `v`, and
+ * this is the one place that says where a line ends */
+export const textLines = (v: string): readonly string[] => v.split("\n");
+
+export const textBox = (t: { at: readonly [number, number]; s: number; v: string }): Box4 => {
+  const lines = textLines(t.v);
+  let wide = 0;
+  for (const line of lines) wide = Math.max(wide, line.length);
+  return [
+    t.at[0],
+    t.at[1] - t.s * TEXT_ASCENT,
+    t.at[0] + wide * t.s * TEXT_ADV,
+    t.at[1] + t.s * TEXT_DESCENT + (lines.length - 1) * t.s * TEXT_LINE,
+  ];
+};
+
+// ---- the format on the wire (LESSONS 1: one pair, one test) ----------------
+
+const TAU = Math.PI * 2;
+
+/** the angle's own last place: a thousandth of a degree */
+const ANG_STEP = 1e-4;
+
+/** an angle as the document holds it: wrapped into (-pi, pi], so a shape spun
+ * three times round carries the angle it LOOKS like, and rounded to 4 places,
+ * which is a thousandth of a degree and under a tenth of a pixel at any size
+ * this element can hold. Exactly zero is the ABSENT case */
+function ang(v: unknown): number {
+  if (!finite(v)) return 0;
+  // the wrap allows itself the rounding's own last place. Wrapped hard at pi,
+  // a value AT the edge rounds a hair past it and the next pass wraps it back
+  // the other way, so a shape nobody touched would flip sign every time the
+  // document was read (LESSONS 1: the pair has to hold still)
+  const a = v % TAU;
+  const wrapped = a > Math.PI + ANG_STEP ? a - TAU : a < -Math.PI - ANG_STEP ? a + TAU : a;
+  const out = Math.round(wrapped * 1e4) / 1e4;
+  return out === 0 ? 0 : out;
+}
 
 const clampInt = (v: unknown, lo: number, hi: number, fallback: number): number => {
   if (!finite(v)) return fallback;
@@ -128,14 +256,32 @@ export function writeStrokes(strokes: readonly Stroke[]): Stroke[] {
       continue;
     }
     if (s.k === "text") {
-      const at = Array.isArray(s.at) && s.at.length === 2 && s.at.every(finite);
+      const ok = Array.isArray(s.at) && s.at.length === 2 && s.at.every(finite);
       const v = typeof s.v === "string" ? s.v : "";
-      if (at && v.trim() !== "")
-        out.push({ k: "text", c: ink(s.c), s: rung2(s.s), at: [r1(s.at[0]), r1(s.at[1])], v });
+      if (!ok || v.trim() === "") continue;
+      const at: [number, number] = [r1(s.at[0]), r1(s.at[1])];
+      const size = rung2(s.s);
+      const r = ang(s.r);
+      out.push(
+        r === 0
+          ? { k: "text", c: ink(s.c), s: size, at, v }
+          : { k: "text", c: ink(s.c), s: size, at, v, r },
+      );
       continue;
     }
     const b = box4(s.b);
-    if (b) out.push({ k: s.k, c: ink(s.c), t: rung(s.t), b });
+    if (!b) continue;
+    const c = ink(s.c);
+    const t = rung(s.t);
+    // the positive test, not `line || arrow` and a fall-through: a negative
+    // check cannot drop a union member whose own `k` is two literals, so the
+    // angle would read off a kind that does not declare one
+    if (s.k === "rect" || s.k === "ellipse") {
+      const r = ang(s.r);
+      out.push(r === 0 ? { k: s.k, c, t, b } : { k: s.k, c, t, b, r });
+      continue;
+    }
+    out.push({ k: s.k, c, t, b });
   }
   return out;
 }
@@ -170,12 +316,29 @@ export function parseStrokes(raw: unknown): Stroke[] {
       const v = (s as { v?: unknown }).v;
       if (!Array.isArray(at) || at.length !== 2 || !at.every(finite)) continue;
       if (typeof v !== "string" || v.trim() === "") continue;
-      out.push({ k: "text", c: ink(s.c), s: rung2((s as { s?: unknown }).s), at: [r1(at[0]), r1(at[1])], v });
+      const seat: [number, number] = [r1(at[0]), r1(at[1])];
+      const size = rung2((s as { s?: unknown }).s);
+      const r = ang((s as { r?: unknown }).r);
+      out.push(
+        r === 0
+          ? { k: "text", c: ink(s.c), s: size, at: seat, v }
+          : { k: "text", c: ink(s.c), s: size, at: seat, v, r },
+      );
       continue;
     }
     if (s.k === "rect" || s.k === "ellipse" || s.k === "line" || s.k === "arrow") {
       const b = box4((s as { b?: unknown }).b);
-      if (b) out.push({ k: s.k, c: ink(s.c), t: rung(s.t), b });
+      if (!b) continue;
+      const c = ink(s.c);
+      const t = rung(s.t);
+      // a hand-edited angle on a line or an arrow is a field with nothing to
+      // mean: those two bake every turn into their own two points
+      if (s.k === "line" || s.k === "arrow") {
+        out.push({ k: s.k, c, t, b });
+        continue;
+      }
+      const r = ang((s as { r?: unknown }).r);
+      out.push(r === 0 ? { k: s.k, c, t, b } : { k: s.k, c, t, b, r });
     }
   }
   return out;
@@ -242,12 +405,10 @@ export function penPath(p: readonly number[]): string {
 
 // ---- the shapes ------------------------------------------------------------
 
-const rectOf = (b: Box4): Box => ({
-  x: Math.min(b[0], b[2]),
-  y: Math.min(b[1], b[3]),
-  w: Math.abs(b[2] - b[0]),
-  h: Math.abs(b[3] - b[1]),
-});
+const rectOf = (b: Box4): Box => {
+  const n = normBox(b);
+  return { x: n[0], y: n[1], w: n[2] - n[0], h: n[3] - n[1] };
+};
 
 /** a rectangle as a path, so every mark but a label is one primitive */
 function rectPath(b: Box4): string {
@@ -272,8 +433,23 @@ const linePath = (b: Box4): string => `M${n1(b[0])} ${n1(b[1])}L${n1(b[2])} ${n1
  * so the picture on the page and the picture the model reads are one geometry
  * (DESIGN rule 14) */
 export type Mark =
-  | { el: "path"; d: string; c: number; t: number; round: boolean; head: boolean }
-  | { el: "text"; x: number; y: number; c: number; s: number; v: string };
+  | { el: "path"; d: string; c: number; t: number; round: boolean; head: boolean; rot?: string }
+  | { el: "text"; x: number; y: number; c: number; s: number; v: string; rot?: string };
+
+/** one label's lines, each where it stands: the sheet writes these as
+ * `<tspan>`s and so does the export, off one arithmetic (rule 14). The first
+ * row sits on the label's own baseline, so a one-line label is the single
+ * `<text>` C2b wrote, at the same y */
+export const textRows = (t: { x: number; y: number; s: number; v: string }): { x: number; y: number; v: string }[] =>
+  textLines(t.v).map((v, i) => ({ x: t.x, y: t.y + i * t.s * TEXT_LINE, v }));
+
+/** the SVG transform a turned stroke wears, built ONCE here: the live element
+ * sets it as an attribute and the export writes the same string, so a rotated
+ * rectangle cannot land at two angles in two renderers (rule 14) */
+const rotAttr = (b: Box4, r: number): string => {
+  const [cx, cy] = centreOf(b);
+  return `rotate(${r2((r * 180) / Math.PI)} ${r1(cx)} ${r1(cy)})`;
+};
 
 /** the strokes, as the two things a renderer can draw */
 export function marksOf(strokes: readonly Stroke[] | undefined): Mark[] {
@@ -285,25 +461,21 @@ export function marksOf(strokes: readonly Stroke[] | undefined): Mark[] {
       continue;
     }
     if (s.k === "text") {
-      out.push({ el: "text", x: s.at[0], y: s.at[1], c: s.c, s: s.s, v: s.v });
+      const base = { el: "text" as const, x: s.at[0], y: s.at[1], c: s.c, s: s.s, v: s.v };
+      out.push(s.r ? { ...base, rot: rotAttr(textBox(s), s.r) } : base);
       continue;
     }
     const d = s.k === "rect" ? rectPath(s.b) : s.k === "ellipse" ? ellipsePath(s.b) : linePath(s.b);
     // a round cap on an arrow would poke through its own head, and a closed
     // shape has no cap to speak of: the round one is the pen's and the line's
-    out.push({ el: "path", d, c: s.c, t: s.t, round: s.k === "line", head: s.k === "arrow" });
+    const mark = { el: "path" as const, d, c: s.c, t: s.t, round: s.k === "line", head: s.k === "arrow" };
+    const r = s.k === "rect" || s.k === "ellipse" ? (s.r ?? 0) : 0;
+    out.push(r === 0 ? mark : { ...mark, rot: rotAttr(s.b, r) });
   }
   return out;
 }
 
 // ---- what the ink covers ---------------------------------------------------
-
-/** a label's own extent, estimated from its glyph count: the store has no DOM
- * and a measured string would re-measure on every width for a two-pixel gain
- * (the chart's own rule for its labels) */
-const TEXT_ADV = 0.55;
-const TEXT_ASCENT = 0.8;
-const TEXT_DESCENT = 0.25;
 
 /** the box the ink stands in, or null when there is none. What an element
  * cannot shrink under, and what the export draws */
@@ -330,13 +502,24 @@ export function bboxOf(strokes: readonly Stroke[] | undefined): Box | null {
       continue;
     }
     if (s.k === "text") {
-      const w = s.v.length * s.s * TEXT_ADV;
-      grow(s.at[0], s.at[1] - s.s * TEXT_ASCENT, 0);
-      grow(s.at[0] + w, s.at[1] + s.s * TEXT_DESCENT, 0);
+      const label = s.r ? hullOf(textBox(s), s.r) : textBox(s);
+      grow(label[0], label[1], 0);
+      grow(label[2], label[3], 0);
       continue;
     }
     // an arrowhead stands past the line's own end, so the pad carries it
     const pad = s.k === "arrow" ? (s.t * HEAD_UNITS) / 2 + s.t / 2 : s.t / 2;
+    const r = s.k === "rect" || s.k === "ellipse" ? (s.r ?? 0) : 0;
+    if (r !== 0) {
+      // a turned corner's own join reaches half a stroke along BOTH local
+      // axes, so what the hull needs is that corner's own projection: a flat
+      // half-stroke would let a 45-degree rectangle poke out of its own floor
+      const turned = hullOf(s.b, r);
+      const reach = pad * (Math.abs(Math.cos(r)) + Math.abs(Math.sin(r)));
+      grow(turned[0], turned[1], reach);
+      grow(turned[2], turned[3], reach);
+      continue;
+    }
     grow(s.b[0], s.b[1], pad);
     grow(s.b[2], s.b[3], pad);
   }
@@ -358,6 +541,8 @@ export function pngSize(box: { w: number; h: number }): { w: number; h: number; 
 
 const esc = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+const turn = (m: Mark): string => (m.rot ? ` transform="${m.rot}"` : "");
 
 /** one standalone SVG document, every colour a literal. CSS custom properties
  * do NOT resolve inside an SVG loaded as an image (`var(--accent)` renders as
@@ -385,8 +570,10 @@ export function svgOf(
   const body = marks
     .map((m) =>
       m.el === "text"
-        ? `<text x="${m.x}" y="${m.y}" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="${m.s}" fill="${esc(colour(m.c))}">${esc(m.v)}</text>`
-        : `<path d="${m.d}" fill="none" stroke="${esc(colour(m.c))}" stroke-width="${m.t}" stroke-linejoin="round"${m.round ? ' stroke-linecap="round"' : ""}${m.head ? ` marker-end="url(#h${m.c})"` : ""}/>`,
+        ? `<text x="${m.x}" y="${m.y}" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="${m.s}" fill="${esc(colour(m.c))}"${turn(m)}>${textRows(m)
+            .map((row) => `<tspan x="${r1(row.x)}" y="${r1(row.y)}">${esc(row.v)}</tspan>`)
+            .join("")}</text>`
+        : `<path d="${m.d}" fill="none" stroke="${esc(colour(m.c))}" stroke-width="${m.t}" stroke-linejoin="round"${m.round ? ' stroke-linecap="round"' : ""}${m.head ? ` marker-end="url(#h${m.c})"` : ""}${turn(m)}/>`,
     )
     .join("");
   const fill = background ? `<rect width="${box.w}" height="${box.h}" fill="${esc(background)}"/>` : "";
