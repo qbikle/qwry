@@ -4,6 +4,7 @@ import * as ipc from "../ipc/commands";
 import type { ColumnMeta, EditabilityMap, EditMapHint, EditOutcome, RowEdit } from "../ipc/types";
 import { buildEditMapHint, tableIdentityHints } from "../lib/editHints";
 import { useResults } from "./results";
+import { setEditsGate } from "./editsGate";
 import { skey, useConnections } from "./connections";
 import {
   humanSessionError,
@@ -813,3 +814,12 @@ void listen<{ session_id: string }>("session-closed", (e) => {
   const o = useEdits.getState().undoOffer;
   if (o && o.sessionId === e.payload.session_id) useEdits.getState().clearUndoOffer();
 }).catch((e) => console.error("edits session-closed listener", e));
+
+// what a run must know before it replaces a result set, answered
+// synchronously for a module that cannot import this one (editsGate.ts has
+// the direction and the reason)
+setEditsGate({
+  committing: () => useEdits.getState().committing,
+  staged: (tabId) => Object.keys(useEdits.getState().byTab[tabId]?.pending ?? {}).length,
+  maps: (tabId) => useEdits.getState().byTab[tabId]?.maps ?? {},
+});

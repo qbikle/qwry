@@ -114,7 +114,7 @@ import {
   type Stroke,
 } from "../canvas/strokes";
 import type { DrawTool } from "../canvas/blockTools";
-import { setCanvasPort } from "../canvas/port";
+import { setCanvasPort, setCanvasRefresh } from "../canvas/port";
 import { cellsMoved, gestureId, trace, type TraceCause } from "../canvas/trace";
 import { useAgent } from "./agent";
 import { useAsk } from "./ask";
@@ -723,9 +723,11 @@ export function migrateV1(blocks: readonly Block[], columns: number): Block[] {
     });
 }
 
-/** the page with its holes closed: what stood under a block that is gone
+/** the page with its holes closed: what stood under blocks that are gone
  * floats up. A hole BESIDE an element is the user's own placement and stands;
- * a hole ABOVE one is a gap nothing put there (canvas-grid 4.5) */
+ * a hole ABOVE one is a gap nothing put there (canvas-grid 4.5). The page's
+ * own act only, never a gesture's (D3): the cut of a doomed agent's blocks is
+ * the one caller left, since a hand delete now leaves its hole standing */
 function compacted(blocks: readonly Block[], columns: number): Block[] {
   const cells = new Map(compact(itemsOf(blocks), columns).map((i) => [i.id, i.cell]));
   return blocks.map((b) => {
@@ -1616,8 +1618,14 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     const doc = get().docs[canvasId];
     if (!doc || !doc.blocks.some((b) => b.id === blockId)) return;
     const columns = columnsOfDoc(doc);
+    // no compaction: a delete is a gesture on ONE widget and moves only what
+    // it touches, so the hole it leaves stands exactly as the hole a drag
+    // leaves stands (D3, AGENT-UX 16q). The page rearranging itself is still
+    // its own act and still closes holes — a doomed-agent cut, a reflow, a
+    // new widget's first fit — but a hand that deleted one thing did not ask
+    // for the other three to move
     setDoc(canvasId, {
-      blocks: compacted(laidOut(doc.blocks, columns).filter((b) => b.id !== blockId), columns),
+      blocks: laidOut(doc.blocks, columns).filter((b) => b.id !== blockId),
       lastColumns: columns,
     });
     // a block that is gone stops resolving: its name in an older bubble goes
@@ -2353,33 +2361,37 @@ setCanvasPort({
   newCanvasFor: (profileId) => useCanvas.getState().openForQuestion(profileId),
   drawingImage: (canvasId, blockId) => useCanvas.getState().drawingImage(canvasId, blockId),
   removeByExchange: (exchangeIds) => useCanvas.getState().removeByExchange(exchangeIds),
+  dropIfEmpty: (canvasId) => {
+    const doc = useCanvas.getState().docs[canvasId];
+    // a document that still holds work outlives the exchange that made it
+    if (!doc || doc.blocks.length > 0) return;
+    void useCanvas.getState().deleteCanvas(canvasId);
+  },
   clearOnNextWrite: (exchangeId) => useCanvas.getState().clearOnNextWrite(exchangeId),
   assumeOn: (exchangeId, labels) => useCanvas.getState().assumeOn(exchangeId, labels),
 });
 
 // E2: which widgets a document can refetch and what re-running one means,
-// handed to the store that owns when each one starts. Registered rather than
-// imported, the same shape as the port above: the refresh store reaches every
-// surface in the window and a document that pulled it in would carry the whole
-// of it into the canvas chunk. EXPORTED, and not fire-and-forget: refreshCanvas
-// awaits it, because a ⇧⌘R in the first frames after boot would otherwise find
-// the seam empty and silently refetch no widget at all (LESSONS 9 — a gesture
-// that reports nothing must not also do nothing).
+// handed to the store that owns when each one starts. Registered on the same
+// leaf as the port above and in the same breath as it: the refresh store
+// reaches every surface in the window and a document that pulled it in would
+// carry the whole of it into the canvas chunk. It is synchronous with this
+// module's own evaluation, so a ⇧⌘R in the first frames after boot finds the
+// seam the instant its import resolves rather than a tick later (LESSONS 9 —
+// a gesture that reports nothing must not also do nothing).
 //
 // `blocks` answers synchronously, because E3 rule 1 puts every skeleton up in
 // the gesture's own frame and may only cycle what is actually going out: a
 // document whose connection has no session sends nothing, so it names nothing.
-export const widgetSeam: Promise<void> = import("./refresh").then(({ setCanvasRefresh }) =>
-  setCanvasRefresh({
-    blocks: (canvasId) => {
-      const s = useCanvas.getState();
-      const meta = metaOf(s, canvasId);
-      if (!meta || !anySessionOn(meta.profileId)) return [];
-      return (s.docs[canvasId]?.blocks ?? []).filter(refetchable).map((b) => b.id);
-    },
-    refetch: (canvasId, blockId) => useCanvas.getState().refreshWidget(canvasId, blockId),
-  }),
-);
+setCanvasRefresh({
+  blocks: (canvasId) => {
+    const s = useCanvas.getState();
+    const meta = metaOf(s, canvasId);
+    if (!meta || !anySessionOn(meta.profileId)) return [];
+    return (s.docs[canvasId]?.blocks ?? []).filter(refetchable).map((b) => b.id);
+  },
+  refetch: (canvasId, blockId) => useCanvas.getState().refreshWidget(canvasId, blockId),
+});
 
 window.addEventListener?.("blur", () => void flushCanvases());
 document.addEventListener?.("visibilitychange", () => {

@@ -711,6 +711,59 @@ describe("a cut takes the blocks of the exchanges it removes", () => {
     expect(useCanvas.getState().docs["cv-b"].blocks.map((b) => b.id)).toEqual(["k1", mine]);
     expect(asked().map((e) => e.id)).toEqual(["ex-0"]);
   });
+
+  // AGENT-SPEC §9's Open (D1), closed (E5b): a canvas an exchange MINTED used to
+  // outlive the cut whatever was left on it, an orphan tab with no exchange
+  // behind it. It answers for itself now, and the two branches are what is
+  // on it when its blocks are gone
+  test("a cut canvas that still holds work stands, title and tab and all", async () => {
+    seed({
+      tabs: [canvasTab("t-made", "cv-made", "Month over month")],
+      activeId: "t-made",
+      canvases: [{ id: "cv-made", title: "Month over month" }],
+    });
+    const doc = useCanvas.getState();
+    doc.applyModelBlocks("cv-made", [{ id: "g1", kind: "note", text: "goes", wroteBy: "ex-1" }]);
+    // the reader's own note on the page the model made: their work, not the
+    // thread's, and a cut of the thread may not take it
+    const mine = doc.addNote("cv-made", "the user's own");
+    useAgent.setState({
+      exchanges: {
+        [TID]: [exchange(0), { ...exchange(1, ["g1"]), canvasCreated: "cv-made" }],
+      },
+    });
+
+    await useAgent.getState().truncateThread(TID, "ex-1", true);
+
+    expect(useCanvas.getState().docs["cv-made"].blocks.map((b) => b.id)).toEqual([mine]);
+    expect(useCanvas.getState().canvases[PID].map((c) => c.title)).toContain("Month over month");
+    expect(useTabs.getState().tabs.some((t) => t.canvas_id === "cv-made")).toBe(true);
+  });
+
+  test("a cut canvas the cut emptied goes, and its tab with it", async () => {
+    seed({
+      tabs: [canvasTab("t-made", "cv-made", "Month over month"), queryTab("t-q")],
+      activeId: "t-q",
+      canvases: [{ id: "cv-made", title: "Month over month" }],
+    });
+    useCanvas.getState().applyModelBlocks("cv-made", [
+      { id: "g1", kind: "note", text: "goes", wroteBy: "ex-1" },
+    ]);
+    useAgent.setState({
+      exchanges: {
+        [TID]: [exchange(0), { ...exchange(1, ["g1"]), canvasCreated: "cv-made" }],
+      },
+    });
+
+    await useAgent.getState().truncateThread(TID, "ex-1", true);
+
+    expect(useCanvas.getState().docs["cv-made"]).toBeUndefined();
+    expect(useCanvas.getState().canvases[PID]).toEqual([]);
+    expect(useTabs.getState().tabs.some((t) => t.canvas_id === "cv-made")).toBe(false);
+    // and nothing comes back on the reopen chord pointing at a document that
+    // is gone (deleteCanvas's own rule)
+    expect(useTabs.getState().closedStack.some((c) => c.canvas_id === "cv-made")).toBe(false);
+  });
 });
 
 // ---- the older-Restart confirm --------------------------------------------

@@ -208,6 +208,13 @@ export interface Exchange {
    * a fact about the exchange, not about the workspace. Session-lived like
    * `askedFrom`; the canvas itself is the persisted document */
   canvasWrites?: CanvasWrites;
+  /** E5b: the canvas this exchange's own `canvas_create` MINTED, which
+   * `canvasWrites` cannot say (it tracks blocks written INTO a canvas, never
+   * the fact that an exchange made one, so a cut left the tab standing with
+   * no exchange behind it). A cut reads it to decide that canvas's fate:
+   * kept when it holds work, removed with its tab when the cut left it empty
+   * (AGENT-SPEC §9's Open (D1), closed) */
+  canvasCreated?: string;
 }
 
 /** What a retry replaces: kept whole so restorePrior() is exact. */
@@ -1134,7 +1141,14 @@ export const useAgent = create<AgentState>((set, get) => ({
     // B3: a cut deletes the blocks of every exchange it removes (spec 2.4
     // rule 1), one document write per canvas. A null port means nothing was
     // ever written to a canvas from here, so there is nothing to lose
-    useCanvasPort.getState().port?.removeByExchange(gone.map((e) => e.id));
+    const port = useCanvasPort.getState().port;
+    port?.removeByExchange(gone.map((e) => e.id));
+    // E5b: and the canvas a cut exchange MINTED answers for itself, after its
+    // blocks are gone rather than before, so "empty" is what the cut left.
+    // Holding work it stands, title and all, because that work is the user's;
+    // empty it goes with its tab, rather than standing as a tab no exchange
+    // made (AGENT-SPEC §9's Open (D1), closed)
+    for (const e of gone) if (e.canvasCreated) port?.dropIfEmpty(e.canvasCreated);
     try {
       if (cutRows.length > 0) await agentThreadTruncate(threadId, cutRows);
       await agentThreadSessionSet(threadId, sessionKey);
@@ -1966,6 +1980,10 @@ async function runInto(set: Setter, get: () => AgentState, args: RunArgs) {
         // the model made a canvas: the exchange writes into THAT one from
         // here, so the record the next write assigns names it (LESSONS 13)
         aim = { canvasId: ev.canvasId, title: ev.title };
+        // and the exchange OWNS having made it, which no record of what it
+        // WROTE can say for it: a cut asks the exchange, not its blocks,
+        // whether a canvas it minted should outlive it
+        patchExchange(set, threadId, exchangeId, (e) => ({ ...e, canvasCreated: ev.canvasId }));
         break;
       case "canvasWrite":
         // the record is ASSIGNED, not appended to: the event carries every id

@@ -1518,7 +1518,7 @@ order, session-lived like `askedFrom` — never persisted, since a reload's
 already knows which exchange wrote it; `canvasWrites` exists only so a CUT
 and a RE-RUN, which act on the THREAD's own rows, know which document rows
 to remove without scanning every block of every canvas for a matching
-`wroteBy`. Three rules, no fourth, extending the cut semantics above:
+`wroteBy`. Four rules, no fifth, extending the cut semantics above:
 
 1. A cut deletes the blocks of every exchange it removes: in
    `truncateThread`, beside `rowsOf(e)`, one `removeMany(e.canvasWrites)`
@@ -1533,23 +1533,32 @@ to remove without scanning every block of every canvas for a matching
    names exactly the blocks now standing. `PriorAnswer` is not extended for
    this: a Stop restores the pane's own answer, and a document is not
    un-written by a Stop any more than a note a person typed by hand is.
+4. **Closed (D1, 2026-09-14 → decided E5b, 2026-09-18, `ca62682`): a cut that removes
+   the exchange whose `canvas_create` (§5.1) made a canvas checks that
+   canvas too, not only the blocks a `canvasWrites` entry names.** D1 left
+   this open because `canvasWrites` tracks blocks written into a canvas,
+   never the fact that an exchange minted the canvas itself, so a cut
+   through the creating exchange used to leave the canvas standing, empty
+   or not, an orphan tab with no exchange left that made it. The rule now:
+   the canvas KEEPS standing, title and all, when rule 1's own removal
+   leaves it holding at least one block, written by an exchange the cut
+   kept — that is the user's work, and which exchange happened to open the
+   tab does not own it. The canvas GOES, tab with it, exactly the way a
+   hand-driven delete closes one (`deleteCanvas`, `src/stores/canvas.ts`),
+   when rule 1's removal leaves it holding none. `Exchange.canvasWrites?`
+   gains the sibling field this needed, `canvasCreated?: canvasId`
+   (`src/stores/agent.ts`), written the moment a `canvasTarget` event names
+   a canvas this exchange just made (beside the existing `aim` write, not
+   only into it), read only by `truncateThread`'s cut, after rule 1, to
+   decide which of the two above a cut exchange's own canvas gets.
 
-A block the user deleted meanwhile is a no-op on all three (`remove`
-already resolves nothing for an id no document holds, above). An older
-Restart's confirm counts the canvas widgets beside the questions it deletes:
-`Restart from Here?` · `The 2 questions after this one, their answers and 7
-canvas widgets will be deleted.` · `Delete 2 Questions` (AGENT-UX §16i, and
-§16gg for the word: a grid element is a WIDGET in every string a reader sees,
-D2 item 8).
-
-**Open (D1, 2026-09-14): a cut does not delete a canvas `canvas_create`
-made, only the blocks a `canvasWrites` entry names.** An exchange that
-CREATED a canvas (§5.1) and is later cut by a Restart leaves that canvas
-standing, empty or not, an orphan tab with no exchange left that made it;
-`canvasWrites` tracks blocks written into a canvas, never the fact that an
-exchange minted the canvas itself, and closing that gap (a `canvasCreated:
-canvasId` field beside `canvasWrites`, and a fourth rule for the three
-above) is carried forward rather than guessed at here.
+A block the user deleted meanwhile is a no-op on rules 1 through 3
+(`remove` already resolves nothing for an id no document holds, above). An
+older Restart's confirm counts the canvas widgets beside the questions it
+deletes: `Restart from Here?` · `The 2 questions after this one, their
+answers and 7 canvas widgets will be deleted.` · `Delete 2 Questions`
+(AGENT-UX §16i, and §16gg for the word: a grid element is a WIDGET in every
+string a reader sees, D2 item 8).
 
 One new `AskEvent`, kinds 9 → 10 (`loop.ts`):
 `{ type: "canvasWrite"; canvasId: string; blockIds: string[] }`, emitted

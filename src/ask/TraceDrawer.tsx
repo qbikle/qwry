@@ -61,6 +61,13 @@ type ToolStep = Extract<TraceStep, { step: "tool" }>;
  * tagged line), absent on every other row. */
 interface Row {
   key: string;
+  /** E5b: the tool id this row stands for, for the opener that names one. The
+   * KEY is the row's position, because `closing-fence` is one id an exchange
+   * can carry twice (a fence that failed, was repaired and failed again, E4
+   * R5) and two rows under one React key expand and collapse as one; the id
+   * itself is fixed law (persist's exact-match filter and the row's own
+   * label both read it), so it rides here instead */
+  stepId?: string;
   kind: Kind;
   kindLabel: string;
   label: ReactNode;
@@ -69,7 +76,8 @@ interface Row {
   above?: ReactNode;
 }
 
-const toolKey = (id: string) => `tool:${id}`;
+/** by POSITION in the list the drawer is rendering, never by the step's id */
+const toolKey = (at: number) => `tool:${at}`;
 
 /** status register: `48 ms`, `2.9 s` */
 export function fmtMs(ms: number): string {
@@ -144,11 +152,12 @@ function Sub({ label, children }: { label: string; children: ReactNode }) {
 
 /** one tool call: the row the trace shows for it, and the row a finished chip
  * shows before the answer lands (same renderer, so they never drift) */
-function toolRow(step: ToolStep, ms: number | null): Row {
+function toolRow(step: ToolStep, ms: number | null, at: number): Row {
   const summary = toolSummary(step);
   const fence = step.id === CLOSING_FENCE;
   return {
-    key: toolKey(step.id),
+    key: toolKey(at),
+    stepId: step.id,
     kind: "tool",
     kindLabel: "tool",
     label: (
@@ -251,7 +260,7 @@ function rowsFromTrace(exchange: Exchange, trace: TraceStep[], timed: boolean): 
         break;
       }
       case "tool":
-        rows.push(toolRow(step, ms(step.ms)));
+        rows.push(toolRow(step, ms(step.ms), rows.length));
         break;
       case "verdict": {
         const v = step.verdict;
@@ -364,10 +373,11 @@ function rowsFromTrace(exchange: Exchange, trace: TraceStep[], timed: boolean): 
  * chips are what is known: a finished chip already carries its arguments and
  * result, so it opens; a running one is a static row until it lands */
 function rowsFromChips(exchange: Exchange): Row[] {
-  return exchange.chips.map((c) => {
+  return exchange.chips.map((c, at) => {
     if (c.result === null) {
       return {
-        key: toolKey(c.id),
+        key: toolKey(at),
+        stepId: c.id,
         kind: "tool",
         kindLabel: "tool",
         label: (
@@ -382,6 +392,7 @@ function rowsFromChips(exchange: Exchange): Row[] {
     return toolRow(
       { step: "tool", ms: c.ms ?? 0, id: c.id, name: c.name, args: c.args, result: c.result, isError: c.isError },
       c.ms,
+      at,
     );
   });
 }
@@ -471,7 +482,14 @@ export function TraceDrawer({ open, exchange, focusStepId, onClose }: TraceDrawe
     // that is one row, `knowledge`), else a tool call's id, which is what a
     // chip and a sanity fragment carry
     const named = focusStepId !== null && rows.some((r) => r.key === focusStepId);
-    const key = focusStepId ? (named ? focusStepId : toolKey(focusStepId)) : firstKey;
+    // a tool row is keyed by position now, so the id an opener carries is
+    // matched against the row holding it; the FIRST match is the one asked
+    // for, since a chip and a sanity fragment both name the call they stand on
+    const key = focusStepId
+      ? named
+        ? focusStepId
+        : (rows.find((r) => r.stepId === focusStepId)?.key ?? null)
+      : firstKey;
     setExpanded((prev) => {
       const next = fresh ? new Set<string>() : new Set(prev);
       if (key) next.add(key);

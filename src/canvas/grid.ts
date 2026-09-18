@@ -8,8 +8,9 @@
 // WHAT IT TOUCHES (D3): move() and resize() push the widgets they intersect
 // DOWN and nothing else, never swap, never float anything up. Float-up is the
 // PAGE's operation, not a gesture's, and lives on in compact() for its one
-// caller, the store's compacted() on a delete or a cut (the page rearranging
-// itself), and in firstFit() for reflow() and place().
+// caller, the store's compacted() on a thread cut (the page rearranging
+// itself, never a hand delete — that leaves its hole standing too, AGENT-UX
+// §16q), and in firstFit() for reflow() and place().
 //
 // The total order is (y, x, id). Ids are uuids, so that is a total order and
 // every pass is fully determined by its input. No Math.random, no Date, no

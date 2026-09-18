@@ -16,6 +16,7 @@
  * the skeleton and the fades are each surface's own CSS.
  */
 import { create } from "zustand";
+import { canvasRefresh } from "../canvas/port";
 import { readOnlyHeads } from "../lib/sqlHeads";
 import { nextRetryAt, requestHeal } from "./heal";
 import { afterHeal } from "./liveSession";
@@ -227,7 +228,14 @@ function planActive(): Plan {
   const tab = tabs.tabs.find((t) => t.id === tabId);
   if (!tab) return NOTHING;
   if (tab.kind === "canvas") return tab.canvas_id ? planCanvas(tab.canvas_id) : NOTHING;
-  const staged = Object.keys(useEdits.getState().byTab[tabId]?.pending ?? {}).length;
+  const edits = useEdits.getState();
+  // a commit in flight builds its PK locators against the rows on screen, so
+  // this tab has nothing it may refetch. The plan answers it HERE, where the
+  // whole answer is due (E3 rule 1): results.run refuses the run too, but it
+  // refused it after the skeleton was already up, so the surface cycled over
+  // a request nothing ever sent (R3)
+  if (edits.committing) return NOTHING;
+  const staged = Object.keys(edits.byTab[tabId]?.pending ?? {}).length;
   if (staged > 0) {
     // the rows those edits sit on must not move under them, so this tab does
     // not refetch at all and says so where the reader already looks
@@ -345,29 +353,14 @@ export async function refreshActiveTab(): Promise<void> {
   await plan.send();
 }
 
-/** what a canvas document can refetch, and what re-running one widget MEANS
- * (its session, its row cap, where the rows land): canvas.ts owns both, this
- * module owns only when each one starts */
-export interface CanvasRefresh {
-  /** the result widgets that WILL refetch, in document order */
-  blocks: (canvasId: string) => string[];
-  refetch: (canvasId: string, blockId: string) => Promise<unknown>;
-}
-
-/** registered by canvas.ts as it evaluates. Null only in the frames between
- * that module's first import and its own registration, and there the one
- * thing a gesture must not do is nothing (LESSONS 9): that case alone pays an
- * await, and its skeletons go up a tick late. */
-let canvasSeam: CanvasRefresh | null = null;
-
-export function setCanvasRefresh(seam: CanvasRefresh) {
-  canvasSeam = seam;
-}
-
 /** result widgets refetch in document order; notes and drawings have nothing
- * to fetch and are not touched (R4) */
+ * to fetch and are not touched (R4). The seam is canvas.ts's own, registered
+ * on canvas/port.ts as that module evaluates; null only before anything has
+ * imported it, and there the one thing a gesture must not do is nothing
+ * (LESSONS 9), so that case alone pays an await and its skeletons go up a
+ * tick late. */
 function planCanvas(canvasId: string): Plan {
-  const seam = canvasSeam;
+  const seam = canvasRefresh();
   if (!seam) return { ...NOTHING, send: () => refreshCanvas(canvasId).catch(() => {}) };
   const ids = seam.blocks(canvasId);
   const surfaces = ids.map((id): Surface => `widget:${id}`);
@@ -388,10 +381,9 @@ function planCanvas(canvasId: string): Plan {
 /** one document's widgets, cycled and sent. Every route into a canvas refresh
  * plans it above; this is the door for the seam's own first frames. */
 export async function refreshCanvas(canvasId: string): Promise<void> {
-  if (!canvasSeam) {
-    const { widgetSeam } = await import("./canvas");
-    await widgetSeam;
-    if (!canvasSeam) return;
+  if (!canvasRefresh()) {
+    await import("./canvas");
+    if (!canvasRefresh()) return;
   }
   const plan = planCanvas(canvasId);
   useRefresh.setState((s) => ({

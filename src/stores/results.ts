@@ -3,6 +3,12 @@ import * as ipc from "../ipc/commands";
 import type { ColumnMeta, DriverError, QueryEvent } from "../ipc/types";
 import type { EditMapSlot } from "./edits";
 import { headToken } from "../editor/statements";
+// STATIC (E5b): danger.ts imports no store, so there is no cycle to dodge
+// here, and the dynamic import this replaces stood between a refresh and its
+// own execute_stream — the gesture was answered in its frame and the wire
+// left 38 ms later (LESSONS 16)
+import { confirmDanger, confirmDangerLive, dangerousStatements } from "./danger";
+import { committingNow, mapsOn, stagedOn } from "./editsGate";
 import { terminatedSessions } from "./sessionFlags";
 import { dropTabQueryScroll } from "../grid/scrollMemory";
 import { skey, useConnections } from "./connections";
@@ -356,18 +362,22 @@ export const useResults = create<ResultsState>((set, get) => ({
     if (runInflight.has(tabId) || cur.running || !profileId || !sql.trim()) return;
     // a commit in flight builds PK locators against the CURRENT result set;
     // replacing it mid-commit could aim UPDATEs at the wrong rows
-    {
-      const { useEdits } = await import("./edits");
-      if (useEdits.getState().committing) return;
-    }
-    if (runInflight.has(tabId) || (get().byTab[tabId] ?? blankTab()).running) return; // re-check after await
+    if (committingNow()) return;
     runInflight.add(tabId);
 
     // the first run in a fresh tab establishes its dedicated session; say so
-    // instead of sitting silent for the tunnel handshake
-    writeTab(set, tabId, { connecting: true });
-    const sessionId = await conn.ensureTabSession(profileId, tabId);
-    writeTab(set, tabId, { connecting: false });
+    // instead of sitting silent for the tunnel handshake. A tab that already
+    // HAS one says nothing and waits for nothing: an `await` here yields to
+    // React's flush of the skeletons the refresh plan wrote a tick earlier,
+    // so the statement left a render AFTER the gesture rather than in its own
+    // frame (LESSONS 16), and a connecting flag over a session that is
+    // already up is a state the reader never had
+    let sessionId: string | null = conn.tabSessions[skey(profileId, tabId)] ?? null;
+    if (!sessionId) {
+      writeTab(set, tabId, { connecting: true });
+      sessionId = await conn.ensureTabSession(profileId, tabId);
+      writeTab(set, tabId, { connecting: false });
+    }
     if (!sessionId) {
       // no statements will ever arrive; without an error the pane sits on
       // "Loading table…" forever once the connect toast expires
@@ -387,35 +397,28 @@ export const useResults = create<ResultsState>((set, get) => ({
     // explicit re-runs, filter/sort changes and refresh.)
     // the editability maps as they stand BEFORE the run: the swap reads its
     // PK columns out of them to find the inspected row again, and by then
-    // resetTab has thrown them away (edits.ts imports this module, so the
-    // reference is only ever the dynamic one)
-    let pkMaps: Record<number, EditMapSlot> = {};
-    {
-      const { useEdits } = await import("./edits");
-      if (refresh) pkMaps = useEdits.getState().byTab[tabId]?.maps ?? {};
-      const pendingN = Object.keys(useEdits.getState().byTab[tabId]?.pending ?? {}).length;
-      // a refresh never prompts: R4 keeps a staged tab's rows exactly where
-      // they are and refreshActiveTab says so in the status bar, so a modal
-      // here would be a second answer to a gesture that already has one
-      if (pendingN > 0 && refresh) {
+    // resetTab has thrown them away
+    const pkMaps: Record<number, EditMapSlot> = refresh ? mapsOn(tabId) : {};
+    const pendingN = stagedOn(tabId);
+    // a refresh never prompts: R4 keeps a staged tab's rows exactly where
+    // they are and refreshActiveTab says so in the status bar, so a modal
+    // here would be a second answer to a gesture that already has one
+    if (pendingN > 0 && refresh) {
+      runInflight.delete(tabId);
+      return;
+    }
+    if (pendingN > 0) {
+      const ok = await confirmDanger(
+        `Discard ${pendingN} Staged Edit${pendingN === 1 ? "" : "s"}?`,
+        "Re-running replaces this result set; uncommitted cell edits will be lost.\nCommit with ⌘S first to keep them.",
+        "Discard and Run",
+      );
+      if (!ok) {
         runInflight.delete(tabId);
         return;
       }
-      if (pendingN > 0) {
-        const { confirmDanger } = await import("./danger");
-        const ok = await confirmDanger(
-          `Discard ${pendingN} Staged Edit${pendingN === 1 ? "" : "s"}?`,
-          "Re-running replaces this result set; uncommitted cell edits will be lost.\nCommit with ⌘S first to keep them.",
-          "Discard and Run",
-        );
-        if (!ok) {
-          runInflight.delete(tabId);
-          return;
-        }
-      }
     }
 
-    const { dangerousStatements, confirmDangerLive } = await import("./danger");
     const danger = dangerousStatements(sql);
     if (danger.length > 0) {
       // the confirm opens IMMEDIATELY listing the statements; planner
@@ -725,7 +728,6 @@ export const useResults = create<ResultsState>((set, get) => ({
       }
       // both cancel tiers failed. Last tier: pg_terminate_backend (kills the
       // server process) + force-disconnect: explicit confirm, never automatic
-      const { confirmDanger } = await import("./danger");
       const inTx = entry ? !!conns.txTabs[entry[0]] : false;
       const ok = await confirmDanger(
         "Cancel Didn’t Stop the Query",

@@ -1622,7 +1622,12 @@ first question: a place action is not a face of the block it moves); `Move
 Up` is disabled, never hidden, on the first block, `Move Down` on the last
 (DESIGN rule 2's matrix). Drag-reorder is not this wave (ROADMAP › A3, third
 clause); the menu pair stands in for it, and neither carries a chord in the
-picture (Open, below).
+picture (Open, below). **Retired by C2a, 2026-09-11, §16s: the grip and a
+corner resize handle become the grid's own drag route, so `Move Up` /
+`Move Down` are gone from both menus (a result's `More` four rows to
+three, a note's three to one, §16v's own count table). The paragraph above
+stands as the record of what A3 shipped and why the menu carried them; it
+is not restated as current fact where §16s now speaks for the page.**
 
 A `GitCompare` glyph was considered for `Compare` as a sixth cluster button
 and refused: a sixth icon over five already-drawn actions in the Ask pane's
@@ -1786,17 +1791,21 @@ the main card's own entrance, while the blocks under it make room on
 face flips exactly as W7's block flips (§10): the faces crossfade on
 `swapIn`, the block's real height springing between them on
 `spring.layout`, the status line and every block below riding the same
-spring. A removed block fades where it stands while the gap it leaves closes
-on `spring.layout`, the fold's own two registers (§10); the fade rides
+spring. A removed block fades where it stands and the hole it leaves stands
+with it (amended E5b, 2026-09-18, `ca62682`, §16q: a delete is a gesture too, so D3's
+rule reaches it and nothing the hand did not touch moves); the fade rides
 `panelIn`'s own spring, so a block leaves the way it arrived and this wave
-still adds no preset. (The picture asked for `--dur-slow` here. Honouring it
-would have meant either a raw duration in a component, which the motion law
-forbids, or a new `springs.ts` preset, which this section's own first
-sentence forbids; an opacity-only leave is indistinguishable between the two,
-so the rule that kept its meaning won. DECISIONS, A3.) A
-note entering edit moves no glyph at its first line: its box's border fades
-in around the words on `--dur-quick`, the caret takes the end, and the box
-grows outward rather than in. Below that first line a rendered lead or list
+still adds no preset. The gap closing on `spring.layout`, the fold's own two
+registers (§10), is the CUT's motion now and only the cut's: several blocks
+leave together in `removeByExchange` at positions nothing on screen chose, so
+`compact()` still runs there and the survivors ride that spring into place.
+(The picture asked for `--dur-slow` here. Honouring it would have meant
+either a raw duration in a component, which the motion law forbids, or a new
+`springs.ts` preset, which this section's own first sentence forbids; an
+opacity-only leave is indistinguishable between the two, so the rule that
+kept its meaning won. DECISIONS, A3.) A note entering edit moves no glyph at
+its first line: its box's border fades in around the words on `--dur-quick`,
+the caret takes the end, and the box grows outward rather than in. Below that first line a rendered lead or list
 has its own line boxes, which the textarea's source lines are not, so a
 multi-line note's later lines shift by their own spacing (2 to 6 CSS px,
 measured) even though the boundary itself moves nothing. The cluster reveals the way
@@ -1817,9 +1826,11 @@ face is its settled one at once, a removed block is simply gone.
 - The over-cap diff (one status line, no grid, §16e) and a result block
   standing on its SQL face on the canvas are drawn nowhere new here; both
   are W7's own faces, unchanged.
-- Move Up / Move Down (§16b) carry no chord; if a later wave assigns one it
-  goes through `<Kbd>` on the menu row and into the Keyboard Shortcuts
-  sheet.
+- ~~Move Up / Move Down (§16b) carry no chord; if a later wave assigns one
+  it goes through `<Kbd>` on the menu row and into the Keyboard Shortcuts
+  sheet.~~ Stale (E5b, 2026-09-18, `ca62682`): the rows themselves retired with C2a
+  (`blockTools.ts`, DESIGN rule 15), a place on the grid being the
+  object's own act since; there is no menu row left for a chord to reach.
 - The assumed fold (§16a item 4) changes the same fact's costume between
   the pane (a chip) and the canvas (a status fragment); the trace's own
   `tagged` line is the precedent cited for it, but a reviewer may prefer
@@ -2366,12 +2377,13 @@ pushed element then overlaps in turn; nothing else moves, and no float-up
 runs on a move or a resize, not in the drag preview and not on commit.
 Float-up is removed from `move()` and `resize()` outright, and survives
 in two shapes, neither of them a gesture's: `compact()` itself, whose one
-live caller is the store's `compacted()` on a delete or a doomed-agent
-cut (the page rearranging itself, §16g's own "the gap it leaves
-closes"), and `firstFit()`'s row-major scan, which is how `place()` seats
-a new widget and how `reflow()` re-lays the layout at a lower column
-count. A hole a gesture leaves behind stands, above an element now as it
-already could beside one (next paragraph). The maintainer's own recording
+live caller is the store's `compacted()` on a doomed-agent cut (the page
+rearranging itself, §16g's own "the gap it leaves closes"; a delete's own
+holes stand now, decided below), and `firstFit()`'s row-major scan, which
+is how `place()` seats a new widget and how `reflow()` re-lays the layout
+at a lower column count. A hole a gesture leaves behind stands, above an
+element now as it already could beside one (next paragraph). The
+maintainer's own recording
 is why a rule D2 had just reaffirmed is replaced rather than kept:
 lifting the note "Hi" (top-left, 3x2) and dragging it down slid an
 unrelated note at the canvas's lower-right UPWARD though the two never
@@ -2413,12 +2425,28 @@ element is the page's own act, never a gesture's**: `move()` and
 `resize()` call no compaction at all, so a hole above a moved or resized
 element now stands the same way a hole beside one always could. Two paths
 still close one, and both are the page rearranging itself rather than a
-hand placing something: `compact()` on a delete or a cut, and
-`firstFit()` under `place()` and `reflow()`. Whether a DELETE should
-still close every hole above it now that a gesture's holes stand is the
-maintainer's to answer and is put in the ROADMAP_log note, not taken
-here: §16g's "the gap it leaves closes" is pre-existing law, outside
-D3's rule 1.
+hand placing something: `compact()` on a thread CUT (`removeByExchange`,
+several blocks leaving in one stroke at positions nothing on screen chose,
+AGENT-SPEC §9), and `firstFit()` under `place()` and `reflow()`.
+
+**Decided (E5b, 2026-09-18, `ca62682`, closing what D3 itself put to the
+maintainer): a DELETE is a gesture too, and D3's rule reaches it the same
+way it reaches a move or a resize.** `remove()` (`src/stores/canvas.ts`)
+now pins everything it did not touch exactly where it stood, calling no
+compaction at all, the same change `move()`/`resize()` already made: a
+widget deleted out of a 2×2 leaves the other three exactly where they
+were, and the hole it leaves stands above an element now as it already
+could beside one. §16g's "the gap it leaves closes" described this same
+delete truthfully before D3 existed, when every gesture still floated up
+its neighbours; it is superseded here for a delete precisely as D3 already
+superseded it for a move and a resize, and §16g itself is amended in place
+to say so rather than left standing as the older rule (a reader who opens
+§16g alone gets this one), for the identical reason — the user placed the
+widgets a delete leaves behind, and only a hand touching
+one of them again is licensed to move it. A thread cut is not this: no
+hand chooses which blocks a cut takes or where the survivors should sit,
+so `compact()` still runs there, and a delete now differs from a cut the
+same way a move already differs from a reflow.
 
 **The canvas grows DOWN only.** Nothing on the grid ever scrolls sideways;
 "grows right" is resolved as a WIDER WINDOW adding columns (§16o), never a

@@ -28,7 +28,9 @@
 //              the page there; a state with no `@` is the window at rest.
 //              Chrome runs WITHOUT forced reduced motion for this root alone,
 //              and a frozen frame settles for nothing
-//   --tier     refresh only: which act plays, hard (default) or soft
+//   --tier     refresh only: which act plays, hard (default) or soft. A soft
+//              frame's file carries `-soft`, so the two tiers of one state
+//              never share a slot
 //   --out      where the PNGs land; default
 //              ~/projects/qwry-agent-lab/docs/research/w2d-frames
 //   --states   subset of answer,empty,busy,picker,failure,disconnected,small,
@@ -63,7 +65,7 @@
 //              otherwise vite is started on a free port for the run and stopped after
 //   --jobs     Chrome processes in flight at once (default 6)
 //
-// Output: <out>/<state>-<width>-<theme>[-top].png, 2× device scale, a viewport
+// Output: <out>/<state>-<width>-<theme>[-soft][-top].png, 2× device scale, a viewport
 // of (width + 48) × (card + 48) so the card sits in one gutter of app
 // background (688 for the pane's 640, 808 for the canvas's 760, 848 for the
 // 800 B3 and C2a stand on).
@@ -405,6 +407,8 @@ const CANVAS_STATES = [
   "d3-drop-settled",
   "d4-derived",
   "d4-derived-drop",
+  "e5b-delete",
+  "e5b-sql-face",
 ] as const;
 /** the B3 four and the C2a six stand on a taller card: neither a four-block
  * answer with a chart among them nor a page of cells fits A3's 760
@@ -420,6 +424,7 @@ const TALL_CANVAS_STATES: readonly string[] = [
   "c2-resize",
   "c2-migrated",
   "c2-dense",
+  "e5b-sql-face",
 ];
 const CANVAS_WIDTHS = [640, 960, 1280] as const;
 
@@ -433,8 +438,10 @@ const CANVAS_WIDTHS = [640, 960, 1280] as const;
  * e2-dead@200 is the window while the probe is still out, which is the frame
  * E2 could not take because its shim answered in 0 ms.
  *
- * `e2-table@50` is the SOFT tier's frame and nothing else shoots it: pass it
- * with `--tier soft` or the default run will put a hard frame in its slot */
+ * `e2-table@50` is the SOFT tier's frame: pass it with `--tier soft`. The
+ * tier rides the FILENAME (`-soft`), so the default run writes its own slot
+ * beside it rather than into it — a hard frame under a soft state's name was
+ * one gesture's evidence standing for another's (E5b) */
 const REFRESH_STATES = [
   "e2-table@0",
   "e2-table@50",
@@ -484,7 +491,7 @@ const TALL_CANVAS_CARD_H = 800;
  * document is 14 rows at the floor (the figure row stands on two cells since
  * D2 item 1), where an 800 card stops at row 6 and the table and the
  * standing-bars result are both below the crop (c2GridCardH) */
-const DOC_CANVAS_STATES: readonly string[] = ["c2-grid", "c2-grid-floor"];
+const DOC_CANVAS_STATES: readonly string[] = ["c2-grid", "c2-grid-floor", "e5b-delete"];
 const DOC_CANVAS_CARD_H = 1820;
 /** C2b's own four numbers (fixtures.c2draw.ts c2DrawCardH, fixtures.c2empty.ts
  * C2_EMPTY_CARD_H): a sheet beside a chart reflows to six rows at the floor
@@ -727,7 +734,7 @@ for (const state of STATES)
         file: join(
           OUT,
           REFRESH
-            ? `${base}-${at ?? "idle"}-${w}-${theme}${REDUCED ? "-rm" : ""}.png`
+            ? `${base}-${at ?? "idle"}-${w}-${theme}${TIER === "soft" ? "-soft" : ""}${REDUCED ? "-rm" : ""}.png`
             : `${state}-${w}-${theme}${!CANVAS && SCROLL === "top" ? "-top" : ""}.png`,
         ),
       });

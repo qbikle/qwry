@@ -8,7 +8,8 @@
 // (Palette's `import("../stores/heal")`).
 //
 // So `src/stores/canvas.ts` REGISTERS itself here at its module scope and
-// this file holds the one reference. It is a store rather than a module
+// this file holds the references. There are two: the Ask door below, and the
+// refresh seam at the end of the file. It is a store rather than a module
 // variable so a surface that wants to READ whether the door exists can
 // re-render when it opens; `loadCanvasPort` is for the surfaces that only
 // want to walk through it, and loads the store on the way.
@@ -64,6 +65,13 @@ export interface CanvasPort {
    * blocks of the exchanges it is dropping without importing the document
    * (a null port means nothing was ever written and nothing can be lost) */
   removeByExchange: (exchangeIds: readonly string[]) => void;
+  /** E5b: the exchange whose `canvas_create` MINTED this canvas has been
+   * cut. The canvas stands when it holds at least one block, because the
+   * work on it is the user's and its title is theirs too; it goes, tab and
+   * all, when the cut left it empty, rather than standing as a tab no
+   * exchange made (AGENT-SPEC §9's Open (D1), closed). Called AFTER
+   * `removeByExchange`, so "empty" counts what the cut actually left */
+  dropIfEmpty: (canvasId: string) => void;
   /** B3: this exchange is about to be asked again, so its FIRST canvas write
    * clears what its previous attempt wrote. Marked rather than deleted: an
    * attempt that fails, is refused or is cancelled before writing anything
@@ -102,4 +110,44 @@ export async function loadCanvasPort(): Promise<CanvasPort | null> {
   if (held) return held;
   await import("../stores/canvas");
   return useCanvasPort.getState().port;
+}
+
+// ---- the refresh seam (E2 R3, R4) -----------------------------------------
+//
+// Which widgets a document can refetch and what re-running one MEANS: its
+// session, its row cap, where the rows land. `stores/refresh.ts` owns only
+// when each one starts, so the document hands it this and keeps the rest.
+//
+// It is registered on this leaf rather than into the refresh store directly
+// because canvas.ts used to reach that store through `import("./refresh")` as
+// it evaluated, the one module-eval reach into it anywhere in the app: a file
+// that imported the canvas store and then the refresh store got the refresh
+// namespace half-built (`Cannot access useRefresh before initialization`,
+// order-dependent on a warm run, E4's own open item). The seam is the piece
+// the two modules share, so it sits where they both import it and neither is
+// ever in flight when the other asks. A plain variable, not a store: only
+// `refreshCanvas` reads it and no surface re-renders on it.
+
+/** What a canvas document offers the refresh store. Implemented once, by
+ * `src/stores/canvas.ts`, and registered from its module scope. */
+export interface CanvasRefresh {
+  /** the result widgets that WILL refetch, in document order. Answers
+   * synchronously, because every skeleton goes up in the gesture's own frame
+   * and may only cycle what is actually going out (E3 rule 1) */
+  blocks: (canvasId: string) => string[];
+  refetch: (canvasId: string, blockId: string) => Promise<unknown>;
+}
+
+let seam: CanvasRefresh | null = null;
+
+/** the canvas store's own registration, at its module scope */
+export function setCanvasRefresh(next: CanvasRefresh): void {
+  seam = next;
+}
+
+/** null only until something has imported the canvas store; a gesture that
+ * lands there first loads it and asks again, rather than silently refetching
+ * no widget at all (LESSONS 9) */
+export function canvasRefresh(): CanvasRefresh | null {
+  return seam;
 }

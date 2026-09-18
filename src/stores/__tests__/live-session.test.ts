@@ -58,6 +58,11 @@ let refusals = 0;
  * pagination strip from its own catch, and the catch is the only place that
  * sentence exists */
 let pageRefusals = 0;
+/** the same again, for the one-shot the footer's exact count sends */
+let countRefusals = 0;
+/** the handshake refuses: what a commit meets when the connection is not
+ * coming back, which is the only door `no live connection` is written at */
+let connectFails = false;
 
 mockIPC((cmd, payload) => {
   const a = (payload ?? {}) as Record<string, unknown>;
@@ -65,6 +70,7 @@ mockIPC((cmd, payload) => {
   switch (cmd) {
     case "connect":
       connects.push(String(a.profileId));
+      if (connectFails) throw new Error("connection refused");
       return `s${++connSeq}`;
     case "session_probe":
       return true;
@@ -80,6 +86,12 @@ mockIPC((cmd, payload) => {
         throw new Error("no such session");
       }
       return undefined;
+    case "execute":
+      if (countRefusals > 0) {
+        countRefusals--;
+        throw new Error("no such session");
+      }
+      return { statements: [{ index: 0, sql: "", columns: [], rows: [["1"]], affected: null, ms: 1 }] };
     default:
       return undefined;
   }
@@ -215,11 +227,54 @@ async function brokenPage(): Promise<string> {
 }
 
 /** the add-row a user reaches for, as the store runs it: a staged draft on
- * the active browse tab, committed through the store's own writer */
+ * the active browse tab, committed through the store's own writer. It MERGES
+ * into whatever the tab already holds, so a strip an earlier producer wrote
+ * is still standing when this one writes its own */
 async function commitADraft(over: Partial<BrowseTab> = {}) {
-  const t = browseTab({ draftRow: { name: { text: "ada" } }, ...over });
-  useBrowser.setState({ byTab: { t1: t }, active: "t1", table: users, ...t });
+  const held = useBrowser.getState().byTab.t1 ?? browseTab();
+  const t = { ...held, draftRow: { name: { text: "ada" } }, ...over } as BrowseTab;
+  useBrowser.setState((s) => ({ byTab: { ...s.byTab, t1: t }, active: "t1", table: users, ...t }));
   await useBrowser.getState().commitDraft();
+}
+
+/** the footer's exact count, on a session the backend has forgotten: the
+ * browse store writes `countError` from its own catch */
+async function brokenCount(): Promise<string> {
+  countRefusals = 1;
+  useBrowser.setState((s) => ({ byTab: s.byTab, active: "t1", table: users }));
+  await useBrowser.getState().runExactCount(true);
+  await settle();
+  const wrote = useBrowser.getState().byTab.t1.countError;
+  if (!wrote) throw new Error("runExactCount never reached its catch: this setup drifted");
+  return wrote;
+}
+
+/** the commit a staged cell reaches for, on a tab whose session is gone and
+ * whose handshake refuses: the edits store writes its own strip, and `no live
+ * connection` is that store's own words for the same death */
+async function deadCommit(): Promise<string> {
+  useEdits.setState({
+    active: "t1",
+    lastError: null,
+    byTab: {
+      t1: {
+        maps: {},
+        pending: {
+          "0:0:1": { stmtIndex: 0, row: 0, col: 1, value: "ada", original: "eve" },
+        },
+        flash: new Set<string>(),
+        undoStack: [],
+        redoStack: [],
+      },
+    },
+  } as never);
+  useConnections.setState({ sessions: {}, tabSessions: {} });
+  connectFails = true;
+  await useEdits.getState().commit();
+  connectFails = false;
+  const wrote = useEdits.getState().lastError;
+  if (!wrote) throw new Error("commit never reached its refusal: this setup drifted");
+  return wrote;
 }
 
 /** let the fire-and-forget chains (dynamic imports, replenish) settle */
@@ -355,9 +410,27 @@ describe("withLiveSession", () => {
 describe("afterHeal", () => {
   test("clears death strips, keeps real errors, re-stamps the active tab", async () => {
     seed({ tabSessions: { "p1::t1": "A", "p1::t2": "B" } });
+    // t1's strips are PRODUCED, each by the store that really writes it: the
+    // scroll that found the session gone (the pagination latch and the banner
+    // over the rows it left standing), the add-row the same session refused,
+    // the count behind it, and the commit that found no connection to make.
+    // A sentence written out here would go on passing the day one of those
+    // templates moved, which is the whole of what this file is about
+    const page = await brokenPage();
+    refusals = 2;
+    await commitADraft();
+    await settle();
+    const draft = useBrowser.getState().byTab.t1.draftError;
+    const count = await brokenCount();
+    const commit = await deadCommit();
+    seed({ tabSessions: { "p1::t1": "A", "p1::t2": "B" } });
+    expect(page).toContain(LOST);
+    expect(draft).toBe(LOST);
+    expect(count).toBe(LOST);
+    expect(commit).toBe("no live connection");
     useResults.setState({
       byTab: {
-        t1: resultsTab({ globalError: { message: DEATH_STRIP, position: null, code: null } }),
+        t1: resultsTab({ globalError: { message: page, position: null, code: null } }),
         t2: resultsTab({
           executedSessionId: "B",
           globalError: {
@@ -381,7 +454,7 @@ describe("afterHeal", () => {
     });
     useBrowser.setState({
       byTab: {
-        t1: browseTab({ draftError: LOST, paginationBroken: DEATH_STRIP }),
+        t1: browseTab({ draftError: draft, paginationBroken: page, countError: count }),
         t2: browseTab({
           draftError: 'duplicate key value violates unique constraint "connections_pkey"',
         }),
@@ -389,7 +462,7 @@ describe("afterHeal", () => {
       },
       active: "",
     });
-    useEdits.setState({ active: "t1", lastError: LOST });
+    useEdits.setState({ active: "t1", lastError: commit });
     useConnections.getState().markDisconnected("p1", "A", null);
 
     await afterHeal("p1");
@@ -401,6 +474,7 @@ describe("afterHeal", () => {
     const br = useBrowser.getState().byTab;
     expect(br.t1.draftError).toBeNull();
     expect(br.t1.paginationBroken).toBeNull();
+    expect(br.t1.countError).toBeNull();
     expect(br.t2.draftError).toBe(
       'duplicate key value violates unique constraint "connections_pkey"',
     );
@@ -567,10 +641,24 @@ describe("humanSessionError", () => {
     expect(useBrowser.getState().byTab.t1.paginationBroken).toBe(DEATH_STRIP);
     expect(useResults.getState().byTab.t1.globalError?.message).toBe(DEATH_STRIP);
 
-    for (const strip of [refused, draft ?? "", page]) {
-      expect(strip).not.toContain("no such session");
-      expect(strip).toContain(LOST);
-    }
+    // the footer's count, and the commit that found no connection at all
+    const count = await brokenCount();
+    expect(count).toBe(LOST);
+    const commit = await deadCommit();
+    expect(commit).toBe("no live connection");
+
+    // read one at a time, never over a list: a loop lets an empty slot agree
+    // with every other member of it, which is exactly how a strip nothing
+    // wrote passes a "does not contain" test
+    expect(refused).not.toContain("no such session");
+    expect(refused).toContain(LOST);
+    expect(draft).not.toContain("no such session");
+    expect(draft).toContain(LOST);
+    expect(page).not.toContain("no such session");
+    expect(page).toContain(LOST);
+    expect(count).not.toContain("no such session");
+    expect(count).toContain(LOST);
+    expect(commit).not.toContain("no such session");
   });
 });
 
@@ -599,18 +687,18 @@ describe("a tab session dies while the profile lives", () => {
     expect(inserts[0].sessionId).not.toBe("A");
     expect(inserts[0].sessionId).toBe(useConnections.getState().tabSessions["p1::t1"]);
 
-    // and the strips a reader is left with: the add-row the store itself
-    // refuses when the rebuilt session dies too, beside the older pagination
-    // failure and the run banner under it
+    // and the strips a reader is left with, every one of them written by the
+    // store that writes it in the app: the scroll that found the session gone
+    // (the pagination latch and the run banner under it, one catch) and the
+    // add-row the store itself refuses when the rebuilt session dies too
+    const page = await brokenPage();
+    expect(useBrowser.getState().byTab.t1.paginationBroken).toBe(page);
+    expect(useResults.getState().byTab.t1.globalError?.message).toBe(page);
     refusals = 2;
-    await commitADraft({ paginationBroken: DEATH_STRIP });
+    await commitADraft();
+    await settle();
     expect(useBrowser.getState().byTab.t1.draftError).toBe(LOST);
-    useResults.setState((s) => ({
-      byTab: {
-        ...s.byTab,
-        t1: { ...s.byTab.t1, globalError: { message: DEATH_STRIP, position: null, code: null } },
-      },
-    }));
+    expect(useBrowser.getState().byTab.t1.paginationBroken).toBe(page);
 
     await useConnections.getState().healProfile("p1");
     await settle();

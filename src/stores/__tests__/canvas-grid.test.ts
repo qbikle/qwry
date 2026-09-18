@@ -658,7 +658,10 @@ describe("moveTo, resizeTo and the engine", () => {
     expect(noOverlap(blocksOf(cv))).toBe(true);
   });
 
-  test("a delete closes the hole it leaves above what stood under it", async () => {
+  // D3 rule 1 read for the delete (AGENT-UX 16q, amended): a delete is a
+  // gesture on ONE widget, so the hole it leaves stands the same way the hole
+  // a lifted widget leaves stands. Nothing under it rises
+  test("a delete leaves its hole standing, and moves nothing else", async () => {
     const { cv, ids } = three();
     useCanvas.getState().resizeTo(cv, ids[0], { w: 7, h: 2 }, 7);
     expect(cellOf(cv, ids[1]).y).toBe(2);
@@ -668,10 +671,31 @@ describe("moveTo, resizeTo and the engine", () => {
 
     useCanvas.getState().remove(cv, ids[0]);
     expect(blocksOf(cv).map((b) => b.id)).toEqual([ids[1], ids[2]]);
-    expect(blocksOf(cv).every((b) => b.cell!.y === 0)).toBe(true);
+    expect(cellOf(cv, ids[1]).y).toBe(2);
+    expect(cellOf(cv, ids[2]).y).toBe(2);
     expect(noOverlap(blocksOf(cv))).toBe(true);
     await saved();
     expect(writes).toHaveLength(1);
+  });
+
+  // the maintainer's own shape for it (2026-09-18): one of four goes and the
+  // other three are exactly where they were, sideways neighbour included
+  test("a delete in a 2x2 leaves the other three in place", () => {
+    const cv = canvas();
+    const ids = ["a", "b", "c", "d"].map((t) => useCanvas.getState().addNote(cv, t));
+    useCanvas.getState().moveTo(cv, ids[2], { x: 0, y: 1 }, 6);
+    useCanvas.getState().moveTo(cv, ids[3], { x: 3, y: 1 }, 6);
+    const before = new Map(blocksOf(cv).map((b) => [b.id, b.cell]));
+    expect([...before.values()].map((c) => `${c!.x},${c!.y}`)).toEqual([
+      "0,0",
+      "3,0",
+      "0,1",
+      "3,1",
+    ]);
+
+    useCanvas.getState().remove(cv, ids[0]);
+    expect(blocksOf(cv).map((b) => b.id)).toEqual([ids[1], ids[2], ids[3]]);
+    for (const b of blocksOf(cv)) expect(b.cell).toEqual(before.get(b.id));
   });
 
   test("a block that is gone, a canvas that is gone, a column count that is not one", () => {

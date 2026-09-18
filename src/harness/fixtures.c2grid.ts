@@ -56,7 +56,7 @@
 // c2GridCardH(state).
 
 import { CELL_H, cellMetrics, place, type Cell, type GridItem } from "../canvas/grid";
-import type { Block, CanvasDoc, CanvasMeta } from "../stores/canvas";
+import { useCanvas, type Block, type CanvasDoc, type CanvasMeta } from "../stores/canvas";
 
 export const C2_GRID_STATES = [
   "c2-grid",
@@ -65,6 +65,8 @@ export const C2_GRID_STATES = [
   "c2-resize",
   "c2-migrated",
   "c2-dense",
+  "e5b-delete",
+  "e5b-sql-face",
 ] as const;
 export type C2GridState = (typeof C2_GRID_STATES)[number];
 
@@ -86,7 +88,9 @@ export const C2_GRID_CARD_H = 800;
 const C2_DOC_CARD_H = 1820;
 
 export const c2GridCardH = (state: string): number =>
-  state === "c2-grid" || state === "c2-grid-floor" ? C2_DOC_CARD_H : C2_GRID_CARD_H;
+  state === "c2-grid" || state === "c2-grid-floor" || state === "e5b-delete"
+    ? C2_DOC_CARD_H
+    : C2_GRID_CARD_H;
 
 /** the fixture connection, the same id every other canvas fixture uses, so a
  * harness page that seeds more than one of them agrees with itself */
@@ -308,6 +312,14 @@ function dense(): Block[] {
 
 function blocksFor(state: C2GridState): { blocks: Block[]; lastColumns: number } {
   if (state === "c2-migrated") return { blocks: V1, lastColumns: 0 };
+  // E5b: the same page with the chart widget on its SQL face, the one face
+  // that kept a box of its own inside the widget's (DESIGN rule 15)
+  if (state === "e5b-sql-face") {
+    return {
+      blocks: at(SEVEN).map((b) => (b.id === channels.id ? { ...b, face: "sql" } : b)),
+      lastColumns: 7,
+    };
+  }
   if (state === "c2-dense") return { blocks: dense(), lastColumns: 10 };
   if (state === "c2-grid-floor") return { blocks: at(FIVE), lastColumns: 5 };
   return { blocks: at(SEVEN), lastColumns: 7 };
@@ -478,6 +490,14 @@ export async function c2GridAfterMount(state: string): Promise<void> {
   if (s === "c2-grid") {
     const el = document.querySelector<HTMLElement>(`[data-block="${channels.id}"]`);
     if (el) el.dataset.hot = "";
+  }
+  // E5b: the delete is the STORE's own, not a document drawn short, so the
+  // page the frame shows is the page the product leaves behind. The chart
+  // goes from the middle of the page and its hole stands: a gesture moves
+  // only what it touches (D3, AGENT-UX 16q), delete included
+  if (s === "e5b-delete") {
+    useCanvas.getState().remove(CANVAS_ID, channels.id);
+    await frame();
   }
   if (s !== "c2-drag" && s !== "c2-resize") return;
   // the measure is a layout effect and the reflow a render: the gesture is

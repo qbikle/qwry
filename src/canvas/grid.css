@@ -234,6 +234,22 @@
   background: none;
   overflow: visible;
 }
+/* the SQL face folds its line in the same way, the fourth kind to do it after
+   the table, the diff and the note. B3 kept this one's `.rb` edge because the
+   editor register is a panel INSET, and on a widget that read as two hairlines
+   12px apart, concentric, the widget's and the face's (DESIGN rule 15: keep
+   one). The inset is the FILL, not the line, so the panel stays and runs from
+   the widget's line to the widget's line, with its own top and bottom
+   hairlines left standing, exactly as the table's band does. The view's own
+   10 / 12 then puts the first glyph 12 from the widget's line, where every
+   other kind's first glyph stands */
+.cvg-slot .blk > .rb.sql {
+  margin-left: calc(-1 * var(--sp-3));
+  margin-right: calc(-1 * var(--sp-3));
+  border-left: none;
+  border-right: none;
+  border-radius: 0;
+}
 .cvg-slot .blk .cv-diff-face {
   display: flex;
   flex-direction: column;

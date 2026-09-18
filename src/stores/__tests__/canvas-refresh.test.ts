@@ -60,9 +60,6 @@ type Profile = import("../../ipc/types").Profile;
 const { cancelTabSaves, useTabs } = await import("../tabs");
 const { useConnections } = await import("../connections");
 const { refreshCanvas, useRefresh } = await import("../refresh");
-// canvas.ts hands its widget refetch to the refresh store through a dynamic
-// import; let that land before a test asks the store to refresh a document
-await new Promise((r) => setTimeout(r, 0));
 
 afterEach(() => {
   cancelCanvasSaves();
