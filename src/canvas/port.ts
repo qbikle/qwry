@@ -54,6 +54,11 @@ export interface CanvasPort {
    * canvas's other door to a sheet is a press on the page, so the keyboard
    * has one too (DESIGN rule 8's reveal clause) */
   newDrawing: () => void;
+  /** F2: the palette's `New Chart…`, the keyboard route to the dialog the `+`
+   * menu's own `Chart…` row opens. The ellipsis is WRITING rule 2's contract:
+   * unlike `New Note` and `New Drawing` it places nothing until the picks are
+   * made (AGENT-UX §16ii) */
+  newChart: () => void;
   /** B3: the one canvas a QUESTION can cause. A question carrying the word
    * "canvas" on a connection with no canvas tab gets one, its tab opening
    * beside the user's WITHOUT focus; the caller prefixes the question's pill

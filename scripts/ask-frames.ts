@@ -248,6 +248,10 @@
 // sized, its foot fading.
 //
 // D3 (the maintainer's screen recording of 2026-09-15): on the CANVAS root,
+// f2-chart-* = the New Chart dialog (F2): the Table list standing over an empty
+// dialog, two picks and a chart, a date group's line, the cycle a run is in
+// flight behind, the server's own refusal, and the widget Add lands. All six on
+// one card whose height makes the shot window the product's 800 x 600 minimum.
 // d3-drag-nonintersecting = a widget lifted and held over empty cells with
 // another below and to its right standing exactly where it stood, the finding
 // this wave answers (a gesture moves only what it touches); d3-drop-settled =
@@ -416,6 +420,12 @@ const CANVAS_STATES = [
   "e5b-delete",
   "e5b-sql-face",
   "f1-draw-inking",
+  "f2-chart-open",
+  "f2-chart-preview",
+  "f2-chart-date",
+  "f2-chart-running",
+  "f2-chart-error",
+  "f2-chart-added",
 ] as const;
 /** the B3 four and the C2a six stand on a taller card: neither a four-block
  * answer with a chart among them nor a page of cells fits A3's 760
@@ -538,6 +548,19 @@ const D4_CANVAS_STATES: readonly string[] = ["d4-derived", "d4-derived-drop"];
  * side by side */
 const F1_CANVAS_CARD_H = 860;
 const F1_CANVAS_STATES: readonly string[] = ["f1-draw-inking"];
+/** and F2's six (fixtures.f2.ts F2_CANVAS_CARD_H): ONE card, sized so the
+ * window each frame is shot in is the product's own 800 x 600 minimum, which
+ * is the floor the New Chart dialog was drawn at and the only width at which
+ * its cap, its preview's ceiling and its actions row prove anything */
+const F2_CANVAS_CARD_H = 552;
+const F2_CANVAS_STATES: readonly string[] = [
+  "f2-chart-open",
+  "f2-chart-preview",
+  "f2-chart-date",
+  "f2-chart-running",
+  "f2-chart-error",
+  "f2-chart-added",
+];
 const D2_CANVAS_STATES: readonly string[] = [
   "d2-widgets",
   "d2-add-menu",
@@ -548,33 +571,35 @@ const D2_CANVAS_STATES: readonly string[] = [
 const canvasCardH = (state: string): number =>
   F1_CANVAS_STATES.includes(state)
     ? F1_CANVAS_CARD_H
-    : D4_CANVAS_STATES.includes(state)
-      ? state === "d4-derived-drop"
-        ? D4_DROP_CARD_H
-        : D4_REST_CARD_H
-      : D3_CANVAS_STATES.includes(state)
-        ? state === "d3-drop-settled"
-          ? D3_DROP_CARD_H
-          : D3_DRAG_CARD_H
-        : state === "c2-draw-small"
-          ? SMALL_CANVAS_CARD_H
-          : state === "c2-draw-empty"
-            ? FRESH_CANVAS_CARD_H
-            : state === "c2-draw" || state === "c2-draw-tools" || state === "c2-draw-novision"
-              ? DRAW_CANVAS_CARD_H
-              : state === "c2-empty" || state === "c2-empty-place"
-                ? EMPTY_CANVAS_CARD_H
-                : D2_TALL_CANVAS_STATES.includes(state)
-                  ? D2_TALL_CANVAS_CARD_H
-                  : D2_CANVAS_STATES.includes(state)
-                    ? D2_CANVAS_CARD_H
-                    : D1_TALL_CANVAS_STATES.includes(state)
-                      ? D1_TALL_CANVAS_CARD_H
-                      : DOC_CANVAS_STATES.includes(state)
-                        ? DOC_CANVAS_CARD_H
-                        : TALL_CANVAS_STATES.includes(state)
-                          ? TALL_CANVAS_CARD_H
-                          : CANVAS_CARD_H;
+    : F2_CANVAS_STATES.includes(state)
+      ? F2_CANVAS_CARD_H
+      : D4_CANVAS_STATES.includes(state)
+        ? state === "d4-derived-drop"
+          ? D4_DROP_CARD_H
+          : D4_REST_CARD_H
+        : D3_CANVAS_STATES.includes(state)
+          ? state === "d3-drop-settled"
+            ? D3_DROP_CARD_H
+            : D3_DRAG_CARD_H
+          : state === "c2-draw-small"
+            ? SMALL_CANVAS_CARD_H
+            : state === "c2-draw-empty"
+              ? FRESH_CANVAS_CARD_H
+              : state === "c2-draw" || state === "c2-draw-tools" || state === "c2-draw-novision"
+                ? DRAW_CANVAS_CARD_H
+                : state === "c2-empty" || state === "c2-empty-place"
+                  ? EMPTY_CANVAS_CARD_H
+                  : D2_TALL_CANVAS_STATES.includes(state)
+                    ? D2_TALL_CANVAS_CARD_H
+                    : D2_CANVAS_STATES.includes(state)
+                      ? D2_CANVAS_CARD_H
+                      : D1_TALL_CANVAS_STATES.includes(state)
+                        ? D1_TALL_CANVAS_CARD_H
+                        : DOC_CANVAS_STATES.includes(state)
+                          ? DOC_CANVAS_CARD_H
+                          : TALL_CANVAS_STATES.includes(state)
+                            ? TALL_CANVAS_CARD_H
+                            : CANVAS_CARD_H;
 const MARGIN = 24;
 
 // ---- args -------------------------------------------------------------------

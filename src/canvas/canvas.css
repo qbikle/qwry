@@ -170,6 +170,16 @@ input.cv-title {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+/* an identifier inside the title line: data's own clothes inside chrome
+   (WRITING), so `status` reads as the column it is and not as a word the
+   label's own uppercase swallowed */
+.blk-q code {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  text-transform: none;
+  letter-spacing: 0;
+  color: inherit;
+}
 .blk .ans-text {
   max-width: 680px;
 }

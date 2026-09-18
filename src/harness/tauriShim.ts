@@ -87,7 +87,13 @@
 //                                           so the warn tier has a row), so a
 //                                           comparison in the harness builds a
 //                                           real diff through the store's own
-//                                           buildDiff
+//                                           buildDiff. Since F2 the run answers
+//                                           by the STATEMENT it is handed, so
+//                                           the New Chart dialog composes its
+//                                           own query and gets the rows that
+//                                           query asks for; a statement nothing
+//                                           here recognises still gets the
+//                                           compare rows
 //   plugin:clipboard-manager|write_text     recorded on `clipboardWrites` and
 //                                           nothing else: every Copy in the pane
 //                                           goes through copyCue, whose cue is
@@ -173,6 +179,70 @@ const COMPARE_ROWS: (string | null)[][] = [
   ["312.00", "1", "EUR"],
   ["188.40", "1", "GBP"],
 ];
+
+/** F2: what `select <group>, count(*) …` off `order_v2` returns, the sketch's
+ * own eight statuses */
+const F2_TEXT_ROWS: (string | null)[][] = [
+  ["delivered", "41238"],
+  ["confirmed", "18804"],
+  ["stitching_started", "9120"],
+  ["dispatched", "6231"],
+  ["cancelled", "5320"],
+  ["returned", "1874"],
+  ["rto", "933"],
+  ["on_hold", "212"],
+];
+
+/** and what a DATE group returns: twelve months, ascending, because that is the
+ * order the dialog's own statement asks for (`chartSql`'s outer `order by 1`)
+ * and the line reads left to right */
+const F2_DATE_ROWS: (string | null)[][] = [
+  ["2025-10", "4210"],
+  ["2025-11", "5330"],
+  ["2025-12", "7811"],
+  ["2026-01", "6120"],
+  ["2026-02", "6950"],
+  ["2026-03", "8102"],
+  ["2026-04", "8740"],
+  ["2026-05", "9101"],
+  ["2026-06", "9930"],
+  ["2026-07", "10412"],
+  ["2026-08", "11208"],
+  ["2026-09", "6122"],
+];
+
+/** F2's `f2-chart-running`: the next read-only run never comes back, so a frame
+ * can hold the cycle the product puts up in the pick's own frame. A harness
+ * that answers faster than the world can never show what a wait looks like
+ * (LESSONS 16's own second half) */
+let heldRuns = false;
+export function holdReadonlyRuns(hold: boolean): void {
+  heldRuns = hold;
+}
+
+/** the answer a composed statement gets, or null for one nothing here knows,
+ * which falls through to the compare rows. A column the SNAPSHOT still carries
+ * and the server does not is the refusal the error state is drawn from */
+function f2Answer(sql: string): { columns: string[]; rows: (string | null)[][]; row_count: number; capped: boolean; ms: number } | null {
+  if (!sql.includes("order_v2")) return null;
+  if (sql.includes("statuss")) throw { message: 'column "statuss" does not exist\nLINE 1: select statuss, count(*) as count from public.order_v2 …' };
+  if (sql.includes("date_trunc"))
+    return {
+      columns: ["created_at", sql.includes("avg(") ? "avg_amount" : "count"],
+      rows: F2_DATE_ROWS.map((r) => [...r]),
+      row_count: F2_DATE_ROWS.length,
+      capped: false,
+      ms: 388.1,
+    };
+  if (!sql.includes("count(*)")) return null;
+  return {
+    columns: ["status", "count"],
+    rows: F2_TEXT_ROWS.map((r) => [...r]),
+    row_count: F2_TEXT_ROWS.length,
+    capped: false,
+    ms: 241.6,
+  };
+}
 
 const record = (payload: unknown): Record<string, unknown> =>
   payload !== null && typeof payload === "object" && !Array.isArray(payload)
@@ -502,14 +572,20 @@ export function installTauriShim(): void {
         }
         case "agent_connect":
           return "harness-session";
-        case "agent_run_readonly":
-          return {
-            columns: ["revenue", "order_count", "currency"],
-            rows: COMPARE_ROWS.map((r) => [...r]),
-            row_count: COMPARE_ROWS.length,
-            capped: false,
-            ms: 388.1,
-          };
+        case "agent_run_readonly": {
+          // the statement never comes back while a frame is holding it
+          if (heldRuns) return new Promise<never>(() => {});
+          const sql = typeof record(payload).sql === "string" ? String(record(payload).sql) : "";
+          return (
+            f2Answer(sql) ?? {
+              columns: ["revenue", "order_count", "currency"],
+              rows: COMPARE_ROWS.map((r) => [...r]),
+              row_count: COMPARE_ROWS.length,
+              capped: false,
+              ms: 388.1,
+            }
+          );
+        }
         case "plugin:clipboard-manager|write_text": {
           const text = record(payload).text;
           clipboardWrites.push(typeof text === "string" ? text : "");

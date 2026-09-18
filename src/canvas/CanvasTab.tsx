@@ -106,6 +106,7 @@ import {
   type ResultBlock as ResultBlockDoc,
   type StatusLine,
 } from "../stores/canvas";
+import { openChartDialog } from "../stores/chartDialog";
 import { canSeeImages } from "../stores/agent";
 import { useRefresh } from "../stores/refresh";
 import { useSettings } from "../stores/settings";
@@ -138,6 +139,48 @@ const written = (block: Block): WrittenBlock => block as Block & WrittenBlock;
  * answer's first block, then the model's own title on its other results, then
  * nothing. A model's note carries none, because the question above it is the
  * section's heading and a second one would be the same fact twice (rule 14). */
+/** the `+`'s menu: three KINDS, each wearing its own glyph (the amended menu
+ * rule, ContextMenu's `glyph`: a menu of kinds hands you a shape, a menu of
+ * actions stays bare). A note and a drawing are placed at once, at the kind's
+ * default span, through the two doors the palette's `New Note` and `New
+ * Drawing` already use, so a widget added from here and one added from there
+ * are the same widget (DESIGN rule 14). `Chart…` cannot be placed: a chart is a
+ * READING of a query and there is none yet, so the row opens the New Chart
+ * dialog, where three picks compose one and the widget lands from there (F2,
+ * AGENT-UX §16ii, amending D2's own "opens the composer": a prefilled sentence
+ * was a thing the person could already type, the maintainer's own finding). The
+ * ellipsis is WRITING rule 2's contract and it stays, the row still asking
+ * before it acts; the two that act at once carry none.
+ *
+ * Built out here, not inside the strip, so what each row DOES can be pressed by
+ * a test: the rows are three one-line calls and a frame can only show that they
+ * exist (LESSONS 12, a reviewer that can execute). */
+export function addMenuFor(canvasId: string): MenuNode[] {
+  return [
+    {
+      kind: "item",
+      glyph: <Type size={12} />,
+      label: "Note",
+      onSelect: () => {
+        const store = useCanvas.getState();
+        store.beginEdit(store.addNote(canvasId, ""));
+      },
+    },
+    {
+      kind: "item",
+      glyph: <PenLine size={12} />,
+      label: "Drawing",
+      onSelect: () => void useCanvas.getState().addDrawing(canvasId),
+    },
+    {
+      kind: "item",
+      glyph: <BarChart3 size={12} />,
+      label: "Chart…",
+      onSelect: () => openChartDialog(canvasId),
+    },
+  ];
+}
+
 export function titleOf(block: Block): string {
   // a drawing carries no line of words at all: what it is called is its first
   // text label, and that is drawn ON it (drawingName), never above it
@@ -543,39 +586,7 @@ function CanvasHead({ canvasId, title }: { canvasId: string; title: string }) {
     if (next && next !== title) useCanvas.getState().rename(canvasId, next);
   };
 
-  /** the `+`'s menu: three KINDS, each wearing its own glyph (the amended menu
-   * rule, ContextMenu's `glyph`: a menu of kinds hands you a shape, a menu of
-   * actions stays bare). A note and a drawing are placed at once, at the kind's
-   * default span, through the two doors the palette's `New Note` and `New
-   * Drawing` already use, so a widget added from here and one added from there
-   * are the same widget (DESIGN rule 14). `Chart…` cannot be placed: a chart is
-   * a READING of a query and there is none yet, so the row opens the composer
-   * with this canvas tagged and the words the question starts with, and the
-   * model writes it. The ellipsis is WRITING rule 2's contract; the two that
-   * act at once carry none */
-  const addMenu: MenuNode[] = [
-    {
-      kind: "item",
-      glyph: <Type size={12} />,
-      label: "Note",
-      onSelect: () => {
-        const store = useCanvas.getState();
-        store.beginEdit(store.addNote(canvasId, ""));
-      },
-    },
-    {
-      kind: "item",
-      glyph: <PenLine size={12} />,
-      label: "Drawing",
-      onSelect: () => void useCanvas.getState().addDrawing(canvasId),
-    },
-    {
-      kind: "item",
-      glyph: <BarChart3 size={12} />,
-      label: "Chart…",
-      onSelect: () => useCanvas.getState().askForChart(canvasId),
-    },
-  ];
+  const addMenu = addMenuFor(canvasId);
 
   return (
     <div className="cv-head">

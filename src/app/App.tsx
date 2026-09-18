@@ -47,6 +47,9 @@ const HistoryPanel = lazy(() => import("./HistoryPanel").then((m) => ({ default:
 const ShortcutsModal = lazy(() => import("./ShortcutsModal").then((m) => ({ default: m.ShortcutsModal })));
 const AskPanel = lazy(() => import("../ask/AskPanel").then((m) => ({ default: m.AskPanel })));
 const CanvasTab = lazy(() => import("../canvas/CanvasTab").then((m) => ({ default: m.CanvasTab })));
+// New Chart (F2): a modal nobody reaches before they have a canvas, so it is
+// off the cold-start path like every other lazy surface here
+const ChartDialog = lazy(() => import("../canvas/ChartDialog").then((m) => ({ default: m.ChartDialog })));
 // the palette joins them (B5): a modal that is never on the first-paint path
 // carried cmdk, three radix packages and react-remove-scroll in the entry
 const Palette = lazy(() => import("../palette/Palette").then((m) => ({ default: m.Palette })));
@@ -1072,6 +1075,9 @@ export function App() {
         </Suspense>
       )}
       <SettingsModal />
+      <Suspense fallback={null}>
+        <ChartDialog />
+      </Suspense>
       <ThemePicker />
       <DangerModal />
       <CloseGuardModal />

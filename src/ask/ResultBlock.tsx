@@ -162,6 +162,21 @@ export function statementFromRun(run: AgentRun, sql: string | null): StatementSt
  * looking when they pressed Insert in another pane. Every Insert the pane
  * offers is this one call (the block's cluster and the failure block's
  * field), so the two cannot drift. */
+/** A title's own identifiers, in data's clothes. A title line is CHROME (24px,
+ * uppercase, letter-spaced, tier 2) and a column or table name inside chrome
+ * either wears mono or does not appear (WRITING's identifiers-inside-chrome
+ * rule), so the backticks a title carries become mono spans rather than grave
+ * accents standing in an uppercased label. The model has always written its
+ * six-word titles this way (AGENT-SPEC §5.2) and the New Chart dialog composes
+ * its own the same way (F2). */
+function ticked(text: string): ReactNode {
+  if (!text.includes("`")) return text;
+  return text.split("`").map((part, i) => (i % 2 === 1 ? <code key={i}>{part}</code> : part));
+}
+
+/** the same line for a tooltip, where there is no mono to wear */
+const plainTitle = (text: string): string => text.split("`").join("");
+
 export function insertSql(text: string, tabTitle: string): void {
   void import("../editor/SqlEditor").then(({ editorInsert }) => {
     if (editorInsert.current) {
@@ -754,8 +769,8 @@ export function ResultBlock({
   return (
     <>
       {headline !== "" && (
-        <div className="blk-q" title={headline}>
-          {headline}
+        <div className="blk-q" title={plainTitle(headline)}>
+          {ticked(headline)}
         </div>
       )}
       {prose ? <AnswerText raw={prose} hasRun={run !== null} live={false} /> : null}

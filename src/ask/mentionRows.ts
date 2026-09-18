@@ -165,16 +165,26 @@ export function shortType(type: string): string {
   return m ? (TYPE_SHORT[m[1]] ?? m[1]) + m[2] : type;
 }
 
+/** the estimate's MAGNITUDE alone: `2.1M`, `318k`, `412`; null with no estimate
+ * (-1 or a relation the planner never counted). The New Chart dialog's Table
+ * field and its popover's hint slot wear this bare, the `@` popover wears it
+ * inside `rowsHint`'s own words below: one arithmetic for one fact, however
+ * many registers print it (LESSONS 11) */
+export function rowsCount(reltuples: number | null | undefined): string | null {
+  if (reltuples == null || reltuples < 0) return null;
+  const n = Math.round(reltuples);
+  const unit = n >= 1e9 ? (["B", 1e9] as const) : n >= 1e6 ? (["M", 1e6] as const) : n >= 1e3 ? (["k", 1e3] as const) : null;
+  if (!unit) return String(n);
+  const v = n / unit[1];
+  return `${v < 9.95 ? v.toFixed(1) : String(Math.round(v))}${unit[0]}`;
+}
+
 /** `~2.1M rows`, `~318k rows`, `~412 rows`; null with no estimate (-1 or a
  * relation the planner never counted) */
 export function rowsHint(reltuples: number | null | undefined): string | null {
-  if (reltuples == null || reltuples < 0) return null;
-  const n = Math.round(reltuples);
-  if (n === 1) return "~1 row";
-  const unit = n >= 1e9 ? (["B", 1e9] as const) : n >= 1e6 ? (["M", 1e6] as const) : n >= 1e3 ? (["k", 1e3] as const) : null;
-  if (!unit) return `~${n} rows`;
-  const v = n / unit[1];
-  return `~${v < 9.95 ? v.toFixed(1) : String(Math.round(v))}${unit[0]} rows`;
+  const count = rowsCount(reltuples);
+  if (count === null) return null;
+  return `~${count} ${Math.round(reltuples as number) === 1 ? "row" : "rows"}`;
 }
 
 // ---- rows ----------------------------------------------------------------------

@@ -1,0 +1,263 @@
+/* ---- New Chart (F2, AGENT-UX §16ii) --------------------------------------
+   The Settings modal's own skin at --modal-w-md, rows in the settings row
+   register (a muted label at 72px, the control filling the rest), and ONE new
+   species: the field picker (DESIGN rule 1's own row, 2026-09-18).
+
+   The list inside a field's popover is NOT re-authored here: it is the
+   picker's own box and the picker's own menu rows (ask.css `.picker-pop`,
+   `.picker-item`, `.picker-group`, `.picker-ctx`), imported by ChartDialog.tsx
+   so the one definition of the menu row species travels with this surface.
+   What this file adds to them is the two things a FIELD's list needs and a
+   composer's list does not: it hangs downward from the field rather than
+   upward from a box, and the Table one carries a search field ahead of its
+   rows (the mention popover's own register). */
+
+.chart-modal {
+  width: var(--modal-w-md);
+  /* the 800 x 600 minimum window is the floor this is drawn at: the card
+     stops short of it and the preview scrolls inside itself, so the actions
+     are always on screen (DESIGN rule 13) */
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.cd-title {
+  font-size: var(--text-lg);
+  font-weight: 650;
+  margin-bottom: var(--sp-1);
+}
+/* the settings row, given a fixed label column so five labels of five lengths
+   leave their controls on one edge */
+.cd-row {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  align-items: center;
+  gap: var(--sp-3);
+  min-height: 28px;
+  font-size: var(--text-sm);
+}
+.cd-label {
+  color: var(--fg-muted);
+}
+.cd-ctl {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+/* ---- the field picker (DESIGN rule 1, new species) -----------------------
+   A bordered field wearing its chosen value and one trailing chevron. Empty
+   is EMPTY: the row's own label already names what fills in, so a placeholder
+   would be a string with nothing to lose (rule 11). A picker with nothing to
+   pick yet is disabled rather than absent, so the row it stands in never
+   changes shape (rule 8, rule 2's stable chrome). */
+.field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 26px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  color: var(--fg);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-quick) var(--ease-std),
+    background var(--dur-quick) var(--ease-std);
+}
+.field:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+.field:active:not(:disabled) {
+  background: var(--bg-active);
+}
+/* .active = its own popover stands (the persistent selection, rule 1's naming) */
+.field.active {
+  border-color: var(--accent);
+}
+.field:disabled {
+  cursor: default;
+}
+.field.wide {
+  flex: 1;
+}
+.field-v {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* an identifier inside chrome wears data's clothes (WRITING) */
+.field-v.mono {
+  font-family: var(--font-mono);
+}
+/* the table's row estimate: decoration beside the name it qualifies, and the
+   field reads whole without it (rule 3's tier 3) */
+.field-ctx {
+  flex: none;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-2xs);
+  color: var(--fg-faint);
+}
+.field > svg {
+  flex: none;
+  margin-left: auto;
+  color: var(--fg-muted);
+}
+
+/* the field's list: the picker's own box, hung DOWNWARD from the field. The
+   anchor is AnchoredOverlay's, which positions the wrapper, so the box itself
+   goes back to the flow and gives up the composer's bottom-left origin */
+.field-pop {
+  position: static;
+  width: 200px;
+  transform-origin: top left;
+}
+.field-pop.searchable {
+  width: 320px;
+}
+.field-pop .picker-item {
+  height: 28px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+/* the relation's kind is metadata beside the name, never the accent a chosen
+   row wears */
+.field-pop .picker-item > svg {
+  color: var(--fg-muted);
+}
+.field-pop .picker-item.active > svg {
+  color: var(--accent);
+}
+.field-pop .picker-ctx {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.field-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+}
+/* the search field over the rows: the mention popover's own register. The
+   input carries no ring of its own because the BOX is the ring: it exists
+   only while this input holds the caret (DESIGN rule 2's replacement clause) */
+.field-search {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 28px;
+  padding: 0 var(--sp-2);
+  margin-bottom: var(--sp-1);
+  border-bottom: 1px solid var(--border);
+}
+.field-search > svg {
+  flex: none;
+  color: var(--fg-muted);
+}
+.field-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+.field-search input:focus-visible {
+  outline: none;
+}
+
+/* ---- the preview --------------------------------------------------------
+   The widget's OWN chart face at the pane's geometry, inside one hairline.
+   Capped and scrolling past the cap, so the card never scrolls at the floor
+   and `Add Chart` is always on screen (rule 13). The cap CLEARS a line rather
+   than clipping it: `PREVIEW_LINE_H` (132, the whole face, its dates at the
+   foot of it) plus 12 of padding either side and the hairline is 158, so a
+   line scrolls nowhere and its dates cannot be lost under the clip. Bars are
+   the one face that does scroll here, and the count under the box is what
+   says so. */
+.cd-preview {
+  margin-top: var(--sp-1);
+  max-height: 160px;
+  overflow-y: auto;
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+}
+/* cv-chart's own 4px top+bottom is for a chart sitting next to a title and a
+   status line on the canvas; the box above already gives it 12, so the 158
+   this cap clears would be short by that pair without this line */
+.cd-preview .cv-chart {
+  padding-block: 0;
+}
+/* the widget's own cycle, at the face's own geometry: lying bars where lying
+   bars will stand, breathing on the app's one skeleton keyframe (E2 R3) */
+.cd-skel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-1) 0;
+}
+.cd-skel i {
+  display: block;
+  height: 12px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-hover);
+  animation: skel-breathe calc(var(--dur-slow) * 5) var(--ease-std) infinite alternate;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cd-skel i {
+    animation: none;
+  }
+}
+
+/* the block's own status line, then the statement in data's clothes. One
+   fixed height for both faces of the slot: a run's facts and a server's
+   refusal must not move the actions under them (rule 2) */
+.cd-status {
+  min-height: 16px;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+.cd-status.err {
+  color: var(--danger);
+}
+.cd-sql {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: text;
+}
+.cd-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+/* the link sits at the row's left end, its own padding paid back so its words
+   line up with the rows above it */
+.cd-actions .linkish {
+  margin-right: auto;
+  margin-left: -6px; /* optical */
+}

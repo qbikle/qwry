@@ -1057,6 +1057,17 @@ interface CanvasState {
    * (canvas-agent-spec 2.4 rule 2) */
   clearOnNextWrite: (exchangeId: string) => void;
   addNote: (canvasId: string, text: string, at?: number) => string;
+  /** F2: the New Chart dialog's one door in. A result widget the PERSON
+   * composed: face `chart`, no question line (nobody asked one), no prose, no
+   * assumptions and no `wroteBy`, because a thread that is cut must never take
+   * it away (LESSONS 4). The run goes through `capRun` exactly as the model's
+   * write and `Add to Canvas` do, so one row cap and one status sentence stand
+   * for every door (DESIGN rule 14), and `place()` lands it at the kind's own
+   * default span exactly as `addNote` and `addDrawing` land theirs */
+  addChart: (
+    canvasId: string,
+    chart: { title: string; sql: string; run: AgentRun },
+  ) => string;
   /** C2b: a sheet, at the end of the document. The palette's `New Drawing` and
    * a click on the empty grid are its two doors; the MODEL has neither, because
    * a drawing is a person's hand and `tools.schema.json`'s union does not move
@@ -1206,8 +1217,16 @@ interface CanvasState {
    * and the model writes the widget through `canvas_add` exactly as it does
    * for any other question aimed at a canvas (B3): one door in, never a
    * second (DESIGN rule 14). The words stand at once; nothing animates
-   * typing. */
-  askForChart: (canvasId: string) => void;
+   * typing.
+   *
+   * F2 amends what opens: the `Chart…` row now opens the New Chart dialog,
+   * and this stays the ONE route the dialog's own `Ask instead` link takes,
+   * carrying whatever was picked as the words the question starts with. */
+  askForChart: (canvasId: string, words?: string) => void;
+  /** F2: the palette's `New Chart…`, the keyboard route to the same dialog the
+   * `+` menu's own row opens, on the connection's current canvas (a fresh one
+   * when it has none, exactly as `New Drawing` makes one) */
+  newChart: () => void;
 }
 
 const metaOf = (s: CanvasState, canvasId: string): CanvasMeta | null => {
@@ -1257,13 +1276,18 @@ function readSafely(json: string, canvasId: string): { doc: CanvasDoc; migrated:
   }
 }
 
-function firstLine(e: unknown): string {
+/** the server's own first line, for the slot that is about to say it. The
+ * FALLBACK belongs to the caller: a failure with nothing in it reads as "the
+ * comparison failed" under a diff and as something else under a preview, and
+ * one helper guessing for both would put the wrong sentence in one of them
+ * (LESSONS 9: feedback must be true, not merely present) */
+export function firstLine(e: unknown, fallback: string): string {
   // a DriverError is a plain object, not an Error: the wire is where most of
   // these come from, and String()ing one prints `[object Object]` at the
   // reader (LESSONS 9)
   const m = (e as { message?: unknown } | null)?.message;
   const raw = typeof m === "string" ? m : String(e);
-  return raw.split("\n")[0].trim() || "the comparison failed";
+  return raw.split("\n")[0].trim() || fallback;
 }
 
 export const useCanvas = create<CanvasState>((set, get) => ({
@@ -1557,6 +1581,28 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     return block.id;
   },
 
+  addChart: (canvasId, { title, sql, run }) => {
+    const { rows, status } = capRun(run);
+    const block: ResultBlock = {
+      id: crypto.randomUUID(),
+      // the question line is the EXCHANGE's; nobody asked this one, so the
+      // widget wears its title instead and `titleOf` reads whichever it has
+      question: "",
+      title,
+      kind: "result",
+      prose: "",
+      sql,
+      columns: run.columns,
+      rows,
+      chips: [],
+      status,
+      ms: run.ms,
+      face: "chart",
+    };
+    insert(canvasId, block, get().docs[canvasId]?.blocks.length ?? 0);
+    return block.id;
+  },
+
   updateDrawing: (canvasId, blockId, next) => {
     patch(canvasId, blockId, (b) =>
       b.kind !== "drawing"
@@ -1802,7 +1848,7 @@ export const useCanvas = create<CanvasState>((set, get) => ({
       );
       return { ok: true };
     } catch (e) {
-      return said(compareMismatch(b.name, firstLine(e)));
+      return said(compareMismatch(b.name, firstLine(e, "the comparison failed")));
     } finally {
       set((s) => ({ comparing: without(s.comparing, blockId) }));
       if (session) void disconnect(session).catch(() => {});
@@ -1903,14 +1949,17 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     get().beginEdit(get().addNote(id, ""));
   },
 
-  askForChart: (canvasId) => {
+  askForChart: (canvasId, words) => {
     const meta = metaOf(get(), canvasId);
     if (!meta) return;
     // the pane opens in Ask and never closes, `Ask` on a block's own rule
     useSidePane.getState().show("ask");
     useAsk
       .getState()
-      .prefill(meta.profileId, `${canonicalToken("canvas", { id: meta.id, title: meta.title })} add a chart of `);
+      .prefill(
+        meta.profileId,
+        `${canonicalToken("canvas", { id: meta.id, title: meta.title })} ${words ?? "add a chart of "}`,
+      );
   },
 
   newDrawing: () => {
@@ -1925,6 +1974,22 @@ export const useCanvas = create<CanvasState>((set, get) => ({
     // draw and the sheet says so by being one (drawing.css .dw-sheet), where
     // an empty note is a caret and nothing at all
     get().addDrawing(id);
+  },
+
+  newChart: () => {
+    const pid = useConnections.getState().activeProfileId;
+    if (!pid) return;
+    let id = get().currentFor(pid);
+    if (!id) {
+      id = get().create(pid);
+      useTabs.getState().openCanvasTab(id, titleOf(id), true);
+    }
+    // the canvas the dialog lands on is read BEFORE the import (LESSONS 3):
+    // the rail can move while a module loads. The dialog store is reached
+    // lazily so the canvas document never imports it back (port.ts's own
+    // reason: two stores that import each other are one knot)
+    const canvasId = id;
+    void import("./chartDialog").then(({ openChartDialog }) => openChartDialog(canvasId));
   },
 
   deleteCanvas: async (canvasId) => {
@@ -2141,7 +2206,7 @@ const canvasLost = (): DriverError => ({
  * friendlier sentence for an error nobody here has read is how a status line
  * starts lying (LESSONS 9, `compareMismatch`'s own rule) */
 const refreshFailed = (e: unknown): string => {
-  const line = firstLine(e);
+  const line = firstLine(e, "");
   return line ? `could not refresh · ${line}` : "could not refresh";
 };
 
@@ -2358,6 +2423,7 @@ setCanvasPort({
   newCanvas: () => useCanvas.getState().newCanvas(),
   newNote: () => useCanvas.getState().newNote(),
   newDrawing: () => useCanvas.getState().newDrawing(),
+  newChart: () => useCanvas.getState().newChart(),
   newCanvasFor: (profileId) => useCanvas.getState().openForQuestion(profileId),
   drawingImage: (canvasId, blockId) => useCanvas.getState().drawingImage(canvasId, blockId),
   removeByExchange: (exchangeIds) => useCanvas.getState().removeByExchange(exchangeIds),

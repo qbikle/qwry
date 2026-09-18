@@ -145,6 +145,11 @@
 // on cards of their own (d2CanvasCardH: 1180 for the four-widget page and the
 // menu standing over it, 700 for the other three).
 //
+// F2 adds six canvas states (fixtures.f2.ts): the New Chart dialog, standing
+// over the canvas on ONE card whose height makes the shot window the product's
+// own 800 x 600 minimum, so the dialog's cap and the preview's ceiling are read
+// at the floor they were drawn at (F2_CANVAS_CARD_H).
+//
 // D3 adds two canvas states (fixtures.d3.ts): `d3-drag-nonintersecting` and
 // `d3-drop-settled`, on their own pair of cards (d3CanvasCardH). D4 adds two
 // more (fixtures.d4.ts): `d4-derived` and `d4-derived-drop`, the page at a
@@ -174,6 +179,7 @@ import ReactDOM from "react-dom/client";
 import { AskPanel } from "../ask/AskPanel";
 import { ModelsSettings } from "../ask/ModelsSettings";
 import { CanvasTab } from "../canvas/CanvasTab";
+import { ChartDialog } from "../canvas/ChartDialog";
 import { DEFAULT_PALETTE } from "../design/theme";
 import type { Profile } from "../ipc/types";
 import { useAgent } from "../stores/agent";
@@ -302,6 +308,13 @@ import {
   d3CanvasSeed,
   type D3CanvasState,
 } from "./fixtures.d3";
+import {
+  F2_CANVAS_CARD_H,
+  F2_CANVAS_STATES,
+  f2AfterMount,
+  f2Seed,
+  type F2CanvasState,
+} from "./fixtures.f2";
 import {
   d4CanvasCardH,
   D4_CANVAS_STATES,
@@ -678,7 +691,8 @@ type AnyCanvasState =
   | D2CanvasState
   | D3CanvasState
   | D4CanvasState
-  | F1CanvasState;
+  | F1CanvasState
+  | F2CanvasState;
 
 interface CanvasParams {
   state: AnyCanvasState;
@@ -712,6 +726,8 @@ const isD4Canvas = (state: string): state is D4CanvasState =>
 
 const isF1Canvas = (state: string): state is F1CanvasState =>
   (F1_CANVAS_STATES as readonly string[]).includes(state);
+const isF2Canvas = (state: string): state is F2CanvasState =>
+  (F2_CANVAS_STATES as readonly string[]).includes(state);
 
 /** the card each wave is read on: A3's three blocks stand in 760, B3's four
  * with a chart among them need 800, and C2's page of cells is read from its
@@ -729,23 +745,25 @@ const isF1Canvas = (state: string): state is F1CanvasState =>
 const canvasCardH = (state: string): number =>
   isF1Canvas(state)
     ? F1_CANVAS_CARD_H
-    : isD4Canvas(state)
-      ? d4CanvasCardH(state)
-      : isD3Canvas(state)
-        ? d3CanvasCardH(state)
-        : isC2Draw(state)
-          ? c2DrawCardH(state)
-          : isC2Empty(state)
-            ? C2_EMPTY_CARD_H
-            : isD2Canvas(state)
-              ? d2CanvasCardH(state)
-              : isD1Canvas(state)
-                ? d1CanvasCardH(state)
-                : isC2Grid(state)
-                  ? c2GridCardH(state)
-                  : isB3Canvas(state)
-                    ? B3_CANVAS_CARD_H
-                    : CANVAS_CARD_H;
+    : isF2Canvas(state)
+      ? F2_CANVAS_CARD_H
+      : isD4Canvas(state)
+        ? d4CanvasCardH(state)
+        : isD3Canvas(state)
+          ? d3CanvasCardH(state)
+          : isC2Draw(state)
+            ? c2DrawCardH(state)
+            : isC2Empty(state)
+              ? C2_EMPTY_CARD_H
+              : isD2Canvas(state)
+                ? d2CanvasCardH(state)
+                : isD1Canvas(state)
+                  ? d1CanvasCardH(state)
+                  : isC2Grid(state)
+                    ? c2GridCardH(state)
+                    : isB3Canvas(state)
+                      ? B3_CANVAS_CARD_H
+                      : CANVAS_CARD_H;
 
 function canvasParamsFrom(search: string): CanvasParams {
   const q = new URLSearchParams(search);
@@ -761,7 +779,8 @@ function canvasParamsFrom(search: string): CanvasParams {
     isD2Canvas(raw) ||
     isD3Canvas(raw) ||
     isD4Canvas(raw) ||
-    isF1Canvas(raw);
+    isF1Canvas(raw) ||
+    isF2Canvas(raw);
   // the frames ask for the card's own three widths; a PROBE asks for whatever
   // width it is reproducing, and the maintainer's window was 660. So the route
   // takes the number it is given between the floor and the widest card the
@@ -783,23 +802,25 @@ function seedCanvas({ state, theme }: CanvasParams) {
   // name is the difference between the three waves' documents
   const seed = isF1Canvas(state)
     ? f1CanvasSeed()
-    : isD4Canvas(state)
-      ? d4CanvasSeed(state)
-      : isD3Canvas(state)
-        ? d3CanvasSeed(state)
-        : isC2Draw(state)
-          ? c2DrawSeed(state)
-          : isC2Empty(state)
-            ? c2EmptySeed()
-            : isD2Canvas(state)
-              ? d2CanvasSeed(state)
-              : isD1Canvas(state)
-                ? d1CanvasSeed(state)
-                : isC2Grid(state)
-                  ? c2GridSeed(state)
-                  : isB3Canvas(state)
-                    ? b3CanvasSeed(state)
-                    : canvasSeed(state);
+    : isF2Canvas(state)
+      ? f2Seed()
+      : isD4Canvas(state)
+        ? d4CanvasSeed(state)
+        : isD3Canvas(state)
+          ? d3CanvasSeed(state)
+          : isC2Draw(state)
+            ? c2DrawSeed(state)
+            : isC2Empty(state)
+              ? c2EmptySeed()
+              : isD2Canvas(state)
+                ? d2CanvasSeed(state)
+                : isD1Canvas(state)
+                  ? d1CanvasSeed(state)
+                  : isC2Grid(state)
+                    ? c2GridSeed(state)
+                    : isB3Canvas(state)
+                      ? b3CanvasSeed(state)
+                      : canvasSeed(state);
   // the model is the harness's own everywhere but one state: C2b's
   // `c2-draw-novision` runs on a row the registry documents WITHOUT vision,
   // because the frame's whole subject is the `Ask` that is then not in the
@@ -834,23 +855,25 @@ function CanvasHarness({ state, w, canvasId }: CanvasParams & { canvasId: string
       // cannot hold
       const hook = isF1Canvas(state)
         ? f1CanvasAfterMount(state)
-        : isD4Canvas(state)
-          ? d4CanvasAfterMount(state)
-          : isD3Canvas(state)
-            ? d3CanvasAfterMount(state)
-            : isC2Draw(state)
-              ? c2DrawAfterMount(state)
-              : isC2Empty(state)
-                ? c2EmptyAfterMount(state)
-                : isD2Canvas(state)
-                  ? d2CanvasAfterMount(state)
-                  : isD1Canvas(state)
-                    ? d1CanvasAfterMount(state)
-                    : isC2Grid(state)
-                      ? c2GridAfterMount(state)
-                      : isB3Canvas(state)
-                        ? b3CanvasAfterMount(state)
-                        : canvasAfterMount(state);
+        : isF2Canvas(state)
+          ? f2AfterMount(state)
+          : isD4Canvas(state)
+            ? d4CanvasAfterMount(state)
+            : isD3Canvas(state)
+              ? d3CanvasAfterMount(state)
+              : isC2Draw(state)
+                ? c2DrawAfterMount(state)
+                : isC2Empty(state)
+                  ? c2EmptyAfterMount(state)
+                  : isD2Canvas(state)
+                    ? d2CanvasAfterMount(state)
+                    : isD1Canvas(state)
+                      ? d1CanvasAfterMount(state)
+                      : isC2Grid(state)
+                        ? c2GridAfterMount(state)
+                        : isB3Canvas(state)
+                          ? b3CanvasAfterMount(state)
+                          : canvasAfterMount(state);
       void hook.then(() => {
         if (live) document.documentElement.dataset.harnessReady = "1";
       });
@@ -865,6 +888,9 @@ function CanvasHarness({ state, w, canvasId }: CanvasParams & { canvasId: string
       <main className="card harness-card" style={{ width: w, height: canvasCardH(state) }}>
         <CanvasTab canvasId={canvasId} />
       </main>
+      {/* the dialog is App.tsx's, mounted beside the canvas here for the same
+          reason: it portals over the whole window and belongs to no one tab */}
+      <ChartDialog />
     </div>
   );
 }

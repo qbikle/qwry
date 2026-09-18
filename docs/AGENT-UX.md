@@ -3283,9 +3283,12 @@ this section spells the first and third `Note` and `Chart…` instead, per
 WRITING rule 5 (one term per concept) and the strings already standing
 app-wide (`New Note`, `Delete Note?`, `Copied note`; the chart face's own
 name, §16a), `Chart…` because the row does not create a chart at once,
-it opens the composer and needs a question before a chart exists (WRITING
-rule 2's own ellipsis contract), where `Note` and `Drawing` place their
-widget immediately and earn none. Recorded as a deviation from the
+it opens the New Chart dialog and needs a table, a group and a measure
+before a chart exists (WRITING rule 2's own ellipsis contract; amended in
+place, F2, 2026-09-18: the row opened the composer at this section's own
+D2 writing, and §16ii below is what now stands behind the ellipsis), where
+`Note` and `Drawing` place their widget immediately and earn none.
+Recorded as a deviation from the
 brief's literal wording, per a rule already in this file, rather than a
 silent substitution (LESSONS 9); the maintainer may overrule the spelling.
 
@@ -3293,17 +3296,17 @@ silent substitution (LESSONS 9); the maintainer may overrule the spelling.
 kind's own default span (§16p) and land the new widget on `panelIn`
 (§16g), exactly as `New Drawing` already does from the palette (§16z), a
 third door to the same two calls, beside the palette and, for a note, a
-bare click on empty ground (§16z). `Chart…` moves focus to the composer
-and seeds it with §16l item 1's own prefill mechanism, the `@"Canvas 4"`
-pill an empty draft on this same tab already carries, followed by the
-words `add a chart of `, so the model writes the query a chart needs: a
-graph is the one kind neither a click nor a menu row can create alone,
-since §16i's own tools need a statement to run before there are rows to
-chart. This is not a new targeting route on §16l's own numbered list (the
-tab is already the target the moment its own header holds this button);
-it is one more DOOR to the prefill route 1 already opens, now reachable
-by a press instead of only found by an empty draft, noted at §16l's own
-place below.
+bare click on empty ground (§16z). **`Chart…` opens the New Chart dialog
+(F2, 2026-09-18, superseding this paragraph's own D2 sentence, which sent
+the press to the composer instead): a graph is no longer the one kind
+neither a click nor a menu row can create alone, since the dialog composes
+its own statement from three picks and runs it itself, needing no turn of
+the model first (§16ii, below).** This is not a new targeting route on
+§16l's own numbered list (the tab is already the target the moment its
+own header holds this button, and the dialog acts on that same tab); the
+prefill route 1 opens still stands, now reached from `Ask instead` inside
+the dialog rather than from the row itself, noted at §16l's own place
+below.
 
 **Counts.** Canvas strips: 0 → 1 (title + `+`). Always-visible controls
 per page: 0 → 1 (the `+`). Strings at rest per page: 0 → 1 (the canvas's
@@ -3320,9 +3323,11 @@ reachable) or scroll away with the document is undecided by rule; if the
 maintainer prefers the latter, the counts above are unchanged and only
 the CSS `position` moves.
 
-A pointer at §16l's own place: the header's `Chart…` row (above) rides
-route 1's own prefill mechanism rather than adding a seventh; §16l is
-unamended by it beyond this cross-reference.
+A pointer at §16l's own place, amended (F2, 2026-09-18): the header's
+`Chart…` row (above) no longer rides route 1's own prefill mechanism
+itself, it opens the New Chart dialog (§16ii); route 1's prefill survives
+inside that dialog, behind `Ask instead`, so §16l gains no eighth route
+and stands unamended beyond this cross-reference.
 
 **Motion.** The rename: no glyph travels, the words stand where they
 already were; the 1px accent ring fades in on `--dur-quick` (the note's
@@ -3336,10 +3341,12 @@ rightward under a button at the strip's own right edge); the hot row's
 fill steps on `--dur-quick`; it closes at once, the primitive's own exit.
 A row's press lands the new widget on `panelIn` at the place `place()`
 chose, the widgets under it making room on `spring.layout` (§16t,
-unmoved); `Chart…` opens the pane on `spring.slide` (§10) with the
-prefilled words standing at once (never animate typing). Reduced motion:
-the ring is there or gone with no fade, the menu is open or shut with no
-scale, and the new widget stands at its place at once (§16g).
+unmoved); `Chart…` opens the New Chart dialog on `popIn` instead (F2,
+2026-09-18, superseding the pane-on-`spring.slide` sentence this line
+carried at D2's own writing; §16ii has the dialog's own motion in full).
+Reduced motion: the ring is there or gone with no fade, the menu is open
+or shut with no scale, and the new widget stands at its place at once
+(§16g).
 
 ### 16dd. Note growth: grow while typing, scroll once resized (D2, 2026-09-14, Q4a)
 
@@ -3545,3 +3552,216 @@ document rather than stay pinned (§16cc); the diff grid's own column
 balance at the 640 floor (§16ff); a note mid-growth, the title in edit
 with its own ring, the bottom fade on a hand-sized note, and a hot menu
 row in light theme, none drawn as a fixture this wave (§16dd, §16cc).
+
+### 16ii. The chart dialog (F2, 2026-09-18)
+
+**The ask.** The maintainer, 2026-09-18: "for adding graph we can give some
+sort of guided GUI modal for adding one currently it just adds prompt to
+ask which user could already do that wont work." §16cc's own `Chart…` row
+sent the press to the composer with `add a chart of ` waiting for the
+model to finish the sentence, the same words the person could already
+type without the row's help, so the row earned nothing a blank draft did
+not (rule 15's own first question, answered no: this is a face on the
+composer's existing prefill, not a widget standing beside it, and the fix
+is not a new fixture, it is to give the row something ONLY it can do).
+This section is that fix, amending §16cc's `Chart…` sentences in place
+(cited there) rather than leaving two contradictory accounts of one row.
+
+**The rows.** `New Chart`, on the app's own `Modal` (`src/app/overlay/
+Overlay.tsx`), the Settings modal's skin (`--modal-w-md`, `--bg-raised`,
+`--border-strong`, `radius-lg`, `shadow-lg`) and its own entrance
+(`popIn`), mounted beside `SettingsModal` and `DangerModal` in `App.tsx`
+and opened by a store flag, `openChartDialog(canvasId)`. Its title is the
+strip DESIGN rule 12 already asks for: `New Chart` and nothing else. Rows
+sit in the settings-row register (`.cd-row`, the Settings modal's own row
+at a FIXED 72px label column rather than `.settings-row`'s own flex: five
+labels of five lengths leave their controls on one edge. A muted label,
+the control filling the rest, `min-height: 28px`):
+
+- **Table**: a field picker, the wave's one new species (DESIGN rule 1,
+  below): a bordered field wearing the chosen value in mono with the row
+  estimate riding faint beside it as context (`public.order_v2` `1.2M`),
+  one chevron. Its popover is the mention popover's OWN register (§1a: a
+  search field over 28px mono rows, the kind glyph, schemas as group
+  heads), filtered by `src/ask/fuzzy.ts`, anchored by the same
+  `AnchoredOverlay` every other popover in this app opens through. It
+  opens the moment the dialog does, caret already in the search (the
+  `open` state, below): the first pick is the first thing on screen,
+  never a second press to reach it. Choosing a table closes the popover
+  and moves focus to Group by. Source: `useSchema.getState()
+  .snapshots[profileId].tables`, the same live snapshot the `@` ladder's
+  own table rung reads.
+- **Group by**: the table's own columns, mono, the type riding as context.
+  **Measure**: `Count rows` first, then the numeric columns; picking a
+  column stands the settings-seg recipe (Sum · Avg · Min · Max) beside
+  the field, Sum first; the field keeps its own chevron, the column
+  being still the field's to change. **Per** stands ONLY when Group
+  by holds a date or timestamp column (Day · Week · Month · Year, Month
+  default), and its own presence flips the next row's label from `Top` to
+  `Last`, one row wearing two names rather than two rows for one idea
+  (DESIGN rule 15's second question: a face on a row that already
+  stands). **Top / Last**: a field picker of 5 · 10 · 20 · 50 · 100 · 200
+  (`CHART_ROW_CAP`, the picker's own ceiling and the query's own `limit`
+  both, one number, AGENT-SPEC §5.1's `CANVAS_BLOCK_ROWS` precedent kept
+  rather than a second cap invented beside it), 10 by default, 12 the
+  moment Group by turns a date (a chart's own default reading, §16a).
+- A picker with nothing to pick yet is disabled (`--o-disabled`), never
+  absent (rule 8's own state-matrix contract): Group by, Measure and
+  Top/Last stand from the first frame, waiting on Table, so the row's own
+  label is the only thing that ever explains what fills in next. No
+  placeholder text stands in an empty field, the label already naming it
+  (rule 11).
+
+**The statement.** Every change composes ONE statement through a pure,
+tested function, `src/canvas/chartSql.ts`, the same shape `chartOf` and
+`outlineLine` already are (AGENT-SPEC §5.1, §5.2): identifiers quoted by
+its own `quoteIdent` (double-quoted only when the bare form would not
+round-trip), every name schema-qualified. A text group reads `select
+<g>, count(*) as count from <t> group by 1 order by 2 desc limit N`, a
+chosen measure trading `count(*) as count` for `sum(<c>) as sum_<c>` (and
+`avg`/`min`/`max` alike); a date group reads `to_char(date_trunc('<unit>',
+<c>), '<fmt>') as <c>` beside the measure, `fmt` `YYYY-MM-DD` for Day and
+Week, `YYYY-MM` for Month, `YYYY` for Year, wrapped so the newest N come
+back in reading order rather than the query's own scan order: `select *
+from (… order by 1 desc limit N) t order by 1`. Nulls ride through
+uncoalesced: a null group is a fact about the data, not a bug in the
+picks. The same module gives the widget's own title (`count by
+` + "`status`", `avg ` + "`amount`" + ` by month of ` + "`created_at`":
+the READING, never the statement, DESIGN rule 14's own split, the SQL
+says the table) and the words `Ask instead` hands to the composer.
+
+The run travels the compare path already open for `Compare With` (above,
+`src/stores/canvas.ts`): `agentConnect(profileId)` once, when the dialog
+opens, one session for its whole life; `agentRunReadonly(session, sql,
+CHART_ROW_CAP + 1, timeoutMs)` on every settled change (`timeoutMs` from
+`useSettings().statementTimeoutSecs`, compare's own fallback to
+`RUN_SQL_TIMEOUT_MS` unmoved), the `+ 1` `DIFF_ROW_CAP` already reads by
+to know a result was capped without a second query; `disconnect(session)`
+on close, whichever state the dialog was in. Every keystroke and every
+picker choice debounces 250ms before it runs, and a run token dropped a
+stale answer the way every other debounced fetch in this app already
+does: the picks a person left behind never draw over the picks standing
+now. LESSONS 16's own rule binds the loader, not just the query: the
+running state is a synchronous store write in the gesture's own frame,
+before the debounce's timer or the connection's await start, so the
+dialog never waits on the network to admit it heard the last press.
+
+**The states**, the sketch's own six (`chart-sketch-f2.html`, `?s=`):
+
+- **open**: the dialog mounts with the Table popover already standing and
+  its search caret lit; Group by, Measure and Top/Last sit disabled with
+  no chart below them, `Add Chart` disabled.
+- **preview**: a table and a text group picked, the widget's own chart
+  face drawing bars at the pane's geometry, `8 rows · 241.6 ms` under it,
+  the statement on its one mono line, `Add Chart` enabled.
+- **date**: Group by holds a timestamp column, Per shows (Month
+  active), Top's row now reads Last, the face draws a line instead of
+  bars (§16a's own date-label rule), the measure's segmented control
+  stands beside the Measure field.
+- **running**: the preview box swaps to the widget's own cycle
+  (`.blk.cycling`'s skeleton, E2), never a spinner; the statement line
+  keeps showing the query now in flight.
+- **error**: the preview is GONE, an absent face reads honestly (rule
+  11) rather than an empty box explaining nothing, the status slot
+  carries the server's own first line in the danger register (`firstLine`,
+  the same helper `compare` already calls), `Add Chart` stays disabled;
+  every pick stands exactly where it was, so fixing one letter of a
+  column name is the only edit the error asks for.
+- **added**: the dialog is gone, the new widget stands on the canvas at
+  its place, its own title and status line already the reading `chartSql`
+  built.
+
+Stills: `/Users/manishgudewar/projects/qwry-agent-lab/docs/research/
+f2-sketch-frames/{open,preview,date,running,error,added}-{dark,light}.png`.
+
+**The preview box.** The widget's OWN chart face (`Chart.tsx`, through
+`chartOf` on a block built from the run), at the pane's own geometry (no
+span to speak of yet, so bars lie down at their usual 24px pitch), inside
+one hairline (`--border`, `radius-md`, 12 padding, `--bg-panel`), capped
+at 160px and scrolling past it: the modal's own `--modal-w-md` frame
+never scrolls at the 800×600 floor this dialog is drawn against (rule 13;
+the floor frame is the proof, not the 960 or 1280 one). A clipped box
+must CLEAR the face it holds: the cap is 160 and not the face's own 132
+because 12 of padding either side and the hairline are the other 28, and
+a line is handed §16a's 132 as its WHOLE face (`PREVIEW_LINE_H`, through
+`Chart`'s own `faceH`, the number the cells already hand it on the grid),
+its dates drawn INSIDE that height rather than 18px under a 132px plot,
+where the clip took them with nothing left to say they were ever there.
+Bars are the one face that scrolls in this box: eight rows at the pane's
+own pitch outrun any cap the modal can afford at the floor, and the count
+under it (`8 rows · 241.6 ms`) is what says so, the same fact a squeezed
+face on the grid draws as `+ N more`. A line now scrolls nowhere: 132 and
+two 12s and the hairlines are the 158 the cap clears (LESSONS 9). The box
+is ABSENT until `chartOf` returns non-null (rule 11 again: nothing to
+preview is nothing shown, never an empty frame saying so), and the rows
+beneath it (the status line, the statement) move on `spring.layout` the
+moment it lands (`panelIn` for the box itself, DESIGN rule 6; reduced
+motion: none of this animates, the box is there or it is not).
+
+**Add Chart.** Primary, ↩ while enabled and no popover of the dialog's
+own stands (the Modal's `onKey`, `escStack` routing the key to the
+topmost layer first), disabled until a chart exists and while a run is
+in flight. It calls ONE new store door, `canvas.ts`'s `addChart(canvasId,
+{ title, sql, run })`: a result widget, face `chart`, the exchange's
+`question` empty (this widget carries no question line, §16a item 1: a
+person's own pick, not an exchange), title and prose from `chartSql`'s
+own reading, no chips, columns/rows/status from the SAME `run` `capRun`
+already built (the one door every canvas write already takes, never a
+second one for a person's own hand), ms, and no `wroteBy` (the person's
+own widget, LESSONS 4's provenance rule read the other way: the model
+signs what IT writes, and a widget with no model turn behind it signs
+nothing). `place()` seats it at the kind's own default span exactly as
+`addNote` and `addDrawing` seat theirs, landing on `panelIn`; the dialog
+closes, disconnects its session, and the new widget takes focus the way
+a fresh note or a fresh sheet already does. Cancel and Esc close the same
+way, session and all, the picks thrown away. `Ask instead` (`.linkish`,
+bottom-left, the link species, DESIGN rule 1) closes the dialog and
+hands the composer route 1's own prefill (§16l), now WORDED from the
+picks rather than left blank: `@"Canvas 7" add a chart of order_v2 by
+status`, or, with nothing picked yet, today's bare `add a chart of `.
+
+**The two doors.** `CanvasTab.tsx`'s `+` menu: the `Chart…` row (§16cc,
+amended above) calls `openChartDialog(canvasId)` in place of
+`askForChart`, its glyph and its ellipsis unmoved (the row still asks
+before it acts, WRITING rule 2). The palette gains a fourth canvas row,
+`New Chart…` (`Palette.tsx`, beside `New Note` and `New Drawing`, the
+SAME `LayoutGrid` glyph and 12px size those two already wear, a species
+this file does not reopen), opening the dialog on the active canvas,
+creating one first exactly as `newDrawing` does when no canvas is yet
+open, never a second creation path invented beside it (rule 15). Its own
+ellipsis is new to the palette's canvas rows because it is the only one
+of the four (`New Canvas`, `New Note`, `New Drawing`, `New Chart…`) that
+opens further UI needing input before it acts; the other three still
+carry none. `askForChart` itself is UNCHANGED and stays standing, now
+reached only from `Ask instead` inside the dialog: the model's own route
+to a canvas chart was never this section's question, only the person's
+was.
+
+**Counts.** Modals: `SettingsModal`, `DangerModal` → +1 (`ChartDialog`).
+Canvas strings at rest: unchanged (§16cc's `1`, the canvas's own name,
+stands; this dialog carries no string until it opens). Palette rows: +1
+(`New Chart…`, beside the three the canvas already offered). Always-
+visible controls per page: unchanged (§16hh's `1`, the `+`; the dialog is
+not always visible). New species: 1 (the field picker, DESIGN rule 1,
+below). New spring presets: 0 (`popIn` and `panelIn` both stand already).
+New `--dur` tokens: 0.
+
+**Open.** No WHERE row: a chart this wave reads the whole table's own
+grouping, and narrowing it is `Ask instead`'s own job until a filter row
+earns its keep (DESIGN rule 15's third question, not yet asked). One
+measure: the face itself already draws up to three series (§16a), so a
+second and third Measure row are a face on this dialog's own
+`Measure` row rather than a new one, left for whichever wave needs a
+multi-series chart first. Charting an existing result widget or a query
+tab's own statement, rather than only a fresh table/group/measure pick,
+stands open the same way `Add to Canvas` stands beside a model's own
+write (§16c): a second door onto the same `addChart`, not drawn this
+wave. A Year group draws BARS, not a line: `fmt` collapses to `YYYY`
+alone, and `Chart.tsx`'s own date-label rule (§16a) parses a label only
+when it carries at least a month, so the one bucket this wave's own
+`chartSql` can build that the face cannot read as a date falls back to
+the face's other rule and draws as text, ledgered rather than widened,
+since teaching the face a bare year is a change to §16a's own rule, not
+to this dialog. No sort control: value desc for a text group, label asc
+for a date, both fixed, per rule 15's own restraint (a control the
+picks do not need is a control this dialog does not grow).

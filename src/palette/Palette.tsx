@@ -558,6 +558,19 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
             >
               <LayoutGrid size={12} /> New Drawing
             </Command.Item>
+            <Command.Item
+              value="new chart graph canvas plot"
+              onSelect={() => {
+                // the `+` menu's own `Chart…` row, reached by keyboard (DESIGN
+                // rule 14: one door, two ways to press it). The ellipsis is
+                // earned: the dialog asks for three picks before anything is
+                // placed, where `New Note` and `New Drawing` place at once
+                void loadCanvasPort().then((port) => port?.newChart());
+                close();
+              }}
+            >
+              <LayoutGrid size={12} /> New Chart…
+            </Command.Item>
             {import.meta.env.DEV && (
               // D5's own door, and only ever in `tauri dev`: the canvas writes
               // its layout commits and its gestures to a ring, and this is how

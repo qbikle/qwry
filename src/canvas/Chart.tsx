@@ -366,7 +366,15 @@ function standBars(spec: ChartSpec, w: number, faceH: number): Geometry {
   };
 }
 
-export function Chart({ spec, span }: { spec: ChartSpec; span?: { w: number; h: number } }) {
+export function Chart({
+  spec,
+  span,
+  faceH: fixedH,
+}: {
+  spec: ChartSpec;
+  span?: { w: number; h: number };
+  faceH?: number;
+}) {
   // the cells this face stands in, when it stands in some: what `+ N more`
   // resizes. Null in the pane, where nothing is ever squeezed
   const widget = useContext(Widget);
@@ -387,8 +395,11 @@ export function Chart({ spec, span }: { spec: ChartSpec; span?: { w: number; h: 
     return () => ro.disconnect();
   }, []);
   const w = box.w;
-  // with no span the box is as tall as what it holds, which is what `0` says
-  const faceH = span ? box.h : 0;
+  // with no span the box is as tall as what it holds, which is what `0` says.
+  // A host that has already fixed the height hands it over instead: an
+  // auto-height box cannot be measured for the face it is about to hold, and a
+  // face drawn past a host's own clip loses whatever sits at its foot
+  const faceH = fixedH ?? (span ? box.h : 0);
   const geo =
     w > 0
       ? spec.kind === "line"
