@@ -3121,7 +3121,7 @@ the same list).
 | the armed tool slides home; a member slides back | `spring.snappy`, asymmetric with the row above on purpose: the way out has life, the way back is calm, and nothing ever overshoots past the island's own edge |
 | siblings drop into their slots; family members drop into an open arm | `spring.snappy` (700/38/0.6), the 6px from just above their OWN slot at scale .9, the moment the body grows past it |
 | the island's body grows and shrinks; an arm widens and folds | `spring.snappy`, ζ ≈ .93: a body that overshot would clip the tool standing inside it |
-| siblings leaving, chord letters, hover fills | `--dur-quick` on `--ease-std`, a sibling fading where it stands and travelling nothing |
+| siblings leaving, chord letters, hover fills | `--dur-quick` on `--ease-std`, a sibling fading where it stands and travelling nothing. This gate on the body's own height replaces the sketch addendum's timing (siblings out in 60ms, body and armed tool waiting 80ms): the tree ties each sibling's leaving to the body passing it, which the addendum's fixed numbers only approximated |
 | reduced motion | every getter above collapses to the instant variant; nothing travels, everything stands where it was going |
 
 **ONLY THE ARMED TOOL TRAVELS, and the body is the clock.** Two rules, both
